@@ -129,7 +129,28 @@ feat: implement user authentication system
 
 ## Project Overview
 
-This is oyakata - a TypeScript project with Bun runtime and Nix flake development environment support.
+This is oyakata, a TypeScript/Bun system for cooperative multi-agent session management.
+The project orchestrates writing sessions with two primary agent backends:
+
+- `tacogips/codex-agent`
+- `tacogips/claude-code-agent`
+
+Agent cooperation is defined by a JSON-managed `workflow` model. A workflow can represent:
+
+- Multiple node combinations
+- Branch conditions and branch-judge nodes
+- Loop conditions and loop-judge nodes
+- Node-to-node connections
+- Per-node completion conditions
+- Repetition (loop control)
+- Node timeout control (global default + per-node override)
+
+Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
+
+- `workflow.json` (purpose via `description`, graph/control-flow)
+- `workflow.json` (purpose via `description`, graph/control-flow, global defaults)
+- `workflow-vis.json` (browser visualization state such as node coordinates)
+- `node-{id}.json` (runtime node payload: `model`, `promptTemplate`, `variables`, optional `timeoutMs`)
 
 ## Development Environment
 - **Language**: TypeScript
@@ -142,11 +163,13 @@ This is oyakata - a TypeScript project with Bun runtime and Nix flake developmen
 ```
 .
 ├── flake.nix          # Nix flake configuration for TypeScript/Bun development
-├── flake.lock         # Locked flake dependencies
 ├── package.json       # Package manifest
-├── bun.lockb          # Bun lock file
 ├── tsconfig.json      # TypeScript configuration (maximum strictness)
 ├── .envrc             # direnv configuration
+├── AGENTS.md          # Agent operation and workflow rules
+├── README.md          # Project overview and workflow model summary
+├── .oyakata/          # Workflow definitions and browser visualization state
+├── design-docs/       # Architecture and command design docs
 ├── src/               # Source code
 │   ├── main.ts        # Entry point
 │   ├── lib.ts         # Library code

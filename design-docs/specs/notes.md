@@ -1,15 +1,57 @@
 # Design Notes
 
-This document contains research findings, investigations, and miscellaneous design notes.
+This document captures additional design notes for cooperative multi-agent orchestration.
 
 ## Overview
 
-Notable items that do not fit into architecture or client categories.
+The project uses workflow-driven coordination where agent behavior is explicit and auditable.
 
----
+## Notable Decisions
 
-## Sections
+### Primary Agent Providers
 
-(Add design notes sections below)
+Initial design scope includes exactly two model targets:
+- `tacogips/codex-agent`
+- `tacogips/claude-code-agent`
 
----
+### Prompt Decomposition
+
+Prompt payloads are separated into:
+- `promptTemplate`: reusable template
+- `variables`: runtime-resolved data
+
+This enables deterministic replay and easier session debugging.
+
+### Workflow File Split
+
+Workflow data is intentionally split:
+- `workflow.json`: structure/control and workflow `description`
+- `node-{id}.json`: runtime payload (`model`, `promptTemplate`, `variables`)
+- `workflow-vis.json`: browser visualization state (`x`, `y`, etc.)
+
+This avoids coupling runtime semantics with browser UI state.
+
+### Deterministic Control Flow
+
+Workflow JSON must make control flow explicit:
+- graph edges for transitions
+- branch conditions
+- loop policies and loop-judge nodes
+
+Implicit transitions are avoided.
+
+### Confirmed Runtime Policies
+
+- Branch behavior: fan-out to all matched branches.
+- Loop limit fallback: use workflow global default when loop-local limit is omitted.
+- Completion: auto-complete nodes are allowed; success-judgment-free nodes can be configured.
+- Timeout: each node can define execution timeout, with workflow-level default fallback.
+
+### Completion-First Progression
+
+A node should not transition until completion criteria are evaluated.
+This supports quality gates in collaborative writing workflows.
+
+### Open Items
+
+See `design-docs/qa.md` for current decision status and any remaining confirmation items.
