@@ -8,8 +8,22 @@ Goal: make workflow and node structures unambiguous and reviewable by humans bef
 
 Scope:
 - File models (`workflow.json`, `node-{id}.json`, `workflow-vis.json`)
+- Runtime execution artifact model (`{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`)
 - Internal normalized models used by runtime
 - Validation rules and review checklist
+
+## Canonical Schema Decisions
+
+1. Node payload uses canonical fields `promptTemplate` and `variables`.
+2. Legacy aliases `prompt` and `variable` are read-compatible only and must not be emitted by normalizers/savers.
+3. Node `model` is required at runtime and validation time.
+4. Node ids use stable slug-like identifiers with pattern `^[a-z0-9][a-z0-9-]{1,63}$`.
+5. Artifact root is configurable and resolved by:
+   1. CLI `--artifact-root`
+   2. `OYAKATA_ARTIFACT_ROOT`
+   3. `./.oyakata/workflow`
+6. Conversation handoff uses explicit output references (`OutputRef`), not implicit "latest output" inference.
+7. Complex node input must be assembled as structured `arguments` via bindings/mappings, not by embedding heavy logic in template syntax.
 
 ## File Data Models
 
@@ -21,21 +35,97 @@ Scope:
 | `description` | string | Yes | Human-readable purpose |
 | `defaults.maxLoopIterations` | number | Yes | Initial default: `3` |
 | `defaults.nodeTimeoutMs` | number | Yes | Initial default: `120000` |
+| `managerNodeId` | string | Yes | Must reference the `oyakata` manager node id |
+| `subWorkflows` | array of `SubWorkflowRef` | Yes | Node sequence units with input/output boundaries |
+| `subWorkflowConversations` | array of `SubWorkflowConversation` | No | Conversation sessions between sub-workflows |
 | `nodes` | array of `WorkflowNodeRef` | Yes | Node definitions and references |
 | `edges` | array of `WorkflowEdge` | Yes | Directed transitions |
+| `loops` | array of `LoopRule` | No | Optional explicit loop policy definitions |
 | `branching.mode` | string | Yes | Must be `fan-out` |
 
 `WorkflowNodeRef`:
 - `id: string`
 - `nodeFile: string` (expected format: `node-{id}.json`)
-- `kind?: "task" | "branch-judge" | "loop-judge"`
+- `kind?: "task" | "branch-judge" | "loop-judge" | "manager" | "input" | "output"`
 - `completion?: CompletionRule` (optional for auto-complete nodes)
+
+`SubWorkflowRef`:
+- `id: string`
+- `description: string`
+- `inputNodeId: string` (must reference a node with `kind: "input"`)
+- `outputNodeId: string` (must reference a node with `kind: "output"`)
+- `inputSources: SubWorkflowInputSource[]`
+
+`SubWorkflowInputSource`:
+- `type: "human-input" | "workflow-output" | "node-output" | "sub-workflow-output"`
+- `workflowId?: string` (required when `type = "workflow-output"`)
+- `nodeId?: string` (required when `type = "node-output"`)
+- `subWorkflowId?: string` (required when `type = "sub-workflow-output"`)
+- `selectionPolicy?: OutputSelectionPolicy` (required when source can resolve to multiple executions)
+
+`OutputSelectionPolicy`:
+- `mode: "explicit" | "latest-succeeded" | "latest-any" | "by-loop-iteration"`
+- `nodeExecId?: string` (required when `mode = "explicit"`)
+- `loopIteration?: number` (required when `mode = "by-loop-iteration"`)
+
+`OutputRef`:
+- `sessionId: string`
+- `workflowId: string`
+- `subWorkflowId?: string`
+- `outputNodeId: string`
+- `nodeExecId: string`
+- `artifactDir: string`
+
+`SubWorkflowConversation`:
+- `id: string`
+- `participants: string[]` (sub-workflow ids, minimum length 2)
+- `maxTurns: number` (positive integer)
+- `stopWhen: string` (termination expression)
+- `conversationPolicy?: ConversationPolicy`
+
+`ConversationPolicy`:
+- `turnPolicy?: "round-robin" | "judge-priority" | "score-priority"`
+- `memoryPolicy?: ConversationMemoryPolicy`
+- `toolPolicy?: ConversationToolPolicy`
+- `convergencePolicy?: ConversationConvergencePolicy`
+- `parallelBranches?: ConversationParallelBranches`
+- `budgetPolicy?: ConversationBudgetPolicy`
+
+`ConversationMemoryPolicy`:
+- `mode: "shared" | "role-local" | "hybrid"`
+- `historyWindowTurns?: number`
+
+`ConversationToolPolicy`:
+- `allowedToolsByRole: Record<string, string[]>`
+
+`ConversationConvergencePolicy`:
+- `metric: string`
+- `targetScore: number`
+- `minStableTurns?: number`
+
+`ConversationParallelBranches`:
+- `enabled: boolean`
+- `maxBranches?: number`
+- `mergePolicy?: "all" | "majority" | "judge"`
+
+`ConversationBudgetPolicy`:
+- `maxTokens?: number`
+- `maxCostUsd?: number`
+- `onBudgetExceeded?: "stop" | "degrade" | "judge"`
 
 `WorkflowEdge`:
 - `from: string`
 - `to: string`
 - `when: string` (expression name or `always`)
 - `priority?: number` (optional metadata only; fan-out still applies)
+
+`LoopRule`:
+- `id: string`
+- `judgeNodeId: string` (must reference a node with `kind: "loop-judge"`)
+- `maxIterations?: number` (positive integer; falls back to `defaults.maxLoopIterations`)
+- `continueWhen: string` (expression routed from `judgeNodeId`)
+- `exitWhen: string` (expression routed from `judgeNodeId`)
+- `backoffMs?: number` (optional wait before next loop iteration)
 
 ### node-{id}.json
 
@@ -45,7 +135,21 @@ Scope:
 | `model` | string | Yes | `tacogips/codex-agent` or `tacogips/claude-code-agent` |
 | `promptTemplate` | string | Yes | Render template |
 | `variables` | object | Yes | Template bindings |
+| `argumentsTemplate` | object | No | Structured arguments skeleton to pass to skill/tool adapters |
+| `argumentBindings` | array of `ArgumentBinding` | No | Runtime mapping rules for complex input assembly |
+| `templateEngine` | string | No | Default `mustache`; logic-heavy engines are out of scope |
 | `timeoutMs` | number | No | Overrides workflow default timeout |
+
+Legacy read-compatible aliases:
+- `prompt` -> `promptTemplate`
+- `variable` -> `variables`
+
+`ArgumentBinding`:
+- `targetPath: string` (JSON pointer-like path in `argumentsTemplate`)
+- `source: "variables" | "node-output" | "sub-workflow-output" | "workflow-output" | "human-input" | "conversation-transcript"`
+- `sourceRef?: OutputRef | string` (required for output-based sources)
+- `sourcePath?: string` (JSON path in resolved source payload)
+- `required?: boolean`
 
 ### workflow-vis.json
 
@@ -59,6 +163,27 @@ Scope:
 - `id: string`
 - `x: number`
 - `y: number`
+- `width: number`
+- `height: number`
+
+### Runtime Execution Artifact (`{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`)
+
+Path variable mapping:
+- `{artifact-root}` resolves via CLI/env/default policy
+- `{workflow_id}` = `workflow.json.workflowId`
+
+| Field | Type | Required | Notes |
+|------|------|----------|-------|
+| `input.json` | object | Yes | Fully resolved node input payload |
+| `output.json` | object | Yes | Node execution output payload |
+| `meta.json` | object | Yes | Status and execution metadata |
+
+`meta.json` minimum fields:
+- `nodeId: string`
+- `nodeExecId: string`
+- `status: "succeeded" | "failed" | "timed_out" | "cancelled"`
+- `startedAt: string` (ISO timestamp)
+- `endedAt: string` (ISO timestamp)
 
 ## Internal Runtime Models
 
@@ -69,9 +194,14 @@ These are normalized in memory after file loading and validation.
 - `workflowId: string`
 - `description: string`
 - `defaults: RuntimeDefaults`
+- `managerNodeId: NodeId`
+- `subWorkflows: Map<SubWorkflowId, SubWorkflow>`
+- `subWorkflowConversations: Map<ConversationId, SubWorkflowConversation>`
 - `nodes: Map<NodeId, WorkflowNode>`
 - `adjacency: Map<NodeId, WorkflowEdge[]>`
+- `loops: Map<LoopId, LoopRule>`
 - `branchMode: "fan-out"`
+- `executionArtifactsRoot: string` (resolved: `{artifact-root}/{workflow_id}`)
 
 ### RuntimeDefaults
 
@@ -81,12 +211,37 @@ These are normalized in memory after file loading and validation.
 ### WorkflowNode
 
 - `id: NodeId`
-- `kind: "task" | "branch-judge" | "loop-judge"`
+- `kind: "task" | "branch-judge" | "loop-judge" | "manager" | "input" | "output"`
 - `model: "tacogips/codex-agent" | "tacogips/claude-code-agent"`
 - `promptTemplate: string`
 - `variables: Record<string, unknown>`
 - `timeoutMs: number` (effective timeout after default merge)
 - `completion: CompletionRule | null` (null means auto-complete)
+
+### SubWorkflow
+
+- `id: SubWorkflowId`
+- `description: string`
+- `inputNodeId: NodeId`
+- `outputNodeId: NodeId`
+- `inputSources: SubWorkflowInputSource[]`
+
+### SubWorkflowConversation
+
+- `id: ConversationId`
+- `participants: SubWorkflowId[]`
+- `maxTurns: number`
+- `stopWhen: string`
+- `conversationPolicy?: ConversationPolicy`
+
+### ConversationMessageEnvelope
+
+- `conversationId: ConversationId`
+- `fromSubWorkflowId: SubWorkflowId`
+- `toSubWorkflowId: SubWorkflowId`
+- `outputRef: OutputRef`
+- `payload: Record<string, unknown>`
+- `sentAt: string`
 
 ### CompletionRule
 
@@ -102,15 +257,63 @@ These are normalized in memory after file loading and validation.
 - `when: string`
 - `priority: number | null`
 
+### LoopRule (normalized)
+
+- `id: LoopId`
+- `judgeNodeId: NodeId`
+- `maxIterations: number` (effective value after default merge)
+- `continueWhen: string`
+- `exitWhen: string`
+- `backoffMs: number | null`
+
+### NodeExecutionArtifactRef
+
+- `nodeId: NodeId`
+- `nodeExecId: string`
+- `artifactDir: string` (format: `{artifact-root}/{workflow_id}/{node}/{node-exec-id}`)
+- `inputPath: string` (`{artifactDir}/input.json`)
+- `outputPath: string` (`{artifactDir}/output.json`)
+- `metaPath: string` (`{artifactDir}/meta.json`)
+
+### ResolvedInputPayload
+
+- `promptText?: string` (rendered from `promptTemplate`)
+- `arguments?: Record<string, unknown>` (assembled from `argumentsTemplate` + `argumentBindings`)
+- `sourceOutputRefs: OutputRef[]`
+
 ## Model Invariants
 
 - Every `workflow.json.nodes[].id` must be unique.
+- Every node id must match `^[a-z0-9][a-z0-9-]{1,63}$`.
 - Every `nodeFile` must exist in same workflow directory.
 - `node-{id}.json.id` must match referenced workflow node id.
+- Every executed node must create one unique `nodeExecId`.
+- Every executed node must persist artifacts in `{artifact-root}/{workflow_id}/{node}/{node-exec-id}`.
+- Every artifact directory must include `input.json`, `output.json`, and `meta.json`.
+- `managerNodeId` must reference exactly one node with `kind: "manager"` (oyakata manager).
+- Every `subWorkflows[]` entry must reference existing `input`/`output` nodes.
+- `SubWorkflowInputSource.type = "workflow-output"` requires `workflowId`.
+- `SubWorkflowInputSource.type = "node-output"` requires `nodeId`.
+- `SubWorkflowInputSource.type = "sub-workflow-output"` requires `subWorkflowId`.
+- `selectionPolicy.mode = "explicit"` requires `selectionPolicy.nodeExecId`.
+- `selectionPolicy.mode = "by-loop-iteration"` requires `selectionPolicy.loopIteration`.
+- Output-based input handoff must resolve to a concrete `OutputRef` before node execution.
+- Every `subWorkflowConversations[].participants[]` entry must reference an existing sub-workflow.
+- Every `SubWorkflowConversation.participants` set must contain at least two distinct sub-workflow ids.
+- Every `SubWorkflowConversation.maxTurns` must be a positive integer.
+- If `ConversationPolicy.turnPolicy = "score-priority"`, `convergencePolicy` must be present.
+- If `ConversationPolicy.parallelBranches.enabled = true`, `mergePolicy` must be present.
+- `ConversationBudgetPolicy.maxTokens` and `maxCostUsd` (if present) must be positive.
 - Every edge endpoint must be declared in `nodes`.
+- Every `loops[].judgeNodeId` must reference an existing node with kind `loop-judge`.
+- Every `loops[].maxIterations` (if present) must be a positive integer.
+- Effective loop max iterations must exist for every loop (loop-local or global default).
+- Every loop rule must define both `continueWhen` and `exitWhen`.
 - Branch mode is always fan-out.
 - Effective timeout exists for every executable node (node override or default).
-- Loop execution must be bounded (edge-local config or global default).
+- Loop execution must be bounded (explicit `loops` config or global default).
+- `templateEngine` must be `mustache` when specified.
+- `argumentsTemplate` with `argumentBindings` must produce valid JSON object before adapter invocation.
 
 ## Human Review Checklist
 
@@ -123,19 +326,29 @@ Before approving a workflow model:
 - Start path exists.
 - No unintended dead-end nodes.
 - Fan-out branches are intentional and bounded downstream.
+- `managerNodeId` exists and controls all sub-workflow starts.
+- Each sub-workflow has valid input and output boundary nodes.
+- Conversation participants map to existing sub-workflows and expected dialog topology.
+- Conversation policy is explicit for turn-taking, memory, tools, convergence, branching, and budget.
+- For subgroup pipelines (e.g. subgroup1->subgroup2->subgroup3->subgroup4), order and loop-back edge targets are explicit and reviewable.
+- For adversarial role loops (e.g. blackhat->whitehat->mediation), role handoff edges and commit checkpoints are explicit.
 
 3. Node runtime quality
 - `model` choice is appropriate for each node role.
 - `promptTemplate` is understandable and deterministic.
 - `variables` do not contain missing placeholders.
+- Output handoff to downstream nodes is traceable via execution artifact references.
 
 4. Safety controls
 - Timeouts are realistic for each heavy node.
 - Loop defaults and node-level overrides prevent runaway execution.
+- Iterative hardening loops have explicit `maxIterations` (recommended: `3` for review/fix rounds).
+- Debate loops define explicit convergence/termination conditions (for example issue exhaustion) plus max-round fallback.
 
 5. Completion semantics
 - Nodes requiring quality gates define explicit `completion`.
 - Auto-complete nodes are intentionally marked.
+- Sub-workflow output nodes define completion compatible with handoff requirements.
 
 6. Visualization hygiene
 - `workflow-vis.json` only contains UI state.
