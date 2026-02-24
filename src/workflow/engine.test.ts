@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { AdapterExecutionError } from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
 
@@ -25,15 +26,22 @@ async function createWorkflowFixture(root: string, workflowName: string, withLoo
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
-  const nodes = [
-    { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-    { id: "step-1", kind: "task", nodeFile: "node-step-1.json", completion: { type: "none" } },
-  ];
+  const nodes = withLoop
+    ? [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "step-1", kind: "loop-judge", nodeFile: "node-step-1.json", completion: { type: "none" } },
+        { id: "done", kind: "output", nodeFile: "node-done.json", completion: { type: "none" } },
+      ]
+    : [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "step-1", kind: "task", nodeFile: "node-step-1.json", completion: { type: "none" } },
+      ];
 
   const edges = withLoop
     ? [
         { from: "oyakata-manager", to: "step-1", when: "always" },
-        { from: "step-1", to: "step-1", when: "always" },
+        { from: "step-1", to: "step-1", when: "continue_round" },
+        { from: "step-1", to: "done", when: "loop_exit" },
       ]
     : [{ from: "oyakata-manager", to: "step-1", when: "always" }];
 
@@ -45,15 +53,30 @@ async function createWorkflowFixture(root: string, workflowName: string, withLoo
     subWorkflows: [],
     nodes,
     edges,
-    loops: [],
+    loops: withLoop
+      ? [
+          {
+            id: "main-loop",
+            judgeNodeId: "step-1",
+            continueWhen: "continue_round",
+            exitWhen: "loop_exit",
+          },
+        ]
+      : [],
     branching: { mode: "fan-out" },
   });
 
   await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
-      { id: "step-1", x: 200, y: 0, width: 100, height: 100 },
-    ],
+    nodes: withLoop
+      ? [
+          { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
+          { id: "step-1", x: 200, y: 0, width: 100, height: 100 },
+          { id: "done", x: 400, y: 0, width: 100, height: 100 },
+        ]
+      : [
+          { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
+          { id: "step-1", x: 200, y: 0, width: 100, height: 100 },
+        ],
   });
 
   await writeJson(path.join(workflowDir, "node-oyakata-manager.json"), {
@@ -67,6 +90,99 @@ async function createWorkflowFixture(root: string, workflowName: string, withLoo
     id: "step-1",
     model: "tacogips/claude-code-agent",
     promptTemplate: "step {{topic}}",
+    variables: {},
+  });
+
+  if (withLoop) {
+    await writeJson(path.join(workflowDir, "node-done.json"), {
+      id: "done",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "done",
+      variables: {},
+    });
+  }
+}
+
+async function createSubWorkflowRuntimeFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "sub-workflow fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [
+      {
+        id: "sw-a",
+        description: "A",
+        inputNodeId: "a-input",
+        outputNodeId: "a-output",
+        inputSources: [{ type: "human-input" }],
+      },
+      {
+        id: "sw-b",
+        description: "B",
+        inputNodeId: "b-input",
+        outputNodeId: "b-output",
+        inputSources: [{ type: "sub-workflow-output", subWorkflowId: "sw-a" }],
+      },
+    ],
+    nodes: [
+      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
+      { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
+      { id: "b-input", kind: "input", nodeFile: "node-b-input.json", completion: { type: "none" } },
+      { id: "b-output", kind: "output", nodeFile: "node-b-output.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "a-input", to: "a-output", when: "always" },
+      { from: "a-output", to: "oyakata-manager", when: "always" },
+      { from: "b-input", to: "b-output", when: "always" },
+      { from: "b-output", to: "oyakata-manager", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
+      { id: "a-input", x: 120, y: 0, width: 100, height: 100 },
+      { id: "a-output", x: 240, y: 0, width: 100, height: 100 },
+      { id: "b-input", x: 360, y: 0, width: 100, height: 100 },
+      { id: "b-output", x: 480, y: 0, width: 100, height: 100 },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-oyakata-manager.json"), {
+    id: "oyakata-manager",
+    model: "tacogips/codex-agent",
+    promptTemplate: "manager",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-a-input.json"), {
+    id: "a-input",
+    model: "tacogips/codex-agent",
+    promptTemplate: "a-input",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-a-output.json"), {
+    id: "a-output",
+    model: "tacogips/codex-agent",
+    promptTemplate: "a-output",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-b-input.json"), {
+    id: "b-input",
+    model: "tacogips/codex-agent",
+    promptTemplate: "b-input",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-b-output.json"), {
+    id: "b-output",
+    model: "tacogips/codex-agent",
+    promptTemplate: "b-output",
     variables: {},
   });
 }
@@ -127,7 +243,97 @@ describe("runWorkflow", () => {
     expect(commitMessage).toContain(`Run-ID: ${result.value.session.sessionId}`);
   });
 
-  test("returns loop limit exit code on repeated node", async () => {
+  test("assembles node arguments from runtime variables and upstream outputs", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "assembled-input", false);
+
+    await writeJson(path.join(root, "assembled-input", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      argumentsTemplate: { task: { topic: "", managerNode: "" } },
+      argumentBindings: [
+        {
+          targetPath: "task.topic",
+          source: "variables",
+          sourcePath: "topic",
+          required: true,
+        },
+        {
+          targetPath: "task.managerNode",
+          source: "node-output",
+          sourceRef: "oyakata-manager",
+          sourcePath: "output.payload.nodeId",
+          required: true,
+        },
+      ],
+    });
+
+    const result = await runWorkflow("assembled-input", {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      runtimeVariables: { topic: "B" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec).toBeDefined();
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const inputRaw = await readFile(path.join(step1Exec.artifactDir, "input.json"), "utf8");
+    const inputJson = JSON.parse(inputRaw) as {
+      arguments: { task: { topic: string; managerNode: string } } | null;
+    };
+    expect(inputJson.arguments).toEqual({
+      task: {
+        topic: "B",
+        managerNode: "oyakata-manager",
+      },
+    });
+  });
+
+  test("fails deterministically when required argument binding source is missing", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "missing-required-binding", false);
+
+    await writeJson(path.join(root, "missing-required-binding", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      argumentsTemplate: {},
+      argumentBindings: [
+        {
+          targetPath: "task.userInput",
+          source: "human-input",
+          sourcePath: "response",
+          required: true,
+        },
+      ],
+    });
+
+    const result = await runWorkflow("missing-required-binding", {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      runtimeVariables: { topic: "B" },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.exitCode).toBe(3);
+      expect(result.error.message).toContain("input assembly failed");
+    }
+  });
+
+  test("uses loop semantics to force exit when max loop iterations are reached", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "looped", true);
 
@@ -136,12 +342,21 @@ describe("runWorkflow", () => {
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
       maxLoopIterations: 2,
+      mockScenario: {
+        "step-1": {
+          when: { continue_round: true, loop_exit: false },
+          payload: {},
+        },
+      },
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     if (!result.ok) {
-      expect(result.error.exitCode).toBe(4);
+      return;
     }
+    expect(result.value.session.status).toBe("completed");
+    expect(result.value.session.loopIterationCounts?.["main-loop"]).toBe(2);
+    expect(result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-1")).toHaveLength(3);
   });
 
   test("supports dry-run without adapter execution", async () => {
@@ -251,6 +466,32 @@ describe("runWorkflow", () => {
     }
   });
 
+  test("treats policy-blocked adapter failure as failed execution", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "policy-blocked", false);
+
+    const blockedAdapter: NodeAdapter = {
+      async execute(_input) {
+        throw new AdapterExecutionError("policy_blocked", "blocked by provider policy");
+      },
+    };
+
+    const result = await runWorkflow(
+      "policy-blocked",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      blockedAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.exitCode).toBe(5);
+    }
+  });
+
   test("supports scenario mocks for deterministic branching outputs", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "scenario", false);
@@ -318,5 +559,30 @@ describe("runWorkflow", () => {
     expect(rerun.value.session.nodeExecutions).toHaveLength(1);
     expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
     expect(rerun.value.session.startedAt.length).toBeGreaterThan(0);
+  });
+
+  test("manager schedules sub-workflow inputs based on inputSources dependencies", async () => {
+    const root = await makeTempDir();
+    await createSubWorkflowRuntimeFixture(root, "subworkflow-runtime");
+
+    const result = await runWorkflow("subworkflow-runtime", {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      runtimeVariables: {
+        humanInput: { topic: "demo" },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+
+    const executionOrder = result.value.session.nodeExecutions.map((entry) => entry.nodeId);
+    expect(executionOrder.indexOf("a-output")).toBeGreaterThan(executionOrder.indexOf("a-input"));
+    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(executionOrder.indexOf("a-output"));
+    expect(executionOrder.indexOf("b-output")).toBeGreaterThan(executionOrder.indexOf("b-input"));
   });
 });

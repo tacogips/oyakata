@@ -1,15 +1,22 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
+  AdapterExecutionError,
   DeterministicNodeAdapter,
   ScenarioNodeAdapter,
+  type AdapterExecutionInput,
+  type AdapterExecutionOutput,
+  type AdapterFailureCode,
   type MockNodeScenario,
   type NodeAdapter,
 } from "./adapter";
 import { loadWorkflowFromDisk } from "./load";
+import { assembleNodeInput } from "./input-assembly";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
+import { evaluateBranch, evaluateCompletion, resolveLoopTransition } from "./semantics";
+import { planManagerSubWorkflowInputs } from "./sub-workflow";
 import {
   createSessionId,
   createSessionState,
@@ -17,8 +24,7 @@ import {
   type WorkflowSessionState,
 } from "./session";
 import { loadSession, saveSession, type SessionStoreOptions } from "./session-store";
-import { renderPromptTemplate } from "./render";
-import type { LoadOptions, NodePayload, WorkflowEdge, WorkflowNodeRef } from "./types";
+import type { LoadOptions, LoopRule, NodePayload, WorkflowEdge } from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
@@ -44,6 +50,14 @@ export interface WorkflowRunResult {
 export interface WorkflowRunFailure {
   readonly exitCode: number;
   readonly message: string;
+}
+
+export interface CancellationProbe {
+  isCancelled(sessionId: string): Promise<boolean>;
+}
+
+export interface EngineExecutionGuards {
+  readonly cancellationProbe: CancellationProbe;
 }
 
 function mergeVariables(
@@ -77,6 +91,10 @@ interface UpstreamOutputRef extends OutputRef {
   readonly status: NodeExecutionRecord["status"];
 }
 
+interface UpstreamInput extends UpstreamOutputRef {
+  readonly output: Readonly<Record<string, unknown>>;
+}
+
 function nextNodeExecId(counter: number): string {
   return `exec-${String(counter).padStart(6, "0")}`;
 }
@@ -96,34 +114,40 @@ function resolveTimeoutMs(
 }
 
 function evaluateEdge(edge: WorkflowEdge, output: Readonly<Record<string, unknown>>): boolean {
-  if (edge.when === "always") {
-    return true;
-  }
-
-  const whenMap = output["when"];
-  if (typeof whenMap === "object" && whenMap !== null) {
-    const value = (whenMap as Record<string, unknown>)[edge.when];
-    return value === true;
-  }
-
-  const direct = output[edge.when];
-  return direct === true;
+  return evaluateBranch({ when: edge.when, output });
 }
 
-async function runWithTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<Result<T, "timed_out" | "failed">> {
+async function executeAdapterWithTimeout(
+  adapter: NodeAdapter,
+  input: AdapterExecutionInput,
+  timeoutMs: number,
+): Promise<Result<AdapterExecutionOutput, AdapterFailureCode>> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error("timed_out")), timeoutMs);
-    });
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new AdapterExecutionError("timeout", "adapter execution timed out"));
+    }, timeoutMs);
+  });
 
-    const result = await Promise.race([task, timeoutPromise]);
-    return ok(result as T);
+  try {
+    const output = await Promise.race([
+      adapter.execute(input, {
+        timeoutMs,
+        signal: controller.signal,
+      }),
+      timeoutPromise,
+    ]);
+    return ok(output);
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "timed_out") {
-      return err("timed_out");
+    if (error instanceof AdapterExecutionError) {
+      return err(error.code);
     }
-    return err("failed");
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return err("timeout");
+    }
+    return err("provider_error");
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
@@ -184,6 +208,36 @@ function buildUpstreamOutputRefs(
     .filter((entry): entry is UpstreamOutputRef => entry !== undefined);
 }
 
+async function buildUpstreamInputs(
+  session: WorkflowSessionState,
+  nodeId: string,
+): Promise<readonly UpstreamInput[]> {
+  const refs = buildUpstreamOutputRefs(session, nodeId);
+  if (refs.length === 0) {
+    return [];
+  }
+
+  const loaded = await Promise.all(
+    refs.map(async (ref) => {
+      try {
+        const outputRaw = await readFile(path.join(ref.artifactDir, "output.json"), "utf8");
+        const parsed = JSON.parse(outputRaw) as unknown;
+        if (typeof parsed !== "object" || parsed === null) {
+          return null;
+        }
+        return {
+          ...ref,
+          output: parsed as Readonly<Record<string, unknown>>,
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return loaded.filter((entry): entry is UpstreamInput => entry !== null);
+}
+
 function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: OutputRef, nextNodes: readonly string[]): string {
   const summary = `chore(workflow): checkpoint node ${ref.outputNodeId}`;
   const nextNodeValue = nextNodes.length === 0 ? "(terminal)" : nextNodes.join(",");
@@ -204,11 +258,8 @@ function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: 
   ].join("\n");
 }
 
-function completionSatisfied(node: WorkflowNodeRef, output: Readonly<Record<string, unknown>>): boolean {
-  if (node.completion === undefined || node.completion.type === "none") {
-    return true;
-  }
-  return output["completionPassed"] === true;
+function isTerminalStatus(status: WorkflowSessionState["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
@@ -216,6 +267,7 @@ function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
     ...session,
     queue: [...session.queue],
     nodeExecutionCounts: { ...session.nodeExecutionCounts },
+    loopIterationCounts: { ...(session.loopIterationCounts ?? {}) },
     restartCounts: { ...(session.restartCounts ?? {}) },
     restartEvents: [...(session.restartEvents ?? [])],
     transitions: [...session.transitions],
@@ -228,6 +280,7 @@ export async function runWorkflow(
   workflowName: string,
   options: WorkflowRunOptions = {},
   adapter?: NodeAdapter,
+  guards?: EngineExecutionGuards,
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
   const loaded = await loadWorkflowFromDisk(workflowName, options);
   if (!loaded.ok) {
@@ -241,8 +294,17 @@ export async function runWorkflow(
   const workflow = loaded.value.bundle.workflow;
   const nodeMap = loaded.value.bundle.nodePayloads;
   const workflowNodes = new Map(workflow.nodes.map((entry) => [entry.id, entry]));
+  const loopRuleByJudgeNodeId = new Map<string, LoopRule>((workflow.loops ?? []).map((entry) => [entry.judgeNodeId, entry]));
   const effectiveAdapter =
     adapter ?? (options.mockScenario === undefined ? new DeterministicNodeAdapter() : new ScenarioNodeAdapter(options.mockScenario));
+  const cancellationProbe =
+    guards?.cancellationProbe ??
+    ({
+      async isCancelled(sessionId: string): Promise<boolean> {
+        const current = await loadSession(sessionId, options);
+        return current.ok && current.value.status === "cancelled";
+      },
+    } satisfies CancellationProbe);
 
   let session: WorkflowSessionState;
   if (options.rerunFromSessionId !== undefined) {
@@ -314,6 +376,26 @@ export async function runWorkflow(
   const stuckRestartBackoffMs = options.stuckRestartBackoffMs ?? 250;
 
   while (session.queue.length > 0) {
+    const persisted = await loadSession(session.sessionId, options);
+    if (persisted.ok && isTerminalStatus(persisted.value.status)) {
+      if (persisted.value.status === "completed") {
+        return ok({ session: persisted.value, exitCode: 0 });
+      }
+      const exitCode = persisted.value.status === "cancelled" ? 130 : 1;
+      return err({ exitCode, message: persisted.value.lastError ?? `session ${persisted.value.status}` });
+    }
+    if (await cancellationProbe.isCancelled(session.sessionId)) {
+      const cancelled: WorkflowSessionState = {
+        ...session,
+        status: "cancelled",
+        ...(session.queue[0] === undefined ? {} : { currentNodeId: session.queue[0] }),
+        endedAt: nowIso(),
+        lastError: "cancelled by external request",
+      };
+      await saveSession(cancelled, options);
+      return err({ exitCode: 130, message: cancelled.lastError ?? "cancelled" });
+    }
+
     if (maxSteps !== undefined && session.nodeExecutionCounter >= maxSteps) {
       const paused: WorkflowSessionState = {
         ...session,
@@ -352,7 +434,9 @@ export async function runWorkflow(
 
     for (;;) {
       const nextCount = (session.nodeExecutionCounts[nodeId] ?? 0) + 1;
-      if (nextCount > maxLoopIterations) {
+      const updatedCounts = { ...session.nodeExecutionCounts, [nodeId]: nextCount };
+      const loopRule = loopRuleByJudgeNodeId.get(nodeId);
+      if (loopRule === undefined && nextCount > maxLoopIterations) {
         const failed: WorkflowSessionState = {
           ...session,
           queue,
@@ -371,8 +455,39 @@ export async function runWorkflow(
       await mkdir(artifactDir, { recursive: true });
 
       const mergedVariables = mergeVariables(nodePayload.variables, session.runtimeVariables);
-      const promptText = renderPromptTemplate(nodePayload.promptTemplate, mergedVariables);
       const upstreamOutputRefs = buildUpstreamOutputRefs(session, nodeId);
+      const upstreamInputs = await buildUpstreamInputs(session, nodeId);
+      const upstreamBindingInputs = upstreamInputs.map((entry) => ({
+        fromNodeId: entry.fromNodeId,
+        transitionWhen: entry.transitionWhen,
+        status: entry.status,
+        output: entry.output,
+      }));
+
+      let assembledPromptText: string;
+      let assembledArguments: Readonly<Record<string, unknown>> | null;
+      try {
+        const assembled = assembleNodeInput({
+          runtimeVariables: session.runtimeVariables,
+          node: nodePayload,
+          upstream: upstreamBindingInputs,
+          transcript: [],
+        });
+        assembledPromptText = assembled.promptText;
+        assembledArguments = assembled.arguments;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "unknown input assembly failure";
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt: nowIso(),
+          lastError: `input assembly failed at '${nodeId}': ${message}`,
+        };
+        await saveSession(failed, options);
+        return err({ exitCode: 3, message: failed.lastError ?? "input assembly failed" });
+      }
 
       const inputPayload = {
         sessionId: session.sessionId,
@@ -381,7 +496,8 @@ export async function runWorkflow(
         nodeExecId,
         model: nodePayload.model,
         promptTemplate: nodePayload.promptTemplate,
-        promptText,
+        promptText: assembledPromptText,
+        arguments: assembledArguments,
         variables: mergedVariables,
         upstreamOutputRefs,
         restartAttempt,
@@ -401,25 +517,28 @@ export async function runWorkflow(
         outputPayload = {
           provider: "dry-run",
           model: nodePayload.model,
-          promptText,
+          promptText: assembledPromptText,
           completionPassed: true,
           when: { always: true },
           payload: { skippedExecution: true },
         };
       } else {
-        const execution = await runWithTimeout(
-          effectiveAdapter.execute({
+        const execution = await executeAdapterWithTimeout(
+          effectiveAdapter,
+          {
             workflowId: workflow.workflowId,
             nodeId,
             node: nodePayload,
             mergedVariables,
+            promptText: assembledPromptText,
+            arguments: assembledArguments,
             executionIndex: nextCount,
-          }),
+          },
           timeoutMs,
         );
 
         if (!execution.ok) {
-          nodeStatus = execution.error === "timed_out" ? "timed_out" : "failed";
+          nodeStatus = execution.error === "timeout" ? "timed_out" : "failed";
           outputPayload = {
             provider: "deterministic-local",
             model: nodePayload.model,
@@ -443,7 +562,64 @@ export async function runWorkflow(
       const endedAt = nowIso();
       const edges = outgoingEdges.get(nodeId) ?? [];
       const matched = edges.filter((edge) => evaluateEdge(edge, outputPayload));
-      const nextNodes = matched.map((edge) => edge.to);
+      const loopIterationCounts = session.loopIterationCounts ?? {};
+      let selected = matched;
+      let updatedLoopIterationCounts = loopIterationCounts;
+      if (loopRule !== undefined) {
+        const effectiveLoopRule: LoopRule = {
+          ...loopRule,
+          maxIterations: loopRule.maxIterations ?? maxLoopIterations,
+        };
+        const iteration = loopIterationCounts[loopRule.id] ?? 0;
+        const transition = resolveLoopTransition({
+          loopRule: effectiveLoopRule,
+          output: outputPayload,
+          state: { loopId: loopRule.id, iteration },
+        });
+        if (transition === "continue") {
+          selected = edges.filter((edge) => edge.when === effectiveLoopRule.continueWhen);
+          updatedLoopIterationCounts = {
+            ...loopIterationCounts,
+            [loopRule.id]: iteration + 1,
+          };
+        } else if (transition === "exit") {
+          selected = edges.filter((edge) => edge.when === effectiveLoopRule.exitWhen);
+        } else {
+          selected = matched.filter(
+            (edge) => edge.when !== effectiveLoopRule.continueWhen && edge.when !== effectiveLoopRule.exitWhen,
+          );
+        }
+
+        if (selected.length === 0 && transition !== "none") {
+          const failed: WorkflowSessionState = {
+            ...session,
+            queue,
+            status: "failed",
+            currentNodeId: nodeId,
+            endedAt,
+            nodeExecutionCounter: nextExecutionCounter,
+            nodeExecutionCounts: updatedCounts,
+            nodeExecutions: [
+              ...session.nodeExecutions,
+              {
+                nodeId,
+                nodeExecId,
+                status: nodeStatus,
+                artifactDir,
+                startedAt,
+                endedAt,
+                ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+                ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+              },
+            ],
+            loopIterationCounts: updatedLoopIterationCounts,
+            lastError: `loop transition '${transition}' has no matching edge at '${nodeId}'`,
+          };
+          await saveSession(failed, options);
+          return err({ exitCode: 4, message: failed.lastError ?? "invalid loop transition" });
+        }
+      }
+      const nextNodes = selected.map((edge) => edge.to);
 
       const outputJson = stableJson(outputPayload);
       const metaPayload = {
@@ -525,8 +701,6 @@ export async function runWorkflow(
         },
       ];
 
-      const updatedCounts = { ...session.nodeExecutionCounts, [nodeId]: nextCount };
-
       if (nodeStatus === "timed_out") {
         if (restartOnStuck && restartAttempt < maxStuckRestarts) {
           const restartCountForNode = (session.restartCounts?.[nodeId] ?? 0) + 1;
@@ -594,7 +768,11 @@ export async function runWorkflow(
         return err({ exitCode: 5, message: failed.lastError ?? "adapter failure" });
       }
 
-      if (!completionSatisfied(nodeRef, outputPayload)) {
+      const completion = evaluateCompletion({
+        rule: nodeRef.completion,
+        output: outputPayload,
+      });
+      if (!completion.passed) {
         const failed: WorkflowSessionState = {
           ...session,
           queue,
@@ -604,7 +782,11 @@ export async function runWorkflow(
           nodeExecutionCounter: nextExecutionCounter,
           nodeExecutionCounts: updatedCounts,
           nodeExecutions,
-          lastError: `completion condition not met at '${nodeId}'`,
+          loopIterationCounts: updatedLoopIterationCounts,
+          lastError:
+            completion.reason === null
+              ? `completion condition not met at '${nodeId}'`
+              : `completion condition not met at '${nodeId}': ${completion.reason}`,
         };
         await saveSession(failed, options);
         return err({ exitCode: 3, message: failed.lastError ?? "completion condition not met" });
@@ -612,9 +794,22 @@ export async function runWorkflow(
 
       const transitions = [
         ...session.transitions,
-        ...matched.map((edge) => ({ from: edge.from, to: edge.to, when: edge.when })),
+        ...selected.map((edge) => ({ from: edge.from, to: edge.to, when: edge.when })),
       ];
-      const nextQueue = [...queue, ...matched.map((edge) => edge.to)];
+      const transitionNextNodes = selected.map((edge) => edge.to);
+      const managerPlannedInputs =
+        nodeRef.kind === "manager"
+          ? planManagerSubWorkflowInputs({
+              workflow,
+              session: {
+                ...session,
+                nodeExecutions,
+              },
+            })
+          : [];
+      const nextQueue = [...queue, ...transitionNextNodes, ...managerPlannedInputs].filter(
+        (value, index, all) => all.indexOf(value) === index,
+      );
 
       session = {
         ...session,
@@ -623,6 +818,7 @@ export async function runWorkflow(
         currentNodeId: nodeId,
         nodeExecutionCounter: nextExecutionCounter,
         nodeExecutionCounts: updatedCounts,
+        loopIterationCounts: updatedLoopIterationCounts,
         transitions,
         nodeExecutions,
       };
@@ -630,6 +826,15 @@ export async function runWorkflow(
       await saveSession(session, options);
       break;
     }
+  }
+
+  const beforeComplete = await loadSession(session.sessionId, options);
+  if (beforeComplete.ok && isTerminalStatus(beforeComplete.value.status)) {
+    if (beforeComplete.value.status === "completed") {
+      return ok({ session: beforeComplete.value, exitCode: 0 });
+    }
+    const exitCode = beforeComplete.value.status === "cancelled" ? 130 : 1;
+    return err({ exitCode, message: beforeComplete.value.lastError ?? `session ${beforeComplete.value.status}` });
   }
 
   const completed: WorkflowSessionState = {

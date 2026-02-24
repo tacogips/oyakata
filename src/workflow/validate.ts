@@ -9,6 +9,9 @@ import {
   type LoopRule,
   type NodePayload,
   type NormalizedWorkflowBundle,
+  type SubWorkflowConversation,
+  type SubWorkflowInputSource,
+  type SubWorkflowRef,
   type ValidationIssue,
   type VisNode,
   type WorkflowEdge,
@@ -223,6 +226,151 @@ function normalizeLoop(value: unknown, index: number, issues: ValidationIssue[])
   };
 }
 
+function normalizeSubWorkflowInputSource(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): SubWorkflowInputSource | null {
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return null;
+  }
+
+  const typeRaw = value["type"];
+  if (
+    typeRaw !== "human-input" &&
+    typeRaw !== "workflow-output" &&
+    typeRaw !== "node-output" &&
+    typeRaw !== "sub-workflow-output"
+  ) {
+    issues.push(makeIssue("error", `${path}.type`, "must be a valid sub-workflow input source type"));
+    return null;
+  }
+
+  const workflowId = typeof value["workflowId"] === "string" ? value["workflowId"] : undefined;
+  const nodeId = typeof value["nodeId"] === "string" ? value["nodeId"] : undefined;
+  const subWorkflowId = typeof value["subWorkflowId"] === "string" ? value["subWorkflowId"] : undefined;
+
+  if (typeRaw === "workflow-output" && (workflowId === undefined || workflowId.length === 0)) {
+    issues.push(makeIssue("error", `${path}.workflowId`, "is required when type is workflow-output"));
+  }
+  if (typeRaw === "node-output" && (nodeId === undefined || nodeId.length === 0)) {
+    issues.push(makeIssue("error", `${path}.nodeId`, "is required when type is node-output"));
+  }
+  if (typeRaw === "sub-workflow-output" && (subWorkflowId === undefined || subWorkflowId.length === 0)) {
+    issues.push(makeIssue("error", `${path}.subWorkflowId`, "is required when type is sub-workflow-output"));
+  }
+
+  if (value["selectionPolicy"] !== undefined) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.selectionPolicy`,
+        "is currently unsupported and rejected in the active runtime phase",
+      ),
+    );
+  }
+
+  return {
+    type: typeRaw,
+    ...(workflowId === undefined ? {} : { workflowId }),
+    ...(nodeId === undefined ? {} : { nodeId }),
+    ...(subWorkflowId === undefined ? {} : { subWorkflowId }),
+  };
+}
+
+function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationIssue[]): SubWorkflowRef | null {
+  const path = `workflow.subWorkflows[${index}]`;
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return null;
+  }
+
+  const id = readStringField(value, "id", path, issues);
+  const description = readStringField(value, "description", path, issues);
+  const inputNodeId = readStringField(value, "inputNodeId", path, issues);
+  const outputNodeId = readStringField(value, "outputNodeId", path, issues);
+
+  const inputSourcesRaw = value["inputSources"];
+  if (!Array.isArray(inputSourcesRaw)) {
+    issues.push(makeIssue("error", `${path}.inputSources`, "must be an array"));
+  }
+  const inputSources = Array.isArray(inputSourcesRaw)
+    ? inputSourcesRaw
+        .map((entry, sourceIndex) =>
+          normalizeSubWorkflowInputSource(entry, `${path}.inputSources[${sourceIndex}]`, issues),
+        )
+        .filter((entry): entry is SubWorkflowInputSource => entry !== null)
+    : [];
+
+  if (id === null || description === null || inputNodeId === null || outputNodeId === null) {
+    return null;
+  }
+
+  return {
+    id,
+    description,
+    inputNodeId,
+    outputNodeId,
+    inputSources,
+  };
+}
+
+function normalizeSubWorkflowConversation(
+  value: unknown,
+  index: number,
+  issues: ValidationIssue[],
+): SubWorkflowConversation | null {
+  const path = `workflow.subWorkflowConversations[${index}]`;
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return null;
+  }
+
+  const id = readStringField(value, "id", path, issues);
+  const stopWhen = readStringField(value, "stopWhen", path, issues);
+
+  const participantsRaw = value["participants"];
+  if (!Array.isArray(participantsRaw)) {
+    issues.push(makeIssue("error", `${path}.participants`, "must be an array"));
+  }
+  const participants = Array.isArray(participantsRaw)
+    ? participantsRaw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : [];
+  if (Array.isArray(participantsRaw) && participants.length !== participantsRaw.length) {
+    issues.push(makeIssue("error", `${path}.participants`, "must contain only non-empty strings"));
+  }
+
+  const maxTurnsRaw = value["maxTurns"];
+  let maxTurns: number | null = null;
+  if (typeof maxTurnsRaw === "number" && Number.isFinite(maxTurnsRaw) && maxTurnsRaw > 0) {
+    maxTurns = maxTurnsRaw;
+  } else {
+    issues.push(makeIssue("error", `${path}.maxTurns`, "must be a positive number"));
+  }
+
+  if (value["conversationPolicy"] !== undefined) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.conversationPolicy`,
+        "is currently unsupported and rejected in the active runtime phase",
+      ),
+    );
+  }
+
+  if (id === null || stopWhen === null || maxTurns === null) {
+    return null;
+  }
+
+  return {
+    id,
+    participants,
+    maxTurns,
+    stopWhen,
+  };
+}
+
 function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): WorkflowJson | null {
   if (!isRecord(workflow)) {
     issues.push(makeIssue("error", "workflow", "must be an object"));
@@ -247,6 +395,11 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   if (!Array.isArray(subWorkflowsRaw)) {
     issues.push(makeIssue("error", "workflow.subWorkflows", "must be an array"));
   }
+  const subWorkflows = Array.isArray(subWorkflowsRaw)
+    ? subWorkflowsRaw
+        .map((entry, index) => normalizeSubWorkflow(entry, index, issues))
+        .filter((entry): entry is SubWorkflowRef => entry !== null)
+    : [];
 
   const nodesRaw = workflow["nodes"];
   if (!Array.isArray(nodesRaw)) {
@@ -292,6 +445,11 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   if (subWorkflowConversationsRaw !== undefined && !Array.isArray(subWorkflowConversationsRaw)) {
     issues.push(makeIssue("error", "workflow.subWorkflowConversations", "must be an array when provided"));
   }
+  const subWorkflowConversations = Array.isArray(subWorkflowConversationsRaw)
+    ? subWorkflowConversationsRaw
+        .map((entry, index) => normalizeSubWorkflowConversation(entry, index, issues))
+        .filter((entry): entry is SubWorkflowConversation => entry !== null)
+    : undefined;
 
   if (
     workflowId === null ||
@@ -310,11 +468,6 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   if (nodeTimeoutMs <= 0) {
     issues.push(makeIssue("error", "workflow.defaults.nodeTimeoutMs", "must be > 0"));
   }
-
-  const subWorkflows = subWorkflowsRaw.filter((entry): entry is UnknownRecord => isRecord(entry));
-  const subWorkflowConversations = Array.isArray(subWorkflowConversationsRaw)
-    ? subWorkflowConversationsRaw.filter((entry): entry is UnknownRecord => isRecord(entry))
-    : undefined;
 
   return {
     workflowId,
@@ -577,6 +730,104 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     if (judgeNode?.kind !== "loop-judge") {
       issues.push(makeIssue("error", `workflow.loops[${index}].judgeNodeId`, "must reference a loop-judge node"));
     }
+  });
+
+  const declaredSubWorkflowIds = new Set(bundle.workflow.subWorkflows.map((entry) => entry.id));
+  const subWorkflowIdSet = new Set<string>();
+  bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
+    if (subWorkflowIdSet.has(subWorkflow.id)) {
+      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].id`, `duplicate subWorkflow id '${subWorkflow.id}'`));
+    } else {
+      subWorkflowIdSet.add(subWorkflow.id);
+    }
+
+    if (!nodeIdSet.has(subWorkflow.inputNodeId)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].inputNodeId`,
+          "must reference an existing node id",
+        ),
+      );
+    } else {
+      const inputNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.inputNodeId);
+      if (inputNode?.kind !== "input") {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].inputNodeId`,
+            "must reference a node with kind 'input'",
+          ),
+        );
+      }
+    }
+
+    if (!nodeIdSet.has(subWorkflow.outputNodeId)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].outputNodeId`,
+          "must reference an existing node id",
+        ),
+      );
+    } else {
+      const outputNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.outputNodeId);
+      if (outputNode?.kind !== "output") {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].outputNodeId`,
+            "must reference a node with kind 'output'",
+          ),
+        );
+      }
+    }
+
+    subWorkflow.inputSources.forEach((source, sourceIndex) => {
+      const sourcePath = `workflow.subWorkflows[${index}].inputSources[${sourceIndex}]`;
+      if (source.type === "node-output" && source.nodeId !== undefined && !nodeIdSet.has(source.nodeId)) {
+        issues.push(makeIssue("error", `${sourcePath}.nodeId`, "must reference an existing node id"));
+      }
+      if (
+        source.type === "sub-workflow-output" &&
+        source.subWorkflowId !== undefined &&
+        !declaredSubWorkflowIds.has(source.subWorkflowId)
+      ) {
+        issues.push(makeIssue("error", `${sourcePath}.subWorkflowId`, "must reference an existing subWorkflow id"));
+      }
+    });
+  });
+
+  bundle.workflow.subWorkflowConversations?.forEach((conversation, index) => {
+    if (conversation.participants.length < 2) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflowConversations[${index}].participants`,
+          "must include at least two participants",
+        ),
+      );
+    }
+    if (new Set(conversation.participants).size < 2) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflowConversations[${index}].participants`,
+          "must include at least two distinct participants",
+        ),
+      );
+    }
+    conversation.participants.forEach((participant, participantIndex) => {
+      if (!declaredSubWorkflowIds.has(participant)) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflowConversations[${index}].participants[${participantIndex}]`,
+            "must reference an existing subWorkflow id",
+          ),
+        );
+      }
+    });
   });
 
   const visNodeSet = new Set(bundle.workflowVis.nodes.map((entry) => entry.id));

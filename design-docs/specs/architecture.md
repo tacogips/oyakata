@@ -321,3 +321,4 @@ The browser editor is a control surface only:
 See `design-docs/specs/design-workflow-json.md` for the JSON model design.
 See `design-docs/specs/design-data-model.md` for canonical file/runtime data models and human review checklist.
 See `design-docs/specs/design-tui.md` for TUI framework selection and interaction design.
+See `design-docs/specs/design-autonomous-execution-gap-closure.md` for phase-by-phase correction of spec/implementation gaps toward autonomous execution.

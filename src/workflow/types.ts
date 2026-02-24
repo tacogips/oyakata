@@ -47,13 +47,54 @@ export interface LoopRule {
   readonly backoffMs?: number;
 }
 
+export type OutputSelectionMode =
+  | "explicit"
+  | "latest-succeeded"
+  | "latest-any"
+  | "by-loop-iteration";
+
+export interface OutputSelectionPolicy {
+  readonly mode: OutputSelectionMode;
+  readonly nodeExecId?: string;
+  readonly loopIteration?: number;
+}
+
+export type SubWorkflowInputSourceType =
+  | "human-input"
+  | "workflow-output"
+  | "node-output"
+  | "sub-workflow-output";
+
+export interface SubWorkflowInputSource {
+  readonly type: SubWorkflowInputSourceType;
+  readonly workflowId?: string;
+  readonly nodeId?: string;
+  readonly subWorkflowId?: string;
+  readonly selectionPolicy?: OutputSelectionPolicy;
+}
+
+export interface SubWorkflowRef {
+  readonly id: string;
+  readonly description: string;
+  readonly inputNodeId: string;
+  readonly outputNodeId: string;
+  readonly inputSources: readonly SubWorkflowInputSource[];
+}
+
+export interface SubWorkflowConversation {
+  readonly id: string;
+  readonly participants: readonly string[];
+  readonly maxTurns: number;
+  readonly stopWhen: string;
+}
+
 export interface WorkflowJson {
   readonly workflowId: string;
   readonly description: string;
   readonly defaults: WorkflowDefaults;
   readonly managerNodeId: string;
-  readonly subWorkflows: readonly Readonly<Record<string, unknown>>[];
-  readonly subWorkflowConversations?: readonly Readonly<Record<string, unknown>>[];
+  readonly subWorkflows: readonly SubWorkflowRef[];
+  readonly subWorkflowConversations?: readonly SubWorkflowConversation[];
   readonly nodes: readonly WorkflowNodeRef[];
   readonly edges: readonly WorkflowEdge[];
   readonly loops?: readonly LoopRule[];

@@ -36,6 +36,7 @@ export interface WorkflowSessionState {
   readonly currentNodeId?: string;
   readonly nodeExecutionCounter: number;
   readonly nodeExecutionCounts: Readonly<Record<string, number>>;
+  readonly loopIterationCounts?: Readonly<Record<string, number>>;
   readonly restartCounts?: Readonly<Record<string, number>>;
   readonly restartEvents?: readonly NodeRestartEvent[];
   readonly transitions: readonly SessionTransition[];
@@ -62,6 +63,7 @@ export function createSessionState(input: CreateSessionInput): WorkflowSessionSt
     queue: [input.initialNodeId],
     nodeExecutionCounter: 0,
     nodeExecutionCounts: {},
+    loopIterationCounts: {},
     restartCounts: {},
     restartEvents: [],
     transitions: [],
