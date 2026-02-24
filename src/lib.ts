@@ -1,24 +1,173 @@
-/**
- * Library module for oyakata
- */
+import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
+import { buildInspectionSummary, type WorkflowInspectionSummary } from "./workflow/inspect";
+import { loadWorkflowFromDisk } from "./workflow/load";
+import { listRuntimeNodeExecutions, listRuntimeNodeLogs, listRuntimeSessions } from "./workflow/runtime-db";
+import { loadSession, type SessionStoreOptions } from "./workflow/session-store";
+import type { WorkflowSessionState } from "./workflow/session";
+import type { MockNodeScenario } from "./workflow/adapter";
+import type { LoadOptions } from "./workflow/types";
 
-/**
- * Returns a greeting message for the given name.
- *
- * @param name - The name to greet
- * @returns A greeting string
- */
-export function greet(name: string): string {
-  return `Hello, ${name}!`;
+export type OyakataOptions = LoadOptions & SessionStoreOptions;
+
+export interface ExecuteWorkflowInput extends OyakataOptions {
+  readonly workflowName: string;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly mockScenario?: MockNodeScenario;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
 }
 
-/**
- * Adds two numbers together.
- *
- * @param a - First number
- * @param b - Second number
- * @returns The sum of a and b
- */
-export function add(a: number, b: number): number {
-  return a + b;
+export interface ResumeWorkflowInput extends OyakataOptions {
+  readonly sessionId: string;
 }
+
+export interface RerunWorkflowInput extends OyakataOptions {
+  readonly sourceSessionId: string;
+  readonly fromNodeId: string;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly mockScenario?: MockNodeScenario;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+  readonly dryRun?: boolean;
+}
+
+export interface RuntimeSessionView {
+  readonly session: WorkflowSessionState;
+  readonly nodeExecutions: ReturnType<typeof listRuntimeNodeExecutions> extends Promise<infer T> ? T : never;
+  readonly nodeLogs: ReturnType<typeof listRuntimeNodeLogs> extends Promise<infer T> ? T : never;
+}
+
+export async function inspectWorkflow(
+  workflowName: string,
+  options: OyakataOptions = {},
+): Promise<WorkflowInspectionSummary> {
+  const loaded = await loadWorkflowFromDisk(workflowName, options);
+  if (!loaded.ok) {
+    throw new Error(loaded.error.message);
+  }
+  return buildInspectionSummary(loaded.value);
+}
+
+export async function executeWorkflow(
+  input: ExecuteWorkflowInput,
+): Promise<{ readonly sessionId: string; readonly status: WorkflowSessionState["status"]; readonly exitCode: number }> {
+  const options: WorkflowRunOptions = {
+    ...(input.workflowRoot === undefined ? {} : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined ? {} : { artifactRoot: input.artifactRoot }),
+    ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.runtimeVariables === undefined ? {} : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined ? {} : { mockScenario: input.mockScenario }),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+    ...(input.maxLoopIterations === undefined ? {} : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs: input.defaultTimeoutMs }),
+  };
+  const result = await runWorkflow(input.workflowName, options);
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+  return {
+    sessionId: result.value.session.sessionId,
+    status: result.value.session.status,
+    exitCode: result.value.exitCode,
+  };
+}
+
+export async function resumeWorkflow(
+  input: ResumeWorkflowInput,
+): Promise<{ readonly sessionId: string; readonly status: WorkflowSessionState["status"]; readonly exitCode: number }> {
+  const existing = await loadSession(input.sessionId, input);
+  if (!existing.ok) {
+    throw new Error(existing.error.message);
+  }
+  const result = await runWorkflow(existing.value.workflowName, {
+    ...(input.workflowRoot === undefined ? {} : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined ? {} : { artifactRoot: input.artifactRoot }),
+    ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    resumeSessionId: existing.value.sessionId,
+  });
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+  return {
+    sessionId: result.value.session.sessionId,
+    status: result.value.session.status,
+    exitCode: result.value.exitCode,
+  };
+}
+
+export async function rerunWorkflow(
+  input: RerunWorkflowInput,
+): Promise<{ readonly sessionId: string; readonly status: WorkflowSessionState["status"]; readonly exitCode: number }> {
+  const source = await loadSession(input.sourceSessionId, input);
+  if (!source.ok) {
+    throw new Error(source.error.message);
+  }
+  const result = await runWorkflow(source.value.workflowName, {
+    ...(input.workflowRoot === undefined ? {} : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined ? {} : { artifactRoot: input.artifactRoot }),
+    ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.runtimeVariables === undefined ? {} : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined ? {} : { mockScenario: input.mockScenario }),
+    rerunFromSessionId: source.value.sessionId,
+    rerunFromNodeId: input.fromNodeId,
+    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+    ...(input.maxLoopIterations === undefined ? {} : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+  });
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+  return {
+    sessionId: result.value.session.sessionId,
+    status: result.value.session.status,
+    exitCode: result.value.exitCode,
+  };
+}
+
+export async function getSession(
+  sessionId: string,
+  options: OyakataOptions = {},
+): Promise<WorkflowSessionState> {
+  const loaded = await loadSession(sessionId, options);
+  if (!loaded.ok) {
+    throw new Error(loaded.error.message);
+  }
+  return loaded.value;
+}
+
+export async function listSessions(options: OyakataOptions = {}) {
+  return listRuntimeSessions(options);
+}
+
+export async function getRuntimeSessionView(
+  sessionId: string,
+  options: OyakataOptions = {},
+): Promise<RuntimeSessionView> {
+  const session = await getSession(sessionId, options);
+  const nodeExecutions = await listRuntimeNodeExecutions(sessionId, options);
+  const nodeLogs = await listRuntimeNodeLogs(sessionId, options);
+  return { session, nodeExecutions, nodeLogs };
+}
+
+export { runCli } from "./cli";
+export { startServe } from "./server/serve";
+export { handleApiRequest } from "./server/api";
+export {
+  resolveRuntimeDbPath,
+  listRuntimeNodeExecutions,
+  listRuntimeNodeLogs,
+  listRuntimeSessions,
+} from "./workflow/runtime-db";
+export { loadWorkflowFromDisk } from "./workflow/load";
+export { runWorkflow } from "./workflow/engine";

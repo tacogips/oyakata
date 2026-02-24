@@ -126,6 +126,36 @@ Runtime SQLite behavior:
 - Web UI: `oyakata serve`, then open `http://127.0.0.1:5173/`
   - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
 
+## Library API
+
+`oyakata` can be called as a library from external applications.
+
+Primary exports from `src/lib.ts`:
+- `inspectWorkflow(workflowName, options)`
+- `executeWorkflow({ workflowName, ...options })`
+- `resumeWorkflow({ sessionId, ...options })`
+- `rerunWorkflow({ sourceSessionId, fromNodeId, ...options })`
+- `getSession(sessionId, options)`
+- `listSessions(options)` (runtime SQLite-backed summaries)
+- `getRuntimeSessionView(sessionId, options)` (session + node executions + node logs)
+- low-level exports: `runWorkflow`, `runCli`, `startServe`, `handleApiRequest`, `loadWorkflowFromDisk`
+
+Minimal example:
+
+```ts
+import { executeWorkflow, getRuntimeSessionView } from "oyakata";
+
+const run = await executeWorkflow({
+  workflowName: "software-auto-pipeline",
+  workflowRoot: "./.oyakata",
+  artifactRoot: "./.oyakata/workflow",
+  runtimeVariables: { prompt: "Implement feature X" },
+});
+
+const runtime = await getRuntimeSessionView(run.sessionId, { cwd: process.cwd() });
+console.log(runtime.session.status, runtime.nodeExecutions.length, runtime.nodeLogs.length);
+```
+
 `workflow.json` represents control-flow only:
 - graph connectivity between nodes
 - completion criteria

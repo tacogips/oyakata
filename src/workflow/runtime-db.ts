@@ -21,6 +21,47 @@ interface RuntimeNodeExecutionRow {
   readonly outputHash: string;
 }
 
+export interface RuntimeSessionSummary {
+  readonly sessionId: string;
+  readonly workflowName: string;
+  readonly workflowId: string;
+  readonly status: string;
+  readonly startedAt: string;
+  readonly endedAt: string | null;
+  readonly currentNodeId: string | null;
+  readonly nodeExecutionCounter: number;
+  readonly lastError: string | null;
+  readonly updatedAt: string;
+}
+
+export interface RuntimeNodeExecutionSummary {
+  readonly sessionId: string;
+  readonly nodeExecId: string;
+  readonly nodeId: string;
+  readonly status: string;
+  readonly artifactDir: string;
+  readonly startedAt: string;
+  readonly endedAt: string;
+  readonly attempt: number | null;
+  readonly restartedFromNodeExecId: string | null;
+  readonly inputHash: string;
+  readonly outputHash: string;
+  readonly inputJson: string;
+  readonly outputJson: string;
+  readonly createdAt: string;
+}
+
+export interface RuntimeNodeLogEntry {
+  readonly id: number;
+  readonly sessionId: string;
+  readonly nodeExecId: string | null;
+  readonly nodeId: string | null;
+  readonly level: string;
+  readonly message: string;
+  readonly payloadJson: string | null;
+  readonly at: string;
+}
+
 function resolveRuntimeRoot(options: LoadOptions): string {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
@@ -184,5 +225,159 @@ export async function saveNodeExecutionToRuntimeDb(
       }),
       row.endedAt,
     );
+  });
+}
+
+export async function listRuntimeSessions(
+  options: LoadOptions = {},
+): Promise<readonly RuntimeSessionSummary[]> {
+  return withDatabase(options, (db) => {
+    const rows = db
+      .query(
+        `SELECT
+          session_id,
+          workflow_name,
+          workflow_id,
+          status,
+          started_at,
+          ended_at,
+          current_node_id,
+          node_execution_counter,
+          last_error,
+          updated_at
+         FROM sessions
+         ORDER BY updated_at DESC`,
+      )
+      .all() as Array<{
+      session_id: string;
+      workflow_name: string;
+      workflow_id: string;
+      status: string;
+      started_at: string;
+      ended_at: string | null;
+      current_node_id: string | null;
+      node_execution_counter: number;
+      last_error: string | null;
+      updated_at: string;
+    }>;
+
+    return rows.map((row) => ({
+      sessionId: row.session_id,
+      workflowName: row.workflow_name,
+      workflowId: row.workflow_id,
+      status: row.status,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      currentNodeId: row.current_node_id,
+      nodeExecutionCounter: row.node_execution_counter,
+      lastError: row.last_error,
+      updatedAt: row.updated_at,
+    }));
+  });
+}
+
+export async function listRuntimeNodeExecutions(
+  sessionId: string,
+  options: LoadOptions = {},
+): Promise<readonly RuntimeNodeExecutionSummary[]> {
+  return withDatabase(options, (db) => {
+    const rows = db
+      .query(
+        `SELECT
+          session_id,
+          node_exec_id,
+          node_id,
+          status,
+          artifact_dir,
+          started_at,
+          ended_at,
+          attempt,
+          restarted_from_node_exec_id,
+          input_hash,
+          output_hash,
+          input_json,
+          output_json,
+          created_at
+         FROM node_executions
+         WHERE session_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(sessionId) as Array<{
+      session_id: string;
+      node_exec_id: string;
+      node_id: string;
+      status: string;
+      artifact_dir: string;
+      started_at: string;
+      ended_at: string;
+      attempt: number | null;
+      restarted_from_node_exec_id: string | null;
+      input_hash: string;
+      output_hash: string;
+      input_json: string;
+      output_json: string;
+      created_at: string;
+    }>;
+
+    return rows.map((row) => ({
+      sessionId: row.session_id,
+      nodeExecId: row.node_exec_id,
+      nodeId: row.node_id,
+      status: row.status,
+      artifactDir: row.artifact_dir,
+      startedAt: row.started_at,
+      endedAt: row.ended_at,
+      attempt: row.attempt,
+      restartedFromNodeExecId: row.restarted_from_node_exec_id,
+      inputHash: row.input_hash,
+      outputHash: row.output_hash,
+      inputJson: row.input_json,
+      outputJson: row.output_json,
+      createdAt: row.created_at,
+    }));
+  });
+}
+
+export async function listRuntimeNodeLogs(
+  sessionId: string,
+  options: LoadOptions = {},
+): Promise<readonly RuntimeNodeLogEntry[]> {
+  return withDatabase(options, (db) => {
+    const rows = db
+      .query(
+        `SELECT
+          id,
+          session_id,
+          node_exec_id,
+          node_id,
+          level,
+          message,
+          payload_json,
+          at
+         FROM node_logs
+         WHERE session_id = ?
+         ORDER BY id ASC`,
+      )
+      .all(sessionId) as Array<{
+      id: number;
+      session_id: string;
+      node_exec_id: string | null;
+      node_id: string | null;
+      level: string;
+      message: string;
+      payload_json: string | null;
+      at: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      nodeExecId: row.node_exec_id,
+      nodeId: row.node_id,
+      level: row.level,
+      message: row.message,
+      payloadJson: row.payload_json,
+      at: row.at,
+    }));
   });
 }
