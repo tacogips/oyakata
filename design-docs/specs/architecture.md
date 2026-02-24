@@ -165,6 +165,13 @@ Deterministic handoff contract:
 - Downstream consumers resolve input from `OutputRef` instead of implicit "latest output" behavior.
 - If an explicit `nodeExecId` is not provided in config, selection policy must be declared (`latest-succeeded`, `latest-any`, or `by-loop-iteration`).
 
+VCS checkpoint contract:
+- Each node execution artifact directory additionally writes `handoff.json` and `commit-message.txt`.
+- `handoff.json` includes stable `outputRef` and `sha256` hashes for input/output payloads.
+- `input.json` includes `upstreamOutputRefs` so downstream input provenance is explicit.
+- `commit-message.txt` provides a machine-friendly metadata template for Git/JJ checkpoints.
+- Detailed format is defined in `design-docs/specs/design-vcs-handoff-checkpoints.md`.
+
 ### Node Model
 
 Execution node payload is externalized in `node-{id}.json`:

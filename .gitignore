@@ -52,3 +52,7 @@ impl-plans/.progress.lock
 # Private files
 **/.envrc.private*
 .private*/
+
+# oyakata runtime artifacts and session store (default paths)
+.oyakata/workflow/
+.oyakata/workflow/**

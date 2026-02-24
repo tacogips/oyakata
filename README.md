@@ -42,8 +42,24 @@ Example:
 
 Required files:
 - `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose)
-- `workflow-vis.json`: browser visualization state (e.g., node `x`,`y`) and updated by browser operations
+- `workflow-vis.json`: browser visualization state (e.g., node `x`,`y`,`width`,`height`) and updated by browser operations
 - `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`)
+
+## Git Policy
+
+Default policy for version control:
+- Track workflow definitions in Git:
+  - `.oyakata/<workflow-name>/workflow.json`
+  - `.oyakata/<workflow-name>/workflow-vis.json`
+  - `.oyakata/<workflow-name>/node-*.json`
+- Do not track runtime execution outputs in Git:
+  - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/input.json`
+  - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/output.json`
+  - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/meta.json`
+  - session store files
+
+The repository `.gitignore` enforces this for the default artifact/session path under `.oyakata/workflow/`.
+If you use a custom `--artifact-root` or `OYAKATA_ARTIFACT_ROOT`, add that path to your local/project ignore rules.
 
 `workflow.json` represents control-flow only:
 - graph connectivity between nodes
@@ -72,6 +88,7 @@ Initial defaults:
 - `design-docs/specs/notes.md`
 - `design-docs/specs/design-workflow-json.md`
 - `design-docs/specs/design-data-model.md`
+- `design-docs/specs/design-tui.md`
 - `design-docs/qa.md`
 
 ## Development Environment

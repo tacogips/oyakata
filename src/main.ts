@@ -1,14 +1,8 @@
-/**
- * oyakata - Main entry point
- *
- * no
- */
+import { runCli } from "./cli";
 
-import { greet } from "./lib";
-
-function main(): void {
-  const message = greet("World");
-  console.log(message);
+async function main(): Promise<void> {
+  const exitCode = await runCli(process.argv.slice(2));
+  process.exitCode = exitCode;
 }
 
-main();
+void main();
