@@ -250,4 +250,73 @@ describe("runWorkflow", () => {
       expect(result.error.exitCode).toBe(6);
     }
   });
+
+  test("supports scenario mocks for deterministic branching outputs", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "scenario", false);
+
+    const result = await runWorkflow("scenario", {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      mockScenario: {
+        "oyakata-manager": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "design" },
+        },
+        "step-1": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "test-review" },
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+    const stepExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(stepExec).toBeDefined();
+    if (stepExec === undefined) {
+      return;
+    }
+    const outputRaw = await readFile(path.join(stepExec.artifactDir, "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { provider: string; payload: { stage: string } };
+    expect(outputJson.provider).toBe("scenario-mock");
+    expect(outputJson.payload.stage).toBe("test-review");
+  });
+
+  test("can rerun from a specific node based on a prior session", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "rerun", false);
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const first = await runWorkflow("rerun", options);
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    const rerun = await runWorkflow("rerun", {
+      ...options,
+      rerunFromSessionId: first.value.session.sessionId,
+      rerunFromNodeId: "step-1",
+    });
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+
+    expect(rerun.value.session.sessionId).not.toBe(first.value.session.sessionId);
+    expect(rerun.value.session.nodeExecutions).toHaveLength(1);
+    expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
+    expect(rerun.value.session.startedAt.length).toBeGreaterThan(0);
+  });
 });

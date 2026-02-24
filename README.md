@@ -45,6 +45,52 @@ Required files:
 - `workflow-vis.json`: browser visualization state (e.g., node `x`,`y`,`width`,`height`) and updated by browser operations
 - `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`)
 
+## Deterministic Mock Workflow Example
+
+This repository now includes a ready-to-run deterministic example:
+
+- `.oyakata/software-auto-pipeline/workflow.json`
+- `.oyakata/software-auto-pipeline/workflow-vis.json`
+- `.oyakata/software-auto-pipeline/node-*.json`
+- `.oyakata/software-auto-pipeline/mock-scenario.json`
+
+The workflow covers:
+- design
+- design discussion
+- implementation
+- security check
+- code review
+- test
+- test review
+
+`mock-scenario.json` pins deterministic per-node outputs for `tacogips/codex-agent` and `tacogips/claude-code-agent`.
+The sample `test-review` node returns `needs_rework` on first execution and `approved` on second execution to demonstrate looped rework.
+
+Run example:
+
+```bash
+bun run src/main.ts workflow run software-auto-pipeline \
+  --workflow-root ./.oyakata \
+  --mock-scenario ./.oyakata/software-auto-pipeline/mock-scenario.json \
+  --output json
+```
+
+Progress / resume / rerun commands:
+
+```bash
+# Pause after a few steps
+bun run src/main.ts workflow run software-auto-pipeline --workflow-root ./.oyakata --max-steps 3 --output json
+
+# Inspect progress
+bun run src/main.ts session progress <session-id> --output json
+
+# Resume paused session
+bun run src/main.ts session resume <session-id>
+
+# Re-run from a specific node (creates a new session)
+bun run src/main.ts session rerun <session-id> implement --output json
+```
+
 ## Git Policy
 
 Default policy for version control:
@@ -56,10 +102,29 @@ Default policy for version control:
   - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/input.json`
   - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/output.json`
   - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/meta.json`
-  - session store files
+  - dynamic session/progress files under `.oyakata-opt/`
 
-The repository `.gitignore` enforces this for the default artifact/session path under `.oyakata/workflow/`.
+Default runtime paths:
+- persistent artifact root: `.oyakata/workflow/`
+- dynamic operational state root: `.oyakata-opt/` (for example session store files)
+- runtime SQLite index: `.oyakata-opt/oyakata.db`
+
+The repository `.gitignore` enforces this for `.oyakata/workflow/` and `.oyakata-opt/`.
 If you use a custom `--artifact-root` or `OYAKATA_ARTIFACT_ROOT`, add that path to your local/project ignore rules.
+
+Runtime SQLite behavior:
+- File artifacts remain source-of-truth for full node payload files.
+- SQLite stores queryable runtime index data for:
+  - session snapshots
+  - node input/output hashes and payload JSON
+  - node execution logs
+
+## Interfaces
+
+- TUI: `oyakata tui [workflow-name]`
+  - Select workflow (if omitted), input prompt, execute, and watch per-node progress in terminal output.
+- Web UI: `oyakata serve`, then open `http://127.0.0.1:5173/`
+  - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
 
 `workflow.json` represents control-flow only:
 - graph connectivity between nodes

@@ -1,9 +1,15 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { DeterministicNodeAdapter, type NodeAdapter } from "./adapter";
+import {
+  DeterministicNodeAdapter,
+  ScenarioNodeAdapter,
+  type MockNodeScenario,
+  type NodeAdapter,
+} from "./adapter";
 import { loadWorkflowFromDisk } from "./load";
 import { err, ok, type Result } from "./result";
+import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import {
   createSessionId,
   createSessionState,
@@ -15,12 +21,16 @@ import { renderPromptTemplate } from "./render";
 import type { LoadOptions, NodePayload, WorkflowEdge, WorkflowNodeRef } from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
+  readonly sessionId?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
   readonly dryRun?: boolean;
+  readonly mockScenario?: MockNodeScenario;
   readonly resumeSessionId?: string;
+  readonly rerunFromSessionId?: string;
+  readonly rerunFromNodeId?: string;
   readonly restartOnStuck?: boolean;
   readonly maxStuckRestarts?: number;
   readonly stuckRestartBackoffMs?: number;
@@ -217,7 +227,7 @@ function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
 export async function runWorkflow(
   workflowName: string,
   options: WorkflowRunOptions = {},
-  adapter: NodeAdapter = new DeterministicNodeAdapter(),
+  adapter?: NodeAdapter,
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
   const loaded = await loadWorkflowFromDisk(workflowName, options);
   if (!loaded.ok) {
@@ -228,9 +238,37 @@ export async function runWorkflow(
   }
 
   const runtimeVariables = options.runtimeVariables ?? {};
+  const workflow = loaded.value.bundle.workflow;
+  const nodeMap = loaded.value.bundle.nodePayloads;
+  const workflowNodes = new Map(workflow.nodes.map((entry) => [entry.id, entry]));
+  const effectiveAdapter =
+    adapter ?? (options.mockScenario === undefined ? new DeterministicNodeAdapter() : new ScenarioNodeAdapter(options.mockScenario));
 
   let session: WorkflowSessionState;
-  if (options.resumeSessionId !== undefined) {
+  if (options.rerunFromSessionId !== undefined) {
+    if (options.rerunFromNodeId === undefined) {
+      return err({ exitCode: 1, message: "rerunFromNodeId is required when rerunFromSessionId is set" });
+    }
+    if (!workflowNodes.has(options.rerunFromNodeId)) {
+      return err({ exitCode: 1, message: `unknown rerun node '${options.rerunFromNodeId}'` });
+    }
+
+    const source = await loadSession(options.rerunFromSessionId, options);
+    if (!source.ok) {
+      return err({ exitCode: 1, message: source.error.message });
+    }
+    if (source.value.workflowName !== workflowName) {
+      return err({ exitCode: 1, message: "source session workflow does not match command workflow" });
+    }
+
+    session = createSessionState({
+      sessionId: createSessionId(),
+      workflowName,
+      workflowId: workflow.workflowId,
+      initialNodeId: options.rerunFromNodeId,
+      runtimeVariables: { ...source.value.runtimeVariables, ...runtimeVariables },
+    });
+  } else if (options.resumeSessionId !== undefined) {
     const existing = await loadSession(options.resumeSessionId, options);
     if (!existing.ok) {
       return err({ exitCode: 1, message: existing.error.message });
@@ -249,19 +287,16 @@ export async function runWorkflow(
     };
   } else {
     session = createSessionState({
-      sessionId: createSessionId(),
+      sessionId: options.sessionId ?? createSessionId(),
       workflowName,
-      workflowId: loaded.value.bundle.workflow.workflowId,
-      initialNodeId: loaded.value.bundle.workflow.managerNodeId,
+      workflowId: workflow.workflowId,
+      initialNodeId: workflow.managerNodeId,
       runtimeVariables,
     });
   }
 
   await saveSession(session, options);
 
-  const workflow = loaded.value.bundle.workflow;
-  const nodeMap = loaded.value.bundle.nodePayloads;
-  const workflowNodes = new Map(workflow.nodes.map((entry) => [entry.id, entry]));
   const outgoingEdges = new Map<string, WorkflowEdge[]>();
   workflow.edges.forEach((edge) => {
     const current = outgoingEdges.get(edge.from);
@@ -373,11 +408,12 @@ export async function runWorkflow(
         };
       } else {
         const execution = await runWithTimeout(
-          adapter.execute({
+          effectiveAdapter.execute({
             workflowId: workflow.workflowId,
             nodeId,
             node: nodePayload,
             mergedVariables,
+            executionIndex: nextCount,
           }),
           timeoutMs,
         );
@@ -451,6 +487,29 @@ export async function runWorkflow(
       await writeJsonFile(path.join(artifactDir, "meta.json"), metaPayload);
       await writeJsonFile(path.join(artifactDir, "handoff.json"), handoffPayload);
       await writeFile(path.join(artifactDir, "commit-message.txt"), `${commitMessageTemplate}\n`, "utf8");
+
+      try {
+        await saveNodeExecutionToRuntimeDb(
+          {
+            sessionId: session.sessionId,
+            nodeId,
+            nodeExecId,
+            status: nodeStatus,
+            artifactDir,
+            startedAt,
+            endedAt,
+            ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+            ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+            inputJson,
+            outputJson,
+            inputHash: `sha256:${inputHash}`,
+            outputHash: `sha256:${outputHash}`,
+          },
+          options,
+        );
+      } catch {
+        // runtime DB index is best-effort and must not break artifact/session persistence
+      }
 
       const nodeExecutions = [
         ...session.nodeExecutions,

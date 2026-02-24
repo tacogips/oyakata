@@ -1,0 +1,6 @@
+{
+  "id": "test-review",
+  "model": "tacogips/claude-code-agent",
+  "promptTemplate": "Judge test outcome and decide approved or needs_rework.",
+  "variables": {}
+}

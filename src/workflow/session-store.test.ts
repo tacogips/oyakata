@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createSessionState } from "./session";
-import { loadSession, saveSession } from "./session-store";
+import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
 
 const tempDirs: string[] = [];
 
@@ -18,6 +18,12 @@ afterEach(async () => {
 });
 
 describe("session-store", () => {
+  test("uses .oyakata-opt as default dynamic session store root", async () => {
+    const root = await makeTempDir();
+    const resolved = getSessionStoreRoot({ cwd: root });
+    expect(resolved).toBe(path.join(root, ".oyakata-opt", "sessions"));
+  });
+
   test("save/load roundtrip", async () => {
     const root = await makeTempDir();
     const session = createSessionState({

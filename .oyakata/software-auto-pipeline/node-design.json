@@ -1,0 +1,9 @@
+{
+  "id": "design",
+  "model": "tacogips/claude-code-agent",
+  "promptTemplate": "Create design draft for {{productName}} feature: {{featureName}}.",
+  "variables": {
+    "productName": "sample-product",
+    "featureName": "deterministic-pipeline"
+  }
+}

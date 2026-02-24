@@ -56,3 +56,5 @@ impl-plans/.progress.lock
 # oyakata runtime artifacts and session store (default paths)
 .oyakata/workflow/
 .oyakata/workflow/**
+.oyakata-opt/
+.oyakata-opt/**

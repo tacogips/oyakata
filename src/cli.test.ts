@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -141,6 +141,107 @@ describe("runCli", () => {
     );
     expect(resumeCode).toBe(0);
     expect(resumeCapture.stdout.join("\n")).toContain("completed");
+  });
+
+  test("run with mock scenario and inspect progress + rerun", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const createCapture = createIoCapture();
+    expect(await runCli(["workflow", "create", "demo", "--workflow-root", root], createCapture.io)).toBe(0);
+
+    const runCapture = createIoCapture();
+    const runCode = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
+        "--max-steps",
+        "1",
+        "--output",
+        "json",
+      ],
+      runCapture.io,
+    );
+    expect(runCode).toBe(4);
+    const runPayload = JSON.parse(runCapture.stdout.join("\n")) as { sessionId: string; status: string };
+    expect(runPayload.status).toBe("paused");
+
+    const progressCapture = createIoCapture();
+    const progressCode = await runCli(
+      [
+        "session",
+        "progress",
+        runPayload.sessionId,
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      progressCapture.io,
+    );
+    expect(progressCode).toBe(0);
+    const progressPayload = JSON.parse(progressCapture.stdout.join("\n")) as {
+      status: string;
+      nodeSummaries: Array<{ nodeId: string; executions: number }>;
+    };
+    expect(progressPayload.status).toBe("paused");
+    expect(progressPayload.nodeSummaries.some((entry) => entry.nodeId === "oyakata-manager")).toBe(true);
+
+    const rerunCapture = createIoCapture();
+    const rerunCode = await runCli(
+      [
+        "session",
+        "rerun",
+        runPayload.sessionId,
+        "workflow-output",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      rerunCapture.io,
+    );
+    expect(rerunCode).toBe(0);
+    const rerunPayload = JSON.parse(rerunCapture.stdout.join("\n")) as {
+      sourceSessionId: string;
+      sessionId: string;
+      rerunFromNodeId: string;
+    };
+    expect(rerunPayload.sourceSessionId).toBe(runPayload.sessionId);
+    expect(rerunPayload.sessionId).not.toBe(runPayload.sessionId);
+    expect(rerunPayload.rerunFromNodeId).toBe("workflow-output");
   });
 
   test("serve command uses injected starter", async () => {

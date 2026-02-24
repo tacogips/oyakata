@@ -1,0 +1,8 @@
+{
+  "id": "test",
+  "model": "tacogips/codex-agent",
+  "promptTemplate": "Execute test suite for {{featureName}} and summarize failures.",
+  "variables": {
+    "featureName": "deterministic-pipeline"
+  }
+}

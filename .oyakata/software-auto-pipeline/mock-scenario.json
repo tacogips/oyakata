@@ -1,0 +1,111 @@
+{
+  "oyakata-manager": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "manager"
+    }
+  },
+  "design": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "design"
+    }
+  },
+  "design-discuss": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "design-discuss"
+    }
+  },
+  "implement": [
+    {
+      "provider": "scenario-mock",
+      "when": {
+        "always": true
+      },
+      "payload": {
+        "step": "implement",
+        "iteration": 1
+      }
+    },
+    {
+      "provider": "scenario-mock",
+      "when": {
+        "always": true
+      },
+      "payload": {
+        "step": "implement",
+        "iteration": 2
+      }
+    }
+  ],
+  "security-check": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "security-check"
+    }
+  },
+  "code-review": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "code-review"
+    }
+  },
+  "test": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "test"
+    }
+  },
+  "test-review": [
+    {
+      "provider": "scenario-mock",
+      "when": {
+        "needs_rework": true,
+        "approved": false
+      },
+      "payload": {
+        "step": "test-review",
+        "decision": "needs_rework"
+      }
+    },
+    {
+      "provider": "scenario-mock",
+      "when": {
+        "needs_rework": false,
+        "approved": true
+      },
+      "payload": {
+        "step": "test-review",
+        "decision": "approved"
+      }
+    }
+  ],
+  "workflow-output": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "workflow-output"
+    }
+  }
+}

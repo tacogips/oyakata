@@ -1,9 +1,9 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
-import { resolveEffectiveRoots } from "./paths";
 import { isSafeSessionId, type WorkflowSessionState } from "./session";
-import type { LoadOptions } from "./types";
+import { saveSessionSnapshotToRuntimeDb } from "./runtime-db";
+import { DEFAULT_RUNTIME_ROOT, type LoadOptions } from "./types";
 
 export interface SessionStoreOptions extends LoadOptions {
   readonly sessionStoreRoot?: string;
@@ -29,8 +29,15 @@ function resolveSessionStoreRoot(options: SessionStoreOptions = {}): string {
       : path.resolve(options.cwd ?? process.cwd(), envRoot);
   }
 
-  const roots = resolveEffectiveRoots(options);
-  return path.join(roots.artifactRoot, "sessions");
+  const runtimeRootEnv = env["OYAKATA_RUNTIME_ROOT"];
+  const runtimeRoot =
+    typeof runtimeRootEnv === "string" && runtimeRootEnv.length > 0
+      ? runtimeRootEnv
+      : DEFAULT_RUNTIME_ROOT;
+  const normalizedRuntimeRoot = path.isAbsolute(runtimeRoot)
+    ? runtimeRoot
+    : path.resolve(options.cwd ?? process.cwd(), runtimeRoot);
+  return path.join(normalizedRuntimeRoot, "sessions");
 }
 
 function sessionFilePath(sessionStoreRoot: string, sessionId: string): string {
@@ -51,6 +58,11 @@ export async function saveSession(
   try {
     await mkdir(root, { recursive: true });
     await writeFile(target, `${JSON.stringify(session, null, 2)}\n`, "utf8");
+    try {
+      await saveSessionSnapshotToRuntimeDb(session, options);
+    } catch {
+      // runtime DB index is best-effort and must not break primary file persistence
+    }
     return ok(target);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";

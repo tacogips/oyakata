@@ -1,0 +1,8 @@
+{
+  "id": "security-check",
+  "model": "tacogips/codex-agent",
+  "promptTemplate": "Run a security checklist review for {{featureName}}.",
+  "variables": {
+    "featureName": "deterministic-pipeline"
+  }
+}
