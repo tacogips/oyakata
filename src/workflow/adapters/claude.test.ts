@@ -62,4 +62,33 @@ describe("ClaudeCodeAgentAdapter", () => {
     const adapter = new ClaudeCodeAgentAdapter({ endpoint: "http://localhost/claude" });
     await expect(adapter.execute(baseInput, baseContext)).rejects.toHaveProperty("code", "invalid_output");
   });
+
+  test("retries transient provider failures with bounded attempts", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => new Response("temporary failure", { status: 500 }))
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              provider: "claude-provider",
+              promptText: "hello",
+              completionPassed: true,
+              when: { always: true },
+              payload: { ok: true },
+            }),
+            { status: 200 },
+          ),
+      );
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const adapter = new ClaudeCodeAgentAdapter({
+      endpoint: "http://localhost/claude",
+      maxAttempts: 2,
+      retryDelayMs: 0,
+    });
+    const result = await adapter.execute(baseInput, baseContext);
+    expect(result.provider).toBe("claude-provider");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

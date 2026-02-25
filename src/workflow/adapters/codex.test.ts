@@ -73,4 +73,34 @@ describe("CodexAgentAdapter", () => {
     const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
     await expect(adapter.execute(baseInput, baseContext)).rejects.toHaveProperty("code", "policy_blocked");
   });
+
+  test("retries transient provider failures with bounded attempts", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(async () => new Response("temporary failure", { status: 500 }))
+      .mockImplementationOnce(
+        async () =>
+          new Response(
+            JSON.stringify({
+              provider: "codex-provider",
+              model: "tacogips/codex-agent",
+              promptText: "hello",
+              completionPassed: true,
+              when: { always: true },
+              payload: { ok: true },
+            }),
+            { status: 200 },
+          ),
+      );
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const adapter = new CodexAgentAdapter({
+      endpoint: "http://localhost/codex",
+      maxAttempts: 2,
+      retryDelayMs: 0,
+    });
+    const result = await adapter.execute(baseInput, baseContext);
+    expect(result.provider).toBe("codex-provider");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

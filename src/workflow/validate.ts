@@ -264,6 +264,13 @@ function normalizeSubWorkflowInputSource(
   if (value["selectionPolicy"] !== undefined) {
     issues.push(
       makeIssue(
+        "warning",
+        `${path}.selectionPolicy`,
+        "deprecated/unsupported in current runtime phase; remove or migrate before execution",
+      ),
+    );
+    issues.push(
+      makeIssue(
         "error",
         `${path}.selectionPolicy`,
         "is currently unsupported and rejected in the active runtime phase",
@@ -291,7 +298,17 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
   const inputNodeId = readStringField(value, "inputNodeId", path, issues);
   const outputNodeId = readStringField(value, "outputNodeId", path, issues);
 
-  const inputSourcesRaw = value["inputSources"];
+  const inputSourcesAlias = value["inputs"];
+  const inputSourcesRaw = value["inputSources"] ?? inputSourcesAlias;
+  if (value["inputSources"] === undefined && inputSourcesAlias !== undefined) {
+    issues.push(
+      makeIssue(
+        "warning",
+        `${path}.inputs`,
+        "legacy field 'inputs' normalized to 'inputSources'; update workflow JSON to canonical schema",
+      ),
+    );
+  }
   if (!Array.isArray(inputSourcesRaw)) {
     issues.push(makeIssue("error", `${path}.inputSources`, "must be an array"));
   }
@@ -330,7 +347,17 @@ function normalizeSubWorkflowConversation(
   const id = readStringField(value, "id", path, issues);
   const stopWhen = readStringField(value, "stopWhen", path, issues);
 
-  const participantsRaw = value["participants"];
+  const participantsAlias = value["participantsIds"];
+  const participantsRaw = value["participants"] ?? participantsAlias;
+  if (value["participants"] === undefined && participantsAlias !== undefined) {
+    issues.push(
+      makeIssue(
+        "warning",
+        `${path}.participantsIds`,
+        "legacy field 'participantsIds' normalized to 'participants'; update workflow JSON to canonical schema",
+      ),
+    );
+  }
   if (!Array.isArray(participantsRaw)) {
     issues.push(makeIssue("error", `${path}.participants`, "must be an array"));
   }
@@ -350,6 +377,13 @@ function normalizeSubWorkflowConversation(
   }
 
   if (value["conversationPolicy"] !== undefined) {
+    issues.push(
+      makeIssue(
+        "warning",
+        `${path}.conversationPolicy`,
+        "deprecated/unsupported in current runtime phase; remove or migrate before execution",
+      ),
+    );
     issues.push(
       makeIssue(
         "error",

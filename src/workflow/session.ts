@@ -25,6 +25,15 @@ export interface NodeRestartEvent {
   readonly at: string;
 }
 
+export interface ConversationTurnRecord {
+  readonly conversationId: string;
+  readonly turnIndex: number;
+  readonly fromSubWorkflowId: string;
+  readonly toSubWorkflowId: string;
+  readonly outputRef: Readonly<Record<string, unknown>>;
+  readonly sentAt: string;
+}
+
 export interface WorkflowSessionState {
   readonly sessionId: string;
   readonly workflowName: string;
@@ -41,6 +50,7 @@ export interface WorkflowSessionState {
   readonly restartEvents?: readonly NodeRestartEvent[];
   readonly transitions: readonly SessionTransition[];
   readonly nodeExecutions: readonly NodeExecutionRecord[];
+  readonly conversationTurns?: readonly ConversationTurnRecord[];
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly lastError?: string;
 }
@@ -68,6 +78,7 @@ export function createSessionState(input: CreateSessionInput): WorkflowSessionSt
     restartEvents: [],
     transitions: [],
     nodeExecutions: [],
+    conversationTurns: [],
     runtimeVariables: input.runtimeVariables,
   };
 }

@@ -1,6 +1,6 @@
 # Autonomous Execution Gap Closure Implementation Plan
 
-**Status**: In Progress
+**Status**: Completed
 **Design Reference**: design-docs/specs/design-autonomous-execution-gap-closure.md
 **Created**: 2026-02-24
 **Last Updated**: 2026-02-24
@@ -77,7 +77,7 @@ export function resolveLoopTransition(args: {
 
 #### src/workflow/engine.ts
 
-**Status**: IN_PROGRESS
+**Status**: COMPLETED
 
 ```typescript
 export interface CancellationProbe {
@@ -198,7 +198,7 @@ export class CodexAgentAdapter implements NodeAdapter {
 **Checklist**:
 - [x] Implement codex provider invocation adapter.
 - [x] Enforce output schema validation.
-- [ ] Add retry policy with bounded attempts.
+- [x] Add retry policy with bounded attempts.
 - [x] Add integration-style mocked tests.
 
 #### src/workflow/adapters/claude.ts
@@ -220,7 +220,7 @@ export class ClaudeCodeAgentAdapter implements NodeAdapter {
 **Checklist**:
 - [x] Implement claude provider invocation adapter.
 - [x] Enforce output schema validation.
-- [ ] Add retry policy with bounded attempts.
+- [x] Add retry policy with bounded attempts.
 - [x] Add integration-style mocked tests.
 
 ### 4. Sub-Workflow and Conversation Runtime
@@ -244,7 +244,7 @@ export function planManagerSubWorkflowInputs(args: {
 
 #### src/workflow/conversation.ts
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 export interface ConversationTurn {
@@ -267,10 +267,10 @@ export function executeConversationRound(args: {
 ```
 
 **Checklist**:
-- [ ] Implement participant routing via manager node.
-- [ ] Implement `maxTurns` and `stopWhen` enforcement.
-- [ ] Persist transcript in deterministic order.
-- [ ] Add replay tests from artifact/session state.
+- [x] Implement participant routing via manager node.
+- [x] Implement `maxTurns` and `stopWhen` enforcement.
+- [x] Persist transcript in deterministic order.
+- [x] Add replay tests from artifact/session state.
 
 #### src/workflow/validate.ts
 
@@ -287,7 +287,7 @@ export interface ValidationIssue {
 **Checklist**:
 - [x] Enforce strict schemas for sub-workflow and conversation blocks.
 - [x] Reject inert fields with no runtime support in active phase.
-- [ ] Add migration warnings for deprecated/legacy paths.
+- [x] Add migration warnings for deprecated/legacy paths.
 - [x] Extend semantic validation coverage.
 
 ---
@@ -297,14 +297,14 @@ export interface ValidationIssue {
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
 | Execution semantics | `src/workflow/semantics.ts` | COMPLETED | `src/workflow/semantics.test.ts` |
-| Engine loop/cancel correctness | `src/workflow/engine.ts` | IN_PROGRESS | `src/workflow/engine.test.ts` |
+| Engine loop/cancel correctness | `src/workflow/engine.ts` | COMPLETED | `src/workflow/engine.test.ts` |
 | Input assembly | `src/workflow/input-assembly.ts` | COMPLETED | `src/workflow/input-assembly.test.ts`, `src/workflow/engine.test.ts` |
 | Typed workflow contracts | `src/workflow/types.ts` | COMPLETED | `src/workflow/validate.test.ts` |
 | Adapter contract hardening | `src/workflow/adapter.ts` | COMPLETED | `src/workflow/adapter.test.ts`, `src/workflow/engine.test.ts` |
 | Codex provider adapter | `src/workflow/adapters/codex.ts` | COMPLETED | `src/workflow/adapters/codex.test.ts` |
 | Claude provider adapter | `src/workflow/adapters/claude.ts` | COMPLETED | `src/workflow/adapters/claude.test.ts` |
 | Sub-workflow runtime | `src/workflow/sub-workflow.ts` | COMPLETED | `src/workflow/sub-workflow.test.ts`, `src/workflow/engine.test.ts` |
-| Conversation runtime | `src/workflow/conversation.ts` | NOT_STARTED | - |
+| Conversation runtime | `src/workflow/conversation.ts` | COMPLETED | `src/workflow/conversation.test.ts`, `src/workflow/engine.test.ts` |
 | Validation hardening | `src/workflow/validate.ts` | COMPLETED | `src/workflow/validate.test.ts` |
 
 ## Task Dependencies
@@ -327,9 +327,9 @@ export interface ValidationIssue {
 - [x] Cancellation is race-safe and terminal-state preserving.
 - [x] `argumentsTemplate` and `argumentBindings` affect runtime input deterministically.
 - [x] Real codex/claude adapters execute behind unified contract.
-- [ ] Sub-workflow conversation runtime works with deterministic replay.
-- [ ] `bun test` and `bun run typecheck` pass.
-- [ ] Specs and implementation stay in sync.
+- [x] Sub-workflow conversation runtime works with deterministic replay.
+- [x] `bun test` and `bun run typecheck` pass.
+- [x] Specs and implementation stay in sync.
 
 ## Progress Log
 
@@ -368,6 +368,18 @@ export interface ValidationIssue {
 **Tasks In Progress**: TASK-007
 **Blockers**: None
 **Notes**: Added `src/workflow/sub-workflow.ts` to plan manager-driven sub-workflow input scheduling from typed `inputSources` with readiness checks for `human-input`, `workflow-output`, `node-output`, and `sub-workflow-output` dependencies. Integrated scheduling into `src/workflow/engine.ts` manager transitions with duplicate suppression. Added tests in `src/workflow/sub-workflow.test.ts` and an engine integration case in `src/workflow/engine.test.ts` validating ordered execution across dependent sub-workflows. Verified with `bun test` and `bun run typecheck`.
+
+### Session: 2026-02-24 15:35
+**Tasks Completed**: TASK-007 (conversation runtime)
+**Tasks In Progress**: TASK-008
+**Blockers**: None
+**Notes**: Added `src/workflow/conversation.ts` with deterministic round planning from `subWorkflowConversations`, round-robin participant routing, `maxTurns`/`stopWhen` evaluation, and output reference routing from sender sub-workflow output artifacts. Integrated manager-side conversation round execution into `src/workflow/engine.ts`, persisted transcript turns in `session.conversationTurns`, and routed conversation target sub-workflow input nodes into the queue with deduplication. Added tests in `src/workflow/conversation.test.ts` and extended `src/workflow/engine.test.ts` to verify transcript persistence and dependency-aware execution. Verified with `bun test` and `bun run typecheck`.
+
+### Session: 2026-02-24 16:00
+**Tasks Completed**: TASK-008 (end-to-end verification + docs sync)
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Completed final hardening tasks by adding bounded retry policies to `src/workflow/adapters/codex.ts` and `src/workflow/adapters/claude.ts` with integration-style retry tests. Added migration warnings and legacy alias normalization for sub-workflow/conversation schema paths in `src/workflow/validate.ts` (`inputs` -> `inputSources`, `participantsIds` -> `participants`) with validator tests. Re-ran full verification: `bun test` and `bun run typecheck` pass.
 
 ## Related Plans
 

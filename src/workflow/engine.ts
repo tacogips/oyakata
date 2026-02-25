@@ -15,6 +15,7 @@ import { loadWorkflowFromDisk } from "./load";
 import { assembleNodeInput } from "./input-assembly";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
+import { executeConversationRound } from "./conversation";
 import { evaluateBranch, evaluateCompletion, resolveLoopTransition } from "./semantics";
 import { planManagerSubWorkflowInputs } from "./sub-workflow";
 import {
@@ -272,6 +273,7 @@ function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
     restartEvents: [...(session.restartEvents ?? [])],
     transitions: [...session.transitions],
     nodeExecutions: [...session.nodeExecutions],
+    conversationTurns: [...(session.conversationTurns ?? [])],
     runtimeVariables: { ...session.runtimeVariables },
   };
 }
@@ -463,6 +465,14 @@ export async function runWorkflow(
         status: entry.status,
         output: entry.output,
       }));
+      const transcriptInput = (session.conversationTurns ?? []).map((turn) => ({
+        conversationId: turn.conversationId,
+        turnIndex: turn.turnIndex,
+        fromSubWorkflowId: turn.fromSubWorkflowId,
+        toSubWorkflowId: turn.toSubWorkflowId,
+        outputRef: turn.outputRef,
+        sentAt: turn.sentAt,
+      }));
 
       let assembledPromptText: string;
       let assembledArguments: Readonly<Record<string, unknown>> | null;
@@ -471,7 +481,7 @@ export async function runWorkflow(
           runtimeVariables: session.runtimeVariables,
           node: nodePayload,
           upstream: upstreamBindingInputs,
-          transcript: [],
+          transcript: transcriptInput,
         });
         assembledPromptText = assembled.promptText;
         assembledArguments = assembled.arguments;
@@ -807,7 +817,53 @@ export async function runWorkflow(
               },
             })
           : [];
-      const nextQueue = [...queue, ...transitionNextNodes, ...managerPlannedInputs].filter(
+
+      let conversationTurns = [...(session.conversationTurns ?? [])];
+      let conversationPlannedInputs: string[] = [];
+      if (nodeRef.kind === "manager") {
+        const conversationRound = await executeConversationRound({
+          workflow,
+          sessionId: session.sessionId,
+          session: {
+            ...session,
+            nodeExecutions,
+            conversationTurns,
+          },
+        });
+
+        if (conversationRound.status === "failed") {
+          const failed: WorkflowSessionState = {
+            ...session,
+            queue,
+            status: "failed",
+            currentNodeId: nodeId,
+            endedAt,
+            nodeExecutionCounter: nextExecutionCounter,
+            nodeExecutionCounts: updatedCounts,
+            nodeExecutions,
+            loopIterationCounts: updatedLoopIterationCounts,
+            conversationTurns,
+            lastError: "conversation round execution failed",
+          };
+          await saveSession(failed, options);
+          return err({ exitCode: 1, message: failed.lastError ?? "conversation round execution failed" });
+        }
+
+        if (conversationRound.turns.length > 0) {
+          conversationTurns = [
+            ...conversationTurns,
+            ...conversationRound.turns.map((turn) => ({
+              ...turn,
+              sentAt: endedAt,
+            })),
+          ];
+          conversationPlannedInputs = conversationRound.turns
+            .map((turn) => workflow.subWorkflows.find((entry) => entry.id === turn.toSubWorkflowId)?.inputNodeId)
+            .filter((entry): entry is string => entry !== undefined);
+        }
+      }
+
+      const nextQueue = [...queue, ...transitionNextNodes, ...managerPlannedInputs, ...conversationPlannedInputs].filter(
         (value, index, all) => all.indexOf(value) === index,
       );
 
@@ -821,6 +877,7 @@ export async function runWorkflow(
         loopIterationCounts: updatedLoopIterationCounts,
         transitions,
         nodeExecutions,
+        conversationTurns,
       };
 
       await saveSession(session, options);

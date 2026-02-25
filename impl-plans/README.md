@@ -25,7 +25,7 @@ impl-plans/
 
 | Plan | Status | Design Reference | Last Updated |
 |------|--------|------------------|--------------|
-| `autonomous-execution-gap-closure` | Ready | `design-autonomous-execution-gap-closure` | 2026-02-24 |
+| (none) | - | - | - |
 
 ## Completed Plans
 
@@ -38,6 +38,7 @@ impl-plans/
 | `workflow-vcs-handoff-checkpoints` | 2026-02-23 | `architecture`, `design-vcs-handoff-checkpoints` |
 | `workflow-save-revision-api` | 2026-02-24 | `design-workflow-web-editor` |
 | `workflow-deterministic-mock-and-rerun` | 2026-02-24 | `architecture`, `command` |
+| `autonomous-execution-gap-closure` | 2026-02-24 | `design-autonomous-execution-gap-closure` |
 
 ## Phase Dependencies
 
@@ -50,7 +51,7 @@ impl-plans/
 | 5 | COMPLETED | Phase 4 |
 | 6 | COMPLETED | Phase 5 |
 | 7 | COMPLETED | Phase 6 |
-| 8 | READY | Phase 7 |
+| 8 | COMPLETED | Phase 7 |
 
 ### Phase to Plans Mapping
 
@@ -63,6 +64,6 @@ PHASE_TO_PLANS = {
   5: ["completed/workflow-vcs-handoff-checkpoints.md"],
   6: ["completed/workflow-save-revision-api.md"],
   7: ["completed/workflow-deterministic-mock-and-rerun.md"],
-  8: ["active/autonomous-execution-gap-closure.md"]
+  8: ["completed/autonomous-execution-gap-closure.md"]
 }
 ```

@@ -128,6 +128,14 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
         inputSources: [{ type: "sub-workflow-output", subWorkflowId: "sw-a" }],
       },
     ],
+    subWorkflowConversations: [
+      {
+        id: "conv-1",
+        participants: ["sw-a", "sw-b"],
+        maxTurns: 3,
+        stopWhen: "done",
+      },
+    ],
     nodes: [
       { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
       { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
@@ -584,5 +592,8 @@ describe("runWorkflow", () => {
     expect(executionOrder.indexOf("a-output")).toBeGreaterThan(executionOrder.indexOf("a-input"));
     expect(executionOrder.indexOf("b-input")).toBeGreaterThan(executionOrder.indexOf("a-output"));
     expect(executionOrder.indexOf("b-output")).toBeGreaterThan(executionOrder.indexOf("b-input"));
+    expect((result.value.session.conversationTurns ?? []).length).toBeGreaterThan(0);
+    expect(result.value.session.conversationTurns?.[0]?.fromSubWorkflowId).toBe("sw-a");
+    expect(result.value.session.conversationTurns?.[0]?.toSubWorkflowId).toBe("sw-b");
   });
 });
