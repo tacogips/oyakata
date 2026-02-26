@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -260,6 +260,7 @@ describe("runCli", () => {
             stop: () => {},
           };
         },
+        isInteractiveTerminal: () => true,
       },
     );
 
@@ -277,4 +278,189 @@ describe("runCli", () => {
     const code = await runCli(["workflow", "validate", "../bad-name"], capture.io);
     expect(code).toBe(2);
   });
+
+  test("tui non-interactive fallback requires workflow name", async () => {
+    const root = await makeTempDir();
+    const capture = createIoCapture();
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const code = await runCli(["tui", "--workflow-root", root], capture.io, {
+      startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+      isInteractiveTerminal: () => false,
+    });
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain("workflow name is required in non-interactive terminal");
+  });
+
+  test("tui supports non-interactive fallback and resume-session", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const firstRunCapture = createIoCapture();
+    const firstRunCode = await runCli(
+      [
+        "tui",
+        "demo",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--max-steps",
+        "1",
+      ],
+      firstRunCapture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+    expect(firstRunCode).toBe(4);
+    expect(firstRunCapture.stdout.join("\n")).toContain("promptless fallback mode");
+
+    const sessionIdLine = firstRunCapture.stdout.find((line) => line.startsWith("sessionId: "));
+    expect(sessionIdLine).toBeDefined();
+    const sessionId = sessionIdLine?.replace("sessionId: ", "");
+    expect(sessionId).toBeDefined();
+
+    const resumeCapture = createIoCapture();
+    const resumeCode = await runCli(
+      [
+        "tui",
+        "--resume-session",
+        sessionId ?? "",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+      ],
+      resumeCapture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+    expect(resumeCode).toBe(0);
+    expect(resumeCapture.stdout.join("\n")).toContain("Resuming session");
+    expect(resumeCapture.stdout.join("\n")).toContain("status: completed");
+  });
+
+  test("tui resume-session works even when workflow directory is unavailable", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const firstRunCapture = createIoCapture();
+    expect(
+      await runCli(
+        [
+          "tui",
+          "demo",
+          "--workflow-root",
+          root,
+          "--artifact-root",
+          artifactsRoot,
+          "--session-store",
+          sessionsRoot,
+          "--max-steps",
+          "1",
+        ],
+        firstRunCapture.io,
+        {
+          startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+          isInteractiveTerminal: () => false,
+        },
+      ),
+    ).toBe(4);
+
+    const sessionId = firstRunCapture.stdout
+      .find((line) => line.startsWith("sessionId: "))
+      ?.replace("sessionId: ", "");
+    expect(sessionId).toBeDefined();
+
+    await rename(path.join(root, "demo"), path.join(root, "_demo_tmp_hidden"));
+
+    const resumeCapture = createIoCapture();
+    const resumeCode = await runCli(
+      [
+        "tui",
+        "--resume-session",
+        sessionId ?? "",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+      ],
+      resumeCapture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+
+    expect(resumeCode).toBe(1);
+    expect(resumeCapture.stderr.join("\n")).not.toContain("no workflows found");
+    expect(resumeCapture.stderr.join("\n")).toContain("run failed:");
+  });
+
+  test("tui supports --workflow option in non-interactive mode", async () => {
+    const root = await makeTempDir();
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["tui", "--workflow", "demo", "--workflow-root", root, "--max-steps", "1"],
+      capture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+
+    expect(code).toBe(4);
+    expect(capture.stdout.join("\n")).toContain("using promptless fallback mode");
+  });
+
+  test("tui rejects conflicting positional and --workflow values", async () => {
+    const root = await makeTempDir();
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+    expect(
+      await runCli(["workflow", "create", "other", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["tui", "demo", "--workflow", "other", "--workflow-root", root],
+      capture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain("conflicting workflow names");
+  });
+
 });

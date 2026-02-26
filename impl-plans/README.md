@@ -39,6 +39,9 @@ impl-plans/
 | `workflow-save-revision-api` | 2026-02-24 | `design-workflow-web-editor` |
 | `workflow-deterministic-mock-and-rerun` | 2026-02-24 | `architecture`, `command` |
 | `autonomous-execution-gap-closure` | 2026-02-24 | `design-autonomous-execution-gap-closure` |
+| `workflow-tui-mvp` | 2026-02-25 | `design-tui` |
+| `workflow-tui-cli-parity` | 2026-02-25 | `design-tui` |
+| `workflow-tui-resume-decoupling` | 2026-02-25 | `design-tui` |
 
 ## Phase Dependencies
 
@@ -52,6 +55,9 @@ impl-plans/
 | 6 | COMPLETED | Phase 5 |
 | 7 | COMPLETED | Phase 6 |
 | 8 | COMPLETED | Phase 7 |
+| 9 | COMPLETED | Phase 8 |
+| 10 | COMPLETED | Phase 9 |
+| 11 | COMPLETED | Phase 10 |
 
 ### Phase to Plans Mapping
 
@@ -64,6 +70,9 @@ PHASE_TO_PLANS = {
   5: ["completed/workflow-vcs-handoff-checkpoints.md"],
   6: ["completed/workflow-save-revision-api.md"],
   7: ["completed/workflow-deterministic-mock-and-rerun.md"],
-  8: ["completed/autonomous-execution-gap-closure.md"]
+  8: ["completed/autonomous-execution-gap-closure.md"],
+  9: ["completed/workflow-tui-mvp.md"],
+  10: ["completed/workflow-tui-cli-parity.md"],
+  11: ["completed/workflow-tui-resume-decoupling.md"]
 }
 ```

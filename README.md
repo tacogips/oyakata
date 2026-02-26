@@ -121,8 +121,10 @@ Runtime SQLite behavior:
 
 ## Interfaces
 
-- TUI: `oyakata tui [workflow-name]`
-  - Select workflow (if omitted), input prompt, execute, and watch per-node progress in terminal output.
+- TUI: `oyakata tui [workflow-name] [--workflow <name>] [--resume-session <session-id>]`
+  - Interactive terminal: select workflow (if omitted), input prompt, execute, and watch per-node progress.
+  - Non-interactive terminal: promptless fallback mode is used; `workflow-name` is required.
+  - Resume: `--resume-session` resumes an existing session directly.
 - Web UI: `oyakata serve`, then open `http://127.0.0.1:5173/`
   - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
 

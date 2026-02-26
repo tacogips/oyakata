@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-02-24T16:10:00Z",
+  "lastUpdated": "2026-02-25T23:35:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -8,7 +8,10 @@
     "5": { "status": "COMPLETED" },
     "6": { "status": "COMPLETED" },
     "7": { "status": "COMPLETED" },
-    "8": { "status": "COMPLETED" }
+    "8": { "status": "COMPLETED" },
+    "9": { "status": "COMPLETED" },
+    "10": { "status": "COMPLETED" },
+    "11": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -105,6 +108,31 @@
         "TASK-006": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002", "TASK-004"] },
         "TASK-007": { "status": "Completed", "parallelizable": false, "deps": ["TASK-006", "TASK-005"] },
         "TASK-008": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002", "TASK-003", "TASK-004", "TASK-005", "TASK-006", "TASK-007"] }
+      }
+    },
+    "workflow-tui-mvp": {
+      "phase": 9,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": true, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] },
+        "TASK-004": { "status": "Completed", "parallelizable": true, "deps": ["TASK-001"] }
+      }
+    },
+    "workflow-tui-cli-parity": {
+      "phase": 10,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": true, "deps": ["TASK-001"] }
+      }
+    },
+    "workflow-tui-resume-decoupling": {
+      "phase": 11,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] }
       }
     }
   }

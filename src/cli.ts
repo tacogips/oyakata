@@ -11,6 +11,8 @@ import { resolveEffectiveRoots } from "./workflow/paths";
 import { createSessionId } from "./workflow/session";
 import { buildInspectionSummary } from "./workflow/inspect";
 import { loadSession } from "./workflow/session-store";
+import { selectTuiRuntimeMode } from "./tui/runtime";
+import { renderNeoBlessedWorkflowSelector } from "./tui/neo-blessed-screen";
 
 export interface CliIo {
   readonly stdout: (line: string) => void;
@@ -28,6 +30,7 @@ export interface CliDependencies {
     noExec?: boolean;
     fixedWorkflowName?: string;
   }) => Promise<StartedServe>;
+  readonly isInteractiveTerminal: () => boolean;
 }
 
 interface ParsedOptions {
@@ -45,6 +48,8 @@ interface ParsedOptions {
   readonly port?: number;
   readonly readOnly: boolean;
   readonly noExec: boolean;
+  readonly resumeSessionId?: string;
+  readonly workflowName?: string;
 }
 
 interface ParsedArgs {
@@ -59,6 +64,7 @@ const DEFAULT_IO: CliIo = {
 
 const DEFAULT_DEPS: CliDependencies = {
   startServe,
+  isInteractiveTerminal: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
 };
 
 function parseNumericOption(value: string | undefined): number | undefined {
@@ -88,6 +94,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let port: number | undefined;
   let readOnly = false;
   let noExec = false;
+  let resumeSessionId: string | undefined;
+  let workflowName: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -156,6 +164,12 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       case "--no-exec":
         noExec = true;
         break;
+      case "--resume-session":
+        resumeSessionId = readNext();
+        break;
+      case "--workflow":
+        workflowName = readNext();
+        break;
       default:
         break;
     }
@@ -178,6 +192,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(port === undefined ? {} : { port }),
       readOnly,
       noExec,
+      ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
+      ...(workflowName === undefined ? {} : { workflowName }),
     },
   };
 }
@@ -187,7 +203,9 @@ function printHelp(io: CliIo): void {
   io.stdout("  oyakata workflow <create|validate|inspect|run> <name> [options]");
   io.stdout("  oyakata session <status|progress|resume> <session-id> [options]");
   io.stdout("  oyakata session rerun <session-id> <node-id> [options]");
-  io.stdout("  oyakata tui [workflow-name] [--mock-scenario <path>] [--max-steps <n>]");
+  io.stdout(
+    "  oyakata tui [workflow-name] [--workflow <name>] [--resume-session <id>] [--mock-scenario <path>] [--max-steps <n>]",
+  );
   io.stdout("  oyakata serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]");
 }
 
@@ -259,85 +277,22 @@ async function runTui(
     sessionStoreRoot?: string;
   },
   io: CliIo,
+  deps: CliDependencies,
 ): Promise<number> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  try {
-    let workflowName = workflowNameOrUndefined;
-    const workflowNames = await listWorkflowNames(sharedOptions);
-    if (workflowNames.length === 0) {
-      io.stderr("no workflows found");
-      return 1;
-    }
-
-    if (workflowName === undefined) {
-      io.stdout("Select workflow:");
-      workflowNames.forEach((name, index) => {
-        io.stdout(`  ${String(index + 1)}. ${name}`);
-      });
-      const selectedRaw = await rl.question("Workflow number: ");
-      const selectedIndex = Number(selectedRaw);
-      if (!Number.isFinite(selectedIndex) || selectedIndex < 1 || selectedIndex > workflowNames.length) {
-        io.stderr("invalid workflow selection");
-        return 2;
-      }
-      workflowName = workflowNames[selectedIndex - 1];
-    }
-
-    if (workflowName === undefined || !workflowNames.includes(workflowName)) {
-      io.stderr(`workflow not found: ${workflowName ?? "(empty)"}`);
-      return 1;
-    }
-
-    const userPrompt = await rl.question("Prompt: ");
-    const customVariablesRaw = await rl.question("Additional runtime variables JSON (optional): ");
-    let runtimeVariables: Readonly<Record<string, unknown>> = {
-      userPrompt,
-      prompt: userPrompt,
-    };
-    if (customVariablesRaw.trim().length > 0) {
-      const parsed = JSON.parse(customVariablesRaw) as unknown;
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        io.stderr("additional runtime variables must be a JSON object");
-        return 2;
-      }
-      runtimeVariables = { ...runtimeVariables, ...(parsed as Record<string, unknown>) };
-    }
-
-    let mockScenario: MockNodeScenario | undefined;
-    if (parsedOptions.mockScenarioPath !== undefined) {
-      mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
-    } else {
-      const loaded = await loadWorkflowFromDisk(workflowName, sharedOptions);
-      if (!loaded.ok) {
-        io.stderr(loaded.error.message);
-        return loaded.error.code === "VALIDATION" || loaded.error.code === "INVALID_WORKFLOW_NAME" ? 2 : 1;
-      }
-      const defaultScenarioPath = path.join(loaded.value.workflowDirectory, "mock-scenario.json");
-      try {
-        await stat(defaultScenarioPath);
-        const useScenarioAnswer = await rl.question(
-          `Use mock scenario file at ${defaultScenarioPath}? [Y/n]: `,
-        );
-        if (useScenarioAnswer.trim().toLowerCase() !== "n") {
-          mockScenario = await readMockScenario(defaultScenarioPath);
-        }
-      } catch {
-        // default scenario does not exist
-      }
-    }
-
-    const sessionId = createSessionId();
-    io.stdout(`Starting session ${sessionId}`);
-
+  const runAndReportProgress = async (
+    workflowName: string,
+    runtimeVariables: Readonly<Record<string, unknown>>,
+    mockScenario: MockNodeScenario | undefined,
+    resumeSessionId: string | undefined,
+  ): Promise<number> => {
+    const sessionId = resumeSessionId ?? createSessionId();
+    io.stdout(`${resumeSessionId === undefined ? "Starting" : "Resuming"} session ${sessionId}`);
     const runPromise = runWorkflow(workflowName, {
       ...sharedOptions,
       sessionId,
       runtimeVariables,
       ...(mockScenario === undefined ? {} : { mockScenario }),
+      ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
       ...(parsedOptions.maxSteps === undefined ? {} : { maxSteps: parsedOptions.maxSteps }),
       ...(parsedOptions.maxLoopIterations === undefined
         ? {}
@@ -380,12 +335,147 @@ async function runTui(
     io.stdout(`sessionId: ${result.value.session.sessionId}`);
     io.stdout(`status: ${result.value.session.status}`);
     return result.value.exitCode;
+  };
+
+  try {
+    const runtimeSelection = selectTuiRuntimeMode({
+      isInteractiveTerminal: deps.isInteractiveTerminal(),
+      ...(parsedOptions.resumeSessionId === undefined
+        ? {}
+        : {
+            resumeSessionId: parsedOptions.resumeSessionId,
+          }),
+    });
+
+    if (parsedOptions.resumeSessionId !== undefined) {
+      const session = await loadSession(parsedOptions.resumeSessionId, sharedOptions);
+      if (!session.ok) {
+        io.stderr(`failed to load resume session: ${session.error.message}`);
+        return 1;
+      }
+      return runAndReportProgress(
+        session.value.workflowName,
+        { resumedFromSessionId: session.value.sessionId },
+        undefined,
+        session.value.sessionId,
+        );
+    }
+
+    const workflowNames = await listWorkflowNames(sharedOptions);
+    if (workflowNames.length === 0) {
+      io.stderr("no workflows found");
+      return 1;
+    }
+
+    if (runtimeSelection.mode === "fallback") {
+      if (workflowNameOrUndefined === undefined && runtimeSelection.requiresWorkflowArgument) {
+        io.stderr("workflow name is required in non-interactive terminal");
+        return 2;
+      }
+      if (workflowNameOrUndefined === undefined) {
+        io.stderr("workflow name is required");
+        return 2;
+      }
+      if (!workflowNames.includes(workflowNameOrUndefined)) {
+        io.stderr(`workflow not found: ${workflowNameOrUndefined}`);
+        return 1;
+      }
+      let mockScenario: MockNodeScenario | undefined;
+      if (parsedOptions.mockScenarioPath !== undefined) {
+        mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
+      }
+      io.stdout("using promptless fallback mode");
+      return runAndReportProgress(workflowNameOrUndefined, {}, mockScenario, undefined);
+    }
+
+    let workflowName = workflowNameOrUndefined;
+    if (workflowName === undefined && runtimeSelection.allowsWorkflowSelectionPrompt) {
+      try {
+        const selected = await renderNeoBlessedWorkflowSelector({
+          workflowNames,
+          refreshWorkflowNames: async () => listWorkflowNames(sharedOptions),
+          io,
+        });
+        if (selected.type === "quit") {
+          io.stdout("tui cancelled");
+          return 130;
+        }
+        workflowName = selected.workflowName;
+      } catch {
+        io.stderr("neo-blessed selector unavailable; falling back to readline workflow selection");
+      }
+    }
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    try {
+      if (workflowName === undefined) {
+        io.stdout("Select workflow:");
+        workflowNames.forEach((name, index) => {
+          io.stdout(`  ${String(index + 1)}. ${name}`);
+        });
+        const selectedRaw = await rl.question("Workflow number: ");
+        const selectedIndex = Number(selectedRaw);
+        if (!Number.isFinite(selectedIndex) || selectedIndex < 1 || selectedIndex > workflowNames.length) {
+          io.stderr("invalid workflow selection");
+          return 2;
+        }
+        workflowName = workflowNames[selectedIndex - 1];
+      }
+
+      if (workflowName === undefined || !workflowNames.includes(workflowName)) {
+        io.stderr(`workflow not found: ${workflowName ?? "(empty)"}`);
+        return 1;
+      }
+
+      const userPrompt = await rl.question("Prompt: ");
+      const customVariablesRaw = await rl.question("Additional runtime variables JSON (optional): ");
+      let runtimeVariables: Readonly<Record<string, unknown>> = {
+        userPrompt,
+        prompt: userPrompt,
+      };
+      if (customVariablesRaw.trim().length > 0) {
+        const parsed = JSON.parse(customVariablesRaw) as unknown;
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          io.stderr("additional runtime variables must be a JSON object");
+          return 2;
+        }
+        runtimeVariables = { ...runtimeVariables, ...(parsed as Record<string, unknown>) };
+      }
+
+      let mockScenario: MockNodeScenario | undefined;
+      if (parsedOptions.mockScenarioPath !== undefined) {
+        mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
+      } else {
+        const loaded = await loadWorkflowFromDisk(workflowName, sharedOptions);
+        if (!loaded.ok) {
+          io.stderr(loaded.error.message);
+          return loaded.error.code === "VALIDATION" || loaded.error.code === "INVALID_WORKFLOW_NAME" ? 2 : 1;
+        }
+        const defaultScenarioPath = path.join(loaded.value.workflowDirectory, "mock-scenario.json");
+        try {
+          await stat(defaultScenarioPath);
+          const useScenarioAnswer = await rl.question(
+            `Use mock scenario file at ${defaultScenarioPath}? [Y/n]: `,
+          );
+          if (useScenarioAnswer.trim().toLowerCase() !== "n") {
+            mockScenario = await readMockScenario(defaultScenarioPath);
+          }
+        } catch {
+          // default scenario does not exist
+        }
+      }
+
+      return runAndReportProgress(workflowName, runtimeVariables, mockScenario, undefined);
+    } finally {
+      rl.close();
+    }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     io.stderr(`tui failed: ${message}`);
     return 1;
-  } finally {
-    rl.close();
   }
 }
 
@@ -436,7 +526,19 @@ export async function runCli(
   }
 
   if (scope === "tui") {
-    return runTui(command, parsed.options, sharedOptions, io);
+    const resolvedWorkflowName = parsed.options.workflowName;
+    if (
+      command !== undefined &&
+      resolvedWorkflowName !== undefined &&
+      command.length > 0 &&
+      command !== resolvedWorkflowName
+    ) {
+      io.stderr(
+        `conflicting workflow names: positional='${command}' and --workflow='${resolvedWorkflowName}'`,
+      );
+      return 2;
+    }
+    return runTui(resolvedWorkflowName ?? command, parsed.options, sharedOptions, io, deps);
   }
 
   if (scope === undefined || command === undefined || target === undefined) {
