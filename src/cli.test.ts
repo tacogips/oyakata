@@ -463,4 +463,160 @@ describe("runCli", () => {
     expect(capture.stderr.join("\n")).toContain("conflicting workflow names");
   });
 
+  test("tui fallback applies --variables runtime values", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const variablesPath = path.join(root, "runtime-variables.json");
+    await writeFile(
+      variablesPath,
+      JSON.stringify({ topic: "tui-fallback", humanInput: { request: "alpha" } }, null, 2),
+      "utf8",
+    );
+
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const runCapture = createIoCapture();
+    const runCode = await runCli(
+      [
+        "tui",
+        "demo",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--variables",
+        variablesPath,
+        "--max-steps",
+        "1",
+      ],
+      runCapture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+
+    expect(runCode).toBe(4);
+    const sessionId = runCapture.stdout.find((line) => line.startsWith("sessionId: "))?.replace("sessionId: ", "");
+    expect(sessionId).toBeDefined();
+
+    const statusCapture = createIoCapture();
+    const statusCode = await runCli(
+      [
+        "session",
+        "status",
+        sessionId ?? "",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      statusCapture.io,
+    );
+    expect(statusCode).toBe(0);
+
+    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
+      runtimeVariables: { topic?: string; humanInput?: { request?: string } };
+    };
+    expect(statusPayload.runtimeVariables.topic).toBe("tui-fallback");
+    expect(statusPayload.runtimeVariables.humanInput?.request).toBe("alpha");
+  });
+
+  test("tui resume-session merges --variables into resumed runtime values", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const resumeVariablesPath = path.join(root, "resume-variables.json");
+    await writeFile(resumeVariablesPath, JSON.stringify({ resumeNote: "from-file" }, null, 2), "utf8");
+
+    expect(
+      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+    ).toBe(0);
+
+    const firstRunCapture = createIoCapture();
+    expect(
+      await runCli(
+        [
+          "tui",
+          "demo",
+          "--workflow-root",
+          root,
+          "--artifact-root",
+          artifactsRoot,
+          "--session-store",
+          sessionsRoot,
+          "--max-steps",
+          "1",
+        ],
+        firstRunCapture.io,
+        {
+          startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+          isInteractiveTerminal: () => false,
+        },
+      ),
+    ).toBe(4);
+
+    const sessionId = firstRunCapture.stdout
+      .find((line) => line.startsWith("sessionId: "))
+      ?.replace("sessionId: ", "");
+    expect(sessionId).toBeDefined();
+
+    const resumeCapture = createIoCapture();
+    const resumeCode = await runCli(
+      [
+        "tui",
+        "--resume-session",
+        sessionId ?? "",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--variables",
+        resumeVariablesPath,
+      ],
+      resumeCapture.io,
+      {
+        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        isInteractiveTerminal: () => false,
+      },
+    );
+    expect(resumeCode).toBe(0);
+
+    const statusCapture = createIoCapture();
+    expect(
+      await runCli(
+        [
+          "session",
+          "status",
+          sessionId ?? "",
+          "--workflow-root",
+          root,
+          "--artifact-root",
+          artifactsRoot,
+          "--session-store",
+          sessionsRoot,
+          "--output",
+          "json",
+        ],
+        statusCapture.io,
+      ),
+    ).toBe(0);
+    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
+      runtimeVariables: { resumeNote?: string; resumedFromSessionId?: string };
+    };
+    expect(statusPayload.runtimeVariables.resumeNote).toBe("from-file");
+    expect(statusPayload.runtimeVariables.resumedFromSessionId).toBe(sessionId);
+  });
+
 });

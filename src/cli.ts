@@ -204,7 +204,7 @@ function printHelp(io: CliIo): void {
   io.stdout("  oyakata session <status|progress|resume> <session-id> [options]");
   io.stdout("  oyakata session rerun <session-id> <node-id> [options]");
   io.stdout(
-    "  oyakata tui [workflow-name] [--workflow <name>] [--resume-session <id>] [--mock-scenario <path>] [--max-steps <n>]",
+    "  oyakata tui [workflow-name] [--workflow <name>] [--resume-session <id>] [--variables <path>] [--mock-scenario <path>] [--max-steps <n>]",
   );
   io.stdout("  oyakata serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]");
 }
@@ -279,6 +279,17 @@ async function runTui(
   io: CliIo,
   deps: CliDependencies,
 ): Promise<number> {
+  let optionRuntimeVariables: Readonly<Record<string, unknown>> = {};
+  if (parsedOptions.variablesPath !== undefined) {
+    try {
+      optionRuntimeVariables = await readRuntimeVariables(parsedOptions.variablesPath);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      io.stderr(`failed to read --variables file: ${message}`);
+      return 1;
+    }
+  }
+
   const runAndReportProgress = async (
     workflowName: string,
     runtimeVariables: Readonly<Record<string, unknown>>,
@@ -355,10 +366,13 @@ async function runTui(
       }
       return runAndReportProgress(
         session.value.workflowName,
-        { resumedFromSessionId: session.value.sessionId },
+        {
+          ...optionRuntimeVariables,
+          resumedFromSessionId: session.value.sessionId,
+        },
         undefined,
         session.value.sessionId,
-        );
+      );
     }
 
     const workflowNames = await listWorkflowNames(sharedOptions);
@@ -385,7 +399,7 @@ async function runTui(
         mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
       }
       io.stdout("using promptless fallback mode");
-      return runAndReportProgress(workflowNameOrUndefined, {}, mockScenario, undefined);
+      return runAndReportProgress(workflowNameOrUndefined, optionRuntimeVariables, mockScenario, undefined);
     }
 
     let workflowName = workflowNameOrUndefined;
@@ -433,6 +447,7 @@ async function runTui(
       const userPrompt = await rl.question("Prompt: ");
       const customVariablesRaw = await rl.question("Additional runtime variables JSON (optional): ");
       let runtimeVariables: Readonly<Record<string, unknown>> = {
+        ...optionRuntimeVariables,
         userPrompt,
         prompt: userPrompt,
       };
