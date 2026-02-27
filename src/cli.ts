@@ -1,4 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import readline from "node:readline/promises";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -30,6 +31,7 @@ export interface CliDependencies {
     noExec?: boolean;
     fixedWorkflowName?: string;
   }) => Promise<StartedServe>;
+  readonly openBrowserUrl: (url: string) => Promise<void>;
   readonly isInteractiveTerminal: () => boolean;
 }
 
@@ -48,6 +50,7 @@ interface ParsedOptions {
   readonly port?: number;
   readonly readOnly: boolean;
   readonly noExec: boolean;
+  readonly openBrowser: boolean;
   readonly resumeSessionId?: string;
   readonly workflowName?: string;
 }
@@ -64,6 +67,32 @@ const DEFAULT_IO: CliIo = {
 
 const DEFAULT_DEPS: CliDependencies = {
   startServe,
+  openBrowserUrl: async (url: string) => {
+    const command =
+      process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+    const args =
+      process.platform === "darwin"
+        ? [url]
+        : process.platform === "win32"
+          ? ["/c", "start", "", url]
+          : [url];
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(command, args, {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      child.once("error", reject);
+      child.once("close", (code, signal) => {
+        if (code === 0) {
+          resolve();
+          return;
+        }
+        const codeOrSignal = signal === null ? `exit code ${String(code)}` : `signal ${signal}`;
+        reject(new Error(`${command} failed with ${codeOrSignal}`));
+      });
+    });
+  },
   isInteractiveTerminal: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
 };
 
@@ -94,6 +123,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let port: number | undefined;
   let readOnly = false;
   let noExec = false;
+  let openBrowser = false;
   let resumeSessionId: string | undefined;
   let workflowName: string | undefined;
 
@@ -164,6 +194,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       case "--no-exec":
         noExec = true;
         break;
+      case "--open":
+        openBrowser = true;
+        break;
       case "--resume-session":
         resumeSessionId = readNext();
         break;
@@ -192,6 +225,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(port === undefined ? {} : { port }),
       readOnly,
       noExec,
+      openBrowser,
       ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
       ...(workflowName === undefined ? {} : { workflowName }),
     },
@@ -206,7 +240,9 @@ function printHelp(io: CliIo): void {
   io.stdout(
     "  oyakata tui [workflow-name] [--workflow <name>] [--resume-session <id>] [--variables <path>] [--mock-scenario <path>] [--max-steps <n>]",
   );
-  io.stdout("  oyakata serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]");
+  io.stdout(
+    "  oyakata serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec] [--open]",
+  );
 }
 
 function formatValidationIssues(
@@ -531,6 +567,16 @@ export async function runCli(
         });
       } else {
         io.stdout(`serve listening on http://${started.host}:${String(started.port)}`);
+      }
+
+      if (parsed.options.openBrowser) {
+        const url = `http://${started.host}:${String(started.port)}`;
+        try {
+          await deps.openBrowserUrl(url);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          io.stderr(`failed to open browser: ${message}`);
+        }
       }
       return 0;
     } catch (error: unknown) {

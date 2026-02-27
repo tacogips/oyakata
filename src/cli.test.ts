@@ -260,6 +260,7 @@ describe("runCli", () => {
             stop: () => {},
           };
         },
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
       },
     );
@@ -271,6 +272,53 @@ describe("runCli", () => {
     expect(started[0]?.noExec).toBe(true);
     const payload = JSON.parse(capture.stdout.join("\n")) as { port: number };
     expect(payload.port).toBe(7777);
+  });
+
+  test("serve --open invokes browser opener with served url", async () => {
+    const capture = createIoCapture();
+    const openedUrls: string[] = [];
+
+    const code = await runCli(
+      ["serve", "demo", "--host", "127.0.0.1", "--port", "7777", "--open"],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
+        openBrowserUrl: async (url) => {
+          openedUrls.push(url);
+        },
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(openedUrls).toEqual(["http://127.0.0.1:7777"]);
+  });
+
+  test("serve --open reports opener failure but still succeeds", async () => {
+    const capture = createIoCapture();
+
+    const code = await runCli(
+      ["serve", "demo", "--host", "127.0.0.1", "--port", "7777", "--open"],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {
+          throw new Error("boom");
+        },
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(capture.stderr.join("\n")).toContain("failed to open browser: boom");
   });
 
   test("validate returns code 2 for invalid workflow name", async () => {
@@ -288,6 +336,7 @@ describe("runCli", () => {
 
     const code = await runCli(["tui", "--workflow-root", root], capture.io, {
       startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+      openBrowserUrl: async () => {},
       isInteractiveTerminal: () => false,
     });
 
@@ -321,6 +370,7 @@ describe("runCli", () => {
       firstRunCapture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -348,6 +398,7 @@ describe("runCli", () => {
       resumeCapture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -383,6 +434,7 @@ describe("runCli", () => {
         firstRunCapture.io,
         {
           startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+          openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
       ),
@@ -411,6 +463,7 @@ describe("runCli", () => {
       resumeCapture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -432,6 +485,7 @@ describe("runCli", () => {
       capture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -455,6 +509,7 @@ describe("runCli", () => {
       capture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -497,6 +552,7 @@ describe("runCli", () => {
       runCapture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -560,6 +616,7 @@ describe("runCli", () => {
         firstRunCapture.io,
         {
           startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+          openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
       ),
@@ -588,6 +645,7 @@ describe("runCli", () => {
       resumeCapture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
