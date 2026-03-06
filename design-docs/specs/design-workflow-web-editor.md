@@ -33,7 +33,7 @@ The server and UI are local-first and operate on the existing `.oyakata/<workflo
 3. User edits:
 - Graph nodes/edges and conditions
 - Node payload (`model`, `promptTemplate`, `variables`, optional `timeoutMs`)
-- Layout positions/sizes
+- Vertical sequence metadata (`order`)
 4. User saves; server writes:
 - `workflow.json`
 - `workflow-vis.json`
@@ -87,24 +87,19 @@ Data safety:
 
 ### Editor Surface
 
-- SVG graph canvas for node/edge operations
-- Property panel for selected node/edge
+- Vertical workflow list (top-to-bottom) with card-based node rendering
+- Property panel for selected node/edge/sequence row
 - Workflow defaults panel
 - Save/validate controls
 
-### SVG Interaction Model
+### Vertical Interaction Model
 
-- Node rendering uses SVG groups with draggable headers/body.
-- Edges render as SVG paths with arrow markers and selection hit areas.
-- Users create connections by mouse drag from source node handle to target node handle.
-- Temporary preview edge follows cursor during drag operation.
-- Drop validation blocks invalid links (self-loop rules, missing node, duplicate edge policy).
-- Mouse interactions include:
-  - click: select node/edge
-  - drag node: update visual position
-  - drag from port: create new edge
-  - wheel/gesture: canvas zoom
-  - background drag (with modifier): canvas pan
+- Nodes remain cards, rendered in strict vertical order from `workflow-vis.json.nodes[].order`.
+- Reordering uses row drag-handle and/or move-up/move-down controls.
+- Nesting for loop/group semantics uses derived `indent` level from graph structure.
+- Loop/group visual distinction uses derived semantic `color` tokens from loop/group scope.
+- Edge creation/editing is form-driven (source/target/when), not canvas drawing.
+- Validation blocks invalid links (self-loop rules, missing node, duplicate edge policy).
 
 ### Execution Surface
 
@@ -117,7 +112,7 @@ Data safety:
 
 - Field-level validation (fast local checks)
 - Server validation (authoritative)
-- Error list links back to relevant graph/node form
+- Error list links back to relevant node row/form control
 
 ## Security and Operational Constraints
 
@@ -130,6 +125,7 @@ Data safety:
 ## Compatibility and Migration
 
 - Existing workflows remain valid.
+- Legacy `workflow-vis.json` coordinate fields (`x`,`y`,`width`,`height`,`viewport`) are normalized into sequential vertical order on save.
 - Missing `workflow-vis.json` is auto-generated on first save.
 - Existing CLI `workflow run` and `workflow validate` remain functional.
 
@@ -138,4 +134,4 @@ Data safety:
 1. Poll interval default and maximum for session status API.
 2. Whether to include incremental save endpoints or only full-document save.
 3. Whether to add import/export UX in first release or defer.
-4. Grid snapping and edge routing style (straight, orthogonal, or bezier) for first release.
+4. Standard palette and indentation guide width for loop/group visual clarity.

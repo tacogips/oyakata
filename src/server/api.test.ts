@@ -30,7 +30,12 @@ describe("handleApiRequest", () => {
     expect(uiRes.status).toBe(200);
     expect(uiRes.headers.get("content-type")).toContain("text/html");
     const uiText = await uiRes.text();
-    expect(uiText).toContain("oyakata Workflow Runner");
+    expect(uiText).toContain("oyakata Vertical Workflow Editor");
+    expect(uiText).toContain("Vertical Workflow");
+    expect(uiText).toContain("Workflow Structure");
+    expect(uiText).toContain("Validate Workflow");
+    expect(uiText).toContain("Add Node");
+    expect(uiText).not.toContain("Nodes JSON");
 
     const healthRes = await handleApiRequest(new Request("http://localhost/healthz"), {
       workflowRoot: root,
@@ -60,8 +65,15 @@ describe("handleApiRequest", () => {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(getRes.status).toBe(200);
-    const getJson = (await getRes.json()) as { workflowName: string };
+    const getJson = (await getRes.json()) as {
+      workflowName: string;
+      derivedVisualization: readonly { id: string; indent: number; color: string }[];
+    };
     expect(getJson.workflowName).toBe("demo");
+    expect(getJson.derivedVisualization.length).toBeGreaterThan(0);
+    expect(getJson.derivedVisualization[0]?.id).toBe("oyakata-manager");
+    expect(getJson.derivedVisualization[0]?.indent).toBe(0);
+    expect(getJson.derivedVisualization.find((entry) => entry.id === "workflow-input")?.color).toBe("group:main");
   });
 
   test("validates and executes workflow", async () => {
@@ -123,6 +135,161 @@ describe("handleApiRequest", () => {
     expect(cancelJson.status).toBe("cancelled");
   });
 
+  test("validates an in-memory bundle before save", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const getRes = await handleApiRequest(new Request("http://localhost/api/workflows/demo"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+    expect(getRes.status).toBe(200);
+    const getJson = (await getRes.json()) as {
+      bundle: {
+        workflow: Record<string, unknown>;
+        workflowVis: { nodes: Array<{ id: string; order: number }> };
+        nodePayloads: Record<string, unknown>;
+      };
+    };
+
+    const invalidBundle = {
+      ...getJson.bundle,
+      workflowVis: {
+        ...getJson.bundle.workflowVis,
+        nodes: [{ id: "oyakata-manager", order: 0 }],
+      },
+    };
+
+    const validateRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo/validate", {
+        method: "POST",
+        body: JSON.stringify({ bundle: invalidBundle }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
+    expect(validateRes.status).toBe(200);
+    const validateJson = (await validateRes.json()) as {
+      valid: boolean;
+      issues: Array<{ path: string; message: string }>;
+    };
+    expect(validateJson.valid).toBe(false);
+    expect(validateJson.issues.some((issue) => issue.path === "workflowVis.nodes")).toBe(true);
+  });
+
+  test("validates a bundle loaded from the GET endpoint", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const getRes = await handleApiRequest(new Request("http://localhost/api/workflows/demo"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+    expect(getRes.status).toBe(200);
+    const getJson = (await getRes.json()) as {
+      bundle: Record<string, unknown>;
+    };
+
+    const validateRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo/validate", {
+        method: "POST",
+        body: JSON.stringify({ bundle: getJson.bundle }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
+    expect(validateRes.status).toBe(200);
+    const validateJson = (await validateRes.json()) as {
+      valid: boolean;
+      issues: Array<{ severity: string; path: string; message: string }>;
+    };
+    expect(validateJson.valid).toBe(true);
+    expect(validateJson.issues.some((issue) => issue.message === "node payload file is missing")).toBe(false);
+  });
+
+  test("returns warnings for valid in-memory bundle validation", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const validateRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo/validate", {
+        method: "POST",
+        body: JSON.stringify({
+          bundle: {
+            workflow: {
+              workflowId: "demo",
+              description: "demo",
+              defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+              managerNodeId: "oyakata-manager",
+              subWorkflows: [],
+              nodes: [
+                {
+                  id: "oyakata-manager",
+                  kind: "manager",
+                  nodeFile: "node-oyakata-manager.json",
+                  completion: { type: "none" },
+                },
+                {
+                  id: "worker-1",
+                  kind: "task",
+                  nodeFile: "node-worker-1.json",
+                  completion: { type: "none" },
+                },
+              ],
+              edges: [],
+              loops: [],
+              branching: { mode: "fan-out" },
+            },
+            workflowVis: {
+              nodes: [
+                { id: "oyakata-manager", x: 10, y: 10, width: 100, height: 80 },
+                { id: "worker-1", x: 200, y: 10, width: 100, height: 80 },
+              ],
+              viewport: { x: 0, y: 0, zoom: 1 },
+            },
+            nodePayloads: {
+              "node-oyakata-manager.json": {
+                id: "oyakata-manager",
+                model: "tacogips/codex-agent",
+                promptTemplate: "manager",
+                variables: {},
+              },
+              "node-worker-1.json": {
+                id: "worker-1",
+                model: "tacogips/codex-agent",
+                promptTemplate: "worker",
+                variables: {},
+              },
+            },
+          },
+        }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
+    expect(validateRes.status).toBe(200);
+    const validateJson = (await validateRes.json()) as {
+      valid: boolean;
+      issues: Array<{ severity: string; path: string; message: string }>;
+      warnings: Array<{ severity: string; path: string; message: string }>;
+    };
+    expect(validateJson.valid).toBe(true);
+    expect(validateJson.warnings.length).toBeGreaterThan(0);
+    expect(validateJson.issues.some((issue) => issue.path === "workflowVis.viewport")).toBe(true);
+    expect(validateJson.issues.some((issue) => issue.path === "workflow.defaults.maxLoopIterations")).toBe(true);
+  });
+
   test("executes asynchronously and lists sessions", async () => {
     const root = await makeTempDir();
     await createWorkflowTemplate("demo", { workflowRoot: root });
@@ -163,6 +330,22 @@ describe("handleApiRequest", () => {
       sessions: Array<{ sessionId: string; workflowName: string; status: string }>;
     };
     expect(listJson.sessions.some((session) => session.sessionId === executeJson.sessionId)).toBe(true);
+
+    for (let index = 0; index < 40; index += 1) {
+      const statusRes = await handleApiRequest(
+        new Request(`http://localhost/api/sessions/${executeJson.sessionId}`),
+        context,
+      );
+      if (statusRes.status !== 200) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
+      const sessionJson = (await statusRes.json()) as { status: string };
+      if (["completed", "failed", "cancelled"].includes(sessionJson.status)) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
   });
 
   test("reruns a session from a specific node", async () => {

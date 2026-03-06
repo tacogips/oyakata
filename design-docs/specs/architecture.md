@@ -31,7 +31,8 @@ Outputs:
 
 2. Workflow Visualization State Manager
 - Loads/saves `workflow-vis.json`
-- Preserves browser-edited node layout (e.g., `x`, `y`, `width`, `height`)
+- Preserves browser-edited vertical node sequence (`order`)
+- Computes grouping presentation (`indent`, `color`) from graph + loop semantics
 - Keeps visualization state separate from runtime control logic
 
 3. Prompt Renderer
@@ -64,8 +65,8 @@ Outputs:
 - Restricts by default to local interface (`127.0.0.1`)
 
 8. Browser Workflow Editor (Svelte)
-- Visual graph editing for nodes, edges, branch/loop rules, and defaults
-- SVG-based canvas interaction for drag, pan/zoom, and edge drawing
+- Vertical workflow editing for nodes, edges, branch/loop rules, and defaults
+- Ordered list interaction for reorder, indent, and color-based group/loop expression
 - Node payload editing (`model`, `promptTemplate`, `variables`, `timeoutMs`)
 - Layout editing persisted to `workflow-vis.json`
 - Run controls and execution trace view for local sessions
@@ -307,7 +308,7 @@ Design constraints:
 ## UI/Execution Separation
 
 The browser editor is a control surface only:
-- UI state and drag layout are saved in `workflow-vis.json`.
+- UI state and vertical ordering metadata are saved in `workflow-vis.json`.
 - Runtime control data remains in `workflow.json` and `node-{id}.json`.
 - Execution records remain session artifacts; no runtime state is persisted in visualization file.
 

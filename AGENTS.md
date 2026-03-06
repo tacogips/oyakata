@@ -149,7 +149,7 @@ Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
 
 - `workflow.json` (purpose via `description`, graph/control-flow)
 - `workflow.json` (purpose via `description`, graph/control-flow, global defaults)
-- `workflow-vis.json` (browser visualization state such as node coordinates)
+- `workflow-vis.json` (browser visualization state for vertical ordering such as node `order`; `indent`/`color` are derived)
 - `node-{id}.json` (runtime node payload: `model`, `promptTemplate`, `variables`, optional `timeoutMs`)
 
 ## Development Environment

@@ -170,9 +170,12 @@ Example:
 ## workflow-vis.json
 
 `workflow-vis.json` contains browser visualization state only, for example:
-- node layout (`x`, `y`, `width`, `height`)
-- pan/zoom
-- optional UI grouping metadata
+- vertical node order (`order`)
+- optional UI metadata (`uiMeta`)
+
+Derived at render time (not persisted):
+- nesting depth (`indent`) for loop/group visualization
+- semantic color token (`color`) for loop/group visualization
 
 This file is updated by browser-side operations and should not define runtime execution semantics.
 

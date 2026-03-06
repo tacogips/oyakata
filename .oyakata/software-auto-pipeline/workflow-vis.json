@@ -1,18 +1,16 @@
 {
   "nodes": [
-    { "id": "oyakata-manager", "x": 60, "y": 120, "width": 220, "height": 100 },
-    { "id": "design", "x": 320, "y": 120, "width": 220, "height": 100 },
-    { "id": "design-discuss", "x": 580, "y": 120, "width": 220, "height": 100 },
-    { "id": "implement", "x": 840, "y": 120, "width": 220, "height": 100 },
-    { "id": "security-check", "x": 1100, "y": 120, "width": 220, "height": 100 },
-    { "id": "code-review", "x": 1360, "y": 120, "width": 220, "height": 100 },
-    { "id": "test", "x": 1620, "y": 120, "width": 220, "height": 100 },
-    { "id": "test-review", "x": 1880, "y": 120, "width": 220, "height": 100 },
-    { "id": "workflow-output", "x": 2140, "y": 120, "width": 220, "height": 100 }
+    { "id": "oyakata-manager", "order": 0 },
+    { "id": "design", "order": 1 },
+    { "id": "design-discuss", "order": 2 },
+    { "id": "implement", "order": 3 },
+    { "id": "security-check", "order": 4 },
+    { "id": "code-review", "order": 5 },
+    { "id": "test", "order": 6 },
+    { "id": "test-review", "order": 7 },
+    { "id": "workflow-output", "order": 8 }
   ],
-  "viewport": {
-    "x": 0,
-    "y": 0,
-    "zoom": 0.6
+  "uiMeta": {
+    "layout": "vertical"
   }
 }

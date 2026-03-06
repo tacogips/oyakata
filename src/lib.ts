@@ -171,3 +171,4 @@ export {
 } from "./workflow/runtime-db";
 export { loadWorkflowFromDisk } from "./workflow/load";
 export { runWorkflow } from "./workflow/engine";
+export { deriveWorkflowVisualization } from "./workflow/visualization";

@@ -32,7 +32,7 @@ Additional input assembly policy:
 Workflow data is intentionally split:
 - `workflow.json`: structure/control and workflow `description`
 - `node-{id}.json`: runtime payload (`model`, `promptTemplate`, `variables`)
-- `workflow-vis.json`: browser visualization state (`x`, `y`, `width`, `height`, etc.)
+- `workflow-vis.json`: browser visualization state (`order`, etc.; `indent`/`color` are derived)
 
 This avoids coupling runtime semantics with browser UI state.
 

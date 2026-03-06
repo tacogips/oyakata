@@ -155,16 +155,16 @@ Legacy read-compatible aliases:
 
 | Field | Type | Required | Notes |
 |------|------|----------|-------|
-| `nodes` | array of `VisNode` | Yes | Per-node layout |
-| `viewport` | object | No | Pan/zoom state |
+| `nodes` | array of `VisNode` | Yes | Per-node vertical ordering metadata |
 | `uiMeta` | object | No | Non-runtime UI metadata |
 
 `VisNode`:
 - `id: string`
-- `x: number`
-- `y: number`
-- `width: number`
-- `height: number`
+- `order: number` (non-negative integer; unique per node)
+
+Derived in UI/runtime presentation (not persisted in `workflow-vis.json`):
+- `indent` is computed from graph structure and loop semantics.
+- `color` is computed from loop/group scope.
 
 ### Runtime Execution Artifact (`{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`)
 

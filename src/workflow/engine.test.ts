@@ -69,13 +69,13 @@ async function createWorkflowFixture(root: string, workflowName: string, withLoo
   await writeJson(path.join(workflowDir, "workflow-vis.json"), {
     nodes: withLoop
       ? [
-          { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
-          { id: "step-1", x: 200, y: 0, width: 100, height: 100 },
-          { id: "done", x: 400, y: 0, width: 100, height: 100 },
+          { id: "oyakata-manager", order: 0 },
+          { id: "step-1", order: 1 },
+          { id: "done", order: 2 },
         ]
       : [
-          { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
-          { id: "step-1", x: 200, y: 0, width: 100, height: 100 },
+          { id: "oyakata-manager", order: 0 },
+          { id: "step-1", order: 1 },
         ],
   });
 
@@ -155,11 +155,11 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
 
   await writeJson(path.join(workflowDir, "workflow-vis.json"), {
     nodes: [
-      { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
-      { id: "a-input", x: 120, y: 0, width: 100, height: 100 },
-      { id: "a-output", x: 240, y: 0, width: 100, height: 100 },
-      { id: "b-input", x: 360, y: 0, width: 100, height: 100 },
-      { id: "b-output", x: 480, y: 0, width: 100, height: 100 },
+      { id: "oyakata-manager", order: 0 },
+      { id: "a-input", order: 1 },
+      { id: "a-output", order: 2 },
+      { id: "b-input", order: 3 },
+      { id: "b-output", order: 4 },
     ],
   });
 

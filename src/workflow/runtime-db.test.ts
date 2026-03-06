@@ -39,8 +39,8 @@ async function createWorkflowFixture(root: string, workflowName: string): Promis
 
   await writeJson(path.join(workflowDir, "workflow-vis.json"), {
     nodes: [
-      { id: "oyakata-manager", x: 0, y: 0, width: 100, height: 100 },
-      { id: "step-1", x: 200, y: 0, width: 100, height: 100 },
+      { id: "oyakata-manager", order: 0 },
+      { id: "step-1", order: 1 },
     ],
   });
 

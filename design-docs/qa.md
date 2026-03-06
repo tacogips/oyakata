@@ -25,7 +25,8 @@
   - `variables`
 
 5. workflow-vis.json role
-- Stores browser visualization state (e.g., node `x`, `y`).
+- Stores browser visualization state (e.g., node `order`).
+- `indent`/`color` are derived from graph and loop/group semantics at render time.
 - Updated by browser operations.
 
 6. Branch match policy

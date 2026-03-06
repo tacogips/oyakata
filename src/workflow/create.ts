@@ -87,11 +87,11 @@ export async function createWorkflowTemplate(
 
   const workflowVis = {
     nodes: [
-      { id: managerId, x: 80, y: 80, width: 260, height: 140 },
-      { id: inputId, x: 420, y: 80, width: 260, height: 140 },
-      { id: outputId, x: 760, y: 80, width: 260, height: 140 },
+      { id: managerId, order: 0 },
+      { id: inputId, order: 1 },
+      { id: outputId, order: 2 },
     ],
-    viewport: { x: 0, y: 0, zoom: 1 },
+    uiMeta: { layout: "vertical" },
   };
 
   const nodePayloads: Array<{ fileName: string; payload: object }> = [

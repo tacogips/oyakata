@@ -23,8 +23,8 @@ function makeValidRaw(): {
     },
     workflowVis: {
       nodes: [
-        { id: "oyakata-manager", x: 10, y: 10, width: 100, height: 80 },
-        { id: "worker-1", x: 200, y: 10, width: 100, height: 80 },
+        { id: "oyakata-manager", order: 0 },
+        { id: "worker-1", order: 1 },
       ],
     },
     nodePayloads: {
@@ -73,6 +73,49 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.variables).toEqual({ name: "legacy" });
   });
 
+  test("normalizes legacy coordinate layout to top-to-bottom then left-to-right order", () => {
+    const raw = makeValidRaw();
+    raw.workflowVis = {
+      nodes: [
+        { id: "worker-1", x: 200, y: 10, width: 100, height: 80 },
+        { id: "oyakata-manager", x: 10, y: 10, width: 100, height: 80 },
+      ],
+      viewport: { x: 0, y: 0, zoom: 1 },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.workflowVis.nodes).toEqual([
+      { id: "oyakata-manager", order: 0 },
+      { id: "worker-1", order: 1 },
+    ]);
+  });
+
+  test("ignores persisted indent and color metadata", () => {
+    const raw = makeValidRaw();
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0, indent: 0, color: "manager" },
+        { id: "worker-1", order: 1, indent: 1, color: "loop-main" },
+      ],
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.workflowVis.nodes).toEqual([
+      { id: "oyakata-manager", order: 0 },
+      { id: "worker-1", order: 1 },
+    ]);
+  });
+
   test("reports semantic errors for missing manager and bad node ids", () => {
     const raw = makeValidRaw();
     raw.workflow = {
@@ -90,6 +133,61 @@ describe("validateWorkflowBundle", () => {
     const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
     expect(messages).toContain("workflow.nodes[0].id:must match ^[a-z0-9][a-z0-9-]{1,63}$");
     expect(messages).toContain("workflow.managerNodeId:must reference an existing node id");
+  });
+
+  test("rejects duplicate vertical order entries", () => {
+    const raw = makeValidRaw();
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "worker-1", order: 0 },
+      ],
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflowVis.nodes[1].order:duplicate order '0'");
+  });
+
+  test("rejects missing vertical order for any workflow node", () => {
+    const raw = makeValidRaw();
+    raw.workflowVis = {
+      nodes: [{ id: "oyakata-manager", order: 0 }],
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflowVis.nodes:missing vertical order for node 'worker-1'");
+  });
+
+  test("rejects unknown vertical order ids", () => {
+    const raw = makeValidRaw();
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "worker-1", order: 1 },
+        { id: "ghost", order: 2 },
+      ],
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflowVis.nodes[2].id:references unknown node id");
   });
 
   test("accepts typed subWorkflows and subWorkflowConversations", () => {
@@ -134,11 +232,11 @@ describe("validateWorkflowBundle", () => {
     };
     raw.workflowVis = {
       nodes: [
-        { id: "oyakata-manager", x: 10, y: 10, width: 100, height: 80 },
-        { id: "sw1-input", x: 120, y: 10, width: 100, height: 80 },
-        { id: "sw1-output", x: 230, y: 10, width: 100, height: 80 },
-        { id: "sw2-input", x: 340, y: 10, width: 100, height: 80 },
-        { id: "sw2-output", x: 450, y: 10, width: 100, height: 80 },
+        { id: "oyakata-manager", order: 0 },
+        { id: "sw1-input", order: 1 },
+        { id: "sw1-output", order: 2 },
+        { id: "sw2-input", order: 3 },
+        { id: "sw2-output", order: 4 },
       ],
     };
     raw.nodePayloads = {
@@ -181,6 +279,306 @@ describe("validateWorkflowBundle", () => {
     }
     expect(result.value.workflow.subWorkflows).toHaveLength(2);
     expect(result.value.workflow.subWorkflowConversations?.[0]?.id).toBe("conv-1");
+  });
+
+  test("allows nested sub-workflow vertical groups", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
+        { id: "a-inner-input", kind: "input", nodeFile: "node-a-inner-input.json", completion: { type: "none" } },
+        { id: "a-inner-output", kind: "output", nodeFile: "node-a-inner-output.json", completion: { type: "none" } },
+        { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      subWorkflows: [
+        {
+          id: "a",
+          description: "a",
+          inputNodeId: "a-input",
+          outputNodeId: "a-output",
+          inputSources: [{ type: "human-input" }],
+        },
+        {
+          id: "a-inner",
+          description: "a-inner",
+          inputNodeId: "a-inner-input",
+          outputNodeId: "a-inner-output",
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "a-input", order: 1 },
+        { id: "a-inner-input", order: 2 },
+        { id: "a-inner-output", order: 3 },
+        { id: "a-output", order: 4 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-a-input.json": { id: "a-input", model: "tacogips/codex-agent", promptTemplate: "a-in", variables: {} },
+      "node-a-inner-input.json": { id: "a-inner-input", model: "tacogips/codex-agent", promptTemplate: "a-inner-in", variables: {} },
+      "node-a-inner-output.json": { id: "a-inner-output", model: "tacogips/codex-agent", promptTemplate: "a-inner-out", variables: {} },
+      "node-a-output.json": { id: "a-output", model: "tacogips/codex-agent", promptTemplate: "a-out", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+  });
+
+  test("rejects crossing sub-workflow vertical groups", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
+        { id: "b-input", kind: "input", nodeFile: "node-b-input.json", completion: { type: "none" } },
+        { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
+        { id: "b-output", kind: "output", nodeFile: "node-b-output.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      subWorkflows: [
+        {
+          id: "a",
+          description: "a",
+          inputNodeId: "a-input",
+          outputNodeId: "a-output",
+          inputSources: [{ type: "human-input" }],
+        },
+        {
+          id: "b",
+          description: "b",
+          inputNodeId: "b-input",
+          outputNodeId: "b-output",
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "a-input", order: 1 },
+        { id: "b-input", order: 2 },
+        { id: "a-output", order: 3 },
+        { id: "b-output", order: 4 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-a-input.json": { id: "a-input", model: "tacogips/codex-agent", promptTemplate: "a-in", variables: {} },
+      "node-a-output.json": { id: "a-output", model: "tacogips/codex-agent", promptTemplate: "a-out", variables: {} },
+      "node-b-input.json": { id: "b-input", model: "tacogips/codex-agent", promptTemplate: "b-in", variables: {} },
+      "node-b-output.json": { id: "b-output", model: "tacogips/codex-agent", promptTemplate: "b-out", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflow.subWorkflows:vertical subWorkflow groups 'a' and 'b' cross");
+  });
+
+  test("rejects loop continue target placed after the loop judge", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "worker-1", kind: "task", nodeFile: "node-worker-1.json", completion: { type: "none" } },
+        { id: "loop-judge", kind: "loop-judge", nodeFile: "node-loop-judge.json", completion: { type: "none" } },
+      ],
+      edges: [
+        { from: "oyakata-manager", to: "loop-judge", when: "always" },
+        { from: "loop-judge", to: "worker-1", when: "continue_round" },
+      ],
+      loops: [
+        {
+          id: "main-loop",
+          judgeNodeId: "loop-judge",
+          continueWhen: "continue_round",
+          exitWhen: "loop_exit",
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "loop-judge", order: 1 },
+        { id: "worker-1", order: 2 },
+      ],
+    };
+    raw.nodePayloads["node-loop-judge.json"] = {
+      id: "loop-judge",
+      model: "tacogips/codex-agent",
+      promptTemplate: "judge",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflow.loops[0].continueWhen:continue edge target 'worker-1' must appear before loop judge 'loop-judge' in vertical order");
+  });
+
+  test("rejects crossing loop scopes that cannot be represented vertically", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "loop-a-start", kind: "task", nodeFile: "node-loop-a-start.json", completion: { type: "none" } },
+        { id: "loop-b-start", kind: "task", nodeFile: "node-loop-b-start.json", completion: { type: "none" } },
+        { id: "loop-a-judge", kind: "loop-judge", nodeFile: "node-loop-a-judge.json", completion: { type: "none" } },
+        { id: "loop-b-judge", kind: "loop-judge", nodeFile: "node-loop-b-judge.json", completion: { type: "none" } },
+      ],
+      edges: [
+        { from: "loop-a-judge", to: "loop-a-start", when: "retry-a" },
+        { from: "loop-a-judge", to: "loop-b-judge", when: "exit-a" },
+        { from: "loop-b-judge", to: "loop-b-start", when: "retry-b" },
+        { from: "loop-b-judge", to: "loop-a-judge", when: "exit-b" },
+      ],
+      loops: [
+        { id: "loop-a", judgeNodeId: "loop-a-judge", continueWhen: "retry-a", exitWhen: "exit-a" },
+        { id: "loop-b", judgeNodeId: "loop-b-judge", continueWhen: "retry-b", exitWhen: "exit-b" },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "loop-a-start", order: 1 },
+        { id: "loop-b-start", order: 2 },
+        { id: "loop-a-judge", order: 3 },
+        { id: "loop-b-judge", order: 4 },
+      ],
+    };
+    raw.nodePayloads["node-loop-a-start.json"] = {
+      id: "loop-a-start",
+      model: "tacogips/codex-agent",
+      promptTemplate: "loop-a-start",
+      variables: {},
+    };
+    raw.nodePayloads["node-loop-b-start.json"] = {
+      id: "loop-b-start",
+      model: "tacogips/codex-agent",
+      promptTemplate: "loop-b-start",
+      variables: {},
+    };
+    raw.nodePayloads["node-loop-a-judge.json"] = {
+      id: "loop-a-judge",
+      model: "tacogips/codex-agent",
+      promptTemplate: "loop-a-judge",
+      variables: {},
+    };
+    raw.nodePayloads["node-loop-b-judge.json"] = {
+      id: "loop-b-judge",
+      model: "tacogips/codex-agent",
+      promptTemplate: "loop-b-judge",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflow.loops:vertical loop scopes 'loop-a' and 'loop-b' cross");
+  });
+
+  test("rejects crossing group and loop scopes that cannot be represented vertically", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "group-input", kind: "input", nodeFile: "node-group-input.json", completion: { type: "none" } },
+        { id: "loop-start", kind: "task", nodeFile: "node-loop-start.json", completion: { type: "none" } },
+        { id: "group-output", kind: "output", nodeFile: "node-group-output.json", completion: { type: "none" } },
+        { id: "loop-judge", kind: "loop-judge", nodeFile: "node-loop-judge.json", completion: { type: "none" } },
+      ],
+      edges: [
+        { from: "loop-judge", to: "loop-start", when: "retry" },
+        { from: "loop-judge", to: "oyakata-manager", when: "exit" },
+      ],
+      subWorkflows: [
+        {
+          id: "main-group",
+          description: "main-group",
+          inputNodeId: "group-input",
+          outputNodeId: "group-output",
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+      loops: [
+        { id: "main-loop", judgeNodeId: "loop-judge", continueWhen: "retry", exitWhen: "exit" },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "group-input", order: 1 },
+        { id: "loop-start", order: 2 },
+        { id: "group-output", order: 3 },
+        { id: "loop-judge", order: 4 },
+      ],
+    };
+    raw.nodePayloads["node-group-input.json"] = {
+      id: "group-input",
+      model: "tacogips/codex-agent",
+      promptTemplate: "group-input",
+      variables: {},
+    };
+    raw.nodePayloads["node-loop-start.json"] = {
+      id: "loop-start",
+      model: "tacogips/codex-agent",
+      promptTemplate: "loop-start",
+      variables: {},
+    };
+    raw.nodePayloads["node-group-output.json"] = {
+      id: "group-output",
+      model: "tacogips/codex-agent",
+      promptTemplate: "group-output",
+      variables: {},
+    };
+    raw.nodePayloads["node-loop-judge.json"] = {
+      id: "loop-judge",
+      model: "tacogips/codex-agent",
+      promptTemplate: "loop-judge",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain("workflow:vertical group and loop scopes 'main-group' and 'main-loop' cross");
   });
 
   test("rejects unsupported inert sub-workflow conversation policy and selection policy", () => {

@@ -42,7 +42,7 @@ Example:
 
 Required files:
 - `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose)
-- `workflow-vis.json`: browser visualization state (e.g., node `x`,`y`,`width`,`height`) and updated by browser operations
+- `workflow-vis.json`: browser visualization state for vertical flow rendering (node `order`; `indent/color` are derived from graph semantics)
 - `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`)
 
 ## Deterministic Mock Workflow Example

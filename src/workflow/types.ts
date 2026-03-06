@@ -130,15 +130,11 @@ export interface NodePayload {
 
 export interface VisNode {
   readonly id: string;
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
+  readonly order: number;
 }
 
 export interface WorkflowVisJson {
   readonly nodes: readonly VisNode[];
-  readonly viewport?: Readonly<Record<string, unknown>>;
   readonly uiMeta?: Readonly<Record<string, unknown>>;
 }
 
