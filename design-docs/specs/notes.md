@@ -51,7 +51,8 @@ Implicit transitions are avoided.
 - Loop limit fallback: use workflow global default when loop-local limit is omitted.
 - Completion: auto-complete nodes are allowed; success-judgment-free nodes can be configured.
 - Timeout: each node can define execution timeout, with workflow-level default fallback.
-- Conversation handoff: `oyakata` routes by explicit `OutputRef` (`sessionId`, `subWorkflowId`, `outputNodeId`, `nodeExecId`) instead of implicit latest-output inference.
+- Conversation handoff: `oyakata` routes by explicit `OutputRef` (`workflowExecutionId`, `subWorkflowId`, `outputNodeId`, `nodeExecId`) instead of implicit latest-output inference.
+- Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. The parent workflow manager writes only to the recipient sub-workflow manager inbox, and the recipient sub-workflow manager writes only to nodes inside that sub-workflow (validated via `subWorkflows[].nodeIds`). A re-executed/resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
 
 ### Completion-First Progression
 
@@ -60,4 +61,11 @@ This supports quality gates in collaborative writing workflows.
 
 ### Open Items
 
-See `design-docs/qa.md` for current decision status and any remaining confirmation items.
+- See `design-docs/qa.md` for current decision status and any remaining confirmation items.
+
+### Migration Rule
+
+- Existing workflow-run `sessionId` in runtime/session-store code is the old name for `workflowExecutionId`.
+- New design docs must use `workflowExecutionId` for workflow-run scope and `agentSessionId` for worker retry scope.
+- Bare `sessionId` is allowed only as a temporary compatibility alias in existing APIs and persisted workflow-run state.
+- Compatibility window is fixed: keep `sessionId` alias support through `2026-09-30`, then remove it in the first subsequent minor release.

@@ -77,11 +77,14 @@ Data safety:
 
 - `POST /api/workflows/:name/execute`
   - Request: optional runtime variable overrides and limits.
-  - Response: `sessionId`.
-- `GET /api/sessions/:sessionId`
+  - Response: `workflowExecutionId` (canonical) and `sessionId` (compatibility alias through `2026-09-30`).
+- `GET /api/workflow-executions/:workflowExecutionId`
   - Response: status, active node, completed nodes, branch/loop counters, failures.
-- `POST /api/sessions/:sessionId/cancel`
+- `POST /api/workflow-executions/:workflowExecutionId/cancel`
   - Response: cancellation accepted/ignored (already terminal).
+- Legacy compatibility through `2026-09-30`:
+  - `GET /api/sessions/:sessionId` (alias to `GET /api/workflow-executions/:workflowExecutionId`)
+  - `POST /api/sessions/:sessionId/cancel` (alias to `POST /api/workflow-executions/:workflowExecutionId/cancel`)
 
 ## Svelte UI Design
 

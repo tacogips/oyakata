@@ -12,11 +12,11 @@ Goal: improve output-to-next-input reliability by making handoff state explicit 
 
 Each node execution directory:
 
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/input.json`
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/output.json`
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/meta.json`
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/handoff.json` (new)
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/commit-message.txt` (new)
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/input.json`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/output.json`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/meta.json`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/handoff.json` (new)
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/commit-message.txt` (new)
 
 ### handoff.json
 
@@ -26,7 +26,7 @@ Fields:
 - `schemaVersion: 1`
 - `generatedAt: string` (ISO timestamp)
 - `nodeId: string`
-- `outputRef`: `{ sessionId, workflowId, outputNodeId, nodeExecId, artifactDir }`
+- `outputRef`: `{ workflowExecutionId, workflowId, subWorkflowId, outputNodeId, nodeExecId, artifactDir }`
 - `inputHash: "sha256:<hex>"`
 - `outputHash: "sha256:<hex>"`
 - `nextNodes: string[]`
@@ -40,7 +40,7 @@ Fields:
 - `fromNodeId: string`
 - `transitionWhen: string`
 - `status: "succeeded" | "failed" | "timed_out" | "cancelled"`
-- `sessionId: string`
+- `workflowExecutionId: string`
 - `workflowId: string`
 - `outputNodeId: string`
 - `nodeExecId: string`

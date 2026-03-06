@@ -56,7 +56,7 @@ Outputs:
 - Persists per-node input/output
 - Tracks completion evidence
 - Stores transition history
-- Writes node execution artifacts to `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`
+- Writes node execution artifacts to `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
 
 7. Local HTTP Server (`oyakata serve`)
 - Hosts browser UI (Svelte) and local API on one process
@@ -97,7 +97,7 @@ Workflow root resolution:
 ### Node Execution Artifact Contract
 
 Each node execution must persist artifacts under:
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
 
 Where:
 - `{artifact-root}` resolution order:
@@ -105,6 +105,7 @@ Where:
   2. `OYAKATA_ARTIFACT_ROOT`
   3. `./.oyakata/workflow` (default)
 - `{workflow_id}` is `workflow.json.workflowId`.
+- `{workflowExecutionId}` is the unique id for the enclosing workflow run.
 - `{node}` is the workflow node id.
 - `{node-exec-id}` is a unique execution id for that node run.
 
@@ -127,19 +128,26 @@ When a downstream input source is `human-input`, the manager requests input thro
 Node sequences may be represented as reusable `sub-workflow` units.
 
 Rules:
-- A sub-workflow must include exactly one `input` node and one `output` node.
+- A sub-workflow must include exactly one `input` node, one `output` node, and one `sub-manager` node (`sub oyakata`).
+- A sub-workflow must declare explicit `nodeIds` membership; mailbox writes from that sub-workflow manager are restricted to those `nodeIds`.
 - Sub-workflow `input` may receive data from:
   - direct human input
   - another workflow output
   - another node output
   - another sub-workflow output
 - A workflow must contain exactly one `oyakata` manager node.
+- The root workflow manager node (`kind: "root-manager"`) is distinct from sub-workflow manager nodes (`kind: "sub-manager"`).
 - The `oyakata` manager node is responsible for:
   - selecting and triggering sub-workflow execution
-  - resolving input bindings into each sub-workflow `input` node
+  - writing mailbox deliveries only to the recipient sub-workflow manager node for parent-to-sub-workflow or cross-sub-workflow handoff
   - collecting each sub-workflow `output` node result for downstream routing
   - routing messages between sub-workflows during conversation sessions
-  - mapping execution artifact outputs to downstream node inputs
+  - mapping execution artifact outputs to downstream sub-workflow manager inputs
+- Each sub-workflow manager node is responsible for:
+  - reading parent-workflow or peer-sub-workflow mailbox deliveries addressed to that sub-workflow
+  - resolving input bindings into child nodes inside the sub-workflow
+  - writing mailbox deliveries only to nodes that belong to the same sub-workflow
+  - collecting the sub-workflow `output` node result and returning it to the parent workflow manager
 
 ### Inter-Sub-Workflow Conversation
 
@@ -147,6 +155,8 @@ Two or more sub-workflows may exchange messages as a managed conversation.
 
 Rules:
 - Sub-workflows do not communicate directly; all messages are routed by the `oyakata` manager node.
+- Cross-sub-workflow transport terminates at the recipient sub-workflow manager node, never at a leaf task node inside that sub-workflow.
+- After receipt, the recipient sub-workflow manager node is solely responsible for routing the message to child nodes inside that sub-workflow.
 - Conversation participants are declared in workflow configuration.
 - Each conversation enforces termination controls:
   - max turn count
@@ -162,7 +172,7 @@ Rules:
 
 Deterministic handoff contract:
 - `oyakata` routes messages using explicit `OutputRef` metadata.
-- `OutputRef` must include at least: `sessionId`, `workflowId`, `subWorkflowId`, `outputNodeId`, `nodeExecId`, `artifactDir`.
+- `OutputRef` must include at least: `workflowExecutionId`, `workflowId`, `subWorkflowId`, `outputNodeId`, `nodeExecId`, and `artifactDir`.
 - Downstream consumers resolve input from `OutputRef` instead of implicit "latest output" behavior.
 - If an explicit `nodeExecId` is not provided in config, selection policy must be declared (`latest-succeeded`, `latest-any`, or `by-loop-iteration`).
 
@@ -172,6 +182,19 @@ VCS checkpoint contract:
 - `input.json` includes `upstreamOutputRefs` so downstream input provenance is explicit.
 - `commit-message.txt` provides a machine-friendly metadata template for Git/JJ checkpoints.
 - Detailed format is defined in `design-docs/specs/design-vcs-handoff-checkpoints.md`.
+
+Mailbox transport contract:
+- routed node-to-node delivery uses a file-based mailbox artifact under `{artifact-root}/{workflowId}/executions/{workflowExecutionId}/communications/{communicationId}/`
+- each communication has manager-written `inbox/` and `outbox/` directories
+- only the manager that owns the recipient scope writes recipient inbox files
+- the parent workflow manager may write only to a sub-workflow manager inbox for cross-boundary delivery
+- a sub-workflow manager may write only to nodes that belong to that same sub-workflow
+- worker nodes never perform direct peer-to-peer delivery
+- worker nodes consume manager-resolved `input.json`; they do not poll mailbox directories
+- the root workflow manager owns global `communicationId` allocation within one `workflowExecutionId`
+- one communication may have multiple `deliveryAttemptId` retries and optional AI/code-agent `agentSessionId` restarts
+- any send re-execution/rerun/resend must allocate a new `communicationId`
+- detailed storage and replay rules are defined in `design-docs/specs/design-node-mailbox.md`
 
 ### Node Model
 

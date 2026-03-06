@@ -8,7 +8,7 @@ Goal: make workflow and node structures unambiguous and reviewable by humans bef
 
 Scope:
 - File models (`workflow.json`, `node-{id}.json`, `workflow-vis.json`)
-- Runtime execution artifact model (`{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`)
+- Runtime execution artifact model (`{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`)
 - Internal normalized models used by runtime
 - Validation rules and review checklist
 
@@ -35,7 +35,7 @@ Scope:
 | `description` | string | Yes | Human-readable purpose |
 | `defaults.maxLoopIterations` | number | Yes | Initial default: `3` |
 | `defaults.nodeTimeoutMs` | number | Yes | Initial default: `120000` |
-| `managerNodeId` | string | Yes | Must reference the `oyakata` manager node id |
+| `managerNodeId` | string | Yes | Must reference the root `oyakata` manager node id (`kind: "root-manager"`) |
 | `subWorkflows` | array of `SubWorkflowRef` | Yes | Node sequence units with input/output boundaries |
 | `subWorkflowConversations` | array of `SubWorkflowConversation` | No | Conversation sessions between sub-workflows |
 | `nodes` | array of `WorkflowNodeRef` | Yes | Node definitions and references |
@@ -46,14 +46,16 @@ Scope:
 `WorkflowNodeRef`:
 - `id: string`
 - `nodeFile: string` (expected format: `node-{id}.json`)
-- `kind?: "task" | "branch-judge" | "loop-judge" | "manager" | "input" | "output"`
+- `kind?: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-manager" | "input" | "output"`
 - `completion?: CompletionRule` (optional for auto-complete nodes)
 
 `SubWorkflowRef`:
 - `id: string`
 - `description: string`
+- `managerNodeId: string` (must reference a node with `kind: "sub-manager"` owned by this sub-workflow)
 - `inputNodeId: string` (must reference a node with `kind: "input"`)
 - `outputNodeId: string` (must reference a node with `kind: "output"`)
+- `nodeIds: string[]` (all node ids owned by this sub-workflow, including `managerNodeId`, `inputNodeId`, `outputNodeId`)
 - `inputSources: SubWorkflowInputSource[]`
 
 `SubWorkflowInputSource`:
@@ -69,9 +71,9 @@ Scope:
 - `loopIteration?: number` (required when `mode = "by-loop-iteration"`)
 
 `OutputRef`:
-- `sessionId: string`
+- `workflowExecutionId: string`
 - `workflowId: string`
-- `subWorkflowId?: string`
+- `subWorkflowId: string`
 - `outputNodeId: string`
 - `nodeExecId: string`
 - `artifactDir: string`
@@ -166,11 +168,12 @@ Derived in UI/runtime presentation (not persisted in `workflow-vis.json`):
 - `indent` is computed from graph structure and loop semantics.
 - `color` is computed from loop/group scope.
 
-### Runtime Execution Artifact (`{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`)
+### Runtime Execution Artifact (`{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`)
 
 Path variable mapping:
 - `{artifact-root}` resolves via CLI/env/default policy
 - `{workflow_id}` = `workflow.json.workflowId`
+- `{workflowExecutionId}` = unique id for one workflow run
 
 | Field | Type | Required | Notes |
 |------|------|----------|-------|
@@ -201,7 +204,7 @@ These are normalized in memory after file loading and validation.
 - `adjacency: Map<NodeId, WorkflowEdge[]>`
 - `loops: Map<LoopId, LoopRule>`
 - `branchMode: "fan-out"`
-- `executionArtifactsRoot: string` (resolved: `{artifact-root}/{workflow_id}`)
+- `executionArtifactsRoot: string` (resolved: `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}`)
 
 ### RuntimeDefaults
 
@@ -222,8 +225,10 @@ These are normalized in memory after file loading and validation.
 
 - `id: SubWorkflowId`
 - `description: string`
+- `managerNodeId: NodeId`
 - `inputNodeId: NodeId`
 - `outputNodeId: NodeId`
+- `nodeIds: NodeId[]`
 - `inputSources: SubWorkflowInputSource[]`
 
 ### SubWorkflowConversation
@@ -239,9 +244,47 @@ These are normalized in memory after file loading and validation.
 - `conversationId: ConversationId`
 - `fromSubWorkflowId: SubWorkflowId`
 - `toSubWorkflowId: SubWorkflowId`
+- `fromManagerNodeId: NodeId`
+- `toManagerNodeId: NodeId`
 - `outputRef: OutputRef`
-- `payload: Record<string, unknown>`
+- `communicationId: string` (required mailbox-backed transport reference)
+- `payload?: Record<string, unknown>` (derived view only; not an independent transport source of truth)
 - `sentAt: string`
+
+### Communication (mailbox transport)
+
+- `workflowId: WorkflowId`
+- `workflowExecutionId: string`
+- `communicationId: string`
+- `fromNodeId: NodeId`
+- `toNodeId: NodeId`
+- `sourceNodeExecId: string`
+- `status: "created" | "delivered" | "consumed" | "delivery_failed" | "superseded"`
+- `activeDeliveryAttemptId?: string`
+- `deliveryAttemptIds: string[]`
+- `activeAgentSessionRef?: AgentSessionRef`
+- `agentSessionRefs?: AgentSessionRef[]`
+- `consumedByNodeExecId?: string`
+- `consumedAt?: string`
+- `supersededByCommunicationId?: string`
+- `supersededAt?: string`
+
+### DeliveryAttempt
+
+- `workflowExecutionId: string`
+- `communicationId: string`
+- `deliveryAttemptId: string`
+- `toNodeId: NodeId`
+- `status: "running" | "succeeded" | "failed" | "aborted"`
+- `startedAt: string`
+- `endedAt?: string`
+- `restartOfDeliveryAttemptId?: string`
+- `failureReason?: string`
+
+### AgentSessionRef
+
+- `allocatorNodeId: NodeId`
+- `agentSessionId: string`
 
 ### CompletionRule
 
@@ -270,7 +313,7 @@ These are normalized in memory after file loading and validation.
 
 - `nodeId: NodeId`
 - `nodeExecId: string`
-- `artifactDir: string` (format: `{artifact-root}/{workflow_id}/{node}/{node-exec-id}`)
+- `artifactDir: string` (format: `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}`)
 - `inputPath: string` (`{artifactDir}/input.json`)
 - `outputPath: string` (`{artifactDir}/output.json`)
 - `metaPath: string` (`{artifactDir}/meta.json`)
@@ -288,10 +331,21 @@ These are normalized in memory after file loading and validation.
 - Every `nodeFile` must exist in same workflow directory.
 - `node-{id}.json.id` must match referenced workflow node id.
 - Every executed node must create one unique `nodeExecId`.
-- Every executed node must persist artifacts in `{artifact-root}/{workflow_id}/{node}/{node-exec-id}`.
+- Every executed node must persist artifacts in `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}`.
 - Every artifact directory must include `input.json`, `output.json`, and `meta.json`.
-- `managerNodeId` must reference exactly one node with `kind: "manager"` (oyakata manager).
-- Every `subWorkflows[]` entry must reference existing `input`/`output` nodes.
+- `managerNodeId` must reference exactly one node with `kind: "root-manager"` (oyakata manager).
+- Every `subWorkflows[]` entry must reference existing `sub-manager`/`input`/`output` nodes.
+- Every `subWorkflows[].nodeIds[]` entry must reference an existing node id.
+- Every `subWorkflows[]` manager/input/output node id must be included in `subWorkflows[].nodeIds[]`.
+- No node id may belong to more than one `subWorkflows[].nodeIds[]`.
+- Every sub-workflow boundary delivery must terminate at the recipient sub-workflow `managerNodeId`.
+- Every `Communication` must belong to exactly one `workflowExecutionId`.
+- Every `Communication.communicationId` must be unique within one `workflowExecutionId`.
+- Every `DeliveryAttempt.deliveryAttemptId` must be unique within one `Communication`.
+- Every `AgentSessionRef` tuple (`allocatorNodeId`, `agentSessionId`) must be unique within one `workflowExecutionId`.
+- Every `Communication` must reference exactly one sender node and one recipient node.
+- Worker nodes must not write mailbox transport artifacts directly; only managers may materialize `Communication` and `DeliveryAttempt` records.
+- Every cross-sub-workflow communication must target recipient `subWorkflows[].managerNodeId`, not a leaf node.
 - `SubWorkflowInputSource.type = "workflow-output"` requires `workflowId`.
 - `SubWorkflowInputSource.type = "node-output"` requires `nodeId`.
 - `SubWorkflowInputSource.type = "sub-workflow-output"` requires `subWorkflowId`.
@@ -301,6 +355,7 @@ These are normalized in memory after file loading and validation.
 - Every `subWorkflowConversations[].participants[]` entry must reference an existing sub-workflow.
 - Every `SubWorkflowConversation.participants` set must contain at least two distinct sub-workflow ids.
 - Every `SubWorkflowConversation.maxTurns` must be a positive integer.
+- Every `ConversationMessageEnvelope.communicationId` must reference an existing `Communication.communicationId` in the same `workflowExecutionId`.
 - If `ConversationPolicy.turnPolicy = "score-priority"`, `convergencePolicy` must be present.
 - If `ConversationPolicy.parallelBranches.enabled = true`, `mergePolicy` must be present.
 - `ConversationBudgetPolicy.maxTokens` and `maxCostUsd` (if present) must be positive.
@@ -326,8 +381,8 @@ Before approving a workflow model:
 - Start path exists.
 - No unintended dead-end nodes.
 - Fan-out branches are intentional and bounded downstream.
-- `managerNodeId` exists and controls all sub-workflow starts.
-- Each sub-workflow has valid input and output boundary nodes.
+- `managerNodeId` exists and is `kind: "root-manager"` controlling all sub-workflow starts.
+- Each sub-workflow has valid manager, input, and output boundary nodes, and a complete `nodeIds` membership list.
 - Conversation participants map to existing sub-workflows and expected dialog topology.
 - Conversation policy is explicit for turn-taking, memory, tools, convergence, branching, and budget.
 - For subgroup pipelines (e.g. subgroup1->subgroup2->subgroup3->subgroup4), order and loop-back edge targets are explicit and reviewable.

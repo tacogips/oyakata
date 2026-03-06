@@ -99,9 +99,9 @@ Default policy for version control:
   - `.oyakata/<workflow-name>/workflow-vis.json`
   - `.oyakata/<workflow-name>/node-*.json`
 - Do not track runtime execution outputs in Git:
-  - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/input.json`
-  - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/output.json`
-  - `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/meta.json`
+  - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/input.json`
+  - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/output.json`
+  - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/meta.json`
   - dynamic session/progress files under `.oyakata-opt/`
 
 Default runtime paths:
@@ -135,11 +135,11 @@ Runtime SQLite behavior:
 Primary exports from `src/lib.ts`:
 - `inspectWorkflow(workflowName, options)`
 - `executeWorkflow({ workflowName, ...options })`
-- `resumeWorkflow({ sessionId, ...options })`
-- `rerunWorkflow({ sourceSessionId, fromNodeId, ...options })`
-- `getSession(sessionId, options)`
+- `resumeWorkflow({ sessionId, ...options })` (`sessionId` is the current public API name for workflow-run scope; design docs call this `workflowExecutionId`)
+- `rerunWorkflow({ sourceSessionId, fromNodeId, ...options })` (`sourceSessionId` is the current public API compatibility name for prior `workflowExecutionId`)
+- `getSession(sessionId, options)` (`sessionId` compatibility alias for `workflowExecutionId`)
 - `listSessions(options)` (runtime SQLite-backed summaries)
-- `getRuntimeSessionView(sessionId, options)` (session + node executions + node logs)
+- `getRuntimeSessionView(sessionId, options)` (session + node executions + node logs; `sessionId` is workflow-run scope)
 - low-level exports: `runWorkflow`, `runCli`, `startServe`, `handleApiRequest`, `loadWorkflowFromDisk`
 
 Minimal example:

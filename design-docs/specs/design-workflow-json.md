@@ -30,7 +30,7 @@ Workflow root resolution:
 3. `./.oyakata` (default)
 
 Runtime execution artifacts are written outside the workflow definition directory:
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
 
 Path variable mapping:
 - `{artifact-root}` resolution order:
@@ -59,6 +59,7 @@ Initial default values:
 - `defaults.nodeTimeoutMs = 120000`
 
 Conceptual example:
+(all complete sub-workflow examples must include required `nodeIds`; any abbreviated fragment is explicitly marked as partial and not copy-paste ready.)
 
 ```json
 {
@@ -73,8 +74,10 @@ Conceptual example:
     {
       "id": "writer-sw",
       "description": "Writer sequence.",
+      "managerNodeId": "writer-sub-oyakata",
       "inputNodeId": "writer-input",
       "outputNodeId": "writer-output",
+      "nodeIds": ["writer-sub-oyakata", "writer-input", "writer-draft", "writer-output"],
       "inputSources": [
         { "type": "human-input" }
       ]
@@ -82,8 +85,10 @@ Conceptual example:
     {
       "id": "reviewer-sw",
       "description": "Reviewer sequence.",
+      "managerNodeId": "reviewer-sub-oyakata",
       "inputNodeId": "reviewer-input",
       "outputNodeId": "reviewer-output",
+      "nodeIds": ["reviewer-sub-oyakata", "reviewer-input", "reviewer-review", "reviewer-output"],
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "writer-sw" }
       ]
@@ -102,7 +107,7 @@ Conceptual example:
       "id": "oyakata-manager",
       "name": "oyakata-manager",
       "description": "Coordinates sub-workflow execution.",
-      "kind": "manager",
+      "kind": "root-manager",
       "nodeFile": "node-oyakata-manager.json",
       "completion": {
         "type": "none"
@@ -182,7 +187,7 @@ This file is updated by browser-side operations and should not define runtime ex
 ## Runtime Execution Artifact Output
 
 Each node run produces one execution artifact directory:
-- `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
 
 Artifact payload contract:
 - `input.json`: resolved input payload used for this execution
@@ -205,8 +210,10 @@ Input handoff rule:
 
 - Node sequences can be grouped and defined as `subWorkflows`.
 - Each `subWorkflow` must define:
+  - `managerNodeId` (node kind `sub-manager`; the sub-workflow-local `sub oyakata`)
   - `inputNodeId` (node kind `input`)
   - `outputNodeId` (node kind `output`)
+  - `nodeIds` (complete membership list of node ids owned by that sub-workflow; must include `managerNodeId`, `inputNodeId`, and `outputNodeId`)
 - `inputSources` may reference:
   - human input (`type: "human-input"`)
   - another workflow output (`type: "workflow-output"`)
@@ -217,8 +224,11 @@ Input handoff rule:
   - `latest-succeeded`
   - `latest-any`
   - `by-loop-iteration` (with `loopIteration`)
-- `managerNodeId` is required and must point to a node with kind `manager`.
-- The manager node orchestrates sub-workflow execution and handles input/output handoff.
+- root `managerNodeId` is required and must point to a node with kind `root-manager`.
+- each `subWorkflow.managerNodeId` is required and must point to a node with kind `sub-manager`.
+- each `subWorkflow.nodeIds` is required and must fully define membership for mailbox write-boundary validation.
+- Parent-workflow or peer-sub-workflow deliveries must target the recipient sub-workflow `managerNodeId`.
+- The recipient sub-workflow manager orchestrates sub-workflow execution, reads that delivery, and instructs child nodes inside the sub-workflow.
 
 ## Inter-Sub-Workflow Conversation Semantics
 
@@ -238,17 +248,18 @@ Input handoff rule:
 - The manager node routes all messages between participants.
 - Conversation transcript is persisted in session runtime state and available as an input source for participating sub-workflows.
 - Routed conversation messages must carry an `OutputRef` that points to a concrete execution artifact (`output.json`) for deterministic replay and auditing.
+- Runtime transport for those routed messages is the node mailbox defined in `design-docs/specs/design-node-mailbox.md`; conversation transcript records are orchestration views over mailbox-backed deliveries, not a second transport channel.
 
 `OutputRef` conceptual shape:
 
 ```json
 {
-  "sessionId": "sess-20260223-001",
+  "workflowExecutionId": "wfexec-20260223-001",
   "workflowId": "impl-hardening-loop",
   "subWorkflowId": "subgroup2-security",
   "outputNodeId": "sg2-output",
   "nodeExecId": "nodeexec-00017",
-  "artifactDir": "{artifact-root}/impl-hardening-loop/sg2-output/nodeexec-00017"
+  "artifactDir": "{artifact-root}/impl-hardening-loop/executions/wfexec-20260223-001/nodes/sg2-output/nodeexec-00017"
 }
 ```
 
@@ -300,8 +311,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "subgroup1-antipattern",
       "description": "Anti-pattern review, counter-opinion, mediation, fix, commit.",
+      "managerNodeId": "sg1-sub-oyakata",
       "inputNodeId": "sg1-input",
       "outputNodeId": "sg1-output",
+      "nodeIds": ["sg1-sub-oyakata", "sg1-input", "sg1-output"],
       "inputSources": [
         { "type": "node-output", "nodeId": "implementation-node" }
       ]
@@ -309,8 +322,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "subgroup2-security",
       "description": "Security review, rebuttal, mediation, fix.",
+      "managerNodeId": "sg2-sub-oyakata",
       "inputNodeId": "sg2-input",
       "outputNodeId": "sg2-output",
+      "nodeIds": ["sg2-sub-oyakata", "sg2-input", "sg2-output"],
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "subgroup1-antipattern" }
       ]
@@ -318,8 +333,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "subgroup3-test-integrity",
       "description": "Validate tests are legitimate and not improper.",
+      "managerNodeId": "sg3-sub-oyakata",
       "inputNodeId": "sg3-input",
       "outputNodeId": "sg3-output",
+      "nodeIds": ["sg3-sub-oyakata", "sg3-input", "sg3-output"],
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "subgroup2-security" }
       ]
@@ -327,8 +344,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "subgroup4-round-close",
       "description": "Finalize round and prepare loop-judge decision.",
+      "managerNodeId": "sg4-sub-oyakata",
       "inputNodeId": "sg4-input",
       "outputNodeId": "sg4-output",
+      "nodeIds": ["sg4-sub-oyakata", "sg4-input", "sg4-output"],
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "subgroup3-test-integrity" }
       ]
@@ -404,8 +423,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "blackhat-sw",
       "description": "Attempt penetration based on latest code state and prior defenses.",
+      "managerNodeId": "blackhat-sub-oyakata",
       "inputNodeId": "blackhat-input",
       "outputNodeId": "blackhat-output",
+      "nodeIds": ["blackhat-sub-oyakata", "blackhat-input", "blackhat-output"],
       "inputSources": [
         { "type": "node-output", "nodeId": "user-implementation-instruction" },
         { "type": "sub-workflow-output", "subWorkflowId": "whitehat-sw" }
@@ -414,8 +435,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "whitehat-sw",
       "description": "Design and apply defenses for discovered vulnerabilities.",
+      "managerNodeId": "whitehat-sub-oyakata",
       "inputNodeId": "whitehat-input",
       "outputNodeId": "whitehat-output",
+      "nodeIds": ["whitehat-sub-oyakata", "whitehat-input", "whitehat-output"],
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "blackhat-sw" }
       ]
@@ -423,8 +446,10 @@ Conceptual `workflow.json` fragment:
     {
       "id": "mediation-sw",
       "description": "Judge coverage and decide continue/finish.",
+      "managerNodeId": "mediation-sub-oyakata",
       "inputNodeId": "mediation-input",
       "outputNodeId": "mediation-output",
+      "nodeIds": ["mediation-sub-oyakata", "mediation-input", "mediation-output"],
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "blackhat-sw" },
         { "type": "sub-workflow-output", "subWorkflowId": "whitehat-sw" }
@@ -515,10 +540,12 @@ Completion result drives transition decisions.
 - Node ids must be unique and match `^[a-z0-9][a-z0-9-]{1,63}$`.
 - All edge endpoints must exist.
 - Every executable node must have a valid `node-{id}.json`.
-- Every node execution must persist artifacts under `{artifact-root}/{workflow_id}/{node}/{node-exec-id}/`.
+- Every node execution must persist artifacts under `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`.
 - Every execution artifact directory must contain `input.json`, `output.json`, and `meta.json`.
-- `managerNodeId` must be present and point to a node with `kind: "manager"`.
-- Every `subWorkflow` must include one `input` and one `output` node reference.
+- `managerNodeId` must be present and point to a node with `kind: "root-manager"`.
+- Every `subWorkflow` must include one `sub-manager`, one `input`, and one `output` node reference.
+- Every `subWorkflow` must include `nodeIds`, and those node ids must be unique across sub-workflows.
+- Cross-sub-workflow deliveries must target the recipient `subWorkflow.managerNodeId`, not a leaf task node.
 - Every `subWorkflow.inputSources[]` entry must use one of:
   - `human-input`
   - `workflow-output`
