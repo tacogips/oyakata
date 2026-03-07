@@ -19,6 +19,7 @@ A workflow is the execution contract for session management. It must represent:
 - per-node completion conditions
 - graph connectivity between nodes
 - execution timeout policy (global default and per-node override)
+- optional workflow-level prompt policy for `oyakata` and worker prompt composition
 
 Runtime execution inputs for each executable node are separated into node files:
 - `model`
@@ -46,9 +47,12 @@ Example:
 ```
 
 Required files:
-- `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose)
+- `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose; may include `prompts.oyakataPromptTemplate` and `prompts.workerSystemPromptTemplate`)
 - `workflow-vis.json`: browser visualization state for vertical flow rendering (node `order`; `indent/color` are derived from graph semantics)
 - `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`, optional `output` contract)
+
+Runtime boundary rule:
+- root `oyakata` input and final workflow output are also exposed through mailbox artifacts, so external-to-root handoff uses the same mailbox model as parent/sub-workflow nesting
 
 ## Deterministic Mock Workflow Example
 

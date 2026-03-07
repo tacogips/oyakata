@@ -59,10 +59,16 @@ export interface CommunicationRecord {
   readonly toNodeId: string;
   readonly fromSubWorkflowId?: string;
   readonly toSubWorkflowId?: string;
-  readonly routingScope: "parent-to-sub-workflow" | "cross-sub-workflow" | "intra-sub-workflow";
+  readonly routingScope: "parent-to-sub-workflow" | "cross-sub-workflow" | "intra-sub-workflow" | "external-mailbox";
   readonly sourceNodeExecId: string;
   readonly payloadRef: OutputRef;
-  readonly deliveryKind: "edge-transition" | "loop-back" | "manual-rerun" | "conversation-turn";
+  readonly deliveryKind:
+    | "edge-transition"
+    | "loop-back"
+    | "manual-rerun"
+    | "conversation-turn"
+    | "external-input"
+    | "external-output";
   readonly transitionWhen: string;
   readonly status: "created" | "delivered" | "consumed" | "delivery_failed" | "superseded";
   readonly deliveryAttemptIds: readonly string[];

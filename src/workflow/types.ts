@@ -31,6 +31,11 @@ export interface WorkflowDefaults {
   readonly nodeTimeoutMs: number;
 }
 
+export interface WorkflowPrompts {
+  readonly oyakataPromptTemplate?: string;
+  readonly workerSystemPromptTemplate?: string;
+}
+
 export interface WorkflowNodeRef {
   readonly id: string;
   readonly nodeFile: string;
@@ -83,10 +88,10 @@ export interface SubWorkflowInputSource {
 export interface SubWorkflowRef {
   readonly id: string;
   readonly description: string;
-  readonly managerNodeId?: string;
+  readonly managerNodeId: string;
   readonly inputNodeId: string;
   readonly outputNodeId: string;
-  readonly nodeIds?: readonly string[];
+  readonly nodeIds: readonly string[];
   readonly inputSources: readonly SubWorkflowInputSource[];
 }
 
@@ -101,6 +106,7 @@ export interface WorkflowJson {
   readonly workflowId: string;
   readonly description: string;
   readonly defaults: WorkflowDefaults;
+  readonly prompts?: WorkflowPrompts;
   readonly managerNodeId: string;
   readonly subWorkflows: readonly SubWorkflowRef[];
   readonly subWorkflowConversations?: readonly SubWorkflowConversation[];

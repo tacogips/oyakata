@@ -21,6 +21,7 @@ import {
   type WorkflowEdge,
   type WorkflowJson,
   type WorkflowNodeRef,
+  type WorkflowPrompts,
   type WorkflowVisJson,
 } from "./types";
 
@@ -329,12 +330,12 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
 
   const id = readStringField(value, "id", path, issues);
   const description = readStringField(value, "description", path, issues);
-  const managerNodeId = typeof value["managerNodeId"] === "string" ? value["managerNodeId"] : undefined;
+  const managerNodeId = readStringField(value, "managerNodeId", path, issues);
   const inputNodeId = readStringField(value, "inputNodeId", path, issues);
   const outputNodeId = readStringField(value, "outputNodeId", path, issues);
   const nodeIdsRaw = value["nodeIds"];
-  if (nodeIdsRaw !== undefined && !Array.isArray(nodeIdsRaw)) {
-    issues.push(makeIssue("error", `${path}.nodeIds`, "must be an array when provided"));
+  if (!Array.isArray(nodeIdsRaw)) {
+    issues.push(makeIssue("error", `${path}.nodeIds`, "must be an array"));
   }
   const nodeIds = Array.isArray(nodeIdsRaw)
     ? nodeIdsRaw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
@@ -365,17 +366,24 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
         .filter((entry): entry is SubWorkflowInputSource => entry !== null)
     : [];
 
-  if (id === null || description === null || inputNodeId === null || outputNodeId === null) {
+  if (
+    id === null ||
+    description === null ||
+    managerNodeId === null ||
+    inputNodeId === null ||
+    outputNodeId === null ||
+    nodeIds === undefined
+  ) {
     return null;
   }
 
   return {
     id,
     description,
-    ...(managerNodeId === undefined ? {} : { managerNodeId }),
+    managerNodeId,
     inputNodeId,
     outputNodeId,
-    ...(nodeIds === undefined ? {} : { nodeIds }),
+    nodeIds,
     inputSources,
   };
 }
@@ -472,6 +480,33 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   const nodeTimeoutMs =
     isRecord(defaultsValue) && readNumberField(defaultsValue, "nodeTimeoutMs", "workflow.defaults", issues);
 
+  let prompts: WorkflowPrompts | undefined;
+  const promptsRaw = workflow["prompts"];
+  if (promptsRaw !== undefined) {
+    if (!isRecord(promptsRaw)) {
+      issues.push(makeIssue("error", "workflow.prompts", "must be an object when provided"));
+    } else {
+      const oyakataPromptTemplateRaw = promptsRaw["oyakataPromptTemplate"];
+      const workerSystemPromptTemplateRaw = promptsRaw["workerSystemPromptTemplate"];
+
+      if (oyakataPromptTemplateRaw !== undefined && typeof oyakataPromptTemplateRaw !== "string") {
+        issues.push(makeIssue("error", "workflow.prompts.oyakataPromptTemplate", "must be a string when provided"));
+      }
+      if (workerSystemPromptTemplateRaw !== undefined && typeof workerSystemPromptTemplateRaw !== "string") {
+        issues.push(
+          makeIssue("error", "workflow.prompts.workerSystemPromptTemplate", "must be a string when provided"),
+        );
+      }
+
+      prompts = {
+        ...(typeof oyakataPromptTemplateRaw === "string" ? { oyakataPromptTemplate: oyakataPromptTemplateRaw } : {}),
+        ...(typeof workerSystemPromptTemplateRaw === "string"
+          ? { workerSystemPromptTemplate: workerSystemPromptTemplateRaw }
+          : {}),
+      };
+    }
+  }
+
   const subWorkflowsRaw = workflow["subWorkflows"];
   if (!Array.isArray(subWorkflowsRaw)) {
     issues.push(makeIssue("error", "workflow.subWorkflows", "must be an array"));
@@ -554,6 +589,7 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
     workflowId,
     description,
     defaults: { maxLoopIterations, nodeTimeoutMs },
+    ...(prompts === undefined ? {} : { prompts }),
     managerNodeId,
     subWorkflows,
     ...(subWorkflowConversations === undefined ? {} : { subWorkflowConversations }),
@@ -1100,7 +1136,7 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       subWorkflowIdSet.add(subWorkflow.id);
     }
 
-    if (subWorkflow.managerNodeId !== undefined && subWorkflow.managerNodeId === subWorkflow.inputNodeId) {
+    if (subWorkflow.managerNodeId === subWorkflow.inputNodeId) {
       issues.push(
         makeIssue(
           "error",
@@ -1109,7 +1145,7 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         ),
       );
     }
-    if (subWorkflow.managerNodeId !== undefined && subWorkflow.managerNodeId === subWorkflow.outputNodeId) {
+    if (subWorkflow.managerNodeId === subWorkflow.outputNodeId) {
       issues.push(
         makeIssue(
           "error",
@@ -1128,39 +1164,37 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       );
     }
 
-    if (subWorkflow.managerNodeId !== undefined) {
-      if (!nodeIdSet.has(subWorkflow.managerNodeId)) {
+    if (!nodeIdSet.has(subWorkflow.managerNodeId)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].managerNodeId`,
+          "must reference an existing node id",
+        ),
+      );
+    } else {
+      const subManagerNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.managerNodeId);
+      if (subManagerNode?.kind !== "sub-manager") {
         issues.push(
           makeIssue(
             "error",
             `workflow.subWorkflows[${index}].managerNodeId`,
-            "must reference an existing node id",
+            "must reference a node with kind 'sub-manager'",
           ),
         );
-      } else {
-        const subManagerNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.managerNodeId);
-        if (subManagerNode?.kind !== "sub-manager" && subManagerNode?.kind !== "manager") {
-          issues.push(
-            makeIssue(
-              "error",
-              `workflow.subWorkflows[${index}].managerNodeId`,
-              "must reference a node with kind 'sub-manager'",
-            ),
-          );
-        }
       }
-      const existingBoundaryOwner = subWorkflowBoundaryOwnership.get(subWorkflow.managerNodeId);
-      if (existingBoundaryOwner !== undefined && existingBoundaryOwner !== subWorkflow.id) {
-        issues.push(
-          makeIssue(
-            "error",
-            `workflow.subWorkflows[${index}].managerNodeId`,
-            `manager node '${subWorkflow.managerNodeId}' is already assigned to subWorkflow '${existingBoundaryOwner}'`,
-          ),
-        );
-      } else {
-        subWorkflowBoundaryOwnership.set(subWorkflow.managerNodeId, subWorkflow.id);
-      }
+    }
+    const existingBoundaryOwner = subWorkflowBoundaryOwnership.get(subWorkflow.managerNodeId);
+    if (existingBoundaryOwner !== undefined && existingBoundaryOwner !== subWorkflow.id) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].managerNodeId`,
+          `manager node '${subWorkflow.managerNodeId}' is already assigned to subWorkflow '${existingBoundaryOwner}'`,
+        ),
+      );
+    } else {
+      subWorkflowBoundaryOwnership.set(subWorkflow.managerNodeId, subWorkflow.id);
     }
 
     if (!nodeIdSet.has(subWorkflow.inputNodeId)) {
@@ -1229,62 +1263,60 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       subWorkflowBoundaryOwnership.set(subWorkflow.outputNodeId, subWorkflow.id);
     }
 
-    if (subWorkflow.nodeIds !== undefined) {
-      if (subWorkflow.nodeIds.length === 0) {
-        issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must not be empty"));
-      }
-      const seenNodeIds = new Set<string>();
-      subWorkflow.nodeIds.forEach((nodeId, nodeIndex) => {
-        if (seenNodeIds.has(nodeId)) {
-          issues.push(
-            makeIssue(
-              "error",
-              `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
-              `duplicate node id '${nodeId}' is not allowed within the same subWorkflow`,
-            ),
-          );
-          return;
-        }
-        seenNodeIds.add(nodeId);
-        if (!nodeIdSet.has(nodeId)) {
-          issues.push(
-            makeIssue(
-              "error",
-              `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
-              "must reference an existing node id",
-            ),
-          );
-          return;
-        }
-        const existingOwner = subWorkflowNodeOwnership.get(nodeId);
-        if (existingOwner !== undefined && existingOwner !== subWorkflow.id) {
-          issues.push(
-            makeIssue(
-              "error",
-              `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
-              `node id '${nodeId}' is already owned by subWorkflow '${existingOwner}'`,
-            ),
-          );
-          return;
-        }
-        subWorkflowNodeOwnership.set(nodeId, subWorkflow.id);
-      });
-
-      if (subWorkflow.managerNodeId !== undefined && !subWorkflow.nodeIds.includes(subWorkflow.managerNodeId)) {
+    if (subWorkflow.nodeIds.length === 0) {
+      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must not be empty"));
+    }
+    const seenNodeIds = new Set<string>();
+    subWorkflow.nodeIds.forEach((nodeId, nodeIndex) => {
+      if (seenNodeIds.has(nodeId)) {
         issues.push(
           makeIssue(
             "error",
-            `workflow.subWorkflows[${index}].nodeIds`,
-            "must include managerNodeId when managerNodeId is provided",
+            `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
+            `duplicate node id '${nodeId}' is not allowed within the same subWorkflow`,
           ),
         );
+        return;
       }
-      if (!subWorkflow.nodeIds.includes(subWorkflow.inputNodeId)) {
-        issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include inputNodeId"));
+      seenNodeIds.add(nodeId);
+      if (!nodeIdSet.has(nodeId)) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
+            "must reference an existing node id",
+          ),
+        );
+        return;
       }
-      if (!subWorkflow.nodeIds.includes(subWorkflow.outputNodeId)) {
-        issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include outputNodeId"));
+      const existingOwner = subWorkflowNodeOwnership.get(nodeId);
+      if (existingOwner !== undefined && existingOwner !== subWorkflow.id) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
+            `node id '${nodeId}' is already owned by subWorkflow '${existingOwner}'`,
+          ),
+        );
+        return;
       }
+      subWorkflowNodeOwnership.set(nodeId, subWorkflow.id);
+    });
+
+    if (!subWorkflow.nodeIds.includes(subWorkflow.managerNodeId)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].nodeIds`,
+          "must include managerNodeId",
+        ),
+      );
+    }
+    if (!subWorkflow.nodeIds.includes(subWorkflow.inputNodeId)) {
+      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include inputNodeId"));
+    }
+    if (!subWorkflow.nodeIds.includes(subWorkflow.outputNodeId)) {
+      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include outputNodeId"));
     }
 
     subWorkflow.inputSources.forEach((source, sourceIndex) => {

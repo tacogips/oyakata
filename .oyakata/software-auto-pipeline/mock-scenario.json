@@ -8,6 +8,24 @@
       "step": "manager"
     }
   },
+  "main-oyakata": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "main-oyakata"
+    }
+  },
+  "workflow-input": {
+    "provider": "scenario-mock",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "step": "workflow-input"
+    }
+  },
   "design": {
     "provider": "scenario-mock",
     "when": {

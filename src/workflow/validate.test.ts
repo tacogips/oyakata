@@ -519,6 +519,7 @@ describe("validateWorkflowBundle", () => {
           managerNodeId: "sub-manager-a",
           inputNodeId: "input-a",
           outputNodeId: "output-a",
+          nodeIds: ["sub-manager-a", "input-a", "output-a"],
           inputSources: [{ type: "human-input" }],
         },
         {
@@ -527,6 +528,7 @@ describe("validateWorkflowBundle", () => {
           managerNodeId: "sub-manager-a",
           inputNodeId: "input-a",
           outputNodeId: "output-b",
+          nodeIds: ["sub-manager-a", "input-a", "output-b"],
           inputSources: [{ type: "human-input" }],
         },
       ],
@@ -590,6 +592,76 @@ describe("validateWorkflowBundle", () => {
     }
     expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[1].managerNodeId")).toBe(true);
     expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[1].inputNodeId")).toBe(true);
+  });
+
+  test("requires sub-workflow nodeIds membership lists", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      workflowId: "demo",
+      description: "demo",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [
+        {
+          id: "sw-a",
+          description: "A",
+          managerNodeId: "sub-manager-a",
+          inputNodeId: "input-a",
+          outputNodeId: "output-a",
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sub-manager-a", kind: "sub-manager", nodeFile: "node-sub-manager-a.json", completion: { type: "none" } },
+        { id: "input-a", kind: "input", nodeFile: "node-input-a.json", completion: { type: "none" } },
+        { id: "output-a", kind: "output", nodeFile: "node-output-a.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "sub-manager-a", order: 1 },
+        { id: "input-a", order: 2 },
+        { id: "output-a", order: 3 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sub-manager-a.json": {
+        id: "sub-manager-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sub-manager-a",
+        variables: {},
+      },
+      "node-input-a.json": {
+        id: "input-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "input-a",
+        variables: {},
+      },
+      "node-output-a.json": {
+        id: "output-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "output-a",
+        variables: {},
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[0].nodeIds")).toBe(true);
   });
 
   test("rejects reused boundary nodes inside the same sub-workflow", () => {
@@ -673,14 +745,16 @@ describe("validateWorkflowBundle", () => {
         {
           id: "sw-a",
           description: "A",
+          managerNodeId: "sub-manager-a",
           inputNodeId: "input-a",
           outputNodeId: "output-a",
-          nodeIds: ["input-a", "output-a", "input-a"],
+          nodeIds: ["sub-manager-a", "input-a", "output-a", "input-a"],
           inputSources: [{ type: "human-input" }],
         },
       ],
       nodes: [
         { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sub-manager-a", kind: "sub-manager", nodeFile: "node-sub-manager-a.json", completion: { type: "none" } },
         { id: "input-a", kind: "input", nodeFile: "node-input-a.json", completion: { type: "none" } },
         { id: "output-a", kind: "output", nodeFile: "node-output-a.json", completion: { type: "none" } },
       ],
@@ -691,8 +765,9 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", order: 0 },
-        { id: "input-a", order: 1 },
-        { id: "output-a", order: 2 },
+        { id: "sub-manager-a", order: 1 },
+        { id: "input-a", order: 2 },
+        { id: "output-a", order: 3 },
       ],
     };
     raw.nodePayloads = {
@@ -700,6 +775,12 @@ describe("validateWorkflowBundle", () => {
         id: "oyakata-manager",
         model: "tacogips/codex-agent",
         promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sub-manager-a.json": {
+        id: "sub-manager-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sub-manager-a",
         variables: {},
       },
       "node-input-a.json": {
@@ -724,8 +805,86 @@ describe("validateWorkflowBundle", () => {
     expect(
       result.error.some(
         (issue) =>
-          issue.path === "workflow.subWorkflows[0].nodeIds[2]" &&
+          issue.path === "workflow.subWorkflows[0].nodeIds[3]" &&
           issue.message.includes("duplicate node id 'input-a'"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects sub-workflow managerNodeId that does not reference a sub-manager node", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      workflowId: "demo",
+      description: "demo",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [
+        {
+          id: "sw-a",
+          description: "A",
+          managerNodeId: "plain-manager-a",
+          inputNodeId: "input-a",
+          outputNodeId: "output-a",
+          nodeIds: ["plain-manager-a", "input-a", "output-a"],
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "plain-manager-a", kind: "manager", nodeFile: "node-plain-manager-a.json", completion: { type: "none" } },
+        { id: "input-a", kind: "input", nodeFile: "node-input-a.json", completion: { type: "none" } },
+        { id: "output-a", kind: "output", nodeFile: "node-output-a.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "plain-manager-a", order: 1 },
+        { id: "input-a", order: 2 },
+        { id: "output-a", order: 3 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-plain-manager-a.json": {
+        id: "plain-manager-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "plain-manager-a",
+        variables: {},
+      },
+      "node-input-a.json": {
+        id: "input-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "input-a",
+        variables: {},
+      },
+      "node-output-a.json": {
+        id: "output-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "output-a",
+        variables: {},
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflows[0].managerNodeId" &&
+          issue.message.includes("kind 'sub-manager'"),
       ),
     ).toBe(true);
   });
@@ -789,10 +948,16 @@ describe("validateWorkflowBundle", () => {
     const raw = makeValidRaw();
     raw.workflow = {
       ...(raw.workflow as Record<string, unknown>),
+      prompts: {
+        oyakataPromptTemplate: "Coordinate {{topic}}.",
+        workerSystemPromptTemplate: "Return the node payload for {{topic}}.",
+      },
       nodes: [
         { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sw1-manager", kind: "sub-manager", nodeFile: "node-sw1-manager.json", completion: { type: "none" } },
         { id: "sw1-input", kind: "input", nodeFile: "node-sw1-input.json", completion: { type: "none" } },
         { id: "sw1-output", kind: "output", nodeFile: "node-sw1-output.json", completion: { type: "none" } },
+        { id: "sw2-manager", kind: "sub-manager", nodeFile: "node-sw2-manager.json", completion: { type: "none" } },
         { id: "sw2-input", kind: "input", nodeFile: "node-sw2-input.json", completion: { type: "none" } },
         { id: "sw2-output", kind: "output", nodeFile: "node-sw2-output.json", completion: { type: "none" } },
       ],
@@ -804,15 +969,19 @@ describe("validateWorkflowBundle", () => {
         {
           id: "sw1",
           description: "first",
+          managerNodeId: "sw1-manager",
           inputNodeId: "sw1-input",
           outputNodeId: "sw1-output",
+          nodeIds: ["sw1-manager", "sw1-input", "sw1-output"],
           inputSources: [{ type: "human-input" }],
         },
         {
           id: "sw2",
           description: "second",
+          managerNodeId: "sw2-manager",
           inputNodeId: "sw2-input",
           outputNodeId: "sw2-output",
+          nodeIds: ["sw2-manager", "sw2-input", "sw2-output"],
           inputSources: [{ type: "sub-workflow-output", subWorkflowId: "sw1" }],
         },
       ],
@@ -828,10 +997,12 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", order: 0 },
-        { id: "sw1-input", order: 1 },
-        { id: "sw1-output", order: 2 },
-        { id: "sw2-input", order: 3 },
-        { id: "sw2-output", order: 4 },
+        { id: "sw1-manager", order: 1 },
+        { id: "sw1-input", order: 2 },
+        { id: "sw1-output", order: 3 },
+        { id: "sw2-manager", order: 4 },
+        { id: "sw2-input", order: 5 },
+        { id: "sw2-output", order: 6 },
       ],
     };
     raw.nodePayloads = {
@@ -839,6 +1010,12 @@ describe("validateWorkflowBundle", () => {
         id: "oyakata-manager",
         model: "tacogips/codex-agent",
         promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sw1-manager.json": {
+        id: "sw1-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "m1",
         variables: {},
       },
       "node-sw1-input.json": {
@@ -851,6 +1028,12 @@ describe("validateWorkflowBundle", () => {
         id: "sw1-output",
         model: "tacogips/codex-agent",
         promptTemplate: "out1",
+        variables: {},
+      },
+      "node-sw2-manager.json": {
+        id: "sw2-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "m2",
         variables: {},
       },
       "node-sw2-input.json": {
@@ -872,6 +1055,8 @@ describe("validateWorkflowBundle", () => {
     if (!result.ok) {
       return;
     }
+    expect(result.value.workflow.prompts?.oyakataPromptTemplate).toBe("Coordinate {{topic}}.");
+    expect(result.value.workflow.prompts?.workerSystemPromptTemplate).toBe("Return the node payload for {{topic}}.");
     expect(result.value.workflow.subWorkflows).toHaveLength(2);
     expect(result.value.workflow.subWorkflowConversations?.[0]?.id).toBe("conv-1");
   });
@@ -882,7 +1067,9 @@ describe("validateWorkflowBundle", () => {
       ...(raw.workflow as Record<string, unknown>),
       nodes: [
         { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "a-manager", kind: "sub-manager", nodeFile: "node-a-manager.json", completion: { type: "none" } },
         { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
+        { id: "a-inner-manager", kind: "sub-manager", nodeFile: "node-a-inner-manager.json", completion: { type: "none" } },
         { id: "a-inner-input", kind: "input", nodeFile: "node-a-inner-input.json", completion: { type: "none" } },
         { id: "a-inner-output", kind: "output", nodeFile: "node-a-inner-output.json", completion: { type: "none" } },
         { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
@@ -892,15 +1079,19 @@ describe("validateWorkflowBundle", () => {
         {
           id: "a",
           description: "a",
+          managerNodeId: "a-manager",
           inputNodeId: "a-input",
           outputNodeId: "a-output",
+          nodeIds: ["a-manager", "a-input", "a-output"],
           inputSources: [{ type: "human-input" }],
         },
         {
           id: "a-inner",
           description: "a-inner",
+          managerNodeId: "a-inner-manager",
           inputNodeId: "a-inner-input",
           outputNodeId: "a-inner-output",
+          nodeIds: ["a-inner-manager", "a-inner-input", "a-inner-output"],
           inputSources: [{ type: "human-input" }],
         },
       ],
@@ -908,10 +1099,12 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", order: 0 },
-        { id: "a-input", order: 1 },
-        { id: "a-inner-input", order: 2 },
-        { id: "a-inner-output", order: 3 },
-        { id: "a-output", order: 4 },
+        { id: "a-manager", order: 1 },
+        { id: "a-input", order: 2 },
+        { id: "a-inner-manager", order: 3 },
+        { id: "a-inner-input", order: 4 },
+        { id: "a-inner-output", order: 5 },
+        { id: "a-output", order: 6 },
       ],
     };
     raw.nodePayloads = {
@@ -921,7 +1114,14 @@ describe("validateWorkflowBundle", () => {
         promptTemplate: "manager",
         variables: {},
       },
+      "node-a-manager.json": { id: "a-manager", model: "tacogips/codex-agent", promptTemplate: "a-manager", variables: {} },
       "node-a-input.json": { id: "a-input", model: "tacogips/codex-agent", promptTemplate: "a-in", variables: {} },
+      "node-a-inner-manager.json": {
+        id: "a-inner-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "a-inner-manager",
+        variables: {},
+      },
       "node-a-inner-input.json": { id: "a-inner-input", model: "tacogips/codex-agent", promptTemplate: "a-inner-in", variables: {} },
       "node-a-inner-output.json": { id: "a-inner-output", model: "tacogips/codex-agent", promptTemplate: "a-inner-out", variables: {} },
       "node-a-output.json": { id: "a-output", model: "tacogips/codex-agent", promptTemplate: "a-out", variables: {} },
@@ -937,7 +1137,9 @@ describe("validateWorkflowBundle", () => {
       ...(raw.workflow as Record<string, unknown>),
       nodes: [
         { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "a-manager", kind: "sub-manager", nodeFile: "node-a-manager.json", completion: { type: "none" } },
         { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
+        { id: "b-manager", kind: "sub-manager", nodeFile: "node-b-manager.json", completion: { type: "none" } },
         { id: "b-input", kind: "input", nodeFile: "node-b-input.json", completion: { type: "none" } },
         { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
         { id: "b-output", kind: "output", nodeFile: "node-b-output.json", completion: { type: "none" } },
@@ -947,15 +1149,19 @@ describe("validateWorkflowBundle", () => {
         {
           id: "a",
           description: "a",
+          managerNodeId: "a-manager",
           inputNodeId: "a-input",
           outputNodeId: "a-output",
+          nodeIds: ["a-manager", "a-input", "a-output"],
           inputSources: [{ type: "human-input" }],
         },
         {
           id: "b",
           description: "b",
+          managerNodeId: "b-manager",
           inputNodeId: "b-input",
           outputNodeId: "b-output",
+          nodeIds: ["b-manager", "b-input", "b-output"],
           inputSources: [{ type: "human-input" }],
         },
       ],
@@ -963,10 +1169,12 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", order: 0 },
-        { id: "a-input", order: 1 },
-        { id: "b-input", order: 2 },
-        { id: "a-output", order: 3 },
-        { id: "b-output", order: 4 },
+        { id: "a-manager", order: 1 },
+        { id: "a-input", order: 2 },
+        { id: "b-manager", order: 3 },
+        { id: "b-input", order: 4 },
+        { id: "a-output", order: 5 },
+        { id: "b-output", order: 6 },
       ],
     };
     raw.nodePayloads = {
@@ -976,8 +1184,10 @@ describe("validateWorkflowBundle", () => {
         promptTemplate: "manager",
         variables: {},
       },
+      "node-a-manager.json": { id: "a-manager", model: "tacogips/codex-agent", promptTemplate: "a-manager", variables: {} },
       "node-a-input.json": { id: "a-input", model: "tacogips/codex-agent", promptTemplate: "a-in", variables: {} },
       "node-a-output.json": { id: "a-output", model: "tacogips/codex-agent", promptTemplate: "a-out", variables: {} },
+      "node-b-manager.json": { id: "b-manager", model: "tacogips/codex-agent", promptTemplate: "b-manager", variables: {} },
       "node-b-input.json": { id: "b-input", model: "tacogips/codex-agent", promptTemplate: "b-in", variables: {} },
       "node-b-output.json": { id: "b-output", model: "tacogips/codex-agent", promptTemplate: "b-out", variables: {} },
     };
@@ -1110,6 +1320,7 @@ describe("validateWorkflowBundle", () => {
       ...(raw.workflow as Record<string, unknown>),
       nodes: [
         { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "group-manager", kind: "sub-manager", nodeFile: "node-group-manager.json", completion: { type: "none" } },
         { id: "group-input", kind: "input", nodeFile: "node-group-input.json", completion: { type: "none" } },
         { id: "loop-start", kind: "task", nodeFile: "node-loop-start.json", completion: { type: "none" } },
         { id: "group-output", kind: "output", nodeFile: "node-group-output.json", completion: { type: "none" } },
@@ -1123,8 +1334,10 @@ describe("validateWorkflowBundle", () => {
         {
           id: "main-group",
           description: "main-group",
+          managerNodeId: "group-manager",
           inputNodeId: "group-input",
           outputNodeId: "group-output",
+          nodeIds: ["group-manager", "group-input", "loop-start", "group-output"],
           inputSources: [{ type: "human-input" }],
         },
       ],
@@ -1135,11 +1348,18 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", order: 0 },
-        { id: "group-input", order: 1 },
-        { id: "loop-start", order: 2 },
-        { id: "group-output", order: 3 },
-        { id: "loop-judge", order: 4 },
+        { id: "group-manager", order: 1 },
+        { id: "group-input", order: 2 },
+        { id: "loop-start", order: 3 },
+        { id: "group-output", order: 4 },
+        { id: "loop-judge", order: 5 },
       ],
+    };
+    raw.nodePayloads["node-group-manager.json"] = {
+      id: "group-manager",
+      model: "tacogips/codex-agent",
+      promptTemplate: "group-manager",
+      variables: {},
     };
     raw.nodePayloads["node-group-input.json"] = {
       id: "group-input",
@@ -1180,12 +1400,20 @@ describe("validateWorkflowBundle", () => {
     const raw = makeValidRaw();
     raw.workflow = {
       ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sw1-manager", kind: "sub-manager", nodeFile: "node-sw1-manager.json", completion: { type: "none" } },
+        { id: "sw1-input", kind: "input", nodeFile: "node-sw1-input.json", completion: { type: "none" } },
+        { id: "sw1-output", kind: "output", nodeFile: "node-sw1-output.json", completion: { type: "none" } },
+      ],
       subWorkflows: [
         {
           id: "sw1",
           description: "first",
-          inputNodeId: "oyakata-manager",
-          outputNodeId: "worker-1",
+          managerNodeId: "sw1-manager",
+          inputNodeId: "sw1-input",
+          outputNodeId: "sw1-output",
+          nodeIds: ["sw1-manager", "sw1-input", "sw1-output"],
           inputSources: [
             {
               type: "human-input",
@@ -1203,6 +1431,40 @@ describe("validateWorkflowBundle", () => {
           conversationPolicy: { turnPolicy: "round-robin" },
         },
       ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "sw1-manager", order: 1 },
+        { id: "sw1-input", order: 2 },
+        { id: "sw1-output", order: 3 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sw1-manager.json": {
+        id: "sw1-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sw1-manager",
+        variables: {},
+      },
+      "node-sw1-input.json": {
+        id: "sw1-input",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sw1-input",
+        variables: {},
+      },
+      "node-sw1-output.json": {
+        id: "sw1-output",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sw1-output",
+        variables: {},
+      },
     };
 
     const result = validateWorkflowBundle(raw);
@@ -1223,8 +1485,10 @@ describe("validateWorkflowBundle", () => {
       ...(raw.workflow as Record<string, unknown>),
       nodes: [
         { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sw1-manager", kind: "sub-manager", nodeFile: "node-sw1-manager.json", completion: { type: "none" } },
         { id: "sw1-input", kind: "input", nodeFile: "node-sw1-input.json", completion: { type: "none" } },
         { id: "sw1-output", kind: "output", nodeFile: "node-sw1-output.json", completion: { type: "none" } },
+        { id: "sw2-manager", kind: "sub-manager", nodeFile: "node-sw2-manager.json", completion: { type: "none" } },
         { id: "sw2-input", kind: "input", nodeFile: "node-sw2-input.json", completion: { type: "none" } },
         { id: "sw2-output", kind: "output", nodeFile: "node-sw2-output.json", completion: { type: "none" } },
       ],
@@ -1233,15 +1497,19 @@ describe("validateWorkflowBundle", () => {
         {
           id: "sw1",
           description: "first",
+          managerNodeId: "sw1-manager",
           inputNodeId: "sw1-input",
           outputNodeId: "sw1-output",
+          nodeIds: ["sw1-manager", "sw1-input", "sw1-output"],
           inputs: [{ type: "human-input" }],
         },
         {
           id: "sw2",
           description: "second",
+          managerNodeId: "sw2-manager",
           inputNodeId: "sw2-input",
           outputNodeId: "sw2-output",
+          nodeIds: ["sw2-manager", "sw2-input", "sw2-output"],
           inputSources: [{ type: "sub-workflow-output", subWorkflowId: "sw1" }],
         },
       ],
@@ -1257,10 +1525,12 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", x: 10, y: 10, width: 100, height: 80 },
-        { id: "sw1-input", x: 120, y: 10, width: 100, height: 80 },
-        { id: "sw1-output", x: 230, y: 10, width: 100, height: 80 },
-        { id: "sw2-input", x: 340, y: 10, width: 100, height: 80 },
-        { id: "sw2-output", x: 450, y: 10, width: 100, height: 80 },
+        { id: "sw1-manager", x: 120, y: 10, width: 100, height: 80 },
+        { id: "sw1-input", x: 230, y: 10, width: 100, height: 80 },
+        { id: "sw1-output", x: 340, y: 10, width: 100, height: 80 },
+        { id: "sw2-manager", x: 450, y: 10, width: 100, height: 80 },
+        { id: "sw2-input", x: 560, y: 10, width: 100, height: 80 },
+        { id: "sw2-output", x: 670, y: 10, width: 100, height: 80 },
       ],
     };
     raw.nodePayloads = {
@@ -1268,6 +1538,12 @@ describe("validateWorkflowBundle", () => {
         id: "oyakata-manager",
         model: "tacogips/codex-agent",
         promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sw1-manager.json": {
+        id: "sw1-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "m1",
         variables: {},
       },
       "node-sw1-input.json": {
@@ -1280,6 +1556,12 @@ describe("validateWorkflowBundle", () => {
         id: "sw1-output",
         model: "tacogips/codex-agent",
         promptTemplate: "out1",
+        variables: {},
+      },
+      "node-sw2-manager.json": {
+        id: "sw2-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "m2",
         variables: {},
       },
       "node-sw2-input.json": {

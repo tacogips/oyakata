@@ -91,9 +91,9 @@ describe("deriveWorkflowVisualization", () => {
 
   test("derives sub-workflow group indent and color", () => {
     const workflow = makeBaseWorkflow(
-      ["oyakata-manager", "group-input", "group-output", "done"],
+      ["oyakata-manager", "group-manager", "group-input", "group-output", "done"],
       [
-        { from: "oyakata-manager", to: "group-input", when: "always" },
+        { from: "oyakata-manager", to: "group-manager", when: "always" },
         { from: "group-input", to: "group-output", when: "always" },
         { from: "group-output", to: "done", when: "always" },
       ],
@@ -102,6 +102,7 @@ describe("deriveWorkflowVisualization", () => {
       ...workflow,
       nodes: [
         { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
+        { id: "group-manager", nodeFile: "node-group-manager.json", kind: "sub-manager", completion: { type: "none" } },
         { id: "group-input", nodeFile: "node-group-input.json", kind: "input", completion: { type: "none" } },
         { id: "group-output", nodeFile: "node-group-output.json", kind: "output", completion: { type: "none" } },
         { id: "done", nodeFile: "node-done.json", kind: "output", completion: { type: "none" } },
@@ -110,8 +111,10 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "main-group",
           description: "main",
+          managerNodeId: "group-manager",
           inputNodeId: "group-input",
           outputNodeId: "group-output",
+          nodeIds: ["group-manager", "group-input", "group-output"],
           inputSources: [{ type: "human-input" }],
         },
       ],
@@ -119,23 +122,24 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow: grouped,
-      workflowVis: makeVis(["oyakata-manager", "group-input", "group-output", "done"]),
+      workflowVis: makeVis(["oyakata-manager", "group-manager", "group-input", "group-output", "done"]),
     });
 
     expect(derived).toEqual([
       { id: "oyakata-manager", order: 0, indent: 0, color: "default" },
-      { id: "group-input", order: 1, indent: 1, color: "group:main-group" },
-      { id: "group-output", order: 2, indent: 1, color: "group:main-group" },
-      { id: "done", order: 3, indent: 0, color: "default" },
+      { id: "group-manager", order: 1, indent: 0, color: "default" },
+      { id: "group-input", order: 2, indent: 1, color: "group:main-group" },
+      { id: "group-output", order: 3, indent: 1, color: "group:main-group" },
+      { id: "done", order: 4, indent: 0, color: "default" },
     ]);
   });
 
   test("nests loop scope inside a sub-workflow group", () => {
     const workflow = {
       ...makeBaseWorkflow(
-        ["oyakata-manager", "group-input", "implement", "test-review", "group-output", "done"],
+        ["oyakata-manager", "group-manager", "group-input", "implement", "test-review", "group-output", "done"],
         [
-          { from: "oyakata-manager", to: "group-input", when: "always" },
+          { from: "oyakata-manager", to: "group-manager", when: "always" },
           { from: "group-input", to: "implement", when: "always" },
           { from: "implement", to: "test-review", when: "always" },
           { from: "test-review", to: "implement", when: "continue_round" },
@@ -145,6 +149,7 @@ describe("deriveWorkflowVisualization", () => {
       ),
       nodes: [
         { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
+        { id: "group-manager", nodeFile: "node-group-manager.json", kind: "sub-manager", completion: { type: "none" } },
         { id: "group-input", nodeFile: "node-group-input.json", kind: "input", completion: { type: "none" } },
         { id: "implement", nodeFile: "node-implement.json", kind: "task", completion: { type: "none" } },
         { id: "test-review", nodeFile: "node-test-review.json", kind: "loop-judge", completion: { type: "none" } },
@@ -155,8 +160,10 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "main-group",
           description: "main",
+          managerNodeId: "group-manager",
           inputNodeId: "group-input",
           outputNodeId: "group-output",
+          nodeIds: ["group-manager", "group-input", "implement", "test-review", "group-output"],
           inputSources: [{ type: "human-input" }],
         },
       ],
@@ -172,16 +179,25 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis(["oyakata-manager", "group-input", "implement", "test-review", "group-output", "done"]),
+      workflowVis: makeVis([
+        "oyakata-manager",
+        "group-manager",
+        "group-input",
+        "implement",
+        "test-review",
+        "group-output",
+        "done",
+      ]),
     });
 
     expect(derived).toEqual([
       { id: "oyakata-manager", order: 0, indent: 0, color: "default" },
-      { id: "group-input", order: 1, indent: 1, color: "group:main-group" },
-      { id: "implement", order: 2, indent: 2, color: "loop:main-loop" },
-      { id: "test-review", order: 3, indent: 2, color: "loop:main-loop" },
-      { id: "group-output", order: 4, indent: 1, color: "group:main-group" },
-      { id: "done", order: 5, indent: 0, color: "default" },
+      { id: "group-manager", order: 1, indent: 0, color: "default" },
+      { id: "group-input", order: 2, indent: 1, color: "group:main-group" },
+      { id: "implement", order: 3, indent: 2, color: "loop:main-loop" },
+      { id: "test-review", order: 4, indent: 2, color: "loop:main-loop" },
+      { id: "group-output", order: 5, indent: 1, color: "group:main-group" },
+      { id: "done", order: 6, indent: 0, color: "default" },
     ]);
   });
 });

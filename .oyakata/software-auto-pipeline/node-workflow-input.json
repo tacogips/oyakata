@@ -1,0 +1,8 @@
+{
+  "id": "workflow-input",
+  "model": "tacogips/claude-code-agent",
+  "promptTemplate": "Normalize the received workflow instruction and inputs for {{productName}} before design work starts.",
+  "variables": {
+    "productName": "sample-product"
+  }
+}

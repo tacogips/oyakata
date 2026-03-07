@@ -53,6 +53,7 @@ export async function createWorkflowTemplate(
 
   const workflowId = workflowName;
   const managerId = "oyakata-manager";
+  const mainManagerId = "main-oyakata";
   const inputId = "workflow-input";
   const outputId = "workflow-output";
 
@@ -63,24 +64,31 @@ export async function createWorkflowTemplate(
       maxLoopIterations: 3,
       nodeTimeoutMs: 120000,
     },
+    prompts: {
+      oyakataPromptTemplate:
+        "Coordinate {{workflowId}} so each node and sub-workflow works for a clear reason and returns the value needed downstream.",
+      workerSystemPromptTemplate:
+        "Work only on the assigned node task, use the provided workflow context, and return the business JSON payload requested by the node.",
+    },
     managerNodeId: managerId,
     subWorkflows: [
       {
         id: "main",
         description: "Main sub-workflow",
+        managerNodeId: mainManagerId,
         inputNodeId: inputId,
         outputNodeId: outputId,
-        nodeIds: [inputId, outputId],
+        nodeIds: [mainManagerId, inputId, outputId],
         inputSources: [{ type: "human-input" }],
       },
     ],
     nodes: [
       { id: managerId, kind: "root-manager", nodeFile: `node-${managerId}.json`, completion: { type: "none" } },
+      { id: mainManagerId, kind: "sub-manager", nodeFile: `node-${mainManagerId}.json`, completion: { type: "none" } },
       { id: inputId, kind: "input", nodeFile: `node-${inputId}.json`, completion: { type: "none" } },
       { id: outputId, kind: "output", nodeFile: `node-${outputId}.json`, completion: { type: "none" } },
     ],
     edges: [
-      { from: managerId, to: inputId, when: "always" },
       { from: inputId, to: outputId, when: "always" },
     ],
     loops: [],
@@ -90,8 +98,9 @@ export async function createWorkflowTemplate(
   const workflowVis = {
     nodes: [
       { id: managerId, order: 0 },
-      { id: inputId, order: 1 },
-      { id: outputId, order: 2 },
+      { id: mainManagerId, order: 1 },
+      { id: inputId, order: 2 },
+      { id: outputId, order: 3 },
     ],
     uiMeta: { layout: "vertical" },
   };
@@ -107,11 +116,20 @@ export async function createWorkflowTemplate(
       },
     },
     {
+      fileName: `node-${mainManagerId}.json`,
+      payload: {
+        id: mainManagerId,
+        model: TEMPLATE_MODEL,
+        promptTemplate: "Translate the parent oyakata instruction into this sub-workflow's child work for {{workflowId}}",
+        variables: { workflowId },
+      },
+    },
+    {
       fileName: `node-${inputId}.json`,
       payload: {
         id: inputId,
         model: TEMPLATE_MODEL,
-        promptTemplate: "Collect human input",
+        promptTemplate: "Normalize the received sub-workflow instruction into workflow input",
         variables: {},
       },
     },

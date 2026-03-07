@@ -955,7 +955,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
 
     function replaceSubWorkflowBoundaryNode(subWorkflow, key, nextValue) {
       const previousValue = subWorkflow[key];
-      const normalizedNextValue = nextValue || undefined;
+      const normalizedNextValue = nextValue || "";
       subWorkflow[key] = normalizedNextValue;
       if (Array.isArray(subWorkflow.nodeIds) && previousValue && previousValue !== normalizedNextValue) {
         subWorkflow.nodeIds = subWorkflow.nodeIds
@@ -1011,11 +1011,9 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
         workflowManagerNode.kind = "root-manager";
       }
       state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
-        const subWorkflowManagerNode =
-          subWorkflow.managerNodeId === undefined ? undefined : nodeById.get(subWorkflow.managerNodeId);
+        const subWorkflowManagerNode = nodeById.get(subWorkflow.managerNodeId);
         if (
           subWorkflowManagerNode &&
-          subWorkflow.managerNodeId !== state.bundle.workflow.managerNodeId &&
           subWorkflowManagerNode.kind !== "sub-manager" &&
           subWorkflowManagerNode.kind !== "manager"
         ) {
@@ -1252,7 +1250,12 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
         return;
       }
       const removedSubWorkflowIds = state.bundle.workflow.subWorkflows
-        .filter((subWorkflow) => subWorkflow.inputNodeId === nodeId || subWorkflow.outputNodeId === nodeId)
+        .filter(
+          (subWorkflow) =>
+            subWorkflow.managerNodeId === nodeId ||
+            subWorkflow.inputNodeId === nodeId ||
+            subWorkflow.outputNodeId === nodeId,
+        )
         .map((subWorkflow) => subWorkflow.id);
       state.bundle.workflow.nodes = state.bundle.workflow.nodes.filter((node) => node.id !== nodeId);
       state.bundle.workflow.edges = state.bundle.workflow.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
@@ -1263,9 +1266,6 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
         removeSubWorkflowReferences(subWorkflowId);
       });
       state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
-        if (subWorkflow.managerNodeId === nodeId) {
-          delete subWorkflow.managerNodeId;
-        }
         if (Array.isArray(subWorkflow.nodeIds)) {
           subWorkflow.nodeIds = subWorkflow.nodeIds.filter((entry) => entry !== nodeId);
         }
@@ -1712,10 +1712,10 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
         const row = document.createElement("div");
         row.className = "row";
         row.appendChild(createLabeledField("Manager Node", createSelectInput(
-          [{ value: "", label: "(use workflow manager)" }, ...subWorkflowManagerNodeOptions(subWorkflow.id)],
-          subWorkflow.managerNodeId || "",
+          subWorkflowManagerNodeOptions(subWorkflow.id),
+          subWorkflow.managerNodeId,
           (nextValue) => {
-            replaceSubWorkflowBoundaryNode(subWorkflow, "managerNodeId", nextValue || undefined);
+            replaceSubWorkflowBoundaryNode(subWorkflow, "managerNodeId", nextValue);
             setEditorStatus("Group boundaries changed locally", "warn");
             renderStructureEditors();
             renderWorkflowBoard();
@@ -1969,14 +1969,18 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       const inputNode = firstWorkflowNodeOptionByKind("input");
       const outputNode = firstWorkflowNodeOptionByKind("output");
       const managerNode = firstUnusedSubWorkflowManagerNodeOption();
+      if (!managerNode) {
+        setEditorStatus("Add a dedicated sub-manager node before creating another group.", "fail");
+        return;
+      }
       state.bundle.workflow.subWorkflows.push({
         id: nextSubWorkflowId(),
         description: "New group",
-        managerNodeId: managerNode ? managerNode.id : undefined,
+        managerNodeId: managerNode.id,
         inputNodeId: inputNode ? inputNode.id : "",
         outputNodeId: outputNode ? outputNode.id : "",
         nodeIds: normalizeNodeIdList([
-          managerNode ? managerNode.id : undefined,
+          managerNode.id,
           inputNode ? inputNode.id : "",
           outputNode ? outputNode.id : "",
         ]),
@@ -1986,10 +1990,6 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       renderWorkflowBoard();
       if (!inputNode || !outputNode) {
         setEditorStatus("Group added locally; assign input/output nodes to clear validation errors", "warn");
-        return;
-      }
-      if (!managerNode) {
-        setEditorStatus("Group added locally using the workflow manager; assign a dedicated manager node if needed", "warn");
         return;
       }
       setEditorStatus("Group added locally", "warn");

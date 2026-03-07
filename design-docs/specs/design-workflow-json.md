@@ -43,6 +43,7 @@ Path variable mapping:
 
 `workflow.json` holds structural and control-flow definitions and must include:
 - `description`: purpose of the workflow
+- optional workflow-level prompt policy for manager/worker execution
 - node graph and connectivity
 - sub-workflow definitions for node sequences
 - inter-sub-workflow conversation definitions
@@ -68,6 +69,10 @@ Partial conceptual example (not copy-paste ready):
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
+  },
+  "prompts": {
+    "oyakataPromptTemplate": "Coordinate {{topic}} end-to-end.",
+    "workerSystemPromptTemplate": "Execute only the assigned node role and return the requested value."
   },
   "managerNodeId": "oyakata-manager",
   "subWorkflows": [
@@ -161,6 +166,26 @@ Each `node-{id}.json` contains execution payload used at runtime:
   - `maxValidationAttempts`
   - runtime-owned publication: contract-enabled adapters submit only a candidate JSON object or reserved temp candidate file; runtime validation and mailbox publication happen after acceptance
 - optional `timeoutMs` (node execution timeout override)
+
+## Workflow-Level Prompt Policy
+
+`workflow.json.prompts` may define:
+
+- `oyakataPromptTemplate`: workflow-specific manager guidance appended after the default repository `oyakata system prompt`
+- `workerSystemPromptTemplate`: workflow-specific system prompt prepended to worker/input/output/judge nodes
+
+Effective manager prompt order:
+
+1. default `oyakata system prompt` markdown from the codebase
+2. rendered `workflow.prompts.oyakataPromptTemplate`
+3. runtime-generated workflow/sub-workflow context
+4. rendered node `promptTemplate`
+
+Effective worker prompt order:
+
+1. rendered `workflow.prompts.workerSystemPromptTemplate`
+2. runtime-generated node reason and expected-return context
+3. rendered node `promptTemplate`
 
 Example:
 

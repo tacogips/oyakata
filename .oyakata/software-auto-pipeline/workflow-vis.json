@@ -1,14 +1,16 @@
 {
   "nodes": [
     { "id": "oyakata-manager", "order": 0 },
-    { "id": "design", "order": 1 },
-    { "id": "design-discuss", "order": 2 },
-    { "id": "implement", "order": 3 },
-    { "id": "security-check", "order": 4 },
-    { "id": "code-review", "order": 5 },
-    { "id": "test", "order": 6 },
-    { "id": "test-review", "order": 7 },
-    { "id": "workflow-output", "order": 8 }
+    { "id": "main-oyakata", "order": 1 },
+    { "id": "workflow-input", "order": 2 },
+    { "id": "design", "order": 3 },
+    { "id": "design-discuss", "order": 4 },
+    { "id": "implement", "order": 5 },
+    { "id": "security-check", "order": 6 },
+    { "id": "code-review", "order": 7 },
+    { "id": "test", "order": 8 },
+    { "id": "test-review", "order": 9 },
+    { "id": "workflow-output", "order": 10 }
   ],
   "uiMeta": {
     "layout": "vertical"

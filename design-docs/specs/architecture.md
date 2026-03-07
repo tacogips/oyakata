@@ -51,6 +51,7 @@ Outputs:
 - Enforces loop limits (including loop-judge node results)
 - Applies fan-out transitions when multiple branch conditions match
 - Enforces node execution timeout (node override or workflow default)
+- Composes execution prompts from workflow-level manager/worker prompt policy, runtime context, and node-level prompt text
 
 6. Session State Store
 - Persists per-node input/output
@@ -143,6 +144,7 @@ Rules:
   - collecting each sub-workflow `output` node result for downstream routing
   - routing messages between sub-workflows during conversation sessions
   - mapping execution artifact outputs to downstream sub-workflow manager inputs
+  - emitting plan/assessment instructions that include workflow purpose, given data, and expected child return values
 - Each sub-workflow manager node is responsible for:
   - reading parent-workflow or peer-sub-workflow mailbox deliveries addressed to that sub-workflow
   - resolving input bindings into child nodes inside the sub-workflow
@@ -157,6 +159,7 @@ Rules:
 - Sub-workflows do not communicate directly; all messages are routed by the `oyakata` manager node.
 - Cross-sub-workflow transport terminates at the recipient sub-workflow manager node, never at a leaf task node inside that sub-workflow.
 - After receipt, the recipient sub-workflow manager node is solely responsible for routing the message to child nodes inside that sub-workflow.
+- Prompt composition details for this nested manager model are defined in `design-docs/specs/design-oyakata-manager-prompt-contract.md`.
 - Conversation participants are declared in workflow configuration.
 - Each conversation enforces termination controls:
   - max turn count

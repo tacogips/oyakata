@@ -52,7 +52,7 @@ function hasPendingDeliveryToTargets(
 
 function subWorkflowAlreadyStarted(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, session: WorkflowSessionState): boolean {
   const targetNodeIds = new Set([subWorkflow.inputNodeId]);
-  if (subWorkflow.managerNodeId !== undefined && subWorkflow.managerNodeId !== workflow.managerNodeId) {
+  if (subWorkflow.managerNodeId !== workflow.managerNodeId) {
     targetNodeIds.add(subWorkflow.managerNodeId);
   }
   if (session.queue.some((nodeId) => targetNodeIds.has(nodeId))) {

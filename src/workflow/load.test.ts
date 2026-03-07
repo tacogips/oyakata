@@ -195,6 +195,14 @@ describe("loadWorkflowFromDisk", () => {
 
     expect(result.value.bundle.workflow.nodes[0]?.id).toBe("oyakata-manager");
     expect(result.value.bundle.workflow.nodes[0]?.kind).toBe("root-manager");
-    expect(result.value.bundle.workflow.subWorkflows[0]?.nodeIds).toEqual(["workflow-input", "workflow-output"]);
+    expect(result.value.bundle.workflow.prompts?.oyakataPromptTemplate).toContain("Coordinate");
+    expect(result.value.bundle.workflow.prompts?.workerSystemPromptTemplate).toContain("assigned node task");
+    expect(result.value.bundle.workflow.subWorkflows[0]?.managerNodeId).toBe("main-oyakata");
+    expect(result.value.bundle.workflow.subWorkflows[0]?.nodeIds).toEqual([
+      "main-oyakata",
+      "workflow-input",
+      "workflow-output",
+    ]);
+    expect(result.value.bundle.workflow.subWorkflows[0]?.inputSources).toEqual([{ type: "human-input" }]);
   });
 });

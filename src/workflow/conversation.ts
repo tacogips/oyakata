@@ -21,8 +21,8 @@ function findSubWorkflow(workflow: WorkflowJson, subWorkflowId: string): SubWork
   return workflow.subWorkflows.find((entry) => entry.id === subWorkflowId);
 }
 
-function managerNodeIdForSubWorkflow(workflow: WorkflowJson, subWorkflow: SubWorkflowRef): string {
-  return subWorkflow.managerNodeId ?? workflow.managerNodeId;
+function managerNodeIdForSubWorkflow(_workflow: WorkflowJson, subWorkflow: SubWorkflowRef): string {
+  return subWorkflow.managerNodeId;
 }
 
 function findLatestSucceededNodeExecution(

@@ -17,6 +17,15 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
+function makeDefaultTemplateScenario(stage = "design"): Readonly<Record<string, unknown>> {
+  return {
+    "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage } },
+    "main-oyakata": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
+    "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+    "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+  };
+}
+
 describe("handleApiRequest", () => {
   test("serves web UI and health endpoint", async () => {
     const root = await makeTempDir();
@@ -43,7 +52,6 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("Refresh Sessions");
     expect(uiText).toContain("Cancel Selected Session");
     expect(uiText).toContain("root-manager");
-    expect(uiText).toContain("(use workflow manager)");
     expect(uiText).toContain("Member Nodes");
     expect(uiText).toContain("Nodes already owned by another group stay unavailable here");
     expect(uiText).toContain("function availableSubWorkflowManagerNodes(currentSubWorkflowId)");
@@ -71,11 +79,13 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("The workflow manager node is kept as root-manager so execution entry stays valid.");
     expect(uiText).toContain("This node is assigned as a sub-workflow input boundary, so its kind stays locked to input.");
     expect(uiText).toContain("This node is assigned as a sub-workflow output boundary, so its kind stays locked to output.");
-    expect(uiText).toContain("Group added locally using the workflow manager; assign a dedicated manager node if needed");
+    expect(uiText).toContain("Add a dedicated sub-manager node before creating another group.");
     expect(uiText).toContain("Manager, input, and output boundaries must be separate nodes.");
     expect(uiText).toContain("if (!trimmed || trimmed === subWorkflow.id)");
     expect(uiText).toContain("Group membership changed locally");
+    expect(uiText).toContain("subWorkflow.managerNodeId === nodeId");
     expect(uiText).not.toContain('workflowNodeOptionsByKinds(["root-manager", "sub-manager", "manager"])');
+    expect(uiText).not.toContain("(use workflow manager)");
     expect(uiText).not.toContain("Nodes JSON");
 
     const healthRes = await handleApiRequest(new Request("http://localhost/healthz"), {
@@ -300,11 +310,9 @@ describe("handleApiRequest", () => {
       new Request("http://localhost/api/workflows/demo/execute", {
         method: "POST",
         body: JSON.stringify({
-          runtimeVariables: { topic: "x" },
+          runtimeVariables: { topic: "x", humanInput: { request: "start demo workflow" } },
           maxSteps: 1,
-          mockScenario: {
-            "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
-          },
+          mockScenario: makeDefaultTemplateScenario(),
         }),
       }),
       {
@@ -560,14 +568,9 @@ describe("handleApiRequest", () => {
       new Request("http://localhost/api/workflows/demo/execute", {
         method: "POST",
         body: JSON.stringify({
+          runtimeVariables: { humanInput: { request: "start demo workflow" } },
           maxSteps: 1,
-          mockScenario: {
-            "oyakata-manager": {
-              provider: "scenario-mock",
-              when: { always: true },
-              payload: { stage: "manager" },
-            },
-          },
+          mockScenario: makeDefaultTemplateScenario("manager"),
         }),
       }),
       {

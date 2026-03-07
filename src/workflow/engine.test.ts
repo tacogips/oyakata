@@ -640,6 +640,105 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
   });
 }
 
+async function createManagerAfterOutputFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "manager-after-output fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "oyakata-manager", to: "workflow-output", when: "needs_output" },
+      { from: "workflow-output", to: "oyakata-manager", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "workflow-output", order: 1 },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-oyakata-manager.json"), {
+    id: "oyakata-manager",
+    model: "tacogips/codex-agent",
+    promptTemplate: "manager",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-workflow-output.json"), {
+    id: "workflow-output",
+    model: "tacogips/codex-agent",
+    promptTemplate: "workflow-output",
+    variables: {},
+  });
+}
+
+async function createWorkflowOutputDrivenSubWorkflowFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "workflow-output source fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [
+      {
+        id: "review-sw",
+        description: "Review after root output",
+        managerNodeId: "review-manager",
+        inputNodeId: "review-input",
+        outputNodeId: "review-output",
+        nodeIds: ["review-manager", "review-input", "review-output"],
+        inputSources: [{ type: "workflow-output", workflowId: workflowName }],
+      },
+    ],
+    nodes: [
+      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
+      { id: "review-manager", kind: "sub-manager", nodeFile: "node-review-manager.json", completion: { type: "none" } },
+      { id: "review-input", kind: "input", nodeFile: "node-review-input.json", completion: { type: "none" } },
+      { id: "review-output", kind: "output", nodeFile: "node-review-output.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "oyakata-manager", to: "workflow-output", when: "needs_output" },
+      { from: "workflow-output", to: "oyakata-manager", when: "always" },
+      { from: "review-input", to: "review-output", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "workflow-output", order: 1 },
+      { id: "review-manager", order: 2 },
+      { id: "review-input", order: 3 },
+      { id: "review-output", order: 4 },
+    ],
+  });
+
+  for (const nodeId of ["oyakata-manager", "workflow-output", "review-manager", "review-input", "review-output"]) {
+    await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
+      id: nodeId,
+      model: "tacogips/codex-agent",
+      promptTemplate: nodeId,
+      variables: {},
+    });
+  }
+}
+
 describe("runWorkflow", () => {
   test("executes linear workflow and writes artifacts", async () => {
     const root = await makeTempDir();
@@ -726,6 +825,231 @@ describe("runWorkflow", () => {
     const commitMessage = await readFile(path.join(step1Exec.artifactDir, "commit-message.txt"), "utf8");
     expect(commitMessage).toContain("Node-ID: step-1");
     expect(commitMessage).toContain(`Run-ID: ${result.value.session.sessionId}`);
+  });
+
+  test("delivers root human input through an external mailbox communication", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "root-mailbox-input", false);
+
+    const result = await runWorkflow(
+      "root-mailbox-input",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: {
+          topic: "B",
+          humanInput: {
+            request: "ship release B",
+            constraints: ["tests", "review"],
+          },
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const bootstrapCommunication = result.value.session.communications.find(
+      (entry) =>
+        entry.fromNodeId === "__workflow-input-mailbox__" &&
+        entry.toNodeId === "oyakata-manager" &&
+        entry.deliveryKind === "external-input",
+    );
+    expect(bootstrapCommunication).toBeDefined();
+    if (bootstrapCommunication === undefined) {
+      return;
+    }
+
+    const managerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
+    expect(managerExec).toBeDefined();
+    if (managerExec === undefined) {
+      return;
+    }
+
+    const managerInputRaw = await readFile(path.join(managerExec.artifactDir, "input.json"), "utf8");
+    const managerInput = JSON.parse(managerInputRaw) as {
+      upstreamOutputRefs: readonly { fromNodeId: string }[];
+      upstreamCommunications: readonly string[];
+      promptText: string;
+    };
+    expect(managerInput.upstreamOutputRefs.some((entry) => entry.fromNodeId === "__workflow-input-mailbox__")).toBe(true);
+    expect(managerInput.upstreamCommunications).toContain(bootstrapCommunication.communicationId);
+    expect(managerInput.promptText).toContain('"request":"ship release B"');
+  });
+
+  test("publishes the completed workflow result to an external mailbox", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "root-mailbox-output", false);
+
+    const result = await runWorkflow(
+      "root-mailbox-output",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const outputCommunication = result.value.session.communications.find(
+      (entry) =>
+        entry.toNodeId === "__workflow-output-mailbox__" &&
+        entry.deliveryKind === "external-output" &&
+        entry.fromNodeId === "step-1",
+    );
+    expect(outputCommunication).toBeDefined();
+    if (outputCommunication === undefined) {
+      return;
+    }
+
+    const outputRaw = await readFile(path.join(outputCommunication.artifactDir, "outbox", "step-1", "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { payload: { nodeId: string } };
+    expect(outputJson.payload.nodeId).toBe("step-1");
+  });
+
+  test("publishes the latest root output node result when a manager runs again afterward", async () => {
+    const root = await makeTempDir();
+    await createManagerAfterOutputFixture(root, "root-output-publication");
+
+    const result = await runWorkflow(
+      "root-output-publication",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": [
+          { provider: "scenario-mock", when: { needs_output: true }, payload: { phase: "plan" } },
+          { provider: "scenario-mock", when: {}, payload: { phase: "assess" } },
+        ],
+        "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "published-result" } },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const outputCommunication = result.value.session.communications.find(
+      (entry) =>
+        entry.toNodeId === "__workflow-output-mailbox__" &&
+        entry.deliveryKind === "external-output",
+    );
+    expect(outputCommunication).toBeDefined();
+    if (outputCommunication === undefined) {
+      return;
+    }
+
+    expect(outputCommunication.fromNodeId).toBe("workflow-output");
+    const outputRaw = await readFile(
+      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
+    expect(outputJson.payload.final).toBe("published-result");
+  });
+
+  test("enables workflow-output input sources after a root output node succeeds", async () => {
+    const root = await makeTempDir();
+    await createWorkflowOutputDrivenSubWorkflowFixture(root, "workflow-output-source");
+
+    const result = await runWorkflow(
+      "workflow-output-source",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": [
+          { provider: "scenario-mock", when: { needs_output: true }, payload: { phase: "plan" } },
+          { provider: "scenario-mock", when: {}, payload: { phase: "assess" } },
+        ],
+        "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "root-output" } },
+        "review-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review-dispatch" } },
+        "review-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review-input" } },
+        "review-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review-output" } },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({ final: "root-output" });
+    expect(result.value.session.nodeExecutions.some((entry) => entry.nodeId === "review-manager")).toBe(true);
+    expect(result.value.session.nodeExecutions.some((entry) => entry.nodeId === "review-input")).toBe(true);
+    expect(result.value.session.nodeExecutions.some((entry) => entry.nodeId === "review-output")).toBe(true);
+  });
+
+  test("composes manager and worker prompts with workflow-level orchestration context", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "prompt-composition", false);
+
+    const workflowPath = path.join(root, "prompt-composition", "workflow.json");
+    const workflowJson = JSON.parse(await readFile(workflowPath, "utf8")) as Record<string, unknown>;
+    workflowJson["prompts"] = {
+      oyakataPromptTemplate: "Plan and audit work for {{topic}}.",
+      workerSystemPromptTemplate: "Complete the assigned worker step for {{topic}}.",
+    };
+    await writeJson(workflowPath, workflowJson);
+
+    const result = await runWorkflow(
+      "prompt-composition",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const managerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
+    const workerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(managerExec).toBeDefined();
+    expect(workerExec).toBeDefined();
+    if (managerExec === undefined || workerExec === undefined) {
+      return;
+    }
+
+    const managerInputRaw = await readFile(path.join(managerExec.artifactDir, "input.json"), "utf8");
+    const workerInputRaw = await readFile(path.join(workerExec.artifactDir, "input.json"), "utf8");
+    const managerInput = JSON.parse(managerInputRaw) as { promptText: string };
+    const workerInput = JSON.parse(workerInputRaw) as { promptText: string };
+
+    expect(managerInput.promptText).toContain("You are `oyakata`, the orchestration manager");
+    expect(managerInput.promptText).toContain("Plan and audit work for B.");
+    expect(managerInput.promptText).toContain("Execution context:");
+    expect(managerInput.promptText).toContain("Given data:");
+    expect(managerInput.promptText).toContain("Manager control payload:");
+    expect(managerInput.promptText).toContain('"type":"start-sub-workflow"');
+    expect(managerInput.promptText).toContain("Node-specific instruction:");
+    expect(managerInput.promptText).toContain("manager B");
+
+    expect(workerInput.promptText).toContain("Complete the assigned worker step for B.");
+    expect(workerInput.promptText).toContain("Given data:");
+    expect(workerInput.promptText).toContain("Reason this node is running:");
+    expect(workerInput.promptText).toContain("Expected return:");
+    expect(workerInput.promptText).toContain("step B");
   });
 
   test("assembles node arguments from runtime variables and upstream outputs", async () => {
@@ -1372,7 +1696,8 @@ describe("runWorkflow", () => {
       validationErrors?: readonly { path: string }[];
     };
     expect(outputJson.error).toBe("provider_error");
-    expect(outputJson.promptText).toBe("step ");
+    expect(outputJson.promptText).toContain("Execution context:");
+    expect(outputJson.promptText).toContain("Node-specific instruction:\nstep");
     expect(outputJson.validationErrors).toBeUndefined();
 
     const failedSessionRaw = await readFile(
@@ -1461,7 +1786,8 @@ describe("runWorkflow", () => {
 
     const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
     const outputJson = JSON.parse(outputRaw) as { promptText: string };
-    expect(outputJson.promptText).toBe("step ");
+    expect(outputJson.promptText).toContain("Execution context:");
+    expect(outputJson.promptText).toContain("Node-specific instruction:\nstep");
     expect(outputJson.promptText).not.toContain("Candidate-Path:");
     expect(outputJson.promptText).not.toContain("Publish-Path:");
   });
@@ -1545,7 +1871,8 @@ describe("runWorkflow", () => {
 
     const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
     const outputJson = JSON.parse(outputRaw) as { promptText: string };
-    expect(outputJson.promptText).toBe("step audit");
+    expect(outputJson.promptText).toContain("Execution context:");
+    expect(outputJson.promptText).toContain("Node-specific instruction:\nstep audit");
     expect(outputJson.promptText).not.toContain("Previous output was rejected:");
   });
 
@@ -2491,7 +2818,14 @@ describe("runWorkflow", () => {
       },
       new ScenarioNodeAdapter({
         "a-output": { payload: { marker: "from-a-output" } },
-        "b-manager": { payload: { marker: "from-b-manager" } },
+        "b-manager": {
+          payload: {
+            marker: "from-b-manager",
+            managerControl: {
+              actions: [{ type: "deliver-to-child-input", inputNodeId: "b-input" }],
+            },
+          },
+        },
       }),
     );
 
@@ -2513,6 +2847,174 @@ describe("runWorkflow", () => {
       arguments: { routed: { marker: string } };
     };
     expect(inputJson.arguments.routed.marker).toBe("from-b-manager");
+  });
+
+  test("sub-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-manager-no-forward";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-manager-no-forward",
+        runtimeVariables: { humanInput: { topic: "ping-pong" } },
+      },
+      new ScenarioNodeAdapter({
+        "b-manager": {
+          payload: {
+            managerControl: {
+              actions: [],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    expect(bInputExecutions).toHaveLength(0);
+  });
+
+  test("root manager can explicitly start a sub-workflow through managerControl", async () => {
+    const root = await makeTempDir();
+    const workflowName = "root-manager-explicit-start";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-root-manager-explicit-start",
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": [
+          {
+            payload: {
+              managerControl: {
+                actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+              },
+            },
+          },
+          { payload: {} },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const aManagerExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-manager");
+    expect(aManagerExecution).toBeDefined();
+
+    const startCommunication = result.value.session.communications.find(
+      (entry) =>
+        entry.fromNodeId === "oyakata-manager" &&
+        entry.toNodeId === "a-manager" &&
+        entry.transitionWhen === "sub-workflow-start:sw-a",
+    );
+    expect(startCommunication).toBeDefined();
+  });
+
+  test("root manager can re-invoke the same sub-workflow through repeated explicit start actions", async () => {
+    const root = await makeTempDir();
+    const workflowName = "root-manager-explicit-rerun";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-root-manager-explicit-rerun",
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": [
+          {
+            payload: {
+              managerControl: {
+                actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+              },
+            },
+          },
+          {
+            payload: {
+              managerControl: {
+                actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+              },
+            },
+          },
+          {
+            payload: {
+              managerControl: {
+                actions: [],
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const aManagerExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "a-manager");
+    expect(aManagerExecutions.length).toBeGreaterThanOrEqual(2);
+
+    const repeatedStartCommunications = result.value.session.communications.filter(
+      (entry) =>
+        entry.fromNodeId === "oyakata-manager" &&
+        entry.toNodeId === "a-manager" &&
+        entry.transitionWhen === "sub-workflow-start:sw-a",
+    );
+    expect(repeatedStartCommunications).toHaveLength(2);
+  });
+
+  test("rejects root-manager retry-node actions that target internal sub-workflow nodes", async () => {
+    const root = await makeTempDir();
+    const workflowName = "root-manager-invalid-internal-retry";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-root-manager-invalid-internal-retry",
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": {
+          payload: {
+            managerControl: {
+              actions: [{ type: "retry-node", nodeId: "a-input" }],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.exitCode).toBe(5);
+    expect(result.error.message).toContain("must re-invoke that sub-workflow with start-sub-workflow instead");
   });
 
   test("exposes conversation routing metadata in transcript bindings", async () => {
@@ -2575,7 +3077,7 @@ describe("runWorkflow", () => {
     expect(inputJson.arguments.transcript[0]?.communicationId).toMatch(/^comm-\d{6}$/);
   });
 
-  test("routes conversation turns into a sub-workflow that reuses the root manager", async () => {
+  test("rejects a sub-workflow that attempts to reuse the root manager", async () => {
     const root = await makeTempDir();
     const workflowName = "subworkflow-root-manager-conversation";
     await createSubWorkflowRuntimeFixture(root, workflowName);
@@ -2614,26 +3116,11 @@ describe("runWorkflow", () => {
       deterministicAdapter,
     );
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
+    expect(result.ok).toBe(false);
+    if (result.ok) {
       return;
     }
-
-    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
-    expect(bInputExecutions).toHaveLength(2);
-
-    const toBConversationTurns = (result.value.session.conversationTurns ?? []).filter(
-      (entry) => entry.toSubWorkflowId === "sw-b",
-    );
-    expect(toBConversationTurns.length).toBeGreaterThan(0);
-    expect(toBConversationTurns[0]?.toManagerNodeId).toBe("oyakata-manager");
-
-    const forwardedToBInput = result.value.session.communications.filter(
-      (entry) =>
-        entry.fromNodeId === "oyakata-manager" &&
-        entry.toNodeId === "b-input" &&
-        entry.toSubWorkflowId === "sw-b",
-    );
-    expect(forwardedToBInput.length).toBeGreaterThan(0);
+    expect(result.error.exitCode).toBe(2);
+    expect(result.error.message).toContain("workflow validation failed");
   });
 });

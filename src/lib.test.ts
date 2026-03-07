@@ -10,6 +10,7 @@ import {
   listSessions,
   resumeWorkflow,
 } from "./lib";
+import type { MockNodeScenario } from "./workflow/adapter";
 import { createWorkflowTemplate } from "./workflow/create";
 
 const tempDirs: string[] = [];
@@ -25,6 +26,15 @@ afterEach(async () => {
 });
 
 describe("library api", () => {
+  function makeDefaultTemplateScenario(): MockNodeScenario {
+    return {
+      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "main-oyakata": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
+      "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+      "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+    };
+  }
+
   test("inspects workflow and executes/resumes via library functions", async () => {
     const root = await makeTempDir();
     const created = await createWorkflowTemplate("demo", { workflowRoot: root });
@@ -38,11 +48,7 @@ describe("library api", () => {
       artifactRoot: path.join(root, "artifacts"),
       cwd: root,
     };
-    const mockScenario = {
-      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
-      "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
-      "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
-    } as const;
+    const mockScenario = makeDefaultTemplateScenario();
 
     const summary = await inspectWorkflow("demo", options);
     expect(summary.workflowName).toBe("demo");
@@ -50,6 +56,7 @@ describe("library api", () => {
     const paused = await executeWorkflow({
       workflowName: "demo",
       ...options,
+      runtimeVariables: { humanInput: { request: "start demo workflow" } },
       mockScenario,
       maxSteps: 1,
     });
