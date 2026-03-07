@@ -18,6 +18,8 @@
     "build": "bun build src/main.ts --outdir dist --target bun",
     "start": "bun run src/main.ts",
     "test": "vitest run",
+    "test:e2e": "playwright test -c playwright.config.cjs",
+    "test:all": "bun run test && bun run test:e2e",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
     "typecheck": "tsc --noEmit",
@@ -40,6 +42,7 @@
     "openai": "6.27.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.58.1",
     "@types/bun": "1.1.14",
     "@vitest/ui": "2.1.8",
     "typescript": "5.7.2",

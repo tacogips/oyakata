@@ -183,6 +183,8 @@ Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
 - `typescript-language-server` - TypeScript language server (LSP)
 - `prettier` - Code formatter
 - `task` - Task runner (go-task)
+- `agent-browser` - Browser verification agent for local UI inspection
+- `playwright` - Browser automation and E2E test runner
 
 ## TypeScript Code Development
 
@@ -194,6 +196,36 @@ Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
 **Coding Standards**: Refer to `.claude/skills/ts-coding-standards/` for TypeScript coding conventions, project layout, error handling, type safety, and async patterns.
 
 **TypeScript Configuration**: This project uses maximum TypeScript strictness. See `tsconfig.json` for the complete strict configuration.
+
+### Verify-Fix Cycle (MANDATORY for UI-related changes)
+
+After `check-and-test-after-modify` passes for UI-related changes, the main conversation MUST perform a browser verification step using `agent-browser`, then loop if errors are found:
+
+```
+ts-coding (implement)
+    |
+    v
+check-and-test-after-modify (typecheck + unit tests)
+    |
+    v
+Browser Verify (agent-browser: open, snapshot, screenshot)
+    |
+    +-- UI looks correct --> Done
+    |
+    +-- UI has issues --> ts-coding (fix) --> check-and-test --> Browser Verify (loop)
+```
+
+**Browser verification commands**:
+```bash
+agent-browser open http://127.0.0.1:5173
+agent-browser snapshot -i
+agent-browser screenshot --full
+agent-browser close
+```
+
+**When to apply**: Any change that affects browser rendering, layout, interactions, or API responses consumed by the browser UI. Skip this for pure backend or library changes with no UI impact.
+
+**Cycle limit**: Maximum 3 verify-fix iterations. If issues remain after 3 cycles, report the remaining issues clearly.
 
 ## Design Documentation
 

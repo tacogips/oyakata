@@ -34,6 +34,16 @@ tasks:
     cmds:
       - bun run test
 
+  test-e2e:
+    desc: Run Playwright E2E tests
+    cmds:
+      - bun run test:e2e
+
+  test-all:
+    desc: Run unit and Playwright E2E tests
+    cmds:
+      - bun run test:all
+
   test-watch:
     desc: Run tests in watch mode with Vitest
     cmds:
