@@ -74,6 +74,48 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.model).toBe("gpt-5");
   });
 
+  test("accepts node session reuse policy", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      sessionPolicy: {
+        mode: "reuse",
+      },
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.sessionPolicy?.mode).toBe("reuse");
+  });
+
+  test("rejects unsupported node session policy mode", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      sessionPolicy: {
+        mode: "shared",
+      },
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.some((issue) => issue.path === "nodePayloads.node-worker-1.json.sessionPolicy.mode")).toBe(
+      true,
+    );
+  });
+
   test("rejects tacogips cli-wrapper identifiers with official sdk backends", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {

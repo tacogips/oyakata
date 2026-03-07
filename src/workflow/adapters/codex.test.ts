@@ -71,6 +71,42 @@ describe("CodexAgentAdapter", () => {
     expect(body["artifactDir"]).toBe("/tmp/node-1/exec-1");
   });
 
+  test("passes backend session hints through the provider contract", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          provider: "codex-provider",
+          model: "tacogips/codex-agent",
+          promptText: "hello",
+          completionPassed: true,
+          when: { always: true },
+          payload: { ok: true },
+          backendSession: { sessionId: "backend-codex-1" },
+        }),
+        { status: 200 },
+      );
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
+    const output = await adapter.execute(
+      {
+        ...baseInput,
+        backendSession: {
+          mode: "reuse",
+          sessionId: "backend-codex-1",
+        },
+      },
+      baseContext,
+    );
+
+    const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
+    const request = calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    expect(body["backendSession"]).toEqual({ mode: "reuse", sessionId: "backend-codex-1" });
+    expect(output.backendSession?.sessionId).toBe("backend-codex-1");
+  });
+
   test("maps blocked responses to policy_blocked", async () => {
     (globalThis as { fetch: typeof fetch }).fetch = vi
       .fn(async () => {

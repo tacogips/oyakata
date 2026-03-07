@@ -19,6 +19,8 @@ export interface NodeExecutionRecord {
     readonly path: string;
     readonly message: string;
   }[];
+  readonly backendSessionId?: string;
+  readonly backendSessionMode?: "new" | "reuse";
   readonly restartedFromNodeExecId?: string;
 }
 
@@ -81,6 +83,16 @@ export interface CommunicationRecord {
   readonly artifactDir: string;
 }
 
+export interface NodeBackendSessionRecord {
+  readonly nodeId: string;
+  readonly backend: string;
+  readonly provider: string;
+  readonly sessionId: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly lastNodeExecId: string;
+}
+
 export interface WorkflowSessionState {
   readonly sessionId: string;
   readonly workflowName: string;
@@ -100,6 +112,7 @@ export interface WorkflowSessionState {
   readonly communicationCounter: number;
   readonly communications: readonly CommunicationRecord[];
   readonly conversationTurns?: readonly ConversationTurnRecord[];
+  readonly nodeBackendSessions?: Readonly<Record<string, NodeBackendSessionRecord>>;
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly lastError?: string;
 }
@@ -130,6 +143,7 @@ export function createSessionState(input: CreateSessionInput): WorkflowSessionSt
     communicationCounter: 0,
     communications: [],
     conversationTurns: [],
+    nodeBackendSessions: {},
     runtimeVariables: input.runtimeVariables,
   };
 }
@@ -149,6 +163,7 @@ export function normalizeSessionState(session: WorkflowSessionState): WorkflowSe
     conversationTurns: [...(session.conversationTurns ?? [])],
     communicationCounter,
     communications: [...communications],
+    nodeBackendSessions: { ...(session.nodeBackendSessions ?? {}) },
   };
 }
 

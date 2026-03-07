@@ -207,6 +207,7 @@ Execution node payload is externalized in `node-{id}.json`:
 - `model`: backend identifier
 - `promptTemplate`: template text
 - `variables`: runtime bindings
+- optional `sessionPolicy`: backend session handling policy (`new` by default, `reuse` for node-local backend session continuation)
 - optional `argumentsTemplate`: structured argument skeleton
 - optional `argumentBindings`: deterministic mapping rules from runtime sources to `argumentsTemplate`
 - optional `templateEngine`: rendering engine for prompt text (default: `mustache`)
@@ -215,6 +216,13 @@ Node input injection policy:
 - For skill/tool adapters that accept `ARGUMENTS` only, `oyakata` must pass assembled `arguments` object.
 - Complex data composition must be done via `argumentBindings` and source references, not logic-heavy template syntax.
 - Keep template engine intentionally simple for prompt text rendering; avoid full Handlebars-style execution semantics in core runtime.
+
+Node backend session reuse:
+- Workflow session persistence and backend session persistence are separate concerns.
+- By default, each node execution starts a fresh backend session.
+- When `node.sessionPolicy.mode = "reuse"`, the engine may resume an opaque backend-managed session for later executions of the same node within one workflow run.
+- Reusable backend session handles are persisted in workflow session state so `session resume` can continue them.
+- Detailed request/response shape is defined in [design-node-session-reuse.md](/g/gits/tacogips/oyakata/design-docs/specs/design-node-session-reuse.md).
 
 `workflow.json` contains structural information:
 - node set and connectivity

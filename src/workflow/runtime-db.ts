@@ -16,6 +16,8 @@ interface RuntimeNodeExecutionRow {
   readonly attempt?: number;
   readonly outputAttemptCount?: number;
   readonly outputValidationErrors?: NodeExecutionRecord["outputValidationErrors"];
+  readonly backendSessionMode?: NodeExecutionRecord["backendSessionMode"];
+  readonly backendSessionId?: NodeExecutionRecord["backendSessionId"];
   readonly restartedFromNodeExecId?: string;
   readonly inputJson: string;
   readonly outputJson: string;
@@ -47,6 +49,8 @@ export interface RuntimeNodeExecutionSummary {
   readonly attempt: number | null;
   readonly outputAttemptCount: number | null;
   readonly outputValidationErrors: NodeExecutionRecord["outputValidationErrors"] | null;
+  readonly backendSessionMode: NodeExecutionRecord["backendSessionMode"] | null;
+  readonly backendSessionId: NodeExecutionRecord["backendSessionId"] | null;
   readonly restartedFromNodeExecId: string | null;
   readonly inputHash: string;
   readonly outputHash: string;
@@ -122,6 +126,8 @@ function ensureSchema(db: Database): void {
       attempt INTEGER,
       output_attempt_count INTEGER,
       output_validation_errors_json TEXT,
+      backend_session_mode TEXT,
+      backend_session_id TEXT,
       restarted_from_node_exec_id TEXT,
       input_hash TEXT NOT NULL,
       output_hash TEXT NOT NULL,
@@ -154,6 +160,12 @@ function ensureSchema(db: Database): void {
   }
   if (!existingColumns.has("output_validation_errors_json")) {
     db.exec("ALTER TABLE node_executions ADD COLUMN output_validation_errors_json TEXT");
+  }
+  if (!existingColumns.has("backend_session_mode")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN backend_session_mode TEXT");
+  }
+  if (!existingColumns.has("backend_session_id")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN backend_session_id TEXT");
   }
 }
 
@@ -205,9 +217,10 @@ export async function saveNodeExecutionToRuntimeDb(
     const nodeStmt = db.prepare(`
       INSERT OR REPLACE INTO node_executions (
         session_id, node_exec_id, node_id, status, artifact_dir, started_at, ended_at,
-        attempt, output_attempt_count, output_validation_errors_json, restarted_from_node_exec_id,
+        attempt, output_attempt_count, output_validation_errors_json, backend_session_mode, backend_session_id,
+        restarted_from_node_exec_id,
         input_hash, output_hash, input_json, output_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     nodeStmt.run(
       row.sessionId,
@@ -220,6 +233,8 @@ export async function saveNodeExecutionToRuntimeDb(
       row.attempt ?? null,
       row.outputAttemptCount ?? null,
       row.outputValidationErrors === undefined ? null : JSON.stringify(row.outputValidationErrors),
+      row.backendSessionMode ?? null,
+      row.backendSessionId ?? null,
       row.restartedFromNodeExecId ?? null,
       row.inputHash,
       row.outputHash,
@@ -314,6 +329,8 @@ export async function listRuntimeNodeExecutions(
           attempt,
           output_attempt_count,
           output_validation_errors_json,
+          backend_session_mode,
+          backend_session_id,
           restarted_from_node_exec_id,
           input_hash,
           output_hash,
@@ -335,6 +352,8 @@ export async function listRuntimeNodeExecutions(
       attempt: number | null;
       output_attempt_count: number | null;
       output_validation_errors_json: string | null;
+      backend_session_mode: NodeExecutionRecord["backendSessionMode"] | null;
+      backend_session_id: NodeExecutionRecord["backendSessionId"] | null;
       restarted_from_node_exec_id: string | null;
       input_hash: string;
       output_hash: string;
@@ -357,6 +376,8 @@ export async function listRuntimeNodeExecutions(
         row.output_validation_errors_json === null
           ? null
           : (JSON.parse(row.output_validation_errors_json) as NodeExecutionRecord["outputValidationErrors"]),
+      backendSessionMode: row.backend_session_mode,
+      backendSessionId: row.backend_session_id,
       restartedFromNodeExecId: row.restarted_from_node_exec_id,
       inputHash: row.input_hash,
       outputHash: row.output_hash,

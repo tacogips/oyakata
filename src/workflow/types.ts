@@ -150,10 +150,17 @@ export interface NodeOutputContract {
   readonly maxValidationAttempts?: number;
 }
 
+export type NodeSessionMode = "new" | "reuse";
+
+export interface NodeSessionPolicy {
+  readonly mode: NodeSessionMode;
+}
+
 export interface NodePayload {
   readonly id: string;
   readonly model: string;
   readonly executionBackend?: NodeExecutionBackend;
+  readonly sessionPolicy?: NodeSessionPolicy;
   readonly promptTemplate: string;
   readonly variables: Readonly<Record<string, unknown>>;
   readonly argumentsTemplate?: Readonly<Record<string, unknown>>;

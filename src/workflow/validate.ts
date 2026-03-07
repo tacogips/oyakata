@@ -12,6 +12,7 @@ import {
   type LoopRule,
   type NodeExecutionBackend,
   type NodePayload,
+  type NodeSessionPolicy,
   type NormalizedWorkflowBundle,
   type SubWorkflowConversation,
   type SubWorkflowInputSource,
@@ -70,6 +71,10 @@ function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
 
 function requiresProviderModel(executionBackend: NodeExecutionBackend | undefined): boolean {
   return executionBackend === "official/openai-sdk" || executionBackend === "official/anthropic-sdk";
+}
+
+function isNodeSessionMode(value: unknown): value is NodeSessionPolicy["mode"] {
+  return value === "new" || value === "reuse";
 }
 
 function makeIssue(
@@ -839,6 +844,18 @@ function normalizeNodePayload(
     }
   }
 
+  const sessionPolicyRaw = payload["sessionPolicy"];
+  let sessionPolicy: NodeSessionPolicy | undefined;
+  if (sessionPolicyRaw !== undefined) {
+    if (!isRecord(sessionPolicyRaw)) {
+      issues.push(makeIssue("error", `${path}.sessionPolicy`, "must be an object when provided"));
+    } else if (!isNodeSessionMode(sessionPolicyRaw["mode"])) {
+      issues.push(makeIssue("error", `${path}.sessionPolicy.mode`, "must be 'new' or 'reuse'"));
+    } else {
+      sessionPolicy = { mode: sessionPolicyRaw["mode"] };
+    }
+  }
+
   const argumentsTemplateRaw = payload["argumentsTemplate"];
   let argumentsTemplate: UnknownRecord | undefined;
   if (argumentsTemplateRaw !== undefined) {
@@ -910,6 +927,7 @@ function normalizeNodePayload(
     id,
     model,
     ...(executionBackend === undefined ? {} : { executionBackend }),
+    ...(sessionPolicy === undefined ? {} : { sessionPolicy }),
     promptTemplate,
     variables,
     ...(argumentsTemplate === undefined ? {} : { argumentsTemplate }),

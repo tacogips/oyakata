@@ -36,6 +36,7 @@ function buildRequestBody(input: AdapterExecutionInput): Record<string, unknown>
     executionIndex: input.executionIndex,
     ...(input.output === undefined ? { artifactDir: input.artifactDir } : {}),
     upstreamCommunicationIds: input.upstreamCommunicationIds,
+    ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
     ...(input.output === undefined ? {} : { output: input.output }),
   };
 }

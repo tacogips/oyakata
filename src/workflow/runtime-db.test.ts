@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "vitest";
+import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
 import { resolveRuntimeDbPath } from "./runtime-db";
 
@@ -56,6 +57,103 @@ async function createWorkflowFixture(root: string, workflowName: string): Promis
     promptTemplate: "step {{topic}}",
     variables: {},
   });
+}
+
+async function createNodeSessionReuseFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "node session reuse fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "step-a", kind: "task", nodeFile: "node-step-a.json", completion: { type: "none" } },
+      { id: "step-b", kind: "task", nodeFile: "node-step-b.json", completion: { type: "none" } },
+      { id: "step-c", kind: "task", nodeFile: "node-step-c.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "oyakata-manager", to: "step-a", when: "always" },
+      { from: "step-a", to: "step-b", when: "always" },
+      { from: "step-b", to: "step-c", when: "go_c" },
+      { from: "step-c", to: "step-b", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "step-a", order: 1 },
+      { id: "step-b", order: 2 },
+      { id: "step-c", order: 3 },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-oyakata-manager.json"), {
+    id: "oyakata-manager",
+    model: "tacogips/codex-agent",
+    promptTemplate: "manager",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-step-a.json"), {
+    id: "step-a",
+    model: "tacogips/codex-agent",
+    promptTemplate: "return 2",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-step-b.json"), {
+    id: "step-b",
+    model: "tacogips/claude-code-agent",
+    sessionPolicy: {
+      mode: "reuse",
+    },
+    promptTemplate: "accumulate",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-step-c.json"), {
+    id: "step-c",
+    model: "tacogips/codex-agent",
+    promptTemplate: "return 3",
+    variables: {},
+  });
+}
+
+class ReusableSessionAdapter implements NodeAdapter {
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<Awaited<ReturnType<NodeAdapter["execute"]>>> {
+    if (input.nodeId === "step-b") {
+      const sessionId = input.backendSession?.sessionId ?? "backend-b-1";
+      const seen = input.backendSession?.mode === "reuse" && input.backendSession.sessionId === "backend-b-1";
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true, go_c: !seen },
+        payload: {
+          sum: seen ? 5 : 2,
+          reused: seen,
+          go_c: !seen,
+        },
+        backendSession: {
+          sessionId,
+        },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
 }
 
 afterEach(async () => {
@@ -168,6 +266,51 @@ describe("runtime-db", () => {
     }
   });
 
+  test("persists backend session metadata for reusable node executions", async () => {
+    const root = await makeTempDir();
+    await createNodeSessionReuseFixture(root, "sqlite-node-session-reuse");
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      cwd: root,
+      sessionId: "sess-sqlite-node-session-reuse",
+    };
+
+    const result = await runWorkflow("sqlite-node-session-reuse", options, new ReusableSessionAdapter());
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const dbPath = resolveRuntimeDbPath(options);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const columns = db.query("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>;
+      expect(columns.some((column) => column.name === "backend_session_mode")).toBe(true);
+      expect(columns.some((column) => column.name === "backend_session_id")).toBe(true);
+
+      const rows = db
+        .query(
+          `SELECT backend_session_mode, backend_session_id
+           FROM node_executions
+           WHERE session_id = ? AND node_id = ?
+           ORDER BY created_at ASC`,
+        )
+        .all("sess-sqlite-node-session-reuse", "step-b") as Array<{
+        backend_session_mode: string | null;
+        backend_session_id: string | null;
+      }>;
+
+      expect(rows).toEqual([
+        { backend_session_mode: "new", backend_session_id: "backend-b-1" },
+        { backend_session_mode: "reuse", backend_session_id: "backend-b-1" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("migrates legacy node_executions tables before persisting output validation metadata", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "sqlite-output-contract-migration");
@@ -262,6 +405,10 @@ describe("runtime-db", () => {
 
     const db = new Database(dbPath, { readonly: true });
     try {
+      const columns = db.query("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>;
+      expect(columns.some((column) => column.name === "backend_session_mode")).toBe(true);
+      expect(columns.some((column) => column.name === "backend_session_id")).toBe(true);
+
       const row = db
         .query(
           `SELECT output_attempt_count, output_validation_errors_json

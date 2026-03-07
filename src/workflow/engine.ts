@@ -11,6 +11,7 @@ import {
   type NodeAdapter,
 } from "./adapter";
 import { DispatchingNodeAdapter } from "./adapters/dispatch";
+import { resolveNodeExecutionBackend } from "./adapters/dispatch";
 import { loadWorkflowFromDisk } from "./load";
 import { assembleNodeInput } from "./input-assembly";
 import { validateJsonValueAgainstSchema, type JsonSchemaValidationError } from "./json-schema";
@@ -25,6 +26,7 @@ import {
   createSessionId,
   createSessionState,
   type CommunicationRecord,
+  type NodeBackendSessionRecord,
   type NodeExecutionRecord,
   type OutputRef,
   type WorkflowSessionState,
@@ -827,8 +829,69 @@ function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
     communicationCounter: session.communicationCounter,
     communications: [...session.communications],
     conversationTurns: [...(session.conversationTurns ?? [])],
+    nodeBackendSessions: { ...(session.nodeBackendSessions ?? {}) },
     runtimeVariables: { ...session.runtimeVariables },
   };
+}
+
+function resolveRequestedBackendSession(
+  session: WorkflowSessionState,
+  node: NodePayload,
+): AdapterExecutionInput["backendSession"] | undefined {
+  if (node.sessionPolicy === undefined) {
+    return undefined;
+  }
+
+  if (node.sessionPolicy.mode === "new") {
+    return { mode: "new" };
+  }
+
+  const existing = session.nodeBackendSessions?.[node.id];
+  if (existing === undefined) {
+    return { mode: "new" };
+  }
+
+  const backend = resolveNodeExecutionBackend(node);
+  if (existing.backend !== backend) {
+    return { mode: "new" };
+  }
+
+  return {
+    mode: "reuse",
+    sessionId: existing.sessionId,
+  };
+}
+
+function persistNodeBackendSession(input: {
+  readonly session: WorkflowSessionState;
+  readonly node: NodePayload;
+  readonly nodeExecId: string;
+  readonly provider: string;
+  readonly endedAt: string;
+  readonly backendSession: AdapterExecutionInput["backendSession"];
+  readonly returnedSessionId?: string;
+}): Readonly<Record<string, NodeBackendSessionRecord>> {
+  const current = { ...(input.session.nodeBackendSessions ?? {}) };
+  if (input.node.sessionPolicy?.mode !== "reuse") {
+    return current;
+  }
+
+  const sessionId = input.returnedSessionId ?? input.backendSession?.sessionId;
+  if (sessionId === undefined) {
+    return current;
+  }
+
+  const existing = current[input.node.id];
+  current[input.node.id] = {
+    nodeId: input.node.id,
+    backend: resolveNodeExecutionBackend(input.node),
+    provider: input.provider,
+    sessionId,
+    createdAt: existing?.createdAt ?? input.endedAt,
+    updatedAt: input.endedAt,
+    lastNodeExecId: input.nodeExecId,
+  };
+  return current;
 }
 
 export async function runWorkflow(
@@ -1089,6 +1152,11 @@ export async function runWorkflow(
         return err({ exitCode: 3, message: failed.lastError ?? "input assembly failed" });
       }
 
+      let backendSession = resolveRequestedBackendSession(session, nodePayload);
+      const requestedBackendSessionMode = backendSession?.mode;
+      let backendSessionId: string | undefined = backendSession?.sessionId;
+      let backendSessionProvider: string | undefined;
+
       const inputPayload = {
         sessionId: session.sessionId,
         workflowExecutionId: session.sessionId,
@@ -1112,6 +1180,7 @@ export async function runWorkflow(
                 maxValidationAttempts: resolveOutputValidationAttempts(nodePayload),
                 publication: buildOutputPublicationPolicy(),
               },
+        ...(backendSession === undefined ? {} : { backendSession }),
         ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
         dryRun: options.dryRun ?? false,
       };
@@ -1217,6 +1286,7 @@ export async function runWorkflow(
                 executionIndex: nextCount,
                 artifactDir,
                 upstreamCommunicationIds,
+                ...(backendSession === undefined ? {} : { backendSession }),
                 ...(adapterOutputContract === undefined ? {} : { output: adapterOutputContract }),
               },
               timeoutMs,
@@ -1261,6 +1331,15 @@ export async function runWorkflow(
                 error: execution.error.code,
               };
               break;
+            }
+
+            backendSessionProvider = execution.value.provider;
+            if (execution.value.backendSession?.sessionId !== undefined) {
+              backendSession = {
+                mode: "reuse",
+                sessionId: execution.value.backendSession.sessionId,
+              };
+              backendSessionId = execution.value.backendSession.sessionId;
             }
 
             if (!hasOutputContract && execution.value.candidateFilePath !== undefined) {
@@ -1390,6 +1469,30 @@ export async function runWorkflow(
       }
 
       const endedAt = nowIso();
+      const nextNodeBackendSessions = persistNodeBackendSession({
+        session,
+        node: nodePayload,
+        nodeExecId,
+        provider: backendSessionProvider ?? outputPayload["provider"]?.toString() ?? "unknown-provider",
+        endedAt,
+        backendSession,
+        ...(backendSessionId === undefined ? {} : { returnedSessionId: backendSessionId }),
+      });
+      const nodeExecutionRecord: NodeExecutionRecord = {
+        nodeId,
+        nodeExecId,
+        status: nodeStatus,
+        artifactDir,
+        startedAt,
+        endedAt,
+        ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+        ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
+        ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
+        ...(backendSessionId === undefined ? {} : { backendSessionId }),
+        ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
+        ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+      };
+      const nodeExecutions = [...session.nodeExecutions, nodeExecutionRecord];
       let managerControl = null;
       if (isManagerNodeKind(nodeRef.kind)) {
         try {
@@ -1411,9 +1514,10 @@ export async function runWorkflow(
             endedAt,
             nodeExecutionCounter: nextExecutionCounter,
             nodeExecutionCounts: updatedCounts,
-            nodeExecutions: session.nodeExecutions,
+            nodeExecutions,
             communicationCounter: session.communicationCounter,
             communications: session.communications,
+            nodeBackendSessions: nextNodeBackendSessions,
             lastError: `invalid manager control at '${nodeId}': ${message}`,
           };
           await saveSession(failed, options);
@@ -1429,9 +1533,10 @@ export async function runWorkflow(
             endedAt,
             nodeExecutionCounter: nextExecutionCounter,
             nodeExecutionCounts: updatedCounts,
-            nodeExecutions: session.nodeExecutions,
+            nodeExecutions,
             communicationCounter: session.communicationCounter,
             communications: session.communications,
+            nodeBackendSessions: nextNodeBackendSessions,
             lastError: `invalid manager control at '${nodeId}': only the root manager can start sub-workflows`,
           };
           await saveSession(failed, options);
@@ -1447,9 +1552,10 @@ export async function runWorkflow(
             endedAt,
             nodeExecutionCounter: nextExecutionCounter,
             nodeExecutionCounts: updatedCounts,
-            nodeExecutions: session.nodeExecutions,
+            nodeExecutions,
             communicationCounter: session.communicationCounter,
             communications: session.communications,
+            nodeBackendSessions: nextNodeBackendSessions,
             lastError: `invalid manager control at '${nodeId}': only a sub-manager can dispatch child input nodes`,
           };
           await saveSession(failed, options);
@@ -1507,10 +1613,13 @@ export async function runWorkflow(
                 ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
                 ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
                 ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
+                ...(backendSessionId === undefined ? {} : { backendSessionId }),
+                ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
                 ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
               },
             ],
             loopIterationCounts: updatedLoopIterationCounts,
+            nodeBackendSessions: nextNodeBackendSessions,
             lastError: `loop transition '${transition}' has no matching edge at '${nodeId}'`,
           };
           await saveSession(failed, options);
@@ -1530,6 +1639,8 @@ export async function runWorkflow(
         timeoutMs,
         restartAttempt,
         outputAttemptCount,
+        ...(backendSessionId === undefined ? {} : { backendSessionId }),
+        ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
         ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
         ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
       };
@@ -1586,6 +1697,8 @@ export async function runWorkflow(
             ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
             ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
             ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
+            ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
+            ...(backendSessionId === undefined ? {} : { backendSessionId }),
             ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
             inputJson,
             outputJson,
@@ -1597,22 +1710,6 @@ export async function runWorkflow(
       } catch {
         // runtime DB index is best-effort and must not break artifact/session persistence
       }
-
-      const nodeExecutions = [
-        ...session.nodeExecutions,
-        {
-          nodeId,
-          nodeExecId,
-          status: nodeStatus,
-          artifactDir,
-          startedAt,
-          endedAt,
-          ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
-          ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
-          ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
-          ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
-        },
-      ];
 
       if (nodeStatus === "timed_out") {
         if (restartOnStuck && restartAttempt < maxStuckRestarts) {
@@ -1640,6 +1737,7 @@ export async function runWorkflow(
             nodeExecutions,
             communicationCounter: currentCommunicationCounter,
             communications: currentCommunications,
+            nodeBackendSessions: nextNodeBackendSessions,
             lastError: `stuck detected at '${nodeId}', restarting attempt ${restartAttempt + 1}`,
           };
           await saveSession(session, options);
@@ -1663,6 +1761,7 @@ export async function runWorkflow(
           nodeExecutions,
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
+          nodeBackendSessions: nextNodeBackendSessions,
           lastError: `node timeout at '${nodeId}'`,
         };
         await saveSession(failed, options);
@@ -1687,6 +1786,7 @@ export async function runWorkflow(
           nodeExecutions,
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
+          nodeBackendSessions: nextNodeBackendSessions,
           lastError: failureReason,
         };
         await saveSession(failed, options);
@@ -1710,6 +1810,7 @@ export async function runWorkflow(
           loopIterationCounts: updatedLoopIterationCounts,
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
+          nodeBackendSessions: nextNodeBackendSessions,
           lastError:
             completion.reason === null
               ? `completion condition not met at '${nodeId}'`
@@ -1737,6 +1838,7 @@ export async function runWorkflow(
           loopIterationCounts: updatedLoopIterationCounts,
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
+          nodeBackendSessions: nextNodeBackendSessions,
           lastError: consumedCommunicationsResult.error,
         };
         await saveSession(failed, options);
@@ -1922,6 +2024,7 @@ export async function runWorkflow(
             communicationCounter: currentCommunicationCounter,
             communications: currentCommunications,
             conversationTurns,
+            nodeBackendSessions: nextNodeBackendSessions,
             lastError: "conversation round execution failed",
           };
           await saveSession(failed, options);
@@ -1953,6 +2056,7 @@ export async function runWorkflow(
                 communicationCounter: currentCommunicationCounter,
                 communications: currentCommunications,
                 conversationTurns,
+                nodeBackendSessions: nextNodeBackendSessions,
                 lastError:
                   `failed to resolve conversation output for '${turn.fromSubWorkflowId}' -> '${turn.toSubWorkflowId}': ` +
                   parsedOutput.error,
@@ -2013,6 +2117,7 @@ export async function runWorkflow(
         communicationCounter: currentCommunicationCounter,
         communications: currentCommunications,
         conversationTurns,
+        nodeBackendSessions: nextNodeBackendSessions,
         runtimeVariables: currentRuntimeVariables,
       };
 

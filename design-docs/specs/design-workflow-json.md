@@ -159,6 +159,10 @@ Each `node-{id}.json` contains execution payload used at runtime:
 - `model` (`tacogips/codex-agent` or `tacogips/claude-code-agent`)
 - `promptTemplate`
 - `variables`
+- optional `sessionPolicy`
+  - `mode: "new" | "reuse"`
+  - omitted means `new`
+  - `reuse` allows repeated executions of the same node to continue one backend-managed session within the same workflow run
 - optional `output` contract:
   - must define at least one of `description` or `jsonSchema`
   - `description`
@@ -195,6 +199,9 @@ Example:
   "name": "draft",
   "description": "Write the initial document draft.",
   "model": "tacogips/codex-agent",
+  "sessionPolicy": {
+    "mode": "reuse"
+  },
   "timeoutMs": 90000,
   "promptTemplate": "Write draft for {{topic}}",
   "variables": {

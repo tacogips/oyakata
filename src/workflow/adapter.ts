@@ -11,6 +11,15 @@ export interface AdapterExecutionContext {
   readonly signal: AbortSignal;
 }
 
+export interface AdapterBackendSessionInput {
+  readonly mode: "new" | "reuse";
+  readonly sessionId?: string;
+}
+
+export interface AdapterBackendSessionOutput {
+  readonly sessionId: string;
+}
+
 export interface AdapterExecutionInput {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
@@ -23,6 +32,7 @@ export interface AdapterExecutionInput {
   readonly executionIndex: number;
   readonly artifactDir: string;
   readonly upstreamCommunicationIds: readonly string[];
+  readonly backendSession?: AdapterBackendSessionInput;
   readonly output?: AdapterOutputContractInput;
 }
 
@@ -56,6 +66,7 @@ export interface AdapterExecutionOutput {
   readonly completionPassed: boolean;
   readonly when: Readonly<Record<string, boolean>>;
   readonly payload: Readonly<Record<string, unknown>>;
+  readonly backendSession?: AdapterBackendSessionOutput;
   readonly candidateFilePath?: string;
 }
 
@@ -128,6 +139,7 @@ export function normalizeAdapterOutput(
   const when = value["when"];
   const payload = value["payload"];
   const candidateFilePath = value["candidateFilePath"];
+  const backendSession = value["backendSession"];
 
   if (typeof provider !== "string" || provider.length === 0) {
     throw new AdapterExecutionError("invalid_output", "adapter output.provider must be a non-empty string");
@@ -144,6 +156,17 @@ export function normalizeAdapterOutput(
   if (candidateFilePath !== undefined && (typeof candidateFilePath !== "string" || candidateFilePath.length === 0)) {
     throw new AdapterExecutionError("invalid_output", "adapter output.candidateFilePath must be a non-empty string");
   }
+  if (
+    backendSession !== undefined &&
+    (!isRecord(backendSession) ||
+      typeof backendSession["sessionId"] !== "string" ||
+      backendSession["sessionId"].length === 0)
+  ) {
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.backendSession.sessionId must be a non-empty string",
+    );
+  }
   if (!isRecord(payload) && typeof candidateFilePath !== "string") {
     throw new AdapterExecutionError("invalid_output", "adapter output.payload must be an object");
   }
@@ -155,6 +178,7 @@ export function normalizeAdapterOutput(
     completionPassed,
     when,
     payload: isRecord(payload) ? payload : {},
+    ...(isRecord(backendSession) ? { backendSession: { sessionId: String(backendSession["sessionId"]) } } : {}),
     ...(typeof candidateFilePath === "string" ? { candidateFilePath } : {}),
   };
 }

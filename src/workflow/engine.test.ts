@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { AdapterExecutionError, DeterministicNodeAdapter, ScenarioNodeAdapter } from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
-import { getSessionStoreRoot } from "./session-store";
+import { getSessionStoreRoot, loadSession } from "./session-store";
 
 const tempDirs: string[] = [];
 const deterministicAdapter = new DeterministicNodeAdapter();
@@ -433,6 +433,142 @@ class DescriptionOnlyRetryPromptCaptureAdapter implements NodeAdapter {
   }
 }
 
+class ReusableSessionAdapter implements NodeAdapter {
+  readonly calls: Array<{
+    readonly nodeId: string;
+    readonly backendSession?: { readonly mode: "new" | "reuse"; readonly sessionId?: string };
+  }> = [];
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    this.calls.push({
+      nodeId: input.nodeId,
+      ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+    });
+
+    if (input.nodeId === "step-b") {
+      const sessionId = input.backendSession?.sessionId ?? "backend-b-1";
+      const seen = input.backendSession?.mode === "reuse" && input.backendSession.sessionId === "backend-b-1";
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true, go_c: !seen },
+        payload: {
+          sum: seen ? 5 : 2,
+          reused: seen,
+          go_c: !seen,
+        },
+        backendSession: {
+          sessionId,
+        },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
+class OutputContractReusableSessionAdapter implements NodeAdapter {
+  readonly calls: Array<{
+    readonly attempt: number;
+    readonly backendSession?: { readonly mode: "new" | "reuse"; readonly sessionId?: string };
+  }> = [];
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId !== "step-1") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const attempt = input.output?.attempt ?? 1;
+    this.calls.push({
+      attempt,
+      ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+    });
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: attempt === 1 ? { wrong: true } : { summary: "valid after backend session retry" },
+      backendSession: {
+        sessionId: "backend-step-1",
+      },
+    };
+  }
+}
+
+class InvalidManagerControlReusableSessionAdapter implements NodeAdapter {
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId !== "oyakata-manager") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {
+        managerControl: {
+          actions: "invalid",
+        },
+      },
+      backendSession: {
+        sessionId: "backend-manager-1",
+      },
+    };
+  }
+}
+
+class ExplicitNewSessionPolicyAdapter implements NodeAdapter {
+  readonly calls: Array<{
+    readonly nodeId: string;
+    readonly backendSession?: { readonly mode: "new" | "reuse"; readonly sessionId?: string };
+  }> = [];
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    this.calls.push({
+      nodeId: input.nodeId,
+      ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+    });
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+      ...(input.nodeId === "step-1" ? { backendSession: { sessionId: "ephemeral-step-1-session" } } : {}),
+    };
+  }
+}
+
 async function makeTempDir(): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "oyakata-engine-test-"));
   tempDirs.push(directory);
@@ -526,6 +662,70 @@ async function createWorkflowFixture(root: string, workflowName: string, withLoo
       variables: {},
     });
   }
+}
+
+async function createNodeSessionReuseFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "node session reuse fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "step-a", kind: "task", nodeFile: "node-step-a.json", completion: { type: "none" } },
+      { id: "step-b", kind: "task", nodeFile: "node-step-b.json", completion: { type: "none" } },
+      { id: "step-c", kind: "task", nodeFile: "node-step-c.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "oyakata-manager", to: "step-a", when: "always" },
+      { from: "step-a", to: "step-b", when: "always" },
+      { from: "step-b", to: "step-c", when: "go_c" },
+      { from: "step-c", to: "step-b", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "step-a", order: 1 },
+      { id: "step-b", order: 2 },
+      { id: "step-c", order: 3 },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-oyakata-manager.json"), {
+    id: "oyakata-manager",
+    model: "tacogips/codex-agent",
+    promptTemplate: "manager",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-step-a.json"), {
+    id: "step-a",
+    model: "tacogips/codex-agent",
+    promptTemplate: "return 2",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-step-b.json"), {
+    id: "step-b",
+    model: "tacogips/claude-code-agent",
+    sessionPolicy: {
+      mode: "reuse",
+    },
+    promptTemplate: "accumulate",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-step-c.json"), {
+    id: "step-c",
+    model: "tacogips/codex-agent",
+    promptTemplate: "return 3",
+    variables: {},
+  });
 }
 
 async function createSubWorkflowRuntimeFixture(root: string, workflowName: string): Promise<void> {
@@ -825,6 +1025,181 @@ describe("runWorkflow", () => {
     const commitMessage = await readFile(path.join(step1Exec.artifactDir, "commit-message.txt"), "utf8");
     expect(commitMessage).toContain("Node-ID: step-1");
     expect(commitMessage).toContain(`Run-ID: ${result.value.session.sessionId}`);
+  });
+
+  test("reuses a node-local backend session across repeated executions in one workflow run", async () => {
+    const root = await makeTempDir();
+    await createNodeSessionReuseFixture(root, "node-session-reuse");
+    const adapter = new ReusableSessionAdapter();
+
+    const result = await runWorkflow(
+      "node-session-reuse",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const bCalls = adapter.calls.filter((entry) => entry.nodeId === "step-b");
+    expect(bCalls).toHaveLength(2);
+    expect(bCalls[0]?.backendSession).toEqual({ mode: "new" });
+    expect(bCalls[1]?.backendSession).toEqual({ mode: "reuse", sessionId: "backend-b-1" });
+    expect(result.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+
+    const bExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-b");
+    expect(bExecutions).toHaveLength(2);
+    expect(bExecutions[0]?.backendSessionMode).toBe("new");
+    expect(bExecutions[0]?.backendSessionId).toBe("backend-b-1");
+    expect(bExecutions[1]?.backendSessionMode).toBe("reuse");
+    expect(bExecutions[1]?.backendSessionId).toBe("backend-b-1");
+  });
+
+  test("preserves reusable node backend sessions across workflow resume", async () => {
+    const root = await makeTempDir();
+    await createNodeSessionReuseFixture(root, "node-session-resume");
+    const firstAdapter = new ReusableSessionAdapter();
+
+    const first = await runWorkflow(
+      "node-session-resume",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        maxSteps: 3,
+      },
+      firstAdapter,
+    );
+
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.session.status).toBe("paused");
+    expect(first.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+
+    const resumedAdapter = new ReusableSessionAdapter();
+    const resumed = await runWorkflow(
+      "node-session-resume",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        resumeSessionId: first.value.session.sessionId,
+      },
+      resumedAdapter,
+    );
+
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) {
+      return;
+    }
+
+    const resumedBCalls = resumedAdapter.calls.filter((entry) => entry.nodeId === "step-b");
+    expect(resumedBCalls).toHaveLength(1);
+    expect(resumedBCalls[0]?.backendSession).toEqual({ mode: "reuse", sessionId: "backend-b-1" });
+    expect(resumed.value.session.status).toBe("completed");
+    expect(resumed.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+  });
+
+  test("forwards explicit new session policy without persisting a reusable backend session", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "explicit-new-session-policy", false);
+
+    await writeJson(path.join(root, "explicit-new-session-policy", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      sessionPolicy: {
+        mode: "new",
+      },
+      promptTemplate: "step {{topic}}",
+      variables: {},
+    });
+
+    const adapter = new ExplicitNewSessionPolicyAdapter();
+    const result = await runWorkflow(
+      "explicit-new-session-policy",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Calls = adapter.calls.filter((entry) => entry.nodeId === "step-1");
+    expect(step1Calls).toEqual([{ nodeId: "step-1", backendSession: { mode: "new" } }]);
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.backendSessionMode).toBe("new");
+    expect(step1Exec?.backendSessionId).toBe("ephemeral-step-1-session");
+    expect(result.value.session.nodeBackendSessions?.["step-1"]).toBeUndefined();
+  });
+
+  test("preserves reusable backend sessions even when post-execution manager-control parsing fails", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "manager-session-failure", false);
+
+    await writeJson(path.join(root, "manager-session-failure", "node-oyakata-manager.json"), {
+      id: "oyakata-manager",
+      model: "tacogips/claude-code-agent",
+      sessionPolicy: {
+        mode: "reuse",
+      },
+      promptTemplate: "manager",
+      variables: {},
+    });
+
+    const adapter = new InvalidManagerControlReusableSessionAdapter();
+    const result = await runWorkflow(
+      "manager-session-failure",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-manager-session-failure",
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const saved = await loadSession("sess-manager-session-failure", {
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) {
+      return;
+    }
+    expect(saved.value.status).toBe("failed");
+    expect(saved.value.nodeExecutions).toHaveLength(1);
+    expect(saved.value.nodeExecutions[0]).toMatchObject({
+      nodeId: "oyakata-manager",
+      nodeExecId: "exec-000001",
+      status: "succeeded",
+      backendSessionMode: "new",
+      backendSessionId: "backend-manager-1",
+    });
+    expect(saved.value.nodeBackendSessions?.["oyakata-manager"]).toMatchObject({
+      nodeId: "oyakata-manager",
+      sessionId: "backend-manager-1",
+      lastNodeExecId: "exec-000001",
+    });
   });
 
   test("delivers root human input through an external mailbox communication", async () => {
@@ -1173,6 +1548,67 @@ describe("runWorkflow", () => {
     );
     const secondValidationJson = JSON.parse(secondValidationRaw) as { valid: boolean };
     expect(secondValidationJson.valid).toBe(true);
+  });
+
+  test("reuses the latest backend session across output-contract retries", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-session-retry", false);
+
+    await writeJson(path.join(root, "output-contract-session-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      sessionPolicy: {
+        mode: "reuse",
+      },
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const adapter = new OutputContractReusableSessionAdapter();
+    const result = await runWorkflow(
+      "output-contract-session-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.calls).toEqual([
+      {
+        attempt: 1,
+        backendSession: { mode: "new" },
+      },
+      {
+        attempt: 2,
+        backendSession: { mode: "reuse", sessionId: "backend-step-1" },
+      },
+    ]);
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    expect(step1Exec?.backendSessionMode).toBe("new");
+    expect(step1Exec?.backendSessionId).toBe("backend-step-1");
+    expect(result.value.session.nodeBackendSessions?.["step-1"]?.sessionId).toBe("backend-step-1");
   });
 
   test("supports output-validation retry flows with scenario-mock sequences", async () => {
@@ -2590,6 +3026,46 @@ describe("runWorkflow", () => {
     expect(rerun.value.session.nodeExecutions).toHaveLength(1);
     expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
     expect(rerun.value.session.startedAt.length).toBeGreaterThan(0);
+  });
+
+  test("does not inherit reusable node backend sessions into a rerun session", async () => {
+    const root = await makeTempDir();
+    await createNodeSessionReuseFixture(root, "rerun-node-session-reuse");
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const firstAdapter = new ReusableSessionAdapter();
+    const first = await runWorkflow("rerun-node-session-reuse", options, firstAdapter);
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+
+    const rerunAdapter = new ReusableSessionAdapter();
+    const rerun = await runWorkflow(
+      "rerun-node-session-reuse",
+      {
+        ...options,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromNodeId: "step-b",
+      },
+      rerunAdapter,
+    );
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+
+    const stepBCalls = rerunAdapter.calls.filter((entry) => entry.nodeId === "step-b");
+    expect(stepBCalls).toHaveLength(2);
+    expect(stepBCalls[0]?.backendSession).toEqual({ mode: "new" });
+    expect(stepBCalls[1]?.backendSession).toEqual({ mode: "reuse", sessionId: "backend-b-1" });
+    expect(rerun.value.session.sessionId).not.toBe(first.value.session.sessionId);
+    expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-b");
   });
 
   test("manager schedules sub-workflow inputs based on inputSources dependencies", async () => {
