@@ -48,6 +48,9 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("modeBanner");
     expect(uiText).toContain("Read-only mode disables create and save actions.");
     expect(uiText).toContain("Execution is disabled, so run and cancel actions are unavailable.");
+    expect(uiText).toContain("derive from model (legacy)");
+    expect(uiText).toContain("placeholder=\"gpt-5 / claude-sonnet-4-5 / claude-opus-4-1\"");
+    expect(uiText).toContain('backendPill.textContent = payload && payload.executionBackend ? payload.executionBackend : "legacy backend";');
     expect(uiText).toContain("Add Node");
     expect(uiText).toContain("Refresh Sessions");
     expect(uiText).toContain("Cancel Selected Session");
@@ -212,10 +215,15 @@ describe("handleApiRequest", () => {
       revision: string | null;
       bundle: {
         workflow: { description: string };
+        nodePayloads: Record<string, { executionBackend?: string; model: string }>;
       };
     };
     expect(createJson.workflowName).toBe("browser-demo");
     expect(createJson.bundle.workflow.description).toBe("New workflow");
+    expect(createJson.bundle.nodePayloads["oyakata-manager"]?.executionBackend).toBe("tacogips/codex-agent");
+    expect(createJson.bundle.nodePayloads["oyakata-manager"]?.model).toBe("gpt-5");
+    expect(createJson.bundle.nodePayloads["workflow-output"]?.executionBackend).toBe("tacogips/codex-agent");
+    expect(createJson.bundle.nodePayloads["workflow-output"]?.model).toBe("gpt-5");
     expect(createJson.revision).toEqual(expect.any(String));
 
     const duplicateRes = await handleApiRequest(

@@ -4,7 +4,7 @@
 
 ## Purpose
 
-The system coordinates multiple agent backends and controls their collaboration with a JSON workflow definition.
+The system coordinates multiple agent execution backends and controls their collaboration with a JSON workflow definition.
 
 Primary agent backends:
 - `tacogips/codex-agent`
@@ -22,6 +22,7 @@ A workflow is the execution contract for session management. It must represent:
 - optional workflow-level prompt policy for `oyakata` and worker prompt composition
 
 Runtime execution inputs for each executable node are separated into node files:
+- `executionBackend`
 - `model`
 - `promptTemplate`
 - `variables`
@@ -49,7 +50,7 @@ Example:
 Required files:
 - `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose; may include `prompts.oyakataPromptTemplate` and `prompts.workerSystemPromptTemplate`)
 - `workflow-vis.json`: browser visualization state for vertical flow rendering (node `order`; `indent/color` are derived from graph semantics)
-- `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`, optional `output` contract)
+- `node-{id}.json`: executable node payload (`executionBackend`, `model`, `promptTemplate`, `variables`, optional `output` contract)
 
 Runtime boundary rule:
 - root `oyakata` input and final workflow output are also exposed through mailbox artifacts, so external-to-root handoff uses the same mailbox model as parent/sub-workflow nesting
@@ -72,7 +73,7 @@ The workflow covers:
 - test
 - test review
 
-`mock-scenario.json` pins deterministic per-node outputs for `tacogips/codex-agent` and `tacogips/claude-code-agent`.
+`mock-scenario.json` pins deterministic per-node outputs for the tacogips execution backends.
 The sample `test-review` node returns `needs_rework` on first execution and `approved` on second execution to demonstrate looped rework.
 
 Run example:

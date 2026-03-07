@@ -204,5 +204,9 @@ describe("loadWorkflowFromDisk", () => {
       "workflow-output",
     ]);
     expect(result.value.bundle.workflow.subWorkflows[0]?.inputSources).toEqual([{ type: "human-input" }]);
+    expect(result.value.bundle.nodePayloads["oyakata-manager"]?.executionBackend).toBe("tacogips/codex-agent");
+    expect(result.value.bundle.nodePayloads["oyakata-manager"]?.model).toBe("gpt-5");
+    expect(result.value.bundle.nodePayloads["workflow-output"]?.executionBackend).toBe("tacogips/codex-agent");
+    expect(result.value.bundle.nodePayloads["workflow-output"]?.model).toBe("gpt-5");
   });
 });

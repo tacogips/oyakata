@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { validateWorkflowBundle } from "./validate";
+import { validateWorkflowBundle, validateWorkflowBundleDetailed } from "./validate";
 
 function makeValidRaw(): {
   workflow: unknown;
@@ -74,6 +74,25 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.model).toBe("gpt-5");
   });
 
+  test("accepts explicit tacogips backend with provider model string", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      executionBackend: "tacogips/claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.executionBackend).toBe("tacogips/claude-code-agent");
+    expect(result.value.nodePayloads["worker-1"]?.model).toBe("claude-opus-4-1");
+  });
+
   test("accepts node session reuse policy", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {
@@ -135,7 +154,31 @@ describe("validateWorkflowBundle", () => {
       result.error.some(
         (issue) =>
           issue.path === "nodePayloads.node-worker-1.json.model" &&
-          issue.message.includes("provider model name"),
+          issue.message.includes("provider or backend-specific model name"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects tacogips cli-wrapper identifiers with explicit tacogips backends", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/codex-agent",
+      executionBackend: "tacogips/codex-agent",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundleDetailed(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.model" &&
+          issue.message.includes("provider or backend-specific model name"),
       ),
     ).toBe(true);
   });
@@ -155,6 +198,21 @@ describe("validateWorkflowBundle", () => {
       return;
     }
     expect(result.error.some((issue) => issue.path === "nodePayloads.node-worker-1.json.executionBackend")).toBe(true);
+  });
+
+  test("warns when legacy tacogips backend identifier is encoded in model", () => {
+    const result = validateWorkflowBundleDetailed(makeValidRaw());
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(
+      result.value.issues.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.model" &&
+          issue.message.includes("legacy tacogips backend identifier"),
+      ),
+    ).toBe(true);
   });
 
   test("normalizes legacy prompt and variable fields", () => {

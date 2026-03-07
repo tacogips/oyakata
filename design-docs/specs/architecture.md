@@ -4,7 +4,7 @@ This document defines the architecture for cooperative multi-agent workflow exec
 
 ## Overview
 
-`oyakata` manages writing sessions by executing JSON-defined workflows across multiple agent backends, primarily:
+`oyakata` manages writing sessions by executing JSON-defined workflows across multiple execution backends, primarily:
 - `tacogips/codex-agent`
 - `tacogips/claude-code-agent`
 
@@ -40,7 +40,8 @@ Outputs:
 - Produces provider-ready prompt payloads
 
 4. Agent Adapter Layer
-- Maps `model` in node to backend implementation
+- Maps `executionBackend` in node to backend implementation
+- Sends node `model` through that backend as the provider/backend-specific model name
 - Initial targets: `tacogips/codex-agent`, `tacogips/claude-code-agent`
 
 5. Execution Engine
@@ -68,7 +69,7 @@ Outputs:
 8. Browser Workflow Editor (Svelte)
 - Vertical workflow editing for nodes, edges, branch/loop rules, and defaults
 - Ordered list interaction for reorder, indent, and color-based group/loop expression
-- Node payload editing (`model`, `promptTemplate`, `variables`, `timeoutMs`)
+- Node payload editing (`executionBackend`, `model`, `promptTemplate`, `variables`, `timeoutMs`)
 - Layout editing persisted to `workflow-vis.json`
 - Run controls and execution trace view for local sessions
 
@@ -204,7 +205,8 @@ Mailbox transport contract:
 ### Node Model
 
 Execution node payload is externalized in `node-{id}.json`:
-- `model`: backend identifier
+- `executionBackend`: adapter/interface identifier
+- `model`: provider or backend-specific model name
 - `promptTemplate`: template text
 - `variables`: runtime bindings
 - optional `sessionPolicy`: backend session handling policy (`new` by default, `reuse` for node-local backend session continuation)
@@ -223,6 +225,7 @@ Node backend session reuse:
 - When `node.sessionPolicy.mode = "reuse"`, the engine may resume an opaque backend-managed session for later executions of the same node within one workflow run.
 - Reusable backend session handles are persisted in workflow session state so `session resume` can continue them.
 - Detailed request/response shape is defined in [design-node-session-reuse.md](/g/gits/tacogips/oyakata/design-docs/specs/design-node-session-reuse.md).
+- Canonical backend/model separation is defined in [design-node-backend-model-separation.md](/g/gits/tacogips/oyakata/design-docs/specs/design-node-backend-model-separation.md).
 
 `workflow.json` contains structural information:
 - node set and connectivity

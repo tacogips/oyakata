@@ -11,7 +11,8 @@ const baseInput: AdapterExecutionInput = {
   nodeExecId: "exec-1",
   node: {
     id: "node-1",
-    model: "tacogips/claude-code-agent",
+    executionBackend: "tacogips/claude-code-agent",
+    model: "claude-opus-4-1",
     promptTemplate: "test",
     variables: {},
   },
@@ -54,10 +55,11 @@ describe("ClaudeCodeAgentAdapter", () => {
     const adapter = new ClaudeCodeAgentAdapter({ endpoint: "http://localhost/claude" });
     const output = await adapter.execute(baseInput, baseContext);
     expect(output.provider).toBe("claude-provider");
-    expect(output.model).toBe("tacogips/claude-code-agent");
+    expect(output.model).toBe("claude-opus-4-1");
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
     const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    expect(body["model"]).toBe("claude-opus-4-1");
     expect(body["workflowExecutionId"]).toBe("sess-1");
     expect(body["nodeExecId"]).toBe("exec-1");
   });

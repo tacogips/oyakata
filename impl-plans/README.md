@@ -25,7 +25,7 @@ impl-plans/
 
 | Plan | Status | Design Reference | Last Updated |
 |------|--------|------------------|--------------|
-| (none) | - | - | - |
+| `workflow-web-editor-execution` | In Progress | `design-workflow-web-editor` | 2026-03-07 |
 
 ## Completed Plans
 
@@ -42,6 +42,11 @@ impl-plans/
 | `workflow-tui-mvp` | 2026-02-25 | `design-tui` |
 | `workflow-tui-cli-parity` | 2026-02-25 | `design-tui` |
 | `workflow-tui-resume-decoupling` | 2026-02-25 | `design-tui` |
+| `node-execution-backend-selection` | 2026-03-07 | `architecture` |
+| `node-output-contract-and-validation` | 2026-03-07 | `design-node-output-contract`, `design-data-model`, `architecture` |
+| `oyakata-manager-prompt-contract` | 2026-03-07 | `design-oyakata-manager-prompt-contract`, `architecture` |
+| `node-session-reuse` | 2026-03-07 | `design-node-session-reuse`, `architecture`, `design-data-model` |
+| `node-backend-model-separation` | 2026-03-07 | `design-node-backend-model-separation`, `design-data-model`, `design-workflow-json`, `architecture` |
 
 ## Phase Dependencies
 
@@ -58,6 +63,12 @@ impl-plans/
 | 9 | COMPLETED | Phase 8 |
 | 10 | COMPLETED | Phase 9 |
 | 11 | COMPLETED | Phase 10 |
+| 12 | COMPLETED | Phase 11 |
+| 13 | COMPLETED | Phase 12 |
+| 14 | IN_PROGRESS | Phase 13 |
+| 15 | COMPLETED | Phase 14 |
+| 16 | COMPLETED | Phase 15 |
+| 17 | COMPLETED | Phase 16 |
 
 ### Phase to Plans Mapping
 
@@ -73,6 +84,12 @@ PHASE_TO_PLANS = {
   8: ["completed/autonomous-execution-gap-closure.md"],
   9: ["completed/workflow-tui-mvp.md"],
   10: ["completed/workflow-tui-cli-parity.md"],
-  11: ["completed/workflow-tui-resume-decoupling.md"]
+  11: ["completed/workflow-tui-resume-decoupling.md"],
+  12: ["impl-plans/node-execution-backend-selection.md"],
+  13: ["impl-plans/node-output-contract-and-validation.md"],
+  14: ["impl-plans/workflow-web-editor-execution.md"],
+  15: ["impl-plans/oyakata-manager-prompt-contract.md"],
+  16: ["impl-plans/node-session-reuse.md"],
+  17: ["impl-plans/node-backend-model-separation.md"]
 }
 ```

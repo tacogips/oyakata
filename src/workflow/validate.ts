@@ -69,8 +69,8 @@ function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
   );
 }
 
-function requiresProviderModel(executionBackend: NodeExecutionBackend | undefined): boolean {
-  return executionBackend === "official/openai-sdk" || executionBackend === "official/anthropic-sdk";
+function requiresSeparatedModel(executionBackend: NodeExecutionBackend | undefined): executionBackend is NodeExecutionBackend {
+  return executionBackend !== undefined;
 }
 
 function isNodeSessionMode(value: unknown): value is NodeSessionPolicy["mode"] {
@@ -799,13 +799,21 @@ function normalizeNodePayload(
         "is required when model is not one of the tacogips CLI-wrapper backend identifiers",
       ),
     );
+  } else if (model !== null && executionBackend === undefined && isCliAgentBackend(model)) {
+    issues.push(
+      makeIssue(
+        "warning",
+        `${path}.model`,
+        "legacy tacogips backend identifier encoded in model; prefer explicit executionBackend plus a provider model name",
+      ),
+    );
   }
-  if (model !== null && executionBackend !== undefined && requiresProviderModel(executionBackend) && isCliAgentBackend(model)) {
+  if (model !== null && requiresSeparatedModel(executionBackend) && isCliAgentBackend(model)) {
     issues.push(
       makeIssue(
         "error",
         `${path}.model`,
-        `must be a provider model name when executionBackend is '${executionBackend}', not a tacogips CLI-wrapper identifier`,
+        `must be a provider or backend-specific model name when executionBackend is '${executionBackend}', not a tacogips CLI-wrapper identifier`,
       ),
     );
   }

@@ -32,7 +32,7 @@ The server and UI are local-first and operate on the existing `.oyakata/<workflo
 2. User chooses workflow from list or creates one from template.
 3. User edits:
 - Graph nodes/edges and conditions
-- Node payload (`model`, `promptTemplate`, `variables`, optional `timeoutMs`)
+- Node payload (`executionBackend`, `model`, `promptTemplate`, `variables`, optional `timeoutMs`)
 - Vertical sequence metadata (`order`)
 4. User saves; server writes:
 - `workflow.json`

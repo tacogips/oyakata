@@ -14,7 +14,8 @@ export interface CreateWorkflowFailure {
   readonly message: string;
 }
 
-const TEMPLATE_MODEL = "tacogips/codex-agent";
+const TEMPLATE_EXECUTION_BACKEND = "tacogips/codex-agent";
+const TEMPLATE_MODEL = "gpt-5";
 
 async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
@@ -110,6 +111,7 @@ export async function createWorkflowTemplate(
       fileName: `node-${managerId}.json`,
       payload: {
         id: managerId,
+        executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
         promptTemplate: "Coordinate workflow execution for {{workflowId}}",
         variables: { workflowId },
@@ -119,6 +121,7 @@ export async function createWorkflowTemplate(
       fileName: `node-${mainManagerId}.json`,
       payload: {
         id: mainManagerId,
+        executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
         promptTemplate: "Translate the parent oyakata instruction into this sub-workflow's child work for {{workflowId}}",
         variables: { workflowId },
@@ -128,6 +131,7 @@ export async function createWorkflowTemplate(
       fileName: `node-${inputId}.json`,
       payload: {
         id: inputId,
+        executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
         promptTemplate: "Normalize the received sub-workflow instruction into workflow input",
         variables: {},
@@ -137,6 +141,7 @@ export async function createWorkflowTemplate(
       fileName: `node-${outputId}.json`,
       payload: {
         id: outputId,
+        executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
         promptTemplate: "Finalize workflow output",
         variables: {},

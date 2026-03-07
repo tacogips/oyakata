@@ -20,6 +20,7 @@
 
 4. node-{id}.json role
 - Defines runtime execution payload for each node:
+  - `executionBackend`
   - `promptTemplate`
   - `model`
   - `variables`
@@ -56,6 +57,8 @@
 
 2. `model` requiredness
 - `node-{id}.json.model` is required for validation and runtime execution.
+- `node-{id}.json.executionBackend` is the canonical execution interface field for newly authored workflows.
+- Existing workflows may omit `executionBackend` only when `model` is a tacogips legacy backend identifier.
 - `OYAKATA_DEFAULT_MODEL` is only for interactive/template generation convenience.
 - Workflows missing `model` must fail validation.
 

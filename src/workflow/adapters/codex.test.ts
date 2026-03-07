@@ -11,7 +11,8 @@ const baseInput: AdapterExecutionInput = {
   nodeExecId: "exec-1",
   node: {
     id: "node-1",
-    model: "tacogips/codex-agent",
+    executionBackend: "tacogips/codex-agent",
+    model: "gpt-5",
     promptTemplate: "test",
     variables: {},
   },
@@ -41,7 +42,7 @@ describe("CodexAgentAdapter", () => {
       return new Response(
         JSON.stringify({
           provider: "codex-provider",
-          model: "tacogips/codex-agent",
+          model: "gpt-5",
           promptText: "hello",
           completionPassed: true,
           when: { always: true },
@@ -66,6 +67,7 @@ describe("CodexAgentAdapter", () => {
     const headers = (request?.headers ?? {}) as Record<string, string>;
     expect(headers["authorization"]).toBe("Bearer secret");
     const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    expect(body["model"]).toBe("gpt-5");
     expect(body["workflowExecutionId"]).toBe("sess-1");
     expect(body["nodeExecId"]).toBe("exec-1");
     expect(body["artifactDir"]).toBe("/tmp/node-1/exec-1");
@@ -76,7 +78,7 @@ describe("CodexAgentAdapter", () => {
       return new Response(
         JSON.stringify({
           provider: "codex-provider",
-          model: "tacogips/codex-agent",
+          model: "gpt-5",
           promptText: "hello",
           completionPassed: true,
           when: { always: true },
@@ -123,7 +125,7 @@ describe("CodexAgentAdapter", () => {
       return new Response(
         JSON.stringify({
           provider: "codex-provider",
-          model: "tacogips/codex-agent",
+          model: "gpt-5",
           promptText: "hello",
           completionPassed: true,
           when: { always: true },
@@ -171,7 +173,7 @@ describe("CodexAgentAdapter", () => {
           new Response(
             JSON.stringify({
               provider: "codex-provider",
-              model: "tacogips/codex-agent",
+              model: "gpt-5",
               promptText: "hello",
               completionPassed: true,
               when: { always: true },

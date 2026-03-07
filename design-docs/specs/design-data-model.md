@@ -134,7 +134,8 @@ Scope:
 | Field | Type | Required | Notes |
 |------|------|----------|-------|
 | `id` | string | Yes | Must match workflow node id |
-| `model` | string | Yes | `tacogips/codex-agent` or `tacogips/claude-code-agent` |
+| `executionBackend` | string | No | Canonical execution interface identifier such as `tacogips/codex-agent`, `tacogips/claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk` |
+| `model` | string | Yes | Provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5` |
 | `promptTemplate` | string | Yes | Render template |
 | `variables` | object | Yes | Template bindings |
 | `argumentsTemplate` | object | No | Structured arguments skeleton to pass to skill/tool adapters |
@@ -145,6 +146,10 @@ Scope:
 Legacy read-compatible aliases:
 - `prompt` -> `promptTemplate`
 - `variable` -> `variables`
+
+Legacy compatibility mode:
+- If `executionBackend` is omitted and `model` is `tacogips/codex-agent` or `tacogips/claude-code-agent`, the runtime derives the backend from `model`.
+- This read path remains supported for existing workflows, but new templates and edited payloads should write explicit `executionBackend`.
 
 `ArgumentBinding`:
 - `targetPath: string` (JSON pointer-like path in `argumentsTemplate`)
@@ -215,7 +220,8 @@ These are normalized in memory after file loading and validation.
 
 - `id: NodeId`
 - `kind: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-manager" | "input" | "output"`
-- `model: "tacogips/codex-agent" | "tacogips/claude-code-agent"`
+- `executionBackend?: "tacogips/codex-agent" | "tacogips/claude-code-agent" | "official/openai-sdk" | "official/anthropic-sdk"`
+- `model: string`
 - `promptTemplate: string`
 - `variables: Record<string, unknown>`
 - `timeoutMs: number` (effective timeout after default merge)
@@ -397,7 +403,7 @@ Before approving a workflow model:
 - For adversarial role loops (e.g. blackhat->whitehat->mediation), role handoff edges and commit checkpoints are explicit.
 
 3. Node runtime quality
-- `model` choice is appropriate for each node role.
+- `executionBackend` and `model` are not conflated in newly authored nodes.
 - `promptTemplate` is understandable and deterministic.
 - `variables` do not contain missing placeholders.
 - Output handoff to downstream nodes is traceable via execution artifact references.

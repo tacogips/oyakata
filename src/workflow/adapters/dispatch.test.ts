@@ -108,4 +108,52 @@ describe("DispatchingNodeAdapter", () => {
     expect(output.provider).toBe("codex-provider");
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  test("routes to tacogips claude-code-agent backend when explicitly selected and preserves provider model", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          provider: "claude-provider",
+          promptText: "hello",
+          completionPassed: true,
+          when: { always: true },
+          payload: { ok: true },
+        }),
+        { status: 200 },
+      );
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const adapter = new DispatchingNodeAdapter({
+      claudeCodeAgent: { endpoint: "http://localhost/claude" },
+    });
+    const input: AdapterExecutionInput = {
+      workflowId: "wf",
+      workflowExecutionId: "sess-1",
+      nodeId: "node-1",
+      nodeExecId: "exec-1",
+      node: {
+        id: "node-1",
+        executionBackend: "tacogips/claude-code-agent",
+        model: "claude-opus-4-1",
+        promptTemplate: "test",
+        variables: {},
+      },
+      mergedVariables: {},
+      promptText: "hello",
+      arguments: null,
+      executionIndex: 1,
+      artifactDir: "/tmp/node-1/exec-1",
+      upstreamCommunicationIds: [],
+    };
+
+    const output = await adapter.execute(input, baseContext);
+    expect(output.provider).toBe("claude-provider");
+    expect(output.model).toBe("claude-opus-4-1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
+    const request = calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    expect(body["model"]).toBe("claude-opus-4-1");
+  });
 });

@@ -156,7 +156,8 @@ Each `node-{id}.json` contains execution payload used at runtime:
 - `id`: stable slug-like identifier matching `^[a-z0-9][a-z0-9-]{1,63}$`
 - `name`: human-readable node name
 - `description`: brief summary of the node's purpose
-- `model` (`tacogips/codex-agent` or `tacogips/claude-code-agent`)
+- `executionBackend` (optional canonical interface selector such as `tacogips/codex-agent`, `tacogips/claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk`)
+- `model` (required provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5`)
 - `promptTemplate`
 - `variables`
 - optional `sessionPolicy`
@@ -198,7 +199,8 @@ Example:
   "id": "a1b2c3d4",
   "name": "draft",
   "description": "Write the initial document draft.",
-  "model": "tacogips/codex-agent",
+  "executionBackend": "tacogips/codex-agent",
+  "model": "gpt-5",
   "sessionPolicy": {
     "mode": "reuse"
   },
@@ -209,6 +211,11 @@ Example:
   }
 }
 ```
+
+Legacy compatibility:
+
+- Older workflows may omit `executionBackend` and encode `tacogips/codex-agent` or `tacogips/claude-code-agent` directly in `model`.
+- Runtime still accepts that shape, but new workflow authoring must prefer explicit `executionBackend`.
 
 ## workflow-vis.json
 

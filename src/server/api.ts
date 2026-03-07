@@ -422,17 +422,17 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
           <div id="selectedNodeLabel" class="muted">Select a node card to edit its payload.</div>
           <label for="nodeExecutionBackend">Execution Backend</label>
           <select id="nodeExecutionBackend">
-            <option value="">derive from model</option>
+            <option value="">derive from model (legacy)</option>
             <option value="tacogips/codex-agent">tacogips/codex-agent</option>
             <option value="tacogips/claude-code-agent">tacogips/claude-code-agent</option>
             <option value="official/openai-sdk">official/openai-sdk</option>
             <option value="official/anthropic-sdk">official/anthropic-sdk</option>
           </select>
           <div id="nodeBackendHint" class="editor-note">
-            Leave backend empty only when model is a tacogips CLI-wrapper identifier. Official SDK backends require a provider model name such as gpt-5 or claude-sonnet-4-5.
+            Prefer setting backend explicitly. Leave it empty only for legacy workflows where model is a tacogips backend identifier. All explicit backends expect model to be a provider/backend model name such as gpt-5 or claude-sonnet-4-5.
           </div>
           <label for="nodeModel">Model</label>
-          <input id="nodeModel" type="text" placeholder="tacogips/codex-agent or gpt-5 / claude-sonnet-4-5" />
+          <input id="nodeModel" type="text" placeholder="gpt-5 / claude-sonnet-4-5 / claude-opus-4-1" />
           <label for="nodePromptTemplate">Prompt Template</label>
           <textarea id="nodePromptTemplate" placeholder="Prompt template"></textarea>
           <label for="nodeVariables">Variables JSON</label>
@@ -1180,7 +1180,8 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       if (!state.bundle.nodePayloads[nodeId]) {
         state.bundle.nodePayloads[nodeId] = {
           id: nodeId,
-          model: "tacogips/codex-agent",
+          executionBackend: "tacogips/codex-agent",
+          model: "gpt-5",
           promptTemplate: "",
           variables: {},
         };
@@ -1453,7 +1454,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       if (!workflowNode || !payload) {
         selectedNodeLabelEl.textContent = "Select a node card to edit its payload.";
         nodeExecutionBackendEl.value = "";
-        nodeModelEl.value = "tacogips/codex-agent";
+        nodeModelEl.value = "gpt-5";
         nodePromptTemplateEl.value = "";
         nodeVariablesEl.value = "{}";
         renderNodeBackendHint();
@@ -1461,7 +1462,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       }
       selectedNodeLabelEl.textContent = workflowNode.id + " (" + (workflowNode.kind || "task") + ")";
       nodeExecutionBackendEl.value = payload.executionBackend || "";
-      nodeModelEl.value = payload.model || "tacogips/codex-agent";
+      nodeModelEl.value = payload.model || "gpt-5";
       nodePromptTemplateEl.value = payload.promptTemplate || "";
       nodeVariablesEl.value = JSON.stringify(payload.variables || {}, null, 2);
       renderNodeBackendHint();
@@ -1472,7 +1473,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       const backend = nodeExecutionBackendEl.value;
       if (!backend) {
         nodeBackendHintEl.textContent =
-          "Backend is derived from model. Use tacogips/codex-agent or tacogips/claude-code-agent here, or choose an explicit backend below.";
+          "Legacy mode: backend is derived from model. Prefer choosing an explicit backend and setting model to the provider/backend model name.";
         return;
       }
       if (backend === "official/openai-sdk") {
@@ -1485,8 +1486,13 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
           "official/anthropic-sdk expects a provider model name such as claude-sonnet-4-5. Do not use tacogips/codex-agent or tacogips/claude-code-agent as the model.";
         return;
       }
+      if (backend === "tacogips/codex-agent") {
+        nodeBackendHintEl.textContent =
+          "tacogips/codex-agent is the execution interface. Set model to the underlying model name it should request, such as gpt-5.";
+        return;
+      }
       nodeBackendHintEl.textContent =
-        backend + " sends requests through the tacogips CLI-wrapper service. Set model to whatever that backend expects.";
+        "tacogips/claude-code-agent is the execution interface. Set model to the underlying model name it should request, such as claude-sonnet-4-5 or claude-opus-4-1.";
     }
 
     function isCliWrapperModel(modelValue) {
@@ -1497,9 +1503,23 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       const backend = nodeExecutionBackendEl.value;
       const modelValue = nodeModelEl.value.trim();
       if (!backend) {
-        nodeModelEl.placeholder = "tacogips/codex-agent or tacogips/claude-code-agent";
+        nodeModelEl.placeholder = "legacy: tacogips/codex-agent or tacogips/claude-code-agent";
         if (!modelValue) {
           nodeModelEl.value = "tacogips/codex-agent";
+        }
+        return;
+      }
+      if (backend === "tacogips/codex-agent") {
+        nodeModelEl.placeholder = "gpt-5";
+        if (!modelValue || isCliWrapperModel(modelValue)) {
+          nodeModelEl.value = "gpt-5";
+        }
+        return;
+      }
+      if (backend === "tacogips/claude-code-agent") {
+        nodeModelEl.placeholder = "claude-sonnet-4-5";
+        if (!modelValue || isCliWrapperModel(modelValue)) {
+          nodeModelEl.value = "claude-sonnet-4-5";
         }
         return;
       }
@@ -1516,10 +1536,6 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
           nodeModelEl.value = "claude-sonnet-4-5";
         }
         return;
-      }
-      nodeModelEl.placeholder = backend;
-      if (!modelValue) {
-        nodeModelEl.value = backend;
       }
     }
 
@@ -2110,11 +2126,15 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
         const scopePill = document.createElement("span");
         scopePill.className = "pill scope-pill " + scopeKind;
         scopePill.textContent = scopeLabel(entry.color);
+        const backendPill = document.createElement("span");
+        backendPill.className = "pill";
+        backendPill.textContent = payload && payload.executionBackend ? payload.executionBackend : "legacy backend";
         const modelPill = document.createElement("span");
         modelPill.className = "pill";
         modelPill.textContent = payload && payload.model ? payload.model : "unconfigured";
         meta.appendChild(kindPill);
         meta.appendChild(scopePill);
+        meta.appendChild(backendPill);
         meta.appendChild(modelPill);
 
         const actions = document.createElement("button");
