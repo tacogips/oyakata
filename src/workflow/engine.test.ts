@@ -5,9 +5,433 @@ import { afterEach, describe, expect, test } from "vitest";
 import { AdapterExecutionError, DeterministicNodeAdapter, ScenarioNodeAdapter } from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
+import { getSessionStoreRoot } from "./session-store";
 
 const tempDirs: string[] = [];
 const deterministicAdapter = new DeterministicNodeAdapter();
+
+class OutputContractRetryAdapter implements NodeAdapter {
+  readonly #mode: "retry-success" | "always-invalid";
+
+  constructor(mode: "retry-success" | "always-invalid") {
+    this.#mode = mode;
+  }
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId !== "step-1") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const attempt = input.output?.attempt ?? 1;
+    if (this.#mode === "retry-success" && attempt > 1) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { summary: "valid output" },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { wrong: true },
+    };
+  }
+}
+
+class OutputContractInvalidOutputAdapter implements NodeAdapter {
+  readonly #mode: "retry-success" | "always-invalid";
+
+  constructor(mode: "retry-success" | "always-invalid") {
+    this.#mode = mode;
+  }
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId !== "step-1") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const attempt = input.output?.attempt ?? 1;
+    if (this.#mode === "retry-success" && attempt > 1) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { summary: "valid after invalid-output retry" },
+      };
+    }
+
+    throw new AdapterExecutionError("invalid_output", "adapter response must be a top-level JSON object");
+  }
+}
+
+class OutputContractInvalidThenProviderErrorAdapter implements NodeAdapter {
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId !== "step-1") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const attempt = input.output?.attempt ?? 1;
+    if (attempt === 1) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { wrong: true },
+      };
+    }
+
+    throw new Error("provider offline");
+  }
+}
+
+class OutputContractFilePathAdapter implements NodeAdapter {
+  readonly #mode: "reserved-path" | "unexpected-path";
+
+  constructor(mode: "reserved-path" | "unexpected-path") {
+    this.#mode = mode;
+  }
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    const candidatePath = input.output?.candidatePath;
+    if (input.nodeId !== "step-1" || candidatePath === undefined) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const actualPath =
+      this.#mode === "reserved-path"
+        ? candidatePath
+        : path.join(path.dirname(candidatePath), "unexpected.json");
+    await mkdir(path.dirname(actualPath), { recursive: true });
+    await writeJson(actualPath, { summary: "from file" });
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: actualPath,
+    };
+  }
+}
+
+class OutputContractDirectFileWriteAdapter implements NodeAdapter {
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    const candidatePath = input.output?.candidatePath;
+    if (input.nodeId !== "step-1" || candidatePath === undefined) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    await writeFile(candidatePath, `${JSON.stringify({ summary: "direct write" }, null, 2)}\n`, "utf8");
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: candidatePath,
+    };
+  }
+}
+
+class OutputContractMalformedCandidateFileAdapter implements NodeAdapter {
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    const candidatePath = input.output?.candidatePath;
+    if (input.nodeId !== "step-1" || candidatePath === undefined) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const attempt = input.output?.attempt ?? 1;
+    if (attempt === 1) {
+      await writeFile(candidatePath, "{\"summary\": ", "utf8");
+    } else {
+      await writeFile(candidatePath, `${JSON.stringify({ summary: "fixed from file" }, null, 2)}\n`, "utf8");
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: candidatePath,
+    };
+  }
+}
+
+class NonContractMissingCandidateFileAdapter implements NodeAdapter {
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId !== "step-1") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: path.join(
+        os.tmpdir(),
+        "oyakata-output-candidates",
+        input.workflowId,
+        input.workflowExecutionId,
+        input.nodeId,
+        input.nodeExecId,
+        "attempt-000001",
+        "candidate.json",
+      ),
+    };
+  }
+}
+
+class OutputContractStaleCandidatePathAdapter implements NodeAdapter {
+  readonly #mode: "write" | "reuse-without-write";
+
+  constructor(mode: "write" | "reuse-without-write") {
+    this.#mode = mode;
+  }
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    const candidatePath = input.output?.candidatePath;
+    if (input.nodeId !== "step-1" || candidatePath === undefined) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    if (this.#mode === "write") {
+      await writeFile(candidatePath, `${JSON.stringify({ summary: "fresh candidate" }, null, 2)}\n`, "utf8");
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: candidatePath,
+    };
+  }
+}
+
+class OutputContractPromptCaptureAdapter implements NodeAdapter {
+  capturedPromptText: string | undefined;
+
+  capturedOutputContract: Parameters<NodeAdapter["execute"]>[0]["output"] | undefined;
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId === "step-1") {
+      this.capturedPromptText = input.promptText;
+      this.capturedOutputContract = input.output;
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { summary: "captured" },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
+class OutputContractCandidatePathCaptureAdapter implements NodeAdapter {
+  readonly #mode: "success" | "invalid-json";
+
+  capturedCandidatePath: string | undefined;
+
+  constructor(mode: "success" | "invalid-json") {
+    this.#mode = mode;
+  }
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    const candidatePath = input.output?.candidatePath;
+    if (input.nodeId !== "step-1" || candidatePath === undefined) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    this.capturedCandidatePath = candidatePath;
+    await mkdir(path.dirname(candidatePath), { recursive: true });
+    if (this.#mode === "success") {
+      await writeFile(candidatePath, `${JSON.stringify({ summary: "captured write" }, null, 2)}\n`, "utf8");
+    } else {
+      await writeFile(candidatePath, "{\"summary\": ", "utf8");
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: candidatePath,
+    };
+  }
+}
+
+class OutputContractRetryPromptCaptureAdapter implements NodeAdapter {
+  prompts: string[] = [];
+  validationErrorsByAttempt: Array<readonly { path: string; message: string }[]> = [];
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId === "step-1") {
+      this.prompts.push(input.promptText);
+      this.validationErrorsByAttempt.push(input.output?.validationErrors ?? []);
+      const attempt = input.output?.attempt ?? 1;
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload:
+          attempt === 1
+            ? {
+                a: 1,
+                b: 2,
+                c: 3,
+                d: 4,
+                e: 5,
+                f: 6,
+                g: 7,
+                h: 8,
+                i: 9,
+              }
+            : { summary: "fixed" },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
+class DescriptionOnlyRetryPromptCaptureAdapter implements NodeAdapter {
+  prompts: string[] = [];
+
+  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+    if (input.nodeId === "step-1") {
+      this.prompts.push(input.promptText);
+      const attempt = input.output?.attempt ?? 1;
+      if (attempt === 1) {
+        throw new AdapterExecutionError("invalid_output", "adapter response must be a top-level JSON object");
+      }
+
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { summary: "fixed" },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
 
 async function makeTempDir(): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "oyakata-engine-test-"));
@@ -243,6 +667,8 @@ describe("runWorkflow", () => {
     }
     const inputRaw = await readFile(path.join(step1Exec.artifactDir, "input.json"), "utf8");
     const inputJson = JSON.parse(inputRaw) as {
+      sessionId: string;
+      workflowExecutionId: string;
       promptText: string;
       upstreamOutputRefs: readonly {
         fromNodeId: string;
@@ -251,6 +677,8 @@ describe("runWorkflow", () => {
       }[];
       upstreamCommunications: readonly string[];
     };
+    expect(inputJson.sessionId).toBe(result.value.session.sessionId);
+    expect(inputJson.workflowExecutionId).toBe(result.value.session.sessionId);
     expect(inputJson.promptText).toContain("B");
     expect(inputJson.upstreamOutputRefs.length).toBe(1);
     expect(inputJson.upstreamOutputRefs[0]?.fromNodeId).toBe("oyakata-manager");
@@ -354,6 +782,1166 @@ describe("runWorkflow", () => {
         managerNode: "oyakata-manager",
       },
     });
+  });
+
+  test("retries invalid node payloads until output schema validation succeeds", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-retry", false);
+
+    await writeJson(path.join(root, "output-contract-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      new OutputContractRetryAdapter("retry-success"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec).toBeDefined();
+    if (step1Exec === undefined) {
+      return;
+    }
+    expect(step1Exec.outputAttemptCount).toBe(2);
+    expect(step1Exec.outputValidationErrors).toBeUndefined();
+
+    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    expect(outputJson.payload.summary).toBe("valid output");
+
+    const firstValidationRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "validation.json"),
+      "utf8",
+    );
+    const firstValidationJson = JSON.parse(firstValidationRaw) as { valid: boolean; errors: readonly { path: string }[] };
+    expect(firstValidationJson.valid).toBe(false);
+    expect(firstValidationJson.errors[0]?.path).toBe("$.summary");
+
+    const secondValidationRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000002", "validation.json"),
+      "utf8",
+    );
+    const secondValidationJson = JSON.parse(secondValidationRaw) as { valid: boolean };
+    expect(secondValidationJson.valid).toBe(true);
+  });
+
+  test("supports output-validation retry flows with scenario-mock sequences", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-scenario-retry", false);
+
+    await writeJson(path.join(root, "output-contract-scenario-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-scenario-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter({
+        "step-1": [
+          { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+          { provider: "scenario-mock", when: { always: true }, payload: { summary: "valid via scenario" } },
+        ],
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+
+    const outputRaw = await readFile(path.join(step1Exec?.artifactDir ?? "", "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    expect(outputJson.payload.summary).toBe("valid via scenario");
+  });
+
+  test("retries malformed reserved candidate files before publishing output", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-file-retry", false);
+
+    await writeJson(path.join(root, "output-contract-file-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-file-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      new OutputContractMalformedCandidateFileAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    expect(step1Exec?.outputValidationErrors).toBeUndefined();
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const firstValidationRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "validation.json"),
+      "utf8",
+    );
+    const firstValidationJson = JSON.parse(firstValidationRaw) as {
+      valid: boolean;
+      errors: readonly { path: string; message: string }[];
+    };
+    expect(firstValidationJson.valid).toBe(false);
+    expect(firstValidationJson.errors[0]?.path).toBe("$");
+    expect(firstValidationJson.errors[0]?.message).toContain("unable to read candidate file");
+
+    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    expect(outputJson.payload.summary).toBe("fixed from file");
+  });
+
+  test("clears stale reserved candidate files before each attempt", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-stale-candidate", false);
+    await writeJson(path.join(root, "output-contract-stale-candidate", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/codex-agent",
+      promptTemplate: "step stale file",
+      variables: {},
+      output: {
+        description: "return a summary object",
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const sessionId = "sess-output-contract-stale-candidate";
+    const firstRun = await runWorkflow(
+      "output-contract-stale-candidate",
+      {
+        cwd: root,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionId,
+      },
+      new OutputContractStaleCandidatePathAdapter("write"),
+    );
+    expect(firstRun.ok).toBe(true);
+
+    const secondRun = await runWorkflow(
+      "output-contract-stale-candidate",
+      {
+        cwd: root,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionId,
+      },
+      new OutputContractStaleCandidatePathAdapter("reuse-without-write"),
+    );
+    expect(secondRun.ok).toBe(false);
+    if (secondRun.ok) {
+      return;
+    }
+
+    expect(secondRun.error.message).toContain("output validation failed");
+    const sessionRaw = await readFile(
+      path.join(getSessionStoreRoot({ cwd: root }), `${sessionId}.json`),
+      "utf8",
+    );
+    const sessionJson = JSON.parse(sessionRaw) as {
+      nodeExecutions: readonly { nodeId: string; artifactDir: string }[];
+    };
+    const stepExecution = sessionJson.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(stepExecution).toBeDefined();
+    if (stepExecution === undefined) {
+      return;
+    }
+    const outputRaw = await readFile(
+      path.join(stepExecution.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    expect(outputJson.error).toBe("output_validation_failed");
+    expect(outputJson.validationErrors[0]?.message).toContain("unable to read candidate file");
+  });
+
+  test("retries malformed structured outputs for description-only contracts", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-description-retry", false);
+
+    await writeJson(path.join(root, "output-contract-description-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return only the summary payload as a JSON object.",
+        maxValidationAttempts: 2,
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-description-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      new OutputContractInvalidOutputAdapter("retry-success"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const firstValidationRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "validation.json"),
+      "utf8",
+    );
+    const firstValidationJson = JSON.parse(firstValidationRaw) as {
+      valid: boolean;
+      errors: readonly { path: string; message: string }[];
+    };
+    expect(firstValidationJson.valid).toBe(false);
+    expect(firstValidationJson.errors[0]?.message).toContain("top-level JSON object");
+
+    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    expect(outputJson.payload.summary).toBe("valid after invalid-output retry");
+  });
+
+  test("uses non-schema retry wording for description-only output contracts", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-description-retry-text", false);
+
+    await writeJson(path.join(root, "output-contract-description-retry-text", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return only a structured JSON object.",
+        maxValidationAttempts: 2,
+      },
+    });
+
+    const captureAdapter = new DescriptionOnlyRetryPromptCaptureAdapter();
+    const result = await runWorkflow(
+      "output-contract-description-retry-text",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      captureAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(captureAdapter.prompts).toHaveLength(2);
+    const retryPrompt = captureAdapter.prompts[1] ?? "";
+    expect(retryPrompt).toContain("Previous output was rejected:");
+    expect(retryPrompt).toContain("Return a corrected JSON object.");
+    expect(retryPrompt).not.toContain("satisfies the schema");
+  });
+
+  test("fails the node when output schema validation never succeeds", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-fail", false);
+
+    await writeJson(path.join(root, "output-contract-fail", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-fail",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-output-contract-fail",
+      },
+      new OutputContractRetryAdapter("always-invalid"),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain("output validation failed");
+    const outputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "output-contract-fail",
+        "executions",
+        "sess-output-contract-fail",
+        "nodes",
+        "step-1",
+        "exec-000002",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { path: string }[] };
+    expect(outputJson.error).toBe("output_validation_failed");
+    expect(outputJson.validationErrors[0]?.path).toBe("$.summary");
+
+    const failedSessionRaw = await readFile(
+      path.join(root, "sessions", "sess-output-contract-fail.json"),
+      "utf8",
+    );
+    const failedSessionJson = JSON.parse(failedSessionRaw) as {
+      nodeExecutions: Array<{
+        nodeId: string;
+        outputAttemptCount?: number;
+        outputValidationErrors?: readonly { path: string }[];
+      }>;
+    };
+    const step1Exec = failedSessionJson.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    expect(step1Exec?.outputValidationErrors?.[0]?.path).toBe("$.summary");
+  });
+
+  test("retries invalid adapter output as contract feedback until a valid payload is submitted", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-invalid-output-retry", false);
+
+    await writeJson(path.join(root, "output-contract-invalid-output-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-invalid-output-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new OutputContractInvalidOutputAdapter("retry-success"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    expect(step1Exec?.outputValidationErrors).toBeUndefined();
+
+    const outputRaw = await readFile(path.join(step1Exec?.artifactDir ?? "", "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    expect(outputJson.payload.summary).toBe("valid after invalid-output retry");
+
+    const firstValidationRaw = await readFile(
+      path.join(step1Exec?.artifactDir ?? "", "output-attempts", "attempt-000001", "validation.json"),
+      "utf8",
+    );
+    const firstValidationJson = JSON.parse(firstValidationRaw) as { valid: boolean; errors: readonly { message: string }[] };
+    expect(firstValidationJson.valid).toBe(false);
+    expect(firstValidationJson.errors[0]?.message).toContain("top-level JSON object");
+  });
+
+  test("fails with output_validation_failed when invalid adapter output exhausts contract retries", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-invalid-output-fail", false);
+
+    await writeJson(path.join(root, "output-contract-invalid-output-fail", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-invalid-output-fail",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-output-contract-invalid-output-fail",
+      },
+      new OutputContractInvalidOutputAdapter("always-invalid"),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain("output validation failed");
+
+    const outputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "output-contract-invalid-output-fail",
+        "executions",
+        "sess-output-contract-invalid-output-fail",
+        "nodes",
+        "step-1",
+        "exec-000002",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    expect(outputJson.error).toBe("output_validation_failed");
+    expect(outputJson.validationErrors[0]?.message).toContain("top-level JSON object");
+  });
+
+  test("does not report output validation failure after a later provider failure", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-provider-fail-after-retry", false);
+
+    await writeJson(path.join(root, "output-contract-provider-fail-after-retry", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-provider-fail-after-retry",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-output-contract-provider-fail-after-retry",
+      },
+      new OutputContractInvalidThenProviderErrorAdapter(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.message).toContain("adapter failure");
+
+    const outputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "output-contract-provider-fail-after-retry",
+        "executions",
+        "sess-output-contract-provider-fail-after-retry",
+        "nodes",
+        "step-1",
+        "exec-000002",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      error: string;
+      promptText: string;
+      validationErrors?: readonly { path: string }[];
+    };
+    expect(outputJson.error).toBe("provider_error");
+    expect(outputJson.promptText).toBe("step ");
+    expect(outputJson.validationErrors).toBeUndefined();
+
+    const failedSessionRaw = await readFile(
+      path.join(root, "sessions", "sess-output-contract-provider-fail-after-retry.json"),
+      "utf8",
+    );
+    const failedSessionJson = JSON.parse(failedSessionRaw) as {
+      nodeExecutions: Array<{
+        nodeId: string;
+        outputAttemptCount?: number;
+        outputValidationErrors?: readonly { path: string }[];
+      }>;
+    };
+    const step1Exec = failedSessionJson.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    expect(step1Exec?.outputValidationErrors).toBeUndefined();
+  });
+
+  test("keeps output-contract execution metadata out of published output artifacts", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-prompt", false);
+
+    await writeJson(path.join(root, "output-contract-prompt", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-prompt",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new OutputContractRetryAdapter("retry-success"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec).toBeDefined();
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const inputRaw = await readFile(path.join(step1Exec.artifactDir, "input.json"), "utf8");
+    const inputJson = JSON.parse(inputRaw) as {
+      promptText: string;
+      outputContract?: Record<string, unknown>;
+    };
+    expect(inputJson.outputContract).toEqual({
+      description: "Return a structured summary object.",
+      jsonSchema: {
+        type: "object",
+        required: ["summary"],
+        additionalProperties: false,
+        properties: {
+          summary: { type: "string", minLength: 1 },
+        },
+      },
+      maxValidationAttempts: 3,
+      publication: {
+        owner: "runtime",
+        finalArtifactWrite: "runtime-only",
+        mailboxWrite: "runtime-only-after-validation",
+        candidateSubmission: "inline-json-or-reserved-candidate-file",
+        futureCommunicationIdsExposed: false,
+      },
+    });
+
+    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { promptText: string };
+    expect(outputJson.promptText).toBe("step ");
+    expect(outputJson.promptText).not.toContain("Candidate-Path:");
+    expect(outputJson.promptText).not.toContain("Publish-Path:");
+  });
+
+  test("persists per-attempt contract request artifacts for retry auditability", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-request-artifacts", false);
+
+    await writeJson(path.join(root, "output-contract-request-artifacts", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: { topic: "audit" },
+      output: {
+        description: "Return a structured summary object.",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-request-artifacts",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new OutputContractRetryAdapter("retry-success"),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(step1Exec?.outputAttemptCount).toBe(2);
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const firstRequestRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "request.json"),
+      "utf8",
+    );
+    const firstRequestJson = JSON.parse(firstRequestRaw) as {
+      attempt: number;
+      promptText: string;
+      candidatePath: string;
+      validationErrors: readonly { path: string; message: string }[];
+    };
+    expect(firstRequestJson.attempt).toBe(1);
+    expect(firstRequestJson.promptText).toContain("Candidate-Path:");
+    expect(firstRequestJson.promptText).not.toContain("Previous output was rejected:");
+    expect(firstRequestJson.validationErrors).toEqual([]);
+    expect(firstRequestJson.candidatePath).toContain("/oyakata-output-candidates/");
+    expect(firstRequestJson.candidatePath).toContain("/attempt-000001/candidate.json");
+
+    const secondRequestRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000002", "request.json"),
+      "utf8",
+    );
+    const secondRequestJson = JSON.parse(secondRequestRaw) as {
+      attempt: number;
+      promptText: string;
+      candidatePath: string;
+      validationErrors: readonly { path: string; message: string }[];
+    };
+    expect(secondRequestJson.attempt).toBe(2);
+    expect(secondRequestJson.promptText).toContain("Previous output was rejected:");
+    expect(secondRequestJson.validationErrors[0]?.path).toBe("$.summary");
+    expect(secondRequestJson.candidatePath).toContain("/oyakata-output-candidates/");
+    expect(secondRequestJson.candidatePath).toContain("/attempt-000002/candidate.json");
+
+    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputJson = JSON.parse(outputRaw) as { promptText: string };
+    expect(outputJson.promptText).toBe("step audit");
+    expect(outputJson.promptText).not.toContain("Previous output was rejected:");
+  });
+
+  test("makes runtime-owned publication rules explicit to contract-enabled adapters", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-boundary", false);
+
+    await writeJson(path.join(root, "output-contract-boundary", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const captureAdapter = new OutputContractPromptCaptureAdapter();
+    const result = await runWorkflow(
+      "output-contract-boundary",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      captureAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(captureAdapter.capturedPromptText).toContain("Final output.json publication and mailbox delivery are runtime-owned.");
+    expect(captureAdapter.capturedPromptText).toContain("Do not write mailbox files, output.json, or invent communication ids.");
+    expect(captureAdapter.capturedPromptText).toContain("Candidate-Path:");
+    expect(captureAdapter.capturedOutputContract).toMatchObject({
+      publication: {
+        owner: "runtime",
+        finalArtifactWrite: "runtime-only",
+        mailboxWrite: "runtime-only-after-validation",
+        candidateSubmission: "inline-json-or-reserved-candidate-file",
+        futureCommunicationIdsExposed: false,
+      },
+    });
+  });
+
+  test("keeps retry validation feedback compact in follow-up prompts", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-compact-feedback", false);
+
+    await writeJson(path.join(root, "output-contract-compact-feedback", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+        maxValidationAttempts: 2,
+      },
+    });
+
+    const captureAdapter = new OutputContractRetryPromptCaptureAdapter();
+    const result = await runWorkflow(
+      "output-contract-compact-feedback",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      captureAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(captureAdapter.prompts).toHaveLength(2);
+    expect(captureAdapter.validationErrorsByAttempt).toHaveLength(2);
+    expect(captureAdapter.validationErrorsByAttempt[0]).toEqual([]);
+    expect(captureAdapter.validationErrorsByAttempt[1]?.length).toBeLessThanOrEqual(8);
+    const retryPrompt = captureAdapter.prompts[1] ?? "";
+    expect(retryPrompt).toContain("Previous output was rejected:");
+    expect(retryPrompt).toContain("additional validation errors omitted");
+    const feedbackLines = retryPrompt
+      .split("\n")
+      .filter((line) => line.startsWith("- $.") || line.startsWith("- $:"));
+    expect(feedbackLines.length).toBeLessThanOrEqual(9);
+  });
+
+  test("rejects adapter candidate files that do not use the reserved runtime candidate path", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-file-path", false);
+
+    await writeJson(path.join(root, "output-contract-file-path", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "output-contract-file-path",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-output-contract-file-path",
+      },
+      new OutputContractFilePathAdapter("unexpected-path"),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.message).toContain("invalid adapter output");
+    const outputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "output-contract-file-path",
+        "executions",
+        "sess-output-contract-file-path",
+        "nodes",
+        "step-1",
+        "exec-000002",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    expect(outputJson.error).toBe("invalid_output");
+    expect(outputJson.validationErrors[0]?.message).toContain("reserved candidate path");
+  });
+
+  test("classifies non-contract candidate-file failures as invalid adapter output", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "non-contract-candidate-file-failure", false);
+
+    const result = await runWorkflow(
+      "non-contract-candidate-file-failure",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-non-contract-candidate-file-failure",
+      },
+      new NonContractMissingCandidateFileAdapter(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.message).toContain("invalid adapter output");
+    const outputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "non-contract-candidate-file-failure",
+        "executions",
+        "sess-non-contract-candidate-file-failure",
+        "nodes",
+        "step-1",
+        "exec-000002",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    expect(outputJson.error).toBe("invalid_output");
+    expect(outputJson.validationErrors[0]?.message).toContain("candidateFilePath is only supported");
+  });
+
+  test("does not persist output-attempt artifacts for nodes without output contracts", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "non-contract-no-output-attempt-artifacts", false);
+
+    const result = await runWorkflow(
+      "non-contract-no-output-attempt-artifacts",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-non-contract-no-output-attempt-artifacts",
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const stepExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(stepExecution).toBeDefined();
+    if (stepExecution === undefined) {
+      return;
+    }
+
+    await expect(
+      readFile(path.join(stepExecution.artifactDir, "output-attempts", "attempt-000001", "request.json"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  test("pre-creates the reserved candidate attempt directory for file-based output submission", async () => {
+    const workflowRoot = await makeTempDir();
+    const artifactRoot = await makeTempDir();
+    await createWorkflowFixture(workflowRoot, "file-output-ready", false);
+
+    const nodeFile = path.join(workflowRoot, "file-output-ready", "node-step-1.json");
+    await writeJson(nodeFile, {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string" },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      "file-output-ready",
+      {
+        workflowRoot,
+        artifactRoot,
+      },
+      new OutputContractDirectFileWriteAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const stepExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(stepExecution).toBeDefined();
+    const candidateRaw = await readFile(
+      path.join(stepExecution!.artifactDir, "output-attempts", "attempt-000001", "candidate.json"),
+      "utf8",
+    );
+    expect(JSON.parse(candidateRaw)).toEqual({ summary: "direct write" });
+  });
+
+  test("uses a temp staging path for reserved candidate-file submission instead of the final artifact directory", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "output-contract-staging-path", false);
+
+    await writeJson(path.join(root, "output-contract-staging-path", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        description: "Return a structured summary object.",
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const captureAdapter = new OutputContractPromptCaptureAdapter();
+    const result = await runWorkflow(
+      "output-contract-staging-path",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      captureAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const stepExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    expect(stepExecution).toBeDefined();
+    expect(captureAdapter.capturedOutputContract?.candidatePath).toContain("/oyakata-output-candidates/");
+    expect(captureAdapter.capturedOutputContract?.candidatePath).not.toContain(stepExecution?.artifactDir ?? "");
+  });
+
+  test("cleans up reserved candidate staging files after publication and after terminal failure", async () => {
+    const successRoot = await makeTempDir();
+    await createWorkflowFixture(successRoot, "output-contract-cleanup-success", false);
+
+    await writeJson(path.join(successRoot, "output-contract-cleanup-success", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const successCaptureAdapter = new OutputContractCandidatePathCaptureAdapter("success");
+    const successResult = await runWorkflow(
+      "output-contract-cleanup-success",
+      {
+        workflowRoot: successRoot,
+        artifactRoot: path.join(successRoot, "artifacts"),
+        sessionStoreRoot: path.join(successRoot, "sessions"),
+      },
+      successCaptureAdapter,
+    );
+
+    expect(successResult.ok).toBe(true);
+    const successCandidatePath = successCaptureAdapter.capturedCandidatePath;
+    expect(successCandidatePath).toBeDefined();
+    await expect(readFile(successCandidatePath!, "utf8")).rejects.toThrow();
+
+    const failureRoot = await makeTempDir();
+    await createWorkflowFixture(failureRoot, "output-contract-cleanup-failure", false);
+
+    await writeJson(path.join(failureRoot, "output-contract-cleanup-failure", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const failureCaptureAdapter = new OutputContractCandidatePathCaptureAdapter("invalid-json");
+    const failureResult = await runWorkflow(
+      "output-contract-cleanup-failure",
+      {
+        workflowRoot: failureRoot,
+        artifactRoot: path.join(failureRoot, "artifacts"),
+        sessionStoreRoot: path.join(failureRoot, "sessions"),
+      },
+      failureCaptureAdapter,
+    );
+
+    expect(failureResult.ok).toBe(false);
+    const failureCandidatePath = failureCaptureAdapter.capturedCandidatePath;
+    expect(failureCandidatePath).toBeDefined();
+    await expect(readFile(failureCandidatePath!, "utf8")).rejects.toThrow();
   });
 
   test("fails deterministically when required argument binding source is missing", async () => {

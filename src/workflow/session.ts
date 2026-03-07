@@ -14,6 +14,11 @@ export interface NodeExecutionRecord {
   readonly startedAt: string;
   readonly endedAt: string;
   readonly attempt?: number;
+  readonly outputAttemptCount?: number;
+  readonly outputValidationErrors?: readonly {
+    readonly path: string;
+    readonly message: string;
+  }[];
   readonly restartedFromNodeExecId?: string;
 }
 

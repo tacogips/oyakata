@@ -126,6 +126,24 @@ export interface ArgumentBinding {
   readonly required?: boolean;
 }
 
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonObject
+  | readonly JsonValue[];
+
+export interface JsonObject {
+  readonly [key: string]: JsonValue;
+}
+
+export interface NodeOutputContract {
+  readonly description?: string;
+  readonly jsonSchema?: JsonObject;
+  readonly maxValidationAttempts?: number;
+}
+
 export interface NodePayload {
   readonly id: string;
   readonly model: string;
@@ -136,6 +154,7 @@ export interface NodePayload {
   readonly argumentBindings?: readonly ArgumentBinding[];
   readonly templateEngine?: string;
   readonly timeoutMs?: number;
+  readonly output?: NodeOutputContract;
 }
 
 export interface VisNode {

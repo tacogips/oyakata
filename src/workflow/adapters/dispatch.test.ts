@@ -44,7 +44,9 @@ describe("DispatchingNodeAdapter", () => {
 
     const input: AdapterExecutionInput = {
       workflowId: "wf",
+      workflowExecutionId: "sess-1",
       nodeId: "node-1",
+      nodeExecId: "exec-1",
       node: {
         id: "node-1",
         model: "gpt-5",
@@ -56,6 +58,8 @@ describe("DispatchingNodeAdapter", () => {
       promptText: "hello",
       arguments: null,
       executionIndex: 1,
+      artifactDir: "/tmp/node-1/exec-1",
+      upstreamCommunicationIds: [],
     };
 
     const output = await adapter.execute(input, baseContext);
@@ -83,7 +87,9 @@ describe("DispatchingNodeAdapter", () => {
     });
     const input: AdapterExecutionInput = {
       workflowId: "wf",
+      workflowExecutionId: "sess-1",
       nodeId: "node-1",
+      nodeExecId: "exec-1",
       node: {
         id: "node-1",
         model: "tacogips/codex-agent",
@@ -94,6 +100,8 @@ describe("DispatchingNodeAdapter", () => {
       promptText: "hello",
       arguments: null,
       executionIndex: 1,
+      artifactDir: "/tmp/node-1/exec-1",
+      upstreamCommunicationIds: [],
     };
 
     const output = await adapter.execute(input, baseContext);

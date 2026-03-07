@@ -1,11 +1,14 @@
 import { err, ok, type Result } from "./result";
+import { validateJsonSchemaDefinition } from "./json-schema";
 import {
   DEFAULT_MAX_LOOP_ITERATIONS,
   DEFAULT_NODE_TIMEOUT_MS,
   NODE_ID_PATTERN,
   type ArgumentBinding,
+  type JsonObject,
   type CliAgentBackend,
   type CompletionRule,
+  type NodeOutputContract,
   type LoopRule,
   type NodeExecutionBackend,
   type NodePayload,
@@ -861,6 +864,8 @@ function normalizeNodePayload(
   const templateEngineRaw = payload["templateEngine"];
   const templateEngine = typeof templateEngineRaw === "string" ? templateEngineRaw : undefined;
 
+  const outputContract = normalizeNodeOutputContract(payload["output"], `${path}.output`, issues);
+
   if (id === null || model === null || promptTemplate === null || variables === null) {
     return null;
   }
@@ -875,6 +880,81 @@ function normalizeNodePayload(
     ...(argumentBindings === undefined ? {} : { argumentBindings }),
     ...(templateEngine === undefined ? {} : { templateEngine }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(outputContract === undefined ? {} : { output: outputContract }),
+  };
+}
+
+function normalizeNodeOutputContract(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): NodeOutputContract | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return undefined;
+  }
+
+  const allowedKeys = new Set(["description", "jsonSchema", "maxValidationAttempts"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(makeIssue("error", `${path}.${key}`, "uses an unsupported output contract field"));
+    }
+  }
+  const hasDescriptionKey = Object.hasOwn(value, "description");
+  const hasJsonSchemaKey = Object.hasOwn(value, "jsonSchema");
+
+  const descriptionRaw = value["description"];
+  const description =
+    typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0 ? descriptionRaw : undefined;
+  if (descriptionRaw !== undefined && typeof descriptionRaw !== "string") {
+    issues.push(makeIssue("error", `${path}.description`, "must be a string when provided"));
+  } else if (typeof descriptionRaw === "string" && description === undefined) {
+    issues.push(makeIssue("error", `${path}.description`, "must be a non-empty string when provided"));
+  }
+
+  const jsonSchemaRaw = value["jsonSchema"];
+  let jsonSchema: JsonObject | undefined;
+  if (jsonSchemaRaw !== undefined) {
+    if (!isRecord(jsonSchemaRaw)) {
+      issues.push(makeIssue("error", `${path}.jsonSchema`, "must be an object when provided"));
+    } else {
+      const schemaIssues = validateJsonSchemaDefinition(jsonSchemaRaw as JsonObject);
+      schemaIssues.forEach((entry) => {
+        issues.push(makeIssue("error", `${path}.jsonSchema${entry.path === "$schema" ? "" : entry.path.slice("$schema".length)}`, entry.message));
+      });
+      if (schemaIssues.length === 0) {
+        jsonSchema = jsonSchemaRaw as JsonObject;
+      }
+    }
+  }
+
+  const maxValidationAttemptsRaw = value["maxValidationAttempts"];
+  let maxValidationAttempts: number | undefined;
+  if (maxValidationAttemptsRaw !== undefined) {
+    if (typeof maxValidationAttemptsRaw === "number" && Number.isInteger(maxValidationAttemptsRaw) && maxValidationAttemptsRaw > 0) {
+      maxValidationAttempts = maxValidationAttemptsRaw;
+    } else {
+      issues.push(makeIssue("error", `${path}.maxValidationAttempts`, "must be an integer > 0 when provided"));
+    }
+  }
+
+  if (!hasDescriptionKey && !hasJsonSchemaKey) {
+    issues.push(
+      makeIssue(
+        "error",
+        path,
+        "must define output.description and/or output.jsonSchema when provided",
+      ),
+    );
+  }
+
+  return {
+    ...(description === undefined ? {} : { description }),
+    ...(jsonSchema === undefined ? {} : { jsonSchema }),
+    ...(maxValidationAttempts === undefined ? {} : { maxValidationAttempts }),
   };
 }
 

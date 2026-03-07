@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
   AdapterExecutionError,
+  parseJsonObjectCandidate,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -116,16 +117,20 @@ export class AnthropicSdkAdapter implements NodeAdapter {
         });
 
         const text = extractAnthropicText(response);
+        const payload =
+          input.output === undefined
+            ? {
+                text,
+                response: isRecord(response) ? response : {},
+              }
+            : parseJsonObjectCandidate(text, "official Anthropic SDK response");
         return {
           provider: "official-anthropic-sdk",
           model: input.node.model,
           promptText: input.promptText,
           completionPassed: true,
           when: { always: true },
-          payload: {
-            text,
-            response: isRecord(response) ? response : {},
-          },
+          payload,
         };
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") {

@@ -96,4 +96,191 @@ describe("runtime-db", () => {
       db.close();
     }
   });
+
+  test("persists output validation retry metadata for node executions", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "sqlite-output-contract");
+
+    await writeJson(path.join(root, "sqlite-output-contract", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      cwd: root,
+      sessionId: "sess-sqlite-output-contract",
+    };
+
+    const mockScenario = {
+      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "step-1": [
+        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+      ],
+    };
+    const result = await runWorkflow("sqlite-output-contract", { ...options, mockScenario });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const dbPath = resolveRuntimeDbPath(options);
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const columns = db.query("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>;
+      expect(columns.some((column) => column.name === "output_attempt_count")).toBe(true);
+      expect(columns.some((column) => column.name === "output_validation_errors_json")).toBe(true);
+
+      const row = db
+        .query(
+          `SELECT output_attempt_count, output_validation_errors_json
+           FROM node_executions
+           WHERE session_id = ? AND node_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        )
+        .get("sess-sqlite-output-contract", "step-1") as {
+        output_attempt_count: number | null;
+        output_validation_errors_json: string | null;
+      };
+
+      expect(row.output_attempt_count).toBe(2);
+      expect(row.output_validation_errors_json).not.toBeNull();
+      const errors = JSON.parse(String(row.output_validation_errors_json)) as Array<{ path: string }>;
+      expect(errors[0]?.path).toBe("$.summary");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("migrates legacy node_executions tables before persisting output validation metadata", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "sqlite-output-contract-migration");
+
+    await writeJson(path.join(root, "sqlite-output-contract-migration", "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    });
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      cwd: root,
+      sessionId: "sess-sqlite-output-contract-migration",
+    };
+
+    const dbPath = resolveRuntimeDbPath(options);
+    await mkdir(path.dirname(dbPath), { recursive: true });
+    const legacyDb = new Database(dbPath);
+    try {
+      legacyDb.exec(`
+        CREATE TABLE sessions (
+          session_id TEXT PRIMARY KEY,
+          workflow_name TEXT NOT NULL,
+          workflow_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          current_node_id TEXT,
+          node_execution_counter INTEGER NOT NULL,
+          queue_json TEXT NOT NULL,
+          last_error TEXT,
+          updated_at TEXT NOT NULL
+        );
+        CREATE TABLE node_executions (
+          session_id TEXT NOT NULL,
+          node_exec_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          artifact_dir TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          ended_at TEXT NOT NULL,
+          attempt INTEGER,
+          restarted_from_node_exec_id TEXT,
+          input_hash TEXT NOT NULL,
+          output_hash TEXT NOT NULL,
+          input_json TEXT NOT NULL,
+          output_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, node_exec_id)
+        );
+        CREATE TABLE node_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          node_exec_id TEXT,
+          node_id TEXT,
+          level TEXT NOT NULL,
+          message TEXT NOT NULL,
+          payload_json TEXT,
+          at TEXT NOT NULL
+        );
+      `);
+    } finally {
+      legacyDb.close();
+    }
+
+    const mockScenario = {
+      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "step-1": [
+        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+      ],
+    };
+    const result = await runWorkflow("sqlite-output-contract-migration", { ...options, mockScenario });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db
+        .query(
+          `SELECT output_attempt_count, output_validation_errors_json
+           FROM node_executions
+           WHERE session_id = ? AND node_id = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+        )
+        .get("sess-sqlite-output-contract-migration", "step-1") as {
+        output_attempt_count: number | null;
+        output_validation_errors_json: string | null;
+      };
+
+      expect(row.output_attempt_count).toBe(2);
+      expect(row.output_validation_errors_json).not.toBeNull();
+      const errors = JSON.parse(String(row.output_validation_errors_json)) as Array<{ path: string }>;
+      expect(errors[0]?.path).toBe("$.summary");
+    } finally {
+      db.close();
+    }
+  });
 });

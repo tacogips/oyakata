@@ -23,6 +23,23 @@ function resolveApiKey(config: ClaudeAdapterConfig): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function buildRequestBody(input: AdapterExecutionInput): Record<string, unknown> {
+  return {
+    workflowId: input.workflowId,
+    workflowExecutionId: input.workflowExecutionId,
+    nodeId: input.nodeId,
+    nodeExecId: input.nodeExecId,
+    model: input.node.model,
+    promptText: input.promptText,
+    arguments: input.arguments,
+    mergedVariables: input.mergedVariables,
+    executionIndex: input.executionIndex,
+    ...(input.output === undefined ? { artifactDir: input.artifactDir } : {}),
+    upstreamCommunicationIds: input.upstreamCommunicationIds,
+    ...(input.output === undefined ? {} : { output: input.output }),
+  };
+}
+
 export class ClaudeCodeAgentAdapter implements NodeAdapter {
   readonly #config: ClaudeAdapterConfig;
 
@@ -48,15 +65,7 @@ export class ClaudeCodeAgentAdapter implements NodeAdapter {
           method: "POST",
           headers,
           signal: context.signal,
-          body: JSON.stringify({
-            workflowId: input.workflowId,
-            nodeId: input.nodeId,
-            model: input.node.model,
-            promptText: input.promptText,
-            arguments: input.arguments,
-            mergedVariables: input.mergedVariables,
-            executionIndex: input.executionIndex,
-          }),
+          body: JSON.stringify(buildRequestBody(input)),
         });
 
         if (!response.ok) {

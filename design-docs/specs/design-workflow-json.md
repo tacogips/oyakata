@@ -154,6 +154,12 @@ Each `node-{id}.json` contains execution payload used at runtime:
 - `model` (`tacogips/codex-agent` or `tacogips/claude-code-agent`)
 - `promptTemplate`
 - `variables`
+- optional `output` contract:
+  - must define at least one of `description` or `jsonSchema`
+  - `description`
+  - `jsonSchema`
+  - `maxValidationAttempts`
+  - runtime-owned publication: contract-enabled adapters submit only a candidate JSON object or reserved temp candidate file; runtime validation and mailbox publication happen after acceptance
 - optional `timeoutMs` (node execution timeout override)
 
 Example:

@@ -194,7 +194,9 @@ Mailbox transport contract:
 - the root workflow manager owns global `communicationId` allocation within one `workflowExecutionId`
 - one communication may have multiple `deliveryAttemptId` retries and optional AI/code-agent `agentSessionId` restarts
 - any send re-execution/rerun/resend must allocate a new `communicationId`
+- when a node declares an output contract, external LLM adapters must receive only the reserved candidate staging path for structured-output submission, not the final publish path
 - detailed storage and replay rules are defined in `design-docs/specs/design-node-mailbox.md`
+- node output contract and schema-validation publication rules are defined in `design-docs/specs/design-node-output-contract.md`
 
 ### Node Model
 

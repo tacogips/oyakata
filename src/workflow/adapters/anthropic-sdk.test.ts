@@ -4,7 +4,9 @@ import { AnthropicSdkAdapter } from "./anthropic-sdk";
 
 const baseInput: AdapterExecutionInput = {
   workflowId: "wf",
+  workflowExecutionId: "sess-1",
   nodeId: "node-1",
+  nodeExecId: "exec-1",
   node: {
     id: "node-1",
     model: "claude-sonnet-4-5",
@@ -16,6 +18,8 @@ const baseInput: AdapterExecutionInput = {
   promptText: "hello",
   arguments: null,
   executionIndex: 1,
+  artifactDir: "/tmp/node-1/exec-1",
+  upstreamCommunicationIds: [],
 };
 
 const baseContext: AdapterExecutionContext = {
@@ -44,6 +48,43 @@ describe("AnthropicSdkAdapter", () => {
     expect(output.provider).toBe("official-anthropic-sdk");
     expect(output.model).toBe("claude-sonnet-4-5");
     expect(output.payload["text"]).toBe("hello from anthropic");
+    expect(output.payload["outputAttempt"]).toBeUndefined();
     expect(capturedSignal).toBe(baseContext.signal);
+  });
+
+  test("parses structured JSON object output when an output contract is present", async () => {
+    const adapter = new AnthropicSdkAdapter({
+      clientFactory: () => ({
+        messages: {
+          async create() {
+            return {
+              content: [{ type: "text", text: "{\"summary\":\"hello from anthropic\"}" }],
+            };
+          },
+        },
+      }),
+    });
+    process.env["ANTHROPIC_API_KEY"] = "test-key";
+
+    const output = await adapter.execute(
+      {
+        ...baseInput,
+        output: {
+          maxValidationAttempts: 3,
+          attempt: 1,
+          candidatePath: "/tmp/node-1/exec-1/candidate.json",
+          validationErrors: [],
+          publication: {
+            owner: "runtime",
+            finalArtifactWrite: "runtime-only",
+            mailboxWrite: "runtime-only-after-validation",
+            candidateSubmission: "inline-json-or-reserved-candidate-file",
+            futureCommunicationIdsExposed: false,
+          },
+        },
+      },
+      baseContext,
+    );
+    expect(output.payload).toEqual({ summary: "hello from anthropic" });
   });
 });

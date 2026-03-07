@@ -1,4 +1,4 @@
-import type { NodePayload } from "./types";
+import type { JsonObject, NodePayload } from "./types";
 
 export type AdapterFailureCode =
   | "provider_error"
@@ -13,12 +13,40 @@ export interface AdapterExecutionContext {
 
 export interface AdapterExecutionInput {
   readonly workflowId: string;
+  readonly workflowExecutionId: string;
   readonly nodeId: string;
+  readonly nodeExecId: string;
   readonly node: NodePayload;
   readonly mergedVariables: Readonly<Record<string, unknown>>;
   readonly promptText: string;
   readonly arguments: Readonly<Record<string, unknown>> | null;
   readonly executionIndex: number;
+  readonly artifactDir: string;
+  readonly upstreamCommunicationIds: readonly string[];
+  readonly output?: AdapterOutputContractInput;
+}
+
+export interface AdapterOutputContractInput {
+  readonly description?: string;
+  readonly jsonSchema?: JsonObject;
+  readonly maxValidationAttempts: number;
+  readonly attempt: number;
+  readonly candidatePath: string;
+  readonly validationErrors: readonly AdapterOutputValidationError[];
+  readonly publication: AdapterOutputPublicationPolicy;
+}
+
+export interface AdapterOutputValidationError {
+  readonly path: string;
+  readonly message: string;
+}
+
+export interface AdapterOutputPublicationPolicy {
+  readonly owner: "runtime";
+  readonly finalArtifactWrite: "runtime-only";
+  readonly mailboxWrite: "runtime-only-after-validation";
+  readonly candidateSubmission: "inline-json-or-reserved-candidate-file";
+  readonly futureCommunicationIdsExposed: false;
 }
 
 export interface AdapterExecutionOutput {
@@ -28,6 +56,7 @@ export interface AdapterExecutionOutput {
   readonly completionPassed: boolean;
   readonly when: Readonly<Record<string, boolean>>;
   readonly payload: Readonly<Record<string, unknown>>;
+  readonly candidateFilePath?: string;
 }
 
 export class AdapterExecutionError extends Error {
@@ -50,6 +79,40 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function extractJsonObjectCandidateText(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith("{")) {
+    return trimmed;
+  }
+
+  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/u);
+  if (fencedMatch?.[1] !== undefined) {
+    return fencedMatch[1].trim();
+  }
+
+  return trimmed;
+}
+
+export function parseJsonObjectCandidate(text: string, source: string): Readonly<Record<string, unknown>> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractJsonObjectCandidateText(text)) as unknown;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown JSON parse error";
+    throw new AdapterExecutionError("invalid_output", `${source} must return a JSON object: ${message}`);
+  }
+
+  if (!isRecord(parsed)) {
+    throw new AdapterExecutionError("invalid_output", `${source} must return a top-level JSON object`);
+  }
+
+  return parsed;
+}
+
 export function normalizeAdapterOutput(
   value: unknown,
   fallbackModel: string,
@@ -64,6 +127,7 @@ export function normalizeAdapterOutput(
   const completionPassed = value["completionPassed"];
   const when = value["when"];
   const payload = value["payload"];
+  const candidateFilePath = value["candidateFilePath"];
 
   if (typeof provider !== "string" || provider.length === 0) {
     throw new AdapterExecutionError("invalid_output", "adapter output.provider must be a non-empty string");
@@ -77,7 +141,10 @@ export function normalizeAdapterOutput(
   if (!isBooleanMap(when)) {
     throw new AdapterExecutionError("invalid_output", "adapter output.when must be an object<boolean>");
   }
-  if (!isRecord(payload)) {
+  if (candidateFilePath !== undefined && (typeof candidateFilePath !== "string" || candidateFilePath.length === 0)) {
+    throw new AdapterExecutionError("invalid_output", "adapter output.candidateFilePath must be a non-empty string");
+  }
+  if (!isRecord(payload) && typeof candidateFilePath !== "string") {
     throw new AdapterExecutionError("invalid_output", "adapter output.payload must be an object");
   }
 
@@ -87,7 +154,8 @@ export function normalizeAdapterOutput(
     promptText,
     completionPassed,
     when,
-    payload,
+    payload: isRecord(payload) ? payload : {},
+    ...(typeof candidateFilePath === "string" ? { candidateFilePath } : {}),
   };
 }
 
@@ -108,12 +176,12 @@ export interface MockNodeResponse {
 export type MockNodeScenarioEntry = MockNodeResponse | readonly MockNodeResponse[];
 export type MockNodeScenario = Readonly<Record<string, MockNodeScenarioEntry>>;
 
-function resolveScenarioEntry(entry: MockNodeScenarioEntry, executionIndex: number): MockNodeResponse {
+function resolveScenarioEntry(entry: MockNodeScenarioEntry, attemptIndex: number): MockNodeResponse {
   if (Array.isArray(entry)) {
     if (entry.length === 0) {
       return {};
     }
-    const selected = entry[Math.min(executionIndex - 1, entry.length - 1)];
+    const selected = entry[Math.min(attemptIndex - 1, entry.length - 1)];
     return selected ?? {};
   }
   return entry as MockNodeResponse;
@@ -129,7 +197,9 @@ export class DeterministicNodeAdapter implements NodeAdapter {
       when: { always: true },
       payload: {
         workflowId: input.workflowId,
+        workflowExecutionId: input.workflowExecutionId,
         nodeId: input.nodeId,
+        nodeExecId: input.nodeExecId,
         renderedLength: input.promptText.length,
       },
     };
@@ -151,7 +221,8 @@ export class ScenarioNodeAdapter implements NodeAdapter {
       return this.#fallback.execute(input, context);
     }
 
-    const response = resolveScenarioEntry(scenarioEntry, input.executionIndex);
+    const attemptIndex = input.output?.attempt ?? input.executionIndex;
+    const response = resolveScenarioEntry(scenarioEntry, attemptIndex);
     if (response.fail === true) {
       throw new Error(`scenario forced failure for node '${input.nodeId}'`);
     }

@@ -6,7 +6,9 @@ const originalFetch = globalThis.fetch;
 
 const baseInput: AdapterExecutionInput = {
   workflowId: "wf",
+  workflowExecutionId: "sess-1",
   nodeId: "node-1",
+  nodeExecId: "exec-1",
   node: {
     id: "node-1",
     model: "tacogips/codex-agent",
@@ -17,6 +19,8 @@ const baseInput: AdapterExecutionInput = {
   promptText: "hello",
   arguments: { key: "value" },
   executionIndex: 1,
+  artifactDir: "/tmp/node-1/exec-1",
+  upstreamCommunicationIds: ["comm-1"],
 };
 
 const baseContext: AdapterExecutionContext = {
@@ -61,6 +65,10 @@ describe("CodexAgentAdapter", () => {
     const request = calls[0]?.[1] as RequestInit | undefined;
     const headers = (request?.headers ?? {}) as Record<string, string>;
     expect(headers["authorization"]).toBe("Bearer secret");
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    expect(body["workflowExecutionId"]).toBe("sess-1");
+    expect(body["nodeExecId"]).toBe("exec-1");
+    expect(body["artifactDir"]).toBe("/tmp/node-1/exec-1");
   });
 
   test("maps blocked responses to policy_blocked", async () => {
@@ -72,6 +80,50 @@ describe("CodexAgentAdapter", () => {
 
     const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
     await expect(adapter.execute(baseInput, baseContext)).rejects.toHaveProperty("code", "policy_blocked");
+  });
+
+  test("omits artifactDir from contract-enabled requests", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          provider: "codex-provider",
+          model: "tacogips/codex-agent",
+          promptText: "hello",
+          completionPassed: true,
+          when: { always: true },
+          payload: { ok: true },
+        }),
+        { status: 200 },
+      );
+    });
+    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
+    await adapter.execute(
+      {
+        ...baseInput,
+        output: {
+          maxValidationAttempts: 2,
+          attempt: 1,
+          candidatePath: "/tmp/candidate.json",
+          validationErrors: [],
+          publication: {
+            owner: "runtime",
+            finalArtifactWrite: "runtime-only",
+            mailboxWrite: "runtime-only-after-validation",
+            candidateSubmission: "inline-json-or-reserved-candidate-file",
+            futureCommunicationIdsExposed: false,
+          },
+        },
+      },
+      baseContext,
+    );
+
+    const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
+    const request = calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    expect(body["artifactDir"]).toBeUndefined();
+    expect(body["output"]).toBeDefined();
   });
 
   test("retries transient provider failures with bounded attempts", async () => {

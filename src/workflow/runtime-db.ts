@@ -14,6 +14,8 @@ interface RuntimeNodeExecutionRow {
   readonly startedAt: string;
   readonly endedAt: string;
   readonly attempt?: number;
+  readonly outputAttemptCount?: number;
+  readonly outputValidationErrors?: NodeExecutionRecord["outputValidationErrors"];
   readonly restartedFromNodeExecId?: string;
   readonly inputJson: string;
   readonly outputJson: string;
@@ -43,6 +45,8 @@ export interface RuntimeNodeExecutionSummary {
   readonly startedAt: string;
   readonly endedAt: string;
   readonly attempt: number | null;
+  readonly outputAttemptCount: number | null;
+  readonly outputValidationErrors: NodeExecutionRecord["outputValidationErrors"] | null;
   readonly restartedFromNodeExecId: string | null;
   readonly inputHash: string;
   readonly outputHash: string;
@@ -116,6 +120,8 @@ function ensureSchema(db: Database): void {
       started_at TEXT NOT NULL,
       ended_at TEXT NOT NULL,
       attempt INTEGER,
+      output_attempt_count INTEGER,
+      output_validation_errors_json TEXT,
       restarted_from_node_exec_id TEXT,
       input_hash TEXT NOT NULL,
       output_hash TEXT NOT NULL,
@@ -138,6 +144,17 @@ function ensureSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_node_exec_session ON node_executions (session_id, node_id);
     CREATE INDEX IF NOT EXISTS idx_node_logs_session ON node_logs (session_id, at);
   `);
+
+  const nodeExecutionColumns = db
+    .query("PRAGMA table_info(node_executions)")
+    .all() as Array<{ name: string }>;
+  const existingColumns = new Set(nodeExecutionColumns.map((row) => row.name));
+  if (!existingColumns.has("output_attempt_count")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN output_attempt_count INTEGER");
+  }
+  if (!existingColumns.has("output_validation_errors_json")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN output_validation_errors_json TEXT");
+  }
 }
 
 export async function saveSessionSnapshotToRuntimeDb(
@@ -188,8 +205,9 @@ export async function saveNodeExecutionToRuntimeDb(
     const nodeStmt = db.prepare(`
       INSERT OR REPLACE INTO node_executions (
         session_id, node_exec_id, node_id, status, artifact_dir, started_at, ended_at,
-        attempt, restarted_from_node_exec_id, input_hash, output_hash, input_json, output_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        attempt, output_attempt_count, output_validation_errors_json, restarted_from_node_exec_id,
+        input_hash, output_hash, input_json, output_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     nodeStmt.run(
       row.sessionId,
@@ -200,6 +218,8 @@ export async function saveNodeExecutionToRuntimeDb(
       row.startedAt,
       row.endedAt,
       row.attempt ?? null,
+      row.outputAttemptCount ?? null,
+      row.outputValidationErrors === undefined ? null : JSON.stringify(row.outputValidationErrors),
       row.restartedFromNodeExecId ?? null,
       row.inputHash,
       row.outputHash,
@@ -292,6 +312,8 @@ export async function listRuntimeNodeExecutions(
           started_at,
           ended_at,
           attempt,
+          output_attempt_count,
+          output_validation_errors_json,
           restarted_from_node_exec_id,
           input_hash,
           output_hash,
@@ -311,6 +333,8 @@ export async function listRuntimeNodeExecutions(
       started_at: string;
       ended_at: string;
       attempt: number | null;
+      output_attempt_count: number | null;
+      output_validation_errors_json: string | null;
       restarted_from_node_exec_id: string | null;
       input_hash: string;
       output_hash: string;
@@ -328,6 +352,11 @@ export async function listRuntimeNodeExecutions(
       startedAt: row.started_at,
       endedAt: row.ended_at,
       attempt: row.attempt,
+      outputAttemptCount: row.output_attempt_count,
+      outputValidationErrors:
+        row.output_validation_errors_json === null
+          ? null
+          : (JSON.parse(row.output_validation_errors_json) as NodeExecutionRecord["outputValidationErrors"]),
       restartedFromNodeExecId: row.restarted_from_node_exec_id,
       inputHash: row.input_hash,
       outputHash: row.output_hash,

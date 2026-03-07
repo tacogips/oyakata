@@ -24,6 +24,11 @@ Runtime execution inputs for each executable node are separated into node files:
 - `model`
 - `promptTemplate`
 - `variables`
+- optional `output` contract:
+  - `description`: human guidance for the expected business payload
+  - `jsonSchema`: optional JSON Schema subset enforced by the runtime against the candidate payload
+  - `maxValidationAttempts`: optional retry budget for malformed/schema-invalid candidate output
+  - publication model: the LLM/backend proposes only the business JSON object; the runtime validates it, writes final `output.json`, and publishes mailbox output only after acceptance
 
 ## Workflow Directory Layout
 
@@ -43,7 +48,7 @@ Example:
 Required files:
 - `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose)
 - `workflow-vis.json`: browser visualization state for vertical flow rendering (node `order`; `indent/color` are derived from graph semantics)
-- `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`)
+- `node-{id}.json`: executable node payload (`model`, `promptTemplate`, `variables`, optional `output` contract)
 
 ## Deterministic Mock Workflow Example
 

@@ -1,18 +1,19 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 import {
   AdapterExecutionError,
   ScenarioNodeAdapter,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
-  type AdapterFailureCode,
   type MockNodeScenario,
   type NodeAdapter,
 } from "./adapter";
 import { DispatchingNodeAdapter } from "./adapters/dispatch";
 import { loadWorkflowFromDisk } from "./load";
 import { assembleNodeInput } from "./input-assembly";
+import { validateJsonValueAgainstSchema, type JsonSchemaValidationError } from "./json-schema";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import { executeConversationRound } from "./conversation";
@@ -27,7 +28,7 @@ import {
   type WorkflowSessionState,
 } from "./session";
 import { loadSession, saveSession, type SessionStoreOptions } from "./session-store";
-import type { LoadOptions, LoopRule, NodePayload, SubWorkflowRef, WorkflowEdge, WorkflowJson } from "./types";
+import type { JsonObject, LoadOptions, LoopRule, NodePayload, SubWorkflowRef, WorkflowEdge, WorkflowJson } from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
@@ -98,6 +99,11 @@ interface ForwardedManagerPayload {
   readonly outputPayload: Readonly<Record<string, unknown>>;
 }
 
+interface AdapterExecutionFailure {
+  readonly code: "provider_error" | "timeout" | "invalid_output" | "policy_blocked";
+  readonly message: string;
+}
+
 function nextNodeExecId(counter: number): string {
   return `exec-${String(counter).padStart(6, "0")}`;
 }
@@ -132,7 +138,7 @@ async function executeAdapterWithTimeout(
   adapter: NodeAdapter,
   input: AdapterExecutionInput,
   timeoutMs: number,
-): Promise<Result<AdapterExecutionOutput, AdapterFailureCode>> {
+): Promise<Result<AdapterExecutionOutput, AdapterExecutionFailure>> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -153,12 +159,21 @@ async function executeAdapterWithTimeout(
     return ok(output);
   } catch (error: unknown) {
     if (error instanceof AdapterExecutionError) {
-      return err(error.code);
+      return err({
+        code: error.code,
+        message: error.message,
+      });
     }
     if (error instanceof DOMException && error.name === "AbortError") {
-      return err("timeout");
+      return err({
+        code: "timeout",
+        message: "adapter execution timed out",
+      });
     }
-    return err("provider_error");
+    return err({
+      code: "provider_error",
+      message: error instanceof Error ? error.message : "unknown adapter execution failure",
+    });
   } finally {
     if (timer !== undefined) {
       clearTimeout(timer);
@@ -179,6 +194,179 @@ function stableJson(payload: unknown): string {
 
 function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function resolveOutputValidationAttempts(node: NodePayload): number {
+  if (node.output === undefined) {
+    return 1;
+  }
+  if (node.output.maxValidationAttempts !== undefined) {
+    return Math.max(1, node.output.maxValidationAttempts);
+  }
+  return node.output.jsonSchema === undefined ? 1 : 3;
+}
+
+function buildOutputPublicationPolicy(): {
+  readonly owner: "runtime";
+  readonly finalArtifactWrite: "runtime-only";
+  readonly mailboxWrite: "runtime-only-after-validation";
+  readonly candidateSubmission: "inline-json-or-reserved-candidate-file";
+  readonly futureCommunicationIdsExposed: false;
+} {
+  return {
+    owner: "runtime",
+    finalArtifactWrite: "runtime-only",
+    mailboxWrite: "runtime-only-after-validation",
+    candidateSubmission: "inline-json-or-reserved-candidate-file",
+    futureCommunicationIdsExposed: false,
+  };
+}
+
+function nextOutputAttemptId(counter: number): string {
+  return `attempt-${String(counter).padStart(6, "0")}`;
+}
+
+function buildReservedCandidateSubmissionPath(input: {
+  readonly workflowId: string;
+  readonly workflowExecutionId: string;
+  readonly nodeId: string;
+  readonly nodeExecId: string;
+  readonly outputAttemptId: string;
+}): string {
+  return path.join(
+    os.tmpdir(),
+    "oyakata-output-candidates",
+    input.workflowId,
+    input.workflowExecutionId,
+    input.nodeId,
+    input.nodeExecId,
+    input.outputAttemptId,
+    "candidate.json",
+  );
+}
+
+async function cleanupReservedCandidateSubmissionPath(candidatePath: string): Promise<void> {
+  await rm(path.dirname(candidatePath), { recursive: true, force: true });
+}
+
+function buildOutputPromptText(input: {
+  readonly basePromptText: string;
+  readonly node: NodePayload;
+  readonly candidatePath: string;
+  readonly validationErrors: readonly JsonSchemaValidationError[];
+}): string {
+  const contract = input.node.output;
+  if (contract === undefined) {
+    return input.basePromptText;
+  }
+
+  const sections = [
+    input.basePromptText.trimEnd(),
+    "",
+    "Output contract:",
+    "Return only the business JSON object for output.payload.",
+    "Final output.json publication and mailbox delivery are runtime-owned.",
+    "Do not write mailbox files, output.json, or invent communication ids.",
+    "If you write a file, write only to the reserved Candidate-Path.",
+  ];
+  if (contract.description !== undefined) {
+    sections.push(`Description: ${contract.description}`);
+  }
+  sections.push(`Candidate-Path: ${input.candidatePath}`);
+  if (contract.jsonSchema !== undefined) {
+    sections.push("JSON-Schema:");
+    sections.push(stableJson(contract.jsonSchema));
+  }
+  if (input.validationErrors.length > 0) {
+    sections.push("Previous output was rejected:");
+    formatOutputValidationErrors(input.validationErrors).forEach((entry) => {
+      sections.push(`- ${entry.path}: ${entry.message}`);
+    });
+    if (input.validationErrors.length > MAX_OUTPUT_VALIDATION_FEEDBACK_ERRORS) {
+      sections.push(
+        `- $: ${input.validationErrors.length - MAX_OUTPUT_VALIDATION_FEEDBACK_ERRORS} additional validation errors omitted; fix the schema violations above first.`,
+      );
+    }
+    sections.push(
+      contract.jsonSchema === undefined
+        ? "Return a corrected JSON object."
+        : "Return a corrected JSON object that satisfies the schema.",
+    );
+  }
+  return sections.join("\n");
+}
+
+const MAX_OUTPUT_VALIDATION_FEEDBACK_ERRORS = 8;
+const MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH = 240;
+const NON_CONTRACT_CANDIDATE_FILE_ERROR =
+  "adapter output.candidateFilePath is only supported when node.output is configured";
+
+function formatOutputValidationErrors(
+  errors: readonly JsonSchemaValidationError[],
+): readonly JsonSchemaValidationError[] {
+  return errors.slice(0, MAX_OUTPUT_VALIDATION_FEEDBACK_ERRORS).map((entry) => ({
+    path: entry.path,
+    message:
+      entry.message.length <= MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH
+        ? entry.message
+        : `${entry.message.slice(0, MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH - 3)}...`,
+  }));
+}
+
+function buildRetryValidationFeedback(
+  errors: readonly JsonSchemaValidationError[],
+): readonly JsonSchemaValidationError[] {
+  if (errors.length === 0) {
+    return [];
+  }
+  return formatOutputValidationErrors(errors);
+}
+
+interface CandidatePayloadResolutionError {
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+async function readCandidatePayloadFromFile(
+  filePath: string,
+): Promise<Result<Readonly<Record<string, unknown>>, CandidatePayloadResolutionError>> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return err({
+        message: `candidate file '${filePath}' must contain a JSON object`,
+        retryable: true,
+      });
+    }
+    return ok(parsed as Readonly<Record<string, unknown>>);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    return err({
+      message: `unable to read candidate file '${filePath}': ${message}`,
+      retryable: true,
+    });
+  }
+}
+
+async function resolveCandidatePayload(input: {
+  readonly expectedCandidatePath: string;
+  readonly execution: AdapterExecutionOutput;
+}): Promise<Result<Readonly<Record<string, unknown>>, CandidatePayloadResolutionError>> {
+  if (input.execution.candidateFilePath === undefined) {
+    return ok(input.execution.payload);
+  }
+
+  const resolvedPath = path.isAbsolute(input.execution.candidateFilePath)
+    ? input.execution.candidateFilePath
+    : path.resolve(path.dirname(input.expectedCandidatePath), input.execution.candidateFilePath);
+  if (path.resolve(resolvedPath) !== path.resolve(input.expectedCandidatePath)) {
+    return err({
+      message: `candidate file path must resolve to the reserved candidate path '${input.expectedCandidatePath}'`,
+      retryable: false,
+    });
+  }
+  return readCandidatePayloadFromFile(resolvedPath);
 }
 
 async function readOutputPayloadArtifact(artifactDir: string): Promise<Result<Readonly<Record<string, unknown>>, string>> {
@@ -762,6 +950,7 @@ export async function runWorkflow(
 
       const inputPayload = {
         sessionId: session.sessionId,
+        workflowExecutionId: session.sessionId,
         workflowId: workflow.workflowId,
         nodeId,
         nodeExecId,
@@ -773,6 +962,15 @@ export async function runWorkflow(
         upstreamOutputRefs,
         upstreamCommunications: upstreamCommunicationIds,
         restartAttempt,
+        outputContract:
+          nodePayload.output === undefined
+            ? undefined
+            : {
+                description: nodePayload.output.description,
+                jsonSchema: nodePayload.output.jsonSchema,
+                maxValidationAttempts: resolveOutputValidationAttempts(nodePayload),
+                publication: buildOutputPublicationPolicy(),
+              },
         ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
         dryRun: options.dryRun ?? false,
       };
@@ -784,6 +982,8 @@ export async function runWorkflow(
 
       let outputPayload: Readonly<Record<string, unknown>>;
       let nodeStatus: NodeExecutionRecord["status"] = "succeeded";
+      let outputValidationErrors: readonly JsonSchemaValidationError[] = [];
+      let outputAttemptCount = 1;
 
       if (options.dryRun === true) {
         outputPayload = {
@@ -795,40 +995,257 @@ export async function runWorkflow(
           payload: { skippedExecution: true },
         };
       } else {
-        const execution = await executeAdapterWithTimeout(
-          effectiveAdapter,
-          {
-            workflowId: workflow.workflowId,
-            nodeId,
-            node: nodePayload,
-            mergedVariables,
-            promptText: assembledPromptText,
-            arguments: assembledArguments,
-            executionIndex: nextCount,
-          },
-          timeoutMs,
-        );
+        let finalizedOutput: Readonly<Record<string, unknown>> | undefined;
+        const hasOutputContract = nodePayload.output !== undefined;
+        const maxOutputAttempts = hasOutputContract ? resolveOutputValidationAttempts(nodePayload) : 1;
 
-        if (!execution.ok) {
-          nodeStatus = execution.error === "timeout" ? "timed_out" : "failed";
-          outputPayload = {
-            provider: "deterministic-local",
-            model: nodePayload.model,
-            completionPassed: false,
-            when: {},
-            payload: {},
-            error: execution.error,
-          };
-        } else {
-          outputPayload = {
-            provider: execution.value.provider,
-            model: execution.value.model,
-            promptText: execution.value.promptText,
-            completionPassed: execution.value.completionPassed,
-            when: execution.value.when,
-            payload: execution.value.payload,
-          };
+        for (let outputAttempt = 1; outputAttempt <= maxOutputAttempts; outputAttempt += 1) {
+          outputAttemptCount = outputAttempt;
+          const outputAttemptId = hasOutputContract ? nextOutputAttemptId(outputAttempt) : undefined;
+          const attemptDir =
+            outputAttemptId === undefined ? undefined : path.join(artifactDir, "output-attempts", outputAttemptId);
+          const candidateArtifactPath =
+            attemptDir === undefined ? undefined : path.join(attemptDir, "candidate.json");
+          const candidatePath =
+            outputAttemptId === undefined
+              ? undefined
+              : buildReservedCandidateSubmissionPath({
+                  workflowId: workflow.workflowId,
+                  workflowExecutionId: session.sessionId,
+                  nodeId,
+                  nodeExecId,
+                  outputAttemptId,
+                });
+          const requestPath = attemptDir === undefined ? undefined : path.join(attemptDir, "request.json");
+          const validationPath = attemptDir === undefined ? undefined : path.join(attemptDir, "validation.json");
+          if (attemptDir !== undefined && candidatePath !== undefined && requestPath !== undefined) {
+            await mkdir(attemptDir, { recursive: true });
+            await mkdir(path.dirname(candidatePath), { recursive: true });
+            await rm(candidatePath, { force: true });
+          }
+          const executionPromptText =
+            candidatePath === undefined
+              ? assembledPromptText
+              : buildOutputPromptText({
+                  basePromptText: assembledPromptText,
+                  node: nodePayload,
+                  candidatePath,
+                  validationErrors: outputValidationErrors,
+                });
+          const retryValidationFeedback = buildRetryValidationFeedback(outputValidationErrors);
+          if (requestPath !== undefined && candidatePath !== undefined) {
+            await writeJsonFile(requestPath, {
+              attempt: outputAttempt,
+              promptText: executionPromptText,
+              candidatePath,
+              validationErrors: retryValidationFeedback,
+            });
+          }
+          try {
+            const contractCandidatePath = hasOutputContract ? candidatePath : undefined;
+            if (hasOutputContract && contractCandidatePath === undefined) {
+              throw new Error("candidate path must exist when node.output is configured");
+            }
+            const adapterOutputContract =
+              !hasOutputContract || nodePayload.output === undefined
+                ? undefined
+                : {
+                    ...(nodePayload.output.description === undefined
+                      ? {}
+                      : { description: nodePayload.output.description }),
+                    ...(nodePayload.output.jsonSchema === undefined
+                      ? {}
+                      : { jsonSchema: nodePayload.output.jsonSchema }),
+                    maxValidationAttempts: maxOutputAttempts,
+                    attempt: outputAttempt,
+                    candidatePath: contractCandidatePath!,
+                    validationErrors: retryValidationFeedback,
+                    publication: buildOutputPublicationPolicy(),
+                  };
+            const execution = await executeAdapterWithTimeout(
+              effectiveAdapter,
+              {
+                workflowId: workflow.workflowId,
+                workflowExecutionId: session.sessionId,
+                nodeId,
+                nodeExecId,
+                node: nodePayload,
+                mergedVariables,
+                promptText: executionPromptText,
+                arguments: assembledArguments,
+                executionIndex: nextCount,
+                artifactDir,
+                upstreamCommunicationIds,
+                ...(adapterOutputContract === undefined ? {} : { output: adapterOutputContract }),
+              },
+              timeoutMs,
+            );
+
+            if (!execution.ok) {
+              if (execution.error.code === "invalid_output" && hasOutputContract && validationPath !== undefined) {
+                outputValidationErrors = [{ path: "$", message: execution.error.message }];
+                await writeJsonFile(validationPath, {
+                  valid: false,
+                  errors: outputValidationErrors,
+                  rejectedAt: nowIso(),
+                });
+
+                if (outputAttempt === maxOutputAttempts) {
+                  nodeStatus = "failed";
+                  finalizedOutput = {
+                    provider: "deterministic-local",
+                    model: nodePayload.model,
+                    promptText: assembledPromptText,
+                    completionPassed: false,
+                    when: {},
+                    payload: {},
+                    error: "output_validation_failed",
+                    validationErrors: outputValidationErrors,
+                  };
+                  break;
+                }
+
+                continue;
+              }
+
+              outputValidationErrors = [];
+              nodeStatus = execution.error.code === "timeout" ? "timed_out" : "failed";
+              finalizedOutput = {
+                provider: "deterministic-local",
+                model: nodePayload.model,
+                promptText: assembledPromptText,
+                completionPassed: false,
+                when: {},
+                payload: {},
+                error: execution.error.code,
+              };
+              break;
+            }
+
+            if (!hasOutputContract && execution.value.candidateFilePath !== undefined) {
+              outputValidationErrors = [{ path: "$", message: NON_CONTRACT_CANDIDATE_FILE_ERROR }];
+              nodeStatus = "failed";
+              finalizedOutput = {
+                provider: execution.value.provider,
+                model: execution.value.model,
+                promptText: assembledPromptText,
+                completionPassed: false,
+                when: {},
+                payload: {},
+                error: "invalid_output",
+                validationErrors: outputValidationErrors,
+              };
+              break;
+            }
+
+            if (!hasOutputContract) {
+              finalizedOutput = {
+                provider: execution.value.provider,
+                model: execution.value.model,
+                promptText: assembledPromptText,
+                completionPassed: execution.value.completionPassed,
+                when: execution.value.when,
+                payload: execution.value.payload,
+              };
+              break;
+            }
+            if (contractCandidatePath === undefined) {
+              throw new Error("candidate path must exist when resolving contract output");
+            }
+
+            const candidateResult = await resolveCandidatePayload({
+              expectedCandidatePath: contractCandidatePath,
+              execution: execution.value,
+            });
+            if (!candidateResult.ok) {
+              outputValidationErrors = [{ path: "$", message: candidateResult.error.message }];
+              if (validationPath !== undefined) {
+                await writeJsonFile(validationPath, {
+                  valid: false,
+                  errors: outputValidationErrors,
+                  rejectedAt: nowIso(),
+                });
+              }
+
+              if (candidateResult.error.retryable && outputAttempt < maxOutputAttempts) {
+                continue;
+              }
+
+              nodeStatus = "failed";
+              finalizedOutput = {
+                provider: execution.value.provider,
+                model: execution.value.model,
+                promptText: assembledPromptText,
+                completionPassed: false,
+                when: {},
+                payload: {},
+                error: candidateResult.error.retryable ? "output_validation_failed" : "invalid_output",
+                validationErrors: outputValidationErrors,
+              };
+              break;
+            }
+
+            if (candidateArtifactPath !== undefined) {
+              await writeJsonFile(candidateArtifactPath, candidateResult.value);
+            }
+            const schema = nodePayload.output?.jsonSchema;
+            const validationErrors =
+              schema === undefined
+                ? []
+                : validateJsonValueAgainstSchema({
+                    schema: schema as JsonObject,
+                    value: candidateResult.value,
+                  });
+            outputValidationErrors = validationErrors;
+            if (validationPath !== undefined) {
+              await writeJsonFile(validationPath, {
+                valid: validationErrors.length === 0,
+                errors: validationErrors,
+                validatedAt: nowIso(),
+              });
+            }
+            if (validationErrors.length === 0) {
+              finalizedOutput = {
+                provider: execution.value.provider,
+                model: execution.value.model,
+                promptText: assembledPromptText,
+                completionPassed: execution.value.completionPassed,
+                when: execution.value.when,
+                payload: candidateResult.value,
+              };
+              break;
+            }
+
+            if (outputAttempt === maxOutputAttempts) {
+              nodeStatus = "failed";
+              finalizedOutput = {
+                provider: execution.value.provider,
+                model: execution.value.model,
+                promptText: assembledPromptText,
+                completionPassed: false,
+                when: {},
+                payload: {},
+                error: "output_validation_failed",
+                validationErrors,
+              };
+              break;
+            }
+          } finally {
+            if (candidatePath !== undefined) {
+              await cleanupReservedCandidateSubmissionPath(candidatePath);
+            }
+          }
         }
+
+        outputPayload = finalizedOutput ?? {
+          provider: "deterministic-local",
+          model: nodePayload.model,
+          promptText: assembledPromptText,
+          completionPassed: false,
+          when: {},
+          payload: {},
+          error: "provider_error",
+        };
       }
 
       const endedAt = nowIso();
@@ -881,6 +1298,8 @@ export async function runWorkflow(
                 startedAt,
                 endedAt,
                 ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+                ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
+                ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
                 ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
               },
             ],
@@ -903,6 +1322,8 @@ export async function runWorkflow(
         model: nodePayload.model,
         timeoutMs,
         restartAttempt,
+        outputAttemptCount,
+        ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
         ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
       };
       const outputRef = outputRefForExecution(
@@ -950,6 +1371,8 @@ export async function runWorkflow(
             startedAt,
             endedAt,
             ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+            ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
+            ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
             ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
             inputJson,
             outputJson,
@@ -972,6 +1395,8 @@ export async function runWorkflow(
           startedAt,
           endedAt,
           ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+          ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
+          ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
           ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
         },
       ];
@@ -1032,6 +1457,12 @@ export async function runWorkflow(
       }
 
       if (nodeStatus === "failed") {
+        const failureReason =
+          outputPayload["error"] === "invalid_output"
+            ? `invalid adapter output at '${nodeId}'`
+            : outputValidationErrors.length > 0
+              ? `output validation failed at '${nodeId}'`
+              : `adapter failure at '${nodeId}'`;
         const failed: WorkflowSessionState = {
           ...session,
           queue,
@@ -1043,7 +1474,7 @@ export async function runWorkflow(
           nodeExecutions,
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
-          lastError: `adapter failure at '${nodeId}'`,
+          lastError: failureReason,
         };
         await saveSession(failed, options);
         return err({ exitCode: 5, message: failed.lastError ?? "adapter failure" });

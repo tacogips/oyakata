@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import {
   AdapterExecutionError,
+  parseJsonObjectCandidate,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -124,16 +125,20 @@ export class OpenAiSdkAdapter implements NodeAdapter {
         });
 
         const text = extractOpenAiText(response);
+        const payload =
+          input.output === undefined
+            ? {
+                text,
+                response: isRecord(response) ? response : {},
+              }
+            : parseJsonObjectCandidate(text, "official OpenAI SDK response");
         return {
           provider: "official-openai-sdk",
           model: input.node.model,
           promptText: input.promptText,
           completionPassed: true,
           when: { always: true },
-          payload: {
-            text,
-            response: isRecord(response) ? response : {},
-          },
+          payload,
         };
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") {

@@ -133,6 +133,258 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.variables).toEqual({ name: "legacy" });
   });
 
+  test("accepts node output contract with supported JSON Schema subset", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        description: "structured worker output",
+        maxValidationAttempts: 3,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          additionalProperties: false,
+          properties: {
+            summary: { type: "string", minLength: 1 },
+          },
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.output?.maxValidationAttempts).toBe(3);
+  });
+
+  test("accepts description-only node output contracts with retry attempts", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        description: "Return only the structured worker payload as a JSON object.",
+        maxValidationAttempts: 2,
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.output?.maxValidationAttempts).toBe(2);
+  });
+
+  test("rejects empty output descriptions", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        description: "   ",
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output.description" &&
+          issue.message.includes("non-empty string"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects empty node output contracts that declare no description or schema", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output" &&
+          issue.message.includes("must define output.description and/or output.jsonSchema"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects unsupported node output contract fields", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        description: "structured worker output",
+        schema: {
+          type: "object",
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output.schema" &&
+          issue.message.includes("unsupported output contract field"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects unsupported JSON Schema keywords in node output contract", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "object",
+          not: { type: "null" },
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output.jsonSchema.not" &&
+          issue.message.includes("unsupported"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects node output schemas whose root cannot accept an object payload", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        jsonSchema: {
+          type: "string",
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output.jsonSchema" &&
+          issue.message.includes("top-level JSON objects"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects node output schemas whose combinator root cannot accept an object payload", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        jsonSchema: {
+          anyOf: [{ type: "string" }, { type: "number" }],
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output.jsonSchema" &&
+          issue.message.includes("top-level JSON objects"),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not report missing jsonSchema when output.jsonSchema is present but invalid", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          not: { type: "null" },
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output.maxValidationAttempts" &&
+          issue.message.includes("requires output.jsonSchema"),
+      ),
+    ).toBe(false);
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.output" &&
+          issue.message.includes("must define output.description and/or output.jsonSchema"),
+      ),
+    ).toBe(false);
+  });
+
   test("normalizes legacy coordinate layout to top-to-bottom then left-to-right order", () => {
     const raw = makeValidRaw();
     raw.workflowVis = {
