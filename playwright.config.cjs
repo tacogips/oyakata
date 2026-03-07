@@ -5,6 +5,7 @@ const baseURL = process.env["OYAKATA_E2E_BASE_URL"] ?? "http://127.0.0.1:5173";
 
 module.exports = defineConfig({
   testDir: "./e2e",
+  testMatch: /.*\.spec\.(cjs|mjs|js|ts)$/,
   timeout: 30_000,
   fullyParallel: true,
   forbidOnly: isCi,

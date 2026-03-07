@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { MockNodeScenario } from "../workflow/adapter";
+import { createWorkflowTemplate } from "../workflow/create";
 import { runWorkflow } from "../workflow/engine";
 import { loadWorkflowFromDisk } from "../workflow/load";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "../workflow/paths";
@@ -67,8 +68,12 @@ function remapNodePayloadsForValidation(bundleObj: Readonly<Record<string, unkno
   return remapped;
 }
 
-function renderWebUi(fixedWorkflowName?: string): string {
-  const fixed = JSON.stringify(fixedWorkflowName ?? "");
+function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; readonly readOnly: boolean; readonly noExec: boolean }): string {
+  const uiConfig = JSON.stringify({
+    fixedWorkflowName: input.fixedWorkflowName ?? "",
+    readOnly: input.readOnly,
+    noExec: input.noExec,
+  });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -116,6 +121,14 @@ function renderWebUi(fixedWorkflowName?: string): string {
     .toolbar > div { flex: 1 1 220px; }
     h1 { margin: 0 0 12px; font-size: 24px; letter-spacing: -0.02em; }
     h2 { margin: 0 0 8px; font-size: 16px; }
+    .banner {
+      margin: 0 0 14px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(244, 217, 191, 0.45);
+      color: var(--text);
+    }
     label { display: block; margin: 10px 0 4px; color: var(--muted); }
     input, select, textarea, button { font: inherit; }
     input, select, textarea {
@@ -251,6 +264,35 @@ function renderWebUi(fixedWorkflowName?: string): string {
       margin: 0;
     }
     .mini-label { display: block; margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+    .session-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .session-item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.84);
+      color: var(--text);
+    }
+    .session-item.selected {
+      box-shadow: 0 0 0 2px rgba(49, 93, 70, 0.22);
+      border-color: rgba(49, 93, 70, 0.45);
+    }
+    .session-item-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .session-item-meta {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
       .row { grid-template-columns: 1fr; }
@@ -263,10 +305,19 @@ function renderWebUi(fixedWorkflowName?: string): string {
   <div class="wrap">
     <div class="card">
       <h1>oyakata Vertical Workflow Editor</h1>
+      <div id="modeBanner" class="banner" hidden></div>
       <div class="toolbar">
         <div>
           <label for="workflow">Workflow</label>
           <select id="workflow"></select>
+        </div>
+        <div>
+          <label for="newWorkflowName">New Workflow</label>
+          <input id="newWorkflowName" type="text" placeholder="workflow-name" />
+        </div>
+        <div style="flex:0 0 auto;">
+          <label>&nbsp;</label>
+          <button id="createWorkflowButton" class="secondary" type="button">Create Workflow</button>
         </div>
         <div>
           <label for="workflowDescription">Workflow Description</label>
@@ -277,7 +328,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         <button id="reloadButton" class="ghost">Reload</button>
         <button id="validateButton" class="ghost">Validate Workflow</button>
         <button id="saveButton">Save Workflow</button>
-        <div id="editorStatus" class="status muted"></div>
+        <div id="editorStatus" class="status muted" aria-live="polite"></div>
       </div>
     </div>
     <div class="layout">
@@ -311,8 +362,13 @@ function renderWebUi(fixedWorkflowName?: string): string {
         </div>
         <div class="card">
           <h2>Session Progress</h2>
-          <div id="sessionLine" class="status"></div>
+          <div class="toolbar" style="margin-bottom:12px;">
+            <button id="refreshSessionsButton" class="ghost" type="button">Refresh Sessions</button>
+            <button id="cancelSessionButton" class="ghost" type="button">Cancel Selected Session</button>
+          </div>
+          <div id="sessionLine" class="status" aria-live="polite"></div>
           <div id="nodeLine" style="margin:8px 0 10px; color:var(--muted)"></div>
+          <div id="sessionsList" class="session-list"></div>
           <pre id="sessionJson">{}</pre>
         </div>
       </div>
@@ -392,14 +448,20 @@ function renderWebUi(fixedWorkflowName?: string): string {
     </div>
   </div>
   <script>
-    const fixedWorkflow = ${fixed};
+    const uiConfig = ${uiConfig};
+    const fixedWorkflow = uiConfig.fixedWorkflowName;
+    const readOnlyMode = uiConfig.readOnly === true;
+    const noExecMode = uiConfig.noExec === true;
     const workflowEl = document.getElementById("workflow");
+    const newWorkflowNameEl = document.getElementById("newWorkflowName");
+    const createWorkflowButtonEl = document.getElementById("createWorkflowButton");
     const workflowDescriptionEl = document.getElementById("workflowDescription");
     const workflowBoardEl = document.getElementById("workflowBoard");
     const reloadButtonEl = document.getElementById("reloadButton");
     const validateButtonEl = document.getElementById("validateButton");
     const saveButtonEl = document.getElementById("saveButton");
     const editorStatusEl = document.getElementById("editorStatus");
+    const modeBannerEl = document.getElementById("modeBanner");
     const validationSummaryEl = document.getElementById("validationSummary");
     const issueListEl = document.getElementById("issueList");
     const workflowMaxLoopIterationsEl = document.getElementById("workflowMaxLoopIterations");
@@ -422,8 +484,11 @@ function renderWebUi(fixedWorkflowName?: string): string {
     const scenarioEl = document.getElementById("mockScenario");
     const maxStepsEl = document.getElementById("maxSteps");
     const runButtonEl = document.getElementById("runButton");
+    const refreshSessionsButtonEl = document.getElementById("refreshSessionsButton");
+    const cancelSessionButtonEl = document.getElementById("cancelSessionButton");
     const sessionLineEl = document.getElementById("sessionLine");
     const nodeLineEl = document.getElementById("nodeLine");
+    const sessionsListEl = document.getElementById("sessionsList");
     const sessionJsonEl = document.getElementById("sessionJson");
     const state = {
       revision: null,
@@ -431,8 +496,93 @@ function renderWebUi(fixedWorkflowName?: string): string {
       derivedVisualization: [],
       selectedNodeId: null,
       issues: [],
+      sessions: [],
+      selectedSessionId: null,
     };
     let pollTimer = null;
+    let polledSessionId = null;
+
+    function hasLoadedWorkflow() {
+      return typeof workflowEl.value === "string" && workflowEl.value.length > 0 && state.bundle !== null;
+    }
+
+    function visibleSessionsForCurrentWorkflow() {
+      const workflowName = workflowEl.value;
+      if (!workflowName) {
+        return [];
+      }
+      return [...state.sessions]
+        .filter((session) => !workflowName || session.workflowName === workflowName)
+        .sort((left, right) => String(right.startedAt).localeCompare(String(left.startedAt)));
+    }
+
+    function selectedVisibleSession() {
+      return visibleSessionsForCurrentWorkflow().find((session) => session.sessionId === state.selectedSessionId) || null;
+    }
+
+    function selectedSessionCanCancel() {
+      const session = selectedVisibleSession();
+      if (!session) {
+        return false;
+      }
+      return session.status !== "completed" && session.status !== "failed" && session.status !== "cancelled";
+    }
+
+    function applyModeCapabilities() {
+      const bannerMessages = [];
+      if (fixedWorkflow) {
+        bannerMessages.push("Fixed workflow mode is active.");
+      }
+      if (readOnlyMode) {
+        bannerMessages.push("Read-only mode disables create and save actions.");
+      }
+      if (noExecMode) {
+        bannerMessages.push("Execution is disabled, so run and cancel actions are unavailable.");
+      }
+      if (bannerMessages.length > 0) {
+        modeBannerEl.hidden = false;
+        modeBannerEl.textContent = bannerMessages.join(" ");
+      } else {
+        modeBannerEl.hidden = true;
+        modeBannerEl.textContent = "";
+      }
+
+      createWorkflowButtonEl.disabled = fixedWorkflow || readOnlyMode;
+      newWorkflowNameEl.disabled = fixedWorkflow || readOnlyMode;
+      workflowDescriptionEl.disabled = readOnlyMode;
+      reloadButtonEl.disabled = !hasLoadedWorkflow();
+      validateButtonEl.disabled = !hasLoadedWorkflow();
+      saveButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      addNodeButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      addEdgeButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      addSubWorkflowButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      addLoopButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      nodeExecutionBackendEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      nodeModelEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      nodePromptTemplateEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      nodeVariablesEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      workflowMaxLoopIterationsEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      workflowNodeTimeoutMsEl.disabled = readOnlyMode || !hasLoadedWorkflow();
+      promptEl.disabled = noExecMode || !hasLoadedWorkflow();
+      scenarioEl.disabled = noExecMode || !hasLoadedWorkflow();
+      maxStepsEl.disabled = noExecMode || !hasLoadedWorkflow();
+      runButtonEl.disabled = noExecMode || !hasLoadedWorkflow();
+      refreshSessionsButtonEl.disabled = !workflowEl.value;
+      cancelSessionButtonEl.disabled = noExecMode || !selectedSessionCanCancel();
+      updateCreateWorkflowControls();
+    }
+
+    function isValidWorkflowNameInput(value) {
+      return /^[a-zA-Z0-9][a-zA-Z0-9-_]{0,63}$/.test(value) && !value.includes("..");
+    }
+
+    function updateCreateWorkflowControls() {
+      if (newWorkflowNameEl.disabled) {
+        createWorkflowButtonEl.disabled = true;
+        return;
+      }
+      createWorkflowButtonEl.disabled = !isValidWorkflowNameInput(newWorkflowNameEl.value.trim());
+    }
 
     function statusClass(status) {
       if (status === "completed") return "ok";
@@ -946,6 +1096,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
       const input = document.createElement("input");
       input.type = "text";
       input.value = value || "";
+      input.disabled = readOnlyMode;
       if (placeholder) {
         input.placeholder = placeholder;
       }
@@ -957,6 +1108,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
       const input = document.createElement("input");
       input.type = "number";
       input.value = value === undefined || value === null ? "" : String(value);
+      input.disabled = readOnlyMode;
       if (typeof min === "number") {
         input.min = String(min);
       }
@@ -966,6 +1118,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
 
     function createSelectInput(options, value, onInput) {
       const select = document.createElement("select");
+      select.disabled = readOnlyMode;
       options.forEach((option) => {
         const el = document.createElement("option");
         el.value = option.value;
@@ -998,7 +1151,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         const input = document.createElement("input");
         input.type = "checkbox";
         input.checked = selected.has(option.value) || locked.has(option.value);
-        input.disabled = locked.has(option.value) || disabled.has(option.value);
+        input.disabled = readOnlyMode || locked.has(option.value) || disabled.has(option.value);
         input.addEventListener("change", () => {
           const nextSelected = options
             .filter((entry) => {
@@ -1221,6 +1374,21 @@ function renderWebUi(fixedWorkflowName?: string): string {
 
     function clearIssues() {
       setIssues([]);
+    }
+
+    function resetSessionPanel(message) {
+      state.selectedSessionId = null;
+      polledSessionId = null;
+      sessionLineEl.className = "status muted";
+      sessionLineEl.textContent = message || "No session selected.";
+      nodeLineEl.textContent = "";
+      sessionJsonEl.textContent = "{}";
+      if (pollTimer !== null) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      renderSessionList();
+      applyModeCapabilities();
     }
 
     function syncWorkflowDescription() {
@@ -1449,7 +1617,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         removeButton.type = "button";
         removeButton.className = "ghost";
         removeButton.textContent = "Remove";
-        removeButton.disabled = state.bundle.workflow.managerNodeId === node.id;
+        removeButton.disabled = readOnlyMode || state.bundle.workflow.managerNodeId === node.id;
         removeButton.addEventListener("click", () => removeNode(node.id));
         meta.appendChild(nodeFile);
         meta.appendChild(selectButton);
@@ -1496,6 +1664,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         removeButton.type = "button";
         removeButton.className = "ghost";
         removeButton.textContent = "Remove";
+        removeButton.disabled = readOnlyMode;
         removeButton.addEventListener("click", () => {
           state.bundle.workflow.edges.splice(index, 1);
           renderStructureEditors();
@@ -1669,6 +1838,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         removeButton.type = "button";
         removeButton.className = "ghost";
         removeButton.textContent = "Remove";
+        removeButton.disabled = readOnlyMode;
         removeButton.addEventListener("click", () => {
           removeSubWorkflowReferences(subWorkflow.id);
           state.bundle.workflow.subWorkflows.splice(index, 1);
@@ -1734,6 +1904,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         removeButton.type = "button";
         removeButton.className = "ghost";
         removeButton.textContent = "Remove";
+        removeButton.disabled = readOnlyMode;
         removeButton.addEventListener("click", () => {
           state.bundle.workflow.loops.splice(index, 1);
           renderStructureEditors();
@@ -1905,12 +2076,12 @@ function renderWebUi(fixedWorkflowName?: string): string {
         const upButton = document.createElement("button");
         upButton.className = "ghost";
         upButton.textContent = "Up";
-        upButton.disabled = index === 0;
+        upButton.disabled = readOnlyMode || index === 0;
         upButton.addEventListener("click", () => moveNode(entry.id, -1));
         const downButton = document.createElement("button");
         downButton.className = "ghost";
         downButton.textContent = "Down";
-        downButton.disabled = index === entries.length - 1;
+        downButton.disabled = readOnlyMode || index === entries.length - 1;
         downButton.addEventListener("click", () => moveNode(entry.id, 1));
         reorder.appendChild(upButton);
         reorder.appendChild(downButton);
@@ -1989,11 +2160,10 @@ function renderWebUi(fixedWorkflowName?: string): string {
       const res = await fetch("/api/workflows/" + encodeURIComponent(workflowName));
       const data = await res.json();
       if (!res.ok) {
-        state.bundle = null;
-        state.derivedVisualization = [];
-        renderWorkflowBoard();
-        renderNodeEditor();
+        resetLoadedWorkflow();
+        resetSessionPanel("Select or create a workflow to inspect executions.");
         setEditorStatus(data.error || "failed to load workflow", "fail");
+        applyModeCapabilities();
         return;
       }
       state.revision = data.revision || null;
@@ -2007,6 +2177,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
       renderNodeEditor();
       clearIssues();
       setEditorStatus("Loaded revision " + (state.revision || "unknown"), "ok");
+      applyModeCapabilities();
     }
 
     async function validateWorkflow() {
@@ -2037,6 +2208,10 @@ function renderWebUi(fixedWorkflowName?: string): string {
 
     async function saveWorkflow() {
       if (!state.bundle) return;
+      if (readOnlyMode) {
+        setEditorStatus("Read-only mode does not allow saving", "fail");
+        return;
+      }
       if (!applyStructureEditors()) {
         return;
       }
@@ -2061,13 +2236,34 @@ function renderWebUi(fixedWorkflowName?: string): string {
       setEditorStatus("Saved revision " + (state.revision || "unknown"), "ok");
     }
 
-    async function loadWorkflows() {
+    function resetLoadedWorkflow() {
+      state.revision = null;
+      state.bundle = null;
+      state.derivedVisualization = [];
+      state.selectedNodeId = null;
+      workflowDescriptionEl.value = "";
+      renderStructureEditors();
+      renderWorkflowBoard();
+      renderNodeEditor();
+      clearIssues();
+    }
+
+    async function loadWorkflows(preferredWorkflowName) {
       if (fixedWorkflow) {
         workflowEl.innerHTML = "<option>" + fixedWorkflow + "</option>";
         workflowEl.disabled = true;
       } else {
         const res = await fetch("/api/workflows");
+        if (!res.ok) {
+          const data = await res.json();
+          resetLoadedWorkflow();
+          resetSessionPanel("Select or create a workflow to inspect executions.");
+          setEditorStatus(data.error || "failed to load workflows", "fail");
+          applyModeCapabilities();
+          return;
+        }
         const data = await res.json();
+        const previousValue = preferredWorkflowName || workflowEl.value;
         workflowEl.innerHTML = "";
         for (const name of data.workflows || []) {
           const opt = document.createElement("option");
@@ -2075,48 +2271,292 @@ function renderWebUi(fixedWorkflowName?: string): string {
           opt.textContent = name;
           workflowEl.appendChild(opt);
         }
+        if (previousValue && Array.from(workflowEl.options).some((option) => option.value === previousValue)) {
+          workflowEl.value = previousValue;
+        }
       }
       if (workflowEl.options.length > 0) {
         await loadWorkflowDetails();
+        await loadSessions(undefined, { refreshSelectedDetails: true });
+        applyModeCapabilities();
+        return;
       }
+      resetLoadedWorkflow();
+      resetSessionPanel("Select or create a workflow to inspect executions.");
+      setEditorStatus("No workflows found. Create one to begin editing.", "warn");
+      applyModeCapabilities();
+    }
+
+    async function createWorkflowFromBrowser() {
+      if (fixedWorkflow) {
+        setEditorStatus("Fixed workflow mode does not allow creating another workflow", "fail");
+        return;
+      }
+      if (readOnlyMode) {
+        setEditorStatus("Read-only mode does not allow creating workflows", "fail");
+        return;
+      }
+      const workflowName = newWorkflowNameEl.value.trim();
+      if (!workflowName) {
+        setEditorStatus("Enter a workflow name before creating", "fail");
+        return;
+      }
+      if (!isValidWorkflowNameInput(workflowName)) {
+        setEditorStatus("Workflow names must start with a letter or number and use only letters, numbers, '-' or '_'", "fail");
+        return;
+      }
+      setEditorStatus("Creating workflow...", "warn");
+      const res = await fetch("/api/workflows", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workflowName }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setEditorStatus(data.error || "failed to create workflow", "fail");
+        return;
+      }
+      newWorkflowNameEl.value = "";
+      updateCreateWorkflowControls();
+      await loadWorkflows(data.workflowName || workflowName);
+      workflowDescriptionEl.focus();
+      setEditorStatus("Created workflow " + (data.workflowName || workflowName), "ok");
+    }
+
+    function renderSessionList() {
+      sessionsListEl.innerHTML = "";
+      if (!workflowEl.value) {
+        sessionsListEl.innerHTML = '<div class="collection-empty">Select or create a workflow to inspect executions.</div>';
+        cancelSessionButtonEl.disabled = true;
+        return;
+      }
+      const sessions = visibleSessionsForCurrentWorkflow();
+      const selectedSession = selectedVisibleSession();
+      if (sessions.length === 0) {
+        sessionsListEl.innerHTML = '<div class="collection-empty">No workflow executions recorded yet.</div>';
+        cancelSessionButtonEl.disabled = true;
+        return;
+      }
+      cancelSessionButtonEl.disabled =
+        noExecMode ||
+        !selectedSession ||
+        selectedSession.status === "completed" ||
+        selectedSession.status === "failed" ||
+        selectedSession.status === "cancelled";
+      sessions.forEach((session) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "session-item" + (state.selectedSessionId === session.sessionId ? " selected" : "");
+        button.addEventListener("click", () => {
+          void selectSession(session.sessionId);
+        });
+
+        const head = document.createElement("div");
+        head.className = "session-item-head";
+        const title = document.createElement("strong");
+        title.textContent = session.sessionId;
+        const status = document.createElement("span");
+        status.className = "pill";
+        status.textContent = session.status;
+        head.appendChild(title);
+        head.appendChild(status);
+
+        const meta = document.createElement("div");
+        meta.className = "session-item-meta";
+        meta.textContent =
+          "current=" + (session.currentNodeId || "-") +
+          " started=" + (session.startedAt || "-") +
+          " ended=" + (session.endedAt || "-");
+
+        button.appendChild(head);
+        button.appendChild(meta);
+        sessionsListEl.appendChild(button);
+      });
     }
 
     function renderSession(session) {
       const status = session.status || "unknown";
+      state.selectedSessionId = session.sessionId || null;
       sessionLineEl.className = "status " + statusClass(status);
       sessionLineEl.textContent = "sessionId=" + session.sessionId + " status=" + status + " currentNode=" + (session.currentNodeId || "-");
       const counts = session.nodeExecutionCounts || {};
       const nodes = Object.keys(counts).sort().map((id) => id + ":" + counts[id]).join(", ");
       nodeLineEl.textContent = "node progress: " + (nodes || "-");
       sessionJsonEl.textContent = JSON.stringify(session, null, 2);
+      cancelSessionButtonEl.disabled =
+        noExecMode ||
+        !session.sessionId || status === "completed" || status === "failed" || status === "cancelled";
+      renderSessionList();
+    }
+
+    async function fetchSessionDetails(sessionId) {
+      const res = await fetch("/api/sessions/" + encodeURIComponent(sessionId));
+      const data = await res.json();
+      if (!res.ok) {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = data.error || "failed to load session";
+        nodeLineEl.textContent = "";
+        sessionJsonEl.textContent = "{}";
+        cancelSessionButtonEl.disabled = true;
+        return false;
+      }
+      renderSession(data);
+      return true;
+    }
+
+    async function loadSessions(preferredSessionId, options) {
+      const previousSelectedSessionId = state.selectedSessionId;
+      const res = await fetch("/api/sessions");
+      const data = await res.json();
+      if (!res.ok) {
+        state.sessions = [];
+        state.selectedSessionId = null;
+        nodeLineEl.textContent = "";
+        sessionJsonEl.textContent = "{}";
+        if (pollTimer !== null) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = data.error || "failed to load sessions";
+        renderSessionList();
+        applyModeCapabilities();
+        return;
+      }
+      state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+      if (preferredSessionId && state.sessions.some((session) => session.sessionId === preferredSessionId)) {
+        state.selectedSessionId = preferredSessionId;
+      } else if (
+        state.selectedSessionId &&
+        !state.sessions.some((session) => session.sessionId === state.selectedSessionId)
+      ) {
+        state.selectedSessionId = null;
+      }
+      if (selectedVisibleSession() === null) {
+        state.selectedSessionId = null;
+      }
+      if (state.selectedSessionId === null) {
+        const visibleSessions = visibleSessionsForCurrentWorkflow();
+        if (visibleSessions.length > 0) {
+          state.selectedSessionId = visibleSessions[0].sessionId;
+        }
+      }
+      if (state.selectedSessionId === null) {
+        resetSessionPanel(
+          workflowEl.value ? "No session selected." : "Select or create a workflow to inspect executions.",
+        );
+        return;
+      }
+      if (polledSessionId && polledSessionId !== state.selectedSessionId) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        polledSessionId = null;
+      }
+      renderSessionList();
+      if (
+        (options && options.refreshSelectedDetails === true) ||
+        previousSelectedSessionId !== state.selectedSessionId
+      ) {
+        await fetchSessionDetails(state.selectedSessionId);
+      }
+    }
+
+    async function selectSession(sessionId) {
+      state.selectedSessionId = sessionId;
+      renderSessionList();
+      await pollSession(sessionId);
     }
 
     async function pollSession(sessionId) {
       if (pollTimer !== null) {
         clearInterval(pollTimer);
       }
+      polledSessionId = sessionId;
       const tick = async () => {
-        const res = await fetch("/api/sessions/" + encodeURIComponent(sessionId));
-        if (!res.ok) return;
-        const session = await res.json();
-        renderSession(session);
+        if (polledSessionId !== sessionId || state.selectedSessionId !== sessionId) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          if (polledSessionId === sessionId) {
+            polledSessionId = null;
+          }
+          return;
+        }
+        const loaded = await fetchSessionDetails(sessionId);
+        if (!loaded) {
+          return;
+        }
+        await loadSessions(sessionId);
+        const session = selectedVisibleSession();
+        if (!session) {
+          return;
+        }
         if (session.status === "completed" || session.status === "failed" || session.status === "cancelled") {
           clearInterval(pollTimer);
           pollTimer = null;
+          if (polledSessionId === sessionId) {
+            polledSessionId = null;
+          }
         }
       };
       await tick();
       pollTimer = setInterval(tick, 1000);
     }
 
+    async function cancelSelectedSession() {
+      if (noExecMode) {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = "execution is disabled in no-exec mode";
+        return;
+      }
+      if (!state.selectedSessionId) {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = "select a session before cancelling";
+        return;
+      }
+      const res = await fetch("/api/sessions/" + encodeURIComponent(state.selectedSessionId) + "/cancel", {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = data.error || "failed to cancel session";
+        return;
+      }
+      await pollSession(state.selectedSessionId);
+    }
+
     workflowEl.addEventListener("change", () => {
       loadWorkflowDetails().catch((error) => {
         setEditorStatus(String(error), "fail");
       });
+      loadSessions(undefined, { refreshSelectedDetails: true }).catch((error) => {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = String(error);
+      });
+    });
+    createWorkflowButtonEl.addEventListener("click", () => {
+      createWorkflowFromBrowser().catch((error) => {
+        setEditorStatus(String(error), "fail");
+      });
+    });
+    newWorkflowNameEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        createWorkflowFromBrowser().catch((error) => {
+          setEditorStatus(String(error), "fail");
+        });
+      }
+    });
+    newWorkflowNameEl.addEventListener("input", () => {
+      updateCreateWorkflowControls();
     });
     reloadButtonEl.addEventListener("click", () => {
       loadWorkflowDetails().catch((error) => {
         setEditorStatus(String(error), "fail");
+      });
+      loadSessions(state.selectedSessionId, { refreshSelectedDetails: true }).catch((error) => {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = String(error);
       });
     });
     validateButtonEl.addEventListener("click", () => {
@@ -2146,10 +2586,27 @@ function renderWebUi(fixedWorkflowName?: string): string {
     nodeModelEl.addEventListener("input", updateSelectedPayload);
     nodePromptTemplateEl.addEventListener("input", updateSelectedPayload);
     nodeVariablesEl.addEventListener("input", updateSelectedPayload);
+    refreshSessionsButtonEl.addEventListener("click", () => {
+      loadSessions(state.selectedSessionId, { refreshSelectedDetails: true }).catch((error) => {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = String(error);
+      });
+    });
+    cancelSessionButtonEl.addEventListener("click", () => {
+      cancelSelectedSession().catch((error) => {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = String(error);
+      });
+    });
 
     runButtonEl.addEventListener("click", async () => {
       const workflowName = workflowEl.value;
       if (!workflowName) return;
+      if (noExecMode) {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = "execution is disabled in no-exec mode";
+        return;
+      }
       const payload = {
         async: true,
         runtimeVariables: {
@@ -2159,8 +2616,14 @@ function renderWebUi(fixedWorkflowName?: string): string {
       };
       if (maxStepsEl.value) payload.maxSteps = Number(maxStepsEl.value);
       const rawScenario = scenarioEl.value.trim();
-      if (rawScenario.length > 0) {
-        payload.mockScenario = JSON.parse(rawScenario);
+      try {
+        if (rawScenario.length > 0) {
+          payload.mockScenario = JSON.parse(rawScenario);
+        }
+      } catch (error) {
+        sessionLineEl.className = "status fail";
+        sessionLineEl.textContent = error instanceof Error ? error.message : "invalid mock scenario JSON";
+        return;
       }
       const res = await fetch("/api/workflows/" + encodeURIComponent(workflowName) + "/execute", {
         method: "POST",
@@ -2173,6 +2636,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         sessionLineEl.textContent = data.error || "run failed";
         return;
       }
+      await loadSessions(data.sessionId);
       await pollSession(data.sessionId);
     });
 
@@ -2181,6 +2645,11 @@ function renderWebUi(fixedWorkflowName?: string): string {
       sessionLineEl.textContent = String(error);
       setEditorStatus(String(error), "fail");
     });
+    loadSessions(undefined, { refreshSelectedDetails: true }).catch((error) => {
+      sessionLineEl.className = "status fail";
+      sessionLineEl.textContent = String(error);
+    });
+    applyModeCapabilities();
   </script>
 </body>
 </html>`;
@@ -2196,7 +2665,16 @@ async function parseJsonBody(request: Request): Promise<unknown> {
 
 async function listWorkflowNames(options: LoadOptions): Promise<readonly string[]> {
   const roots = resolveEffectiveRoots(options);
-  const entries = await readdir(roots.workflowRoot, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await readdir(roots.workflowRoot, { withFileTypes: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("ENOENT")) {
+      return [];
+    }
+    throw error;
+  }
   const names: string[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) {
@@ -2224,7 +2702,13 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
   const parts = routeParts(url.pathname);
 
   if (url.pathname === "/" || url.pathname === "/ui") {
-    return html(renderWebUi(context.fixedWorkflowName));
+    return html(
+      renderWebUi({
+        fixedWorkflowName: context.fixedWorkflowName,
+        readOnly: context.readOnly === true,
+        noExec: context.noExec === true,
+      }),
+    );
   }
 
   if (url.pathname === "/healthz") {
@@ -2234,6 +2718,47 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
   if (parts.length === 2 && parts[0] === "api" && parts[1] === "workflows" && request.method === "GET") {
     const names = await listWorkflowNames(context);
     return json({ workflows: names });
+  }
+
+  if (parts.length === 2 && parts[0] === "api" && parts[1] === "workflows" && request.method === "POST") {
+    if (context.readOnly === true) {
+      return json({ error: "read-only mode enabled" }, 403);
+    }
+    if (context.fixedWorkflowName !== undefined) {
+      return json({ error: "cannot create workflows in fixed workflow mode" }, 403);
+    }
+
+    const body = await parseJsonBody(request);
+    const bodyObj = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+    const workflowName = typeof bodyObj["workflowName"] === "string" ? bodyObj["workflowName"].trim() : "";
+    if (workflowName.length === 0) {
+      return json({ error: "workflowName is required" }, 400);
+    }
+
+    const created = await createWorkflowTemplate(workflowName, context);
+    if (!created.ok) {
+      const status =
+        created.error.code === "ALREADY_EXISTS" ? 409 : created.error.code === "INVALID_WORKFLOW_NAME" ? 400 : 500;
+      return json({ error: created.error.message }, status);
+    }
+
+    const loaded = await loadWorkflowFromDisk(created.value.workflowName, context);
+    if (!loaded.ok) {
+      return json({ error: loaded.error.message, issues: loaded.error.issues ?? [] }, 500);
+    }
+    const nodeFiles = loaded.value.bundle.workflow.nodes.map((node) => node.nodeFile);
+    const revision = await computeWorkflowRevisionFromFiles(loaded.value.workflowDirectory, nodeFiles);
+
+    return json({
+      workflowName: loaded.value.workflowName,
+      workflowDirectory: loaded.value.workflowDirectory,
+      revision: revision.ok ? revision.value : null,
+      bundle: loaded.value.bundle,
+      derivedVisualization: deriveWorkflowVisualization({
+        workflow: loaded.value.bundle.workflow,
+        workflowVis: loaded.value.bundle.workflowVis,
+      }),
+    }, 201);
   }
 
   if (parts.length === 2 && parts[0] === "api" && parts[1] === "sessions" && request.method === "GET") {

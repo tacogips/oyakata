@@ -284,6 +284,7 @@ describe("runCli", () => {
         },
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
+        waitForServeShutdown: async () => {},
       },
     );
 
@@ -313,6 +314,7 @@ describe("runCli", () => {
           openedUrls.push(url);
         },
         isInteractiveTerminal: () => true,
+        waitForServeShutdown: async () => {},
       },
     );
 
@@ -336,11 +338,37 @@ describe("runCli", () => {
           throw new Error("boom");
         },
         isInteractiveTerminal: () => true,
+        waitForServeShutdown: async () => {},
       },
     );
 
     expect(code).toBe(0);
     expect(capture.stderr.join("\n")).toContain("failed to open browser: boom");
+  });
+
+  test("serve reports the actual bound port returned by the server", async () => {
+    const capture = createIoCapture();
+
+    const code = await runCli(
+      ["serve", "demo", "--host", "127.0.0.1", "--port", "0", "--output", "json"],
+      capture.io,
+      {
+        startServe: async (options) => ({
+          host: options.host ?? "127.0.0.1",
+          port: 48321,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        waitForServeShutdown: async () => {},
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(JSON.parse(capture.stdout.join("\n"))).toMatchObject({
+      host: "127.0.0.1",
+      port: 48321,
+    });
   });
 
   test("validate returns code 2 for invalid workflow name", async () => {

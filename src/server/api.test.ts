@@ -33,8 +33,15 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("oyakata Vertical Workflow Editor");
     expect(uiText).toContain("Vertical Workflow");
     expect(uiText).toContain("Workflow Structure");
+    expect(uiText).toContain("Create Workflow");
+    expect(uiText).toContain("New Workflow");
     expect(uiText).toContain("Validate Workflow");
+    expect(uiText).toContain("modeBanner");
+    expect(uiText).toContain("Read-only mode disables create and save actions.");
+    expect(uiText).toContain("Execution is disabled, so run and cancel actions are unavailable.");
     expect(uiText).toContain("Add Node");
+    expect(uiText).toContain("Refresh Sessions");
+    expect(uiText).toContain("Cancel Selected Session");
     expect(uiText).toContain("root-manager");
     expect(uiText).toContain("(use workflow manager)");
     expect(uiText).toContain("Member Nodes");
@@ -79,6 +86,71 @@ describe("handleApiRequest", () => {
     expect(healthRes.status).toBe(200);
   });
 
+  test("lists no workflows when the workflow root does not exist yet", async () => {
+    const root = await makeTempDir();
+    const missingWorkflowRoot = path.join(root, "missing-workflows");
+
+    const listRes = await handleApiRequest(new Request("http://localhost/api/workflows"), {
+      workflowRoot: missingWorkflowRoot,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+
+    expect(listRes.status).toBe(200);
+    const listJson = (await listRes.json()) as { workflows: string[] };
+    expect(listJson.workflows).toEqual([]);
+  });
+
+  test("renders browser UI capability hints for fixed, read-only, and no-exec modes", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const uiRes = await handleApiRequest(new Request("http://localhost/"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      fixedWorkflowName: "demo",
+      readOnly: true,
+      noExec: true,
+    });
+
+    expect(uiRes.status).toBe(200);
+    const uiText = await uiRes.text();
+    expect(uiText).toContain('const fixedWorkflow = uiConfig.fixedWorkflowName;');
+    expect(uiText).toContain('const readOnlyMode = uiConfig.readOnly === true;');
+    expect(uiText).toContain('const noExecMode = uiConfig.noExec === true;');
+    expect(uiText).toContain("function hasLoadedWorkflow()");
+    expect(uiText).toContain("function isValidWorkflowNameInput(value)");
+    expect(uiText).toContain("createWorkflowButtonEl.disabled = !isValidWorkflowNameInput(newWorkflowNameEl.value.trim());");
+    expect(uiText).toContain("workflowDescriptionEl.disabled = readOnlyMode;");
+    expect(uiText).toContain("reloadButtonEl.disabled = !hasLoadedWorkflow();");
+    expect(uiText).toContain("validateButtonEl.disabled = !hasLoadedWorkflow();");
+    expect(uiText).toContain("addNodeButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();");
+    expect(uiText).toContain("nodeExecutionBackendEl.disabled = readOnlyMode || !hasLoadedWorkflow();");
+    expect(uiText).toContain("promptEl.disabled = noExecMode || !hasLoadedWorkflow();");
+    expect(uiText).toContain("scenarioEl.disabled = noExecMode || !hasLoadedWorkflow();");
+    expect(uiText).toContain("maxStepsEl.disabled = noExecMode || !hasLoadedWorkflow();");
+    expect(uiText).toContain("runButtonEl.disabled = noExecMode || !hasLoadedWorkflow();");
+    expect(uiText).toContain("refreshSessionsButtonEl.disabled = !workflowEl.value;");
+    expect(uiText).toContain("cancelSessionButtonEl.disabled = noExecMode || !selectedSessionCanCancel();");
+    expect(uiText).toContain("Select or create a workflow to inspect executions.");
+    expect(uiText).toContain("input.disabled = readOnlyMode || locked.has(option.value) || disabled.has(option.value);");
+    expect(uiText).toContain("Fixed workflow mode is active.");
+    expect(uiText).toContain("Read-only mode disables create and save actions.");
+    expect(uiText).toContain("Execution is disabled, so run and cancel actions are unavailable.");
+    expect(uiText).toContain("Read-only mode does not allow saving");
+    expect(uiText).toContain("execution is disabled in no-exec mode");
+    expect(uiText).toContain("Workflow names must start with a letter or number and use only letters, numbers, '-' or '_'");
+    expect(uiText).toContain("workflowDescriptionEl.focus();");
+    expect(uiText).toContain("const previousSelectedSessionId = state.selectedSessionId;");
+    expect(uiText).toContain("previousSelectedSessionId !== state.selectedSessionId");
+    expect(uiText).toContain("let polledSessionId = null;");
+    expect(uiText).toContain("if (polledSessionId && polledSessionId !== state.selectedSessionId)");
+    expect(uiText).toContain("if (polledSessionId !== sessionId || state.selectedSessionId !== sessionId)");
+    expect(uiText).toContain('loadSessions(undefined, { refreshSelectedDetails: true }).catch((error) => {');
+    expect(uiText).toContain('loadSessions(state.selectedSessionId, { refreshSelectedDetails: true }).catch((error) => {');
+  });
+
   test("lists and gets workflows", async () => {
     const root = await makeTempDir();
     const created = await createWorkflowTemplate("demo", { workflowRoot: root });
@@ -108,6 +180,104 @@ describe("handleApiRequest", () => {
     expect(getJson.derivedVisualization[0]?.id).toBe("oyakata-manager");
     expect(getJson.derivedVisualization[0]?.indent).toBe(0);
     expect(getJson.derivedVisualization.find((entry) => entry.id === "workflow-input")?.color).toBe("group:main");
+  });
+
+  test("creates workflows from the API", async () => {
+    const root = await makeTempDir();
+
+    const createRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows", {
+        method: "POST",
+        body: JSON.stringify({ workflowName: "browser-demo" }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
+    expect(createRes.status).toBe(201);
+    const createJson = (await createRes.json()) as {
+      workflowName: string;
+      revision: string | null;
+      bundle: {
+        workflow: { description: string };
+      };
+    };
+    expect(createJson.workflowName).toBe("browser-demo");
+    expect(createJson.bundle.workflow.description).toBe("New workflow");
+    expect(createJson.revision).toEqual(expect.any(String));
+
+    const duplicateRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows", {
+        method: "POST",
+        body: JSON.stringify({ workflowName: "browser-demo" }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
+    expect(duplicateRes.status).toBe(409);
+  });
+
+  test("rejects invalid workflow names from the API", async () => {
+    const root = await makeTempDir();
+
+    const createRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows", {
+        method: "POST",
+        body: JSON.stringify({ workflowName: "../bad-name" }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
+
+    expect(createRes.status).toBe(400);
+    await expect(createRes.json()).resolves.toMatchObject({
+      error: "invalid workflow name '../bad-name'",
+    });
+  });
+
+  test("rejects browser workflow creation in fixed and read-only serve modes", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const readOnlyRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows", {
+        method: "POST",
+        body: JSON.stringify({ workflowName: "blocked-by-readonly" }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        readOnly: true,
+      },
+    );
+    expect(readOnlyRes.status).toBe(403);
+    await expect(readOnlyRes.json()).resolves.toMatchObject({ error: "read-only mode enabled" });
+
+    const fixedWorkflowRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows", {
+        method: "POST",
+        body: JSON.stringify({ workflowName: "blocked-by-fixed" }),
+      }),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        fixedWorkflowName: "demo",
+      },
+    );
+    expect(fixedWorkflowRes.status).toBe(403);
+    await expect(fixedWorkflowRes.json()).resolves.toMatchObject({
+      error: "cannot create workflows in fixed workflow mode",
+    });
   });
 
   test("validates and executes workflow", async () => {

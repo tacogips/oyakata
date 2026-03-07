@@ -33,6 +33,7 @@ export interface CliDependencies {
   }) => Promise<StartedServe>;
   readonly openBrowserUrl: (url: string) => Promise<void>;
   readonly isInteractiveTerminal: () => boolean;
+  readonly waitForServeShutdown?: (started: StartedServe) => Promise<void>;
 }
 
 interface ParsedOptions {
@@ -94,6 +95,24 @@ const DEFAULT_DEPS: CliDependencies = {
     });
   },
   isInteractiveTerminal: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
+  waitForServeShutdown: async (_started: StartedServe) => {
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        process.off("SIGINT", onSigint);
+        process.off("SIGTERM", onSigterm);
+        resolve();
+      };
+      const onSigint = (): void => finish();
+      const onSigterm = (): void => finish();
+      process.once("SIGINT", onSigint);
+      process.once("SIGTERM", onSigterm);
+    });
+  },
 };
 
 function parseNumericOption(value: string | undefined): number | undefined {
@@ -596,6 +615,14 @@ export async function runCli(
           const message = error instanceof Error ? error.message : "unknown error";
           io.stderr(`failed to open browser: ${message}`);
         }
+      }
+      const waitForServeShutdown = deps.waitForServeShutdown ?? DEFAULT_DEPS.waitForServeShutdown;
+      try {
+        if (waitForServeShutdown !== undefined) {
+          await waitForServeShutdown(started);
+        }
+      } finally {
+        started.stop();
       }
       return 0;
     } catch (error: unknown) {

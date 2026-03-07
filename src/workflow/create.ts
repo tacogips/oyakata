@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "./paths";
@@ -35,6 +35,7 @@ export async function createWorkflowTemplate(
   const workflowDirectory = path.join(roots.workflowRoot, workflowName);
 
   try {
+    await mkdir(roots.workflowRoot, { recursive: true });
     await mkdir(workflowDirectory, { recursive: false });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
@@ -133,6 +134,11 @@ export async function createWorkflowTemplate(
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
+    try {
+      await rm(workflowDirectory, { recursive: true, force: true });
+    } catch {
+      // Preserve the original write failure; the caller only needs one actionable error.
+    }
     return err({
       code: "IO",
       message: `failed writing workflow templates: ${message}`,
