@@ -74,6 +74,30 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.model).toBe("gpt-5");
   });
 
+  test("rejects tacogips cli-wrapper identifiers with official sdk backends", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/codex-agent",
+      executionBackend: "official/openai-sdk",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.model" &&
+          issue.message.includes("provider model name"),
+      ),
+    ).toBe(true);
+  });
+
   test("requires executionBackend for non-tacogips model strings", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {
@@ -191,6 +215,267 @@ describe("validateWorkflowBundle", () => {
     expect(messages).toContain(
       "workflow.managerNodeId:must reference a node with kind 'root-manager' (legacy 'manager' is still accepted during transition)",
     );
+  });
+
+  test("rejects additional root-manager nodes that are not workflow.managerNodeId", () => {
+    const raw = makeValidRaw();
+    const workflowVis = raw.workflowVis as { nodes: Array<{ id: string; order: number }> };
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        ...((raw.workflow as { nodes: unknown[] }).nodes),
+        { id: "shadow-manager", kind: "root-manager", nodeFile: "node-shadow-manager.json", completion: { type: "none" } },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [...workflowVis.nodes, { id: "shadow-manager", order: workflowVis.nodes.length }],
+    };
+    raw.nodePayloads["node-shadow-manager.json"] = {
+      id: "shadow-manager",
+      model: "tacogips/codex-agent",
+      promptTemplate: "shadow manager",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.nodes" &&
+          issue.message.includes("shadow-manager") &&
+          issue.message.includes("root-manager"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects duplicate sub-workflow boundary nodes that make routing ambiguous", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      workflowId: "demo",
+      description: "demo",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [
+        {
+          id: "sw-a",
+          description: "A",
+          managerNodeId: "sub-manager-a",
+          inputNodeId: "input-a",
+          outputNodeId: "output-a",
+          inputSources: [{ type: "human-input" }],
+        },
+        {
+          id: "sw-b",
+          description: "B",
+          managerNodeId: "sub-manager-a",
+          inputNodeId: "input-a",
+          outputNodeId: "output-b",
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sub-manager-a", kind: "sub-manager", nodeFile: "node-sub-manager-a.json", completion: { type: "none" } },
+        { id: "input-a", kind: "input", nodeFile: "node-input-a.json", completion: { type: "none" } },
+        { id: "output-a", kind: "output", nodeFile: "node-output-a.json", completion: { type: "none" } },
+        { id: "output-b", kind: "output", nodeFile: "node-output-b.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "sub-manager-a", order: 1 },
+        { id: "input-a", order: 2 },
+        { id: "output-a", order: 3 },
+        { id: "output-b", order: 4 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sub-manager-a.json": {
+        id: "sub-manager-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sub-manager-a",
+        variables: {},
+      },
+      "node-input-a.json": {
+        id: "input-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "input-a",
+        variables: {},
+      },
+      "node-output-a.json": {
+        id: "output-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "output-a",
+        variables: {},
+      },
+      "node-output-b.json": {
+        id: "output-b",
+        model: "tacogips/codex-agent",
+        promptTemplate: "output-b",
+        variables: {},
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[1].managerNodeId")).toBe(true);
+    expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[1].inputNodeId")).toBe(true);
+  });
+
+  test("rejects reused boundary nodes inside the same sub-workflow", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      workflowId: "demo",
+      description: "demo",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [
+        {
+          id: "sw-a",
+          description: "A",
+          managerNodeId: "sub-manager-a",
+          inputNodeId: "sub-manager-a",
+          outputNodeId: "sub-output-a",
+          nodeIds: ["sub-manager-a", "sub-output-a"],
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "sub-manager-a", kind: "sub-manager", nodeFile: "node-sub-manager-a.json", completion: { type: "none" } },
+        { id: "sub-output-a", kind: "output", nodeFile: "node-sub-output-a.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "sub-manager-a", order: 1 },
+        { id: "sub-output-a", order: 2 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-sub-manager-a.json": {
+        id: "sub-manager-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sub-manager-a",
+        variables: {},
+      },
+      "node-sub-output-a.json": {
+        id: "sub-output-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "sub-output-a",
+        variables: {},
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflows[0].managerNodeId" &&
+          issue.message.includes("same node as inputNodeId"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects duplicate nodeIds within the same sub-workflow", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      workflowId: "demo",
+      description: "demo",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [
+        {
+          id: "sw-a",
+          description: "A",
+          inputNodeId: "input-a",
+          outputNodeId: "output-a",
+          nodeIds: ["input-a", "output-a", "input-a"],
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "input-a", kind: "input", nodeFile: "node-input-a.json", completion: { type: "none" } },
+        { id: "output-a", kind: "output", nodeFile: "node-output-a.json", completion: { type: "none" } },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "input-a", order: 1 },
+        { id: "output-a", order: 2 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": {
+        id: "oyakata-manager",
+        model: "tacogips/codex-agent",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      "node-input-a.json": {
+        id: "input-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "input-a",
+        variables: {},
+      },
+      "node-output-a.json": {
+        id: "output-a",
+        model: "tacogips/codex-agent",
+        promptTemplate: "output-a",
+        variables: {},
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflows[0].nodeIds[2]" &&
+          issue.message.includes("duplicate node id 'input-a'"),
+      ),
+    ).toBe(true);
   });
 
   test("rejects duplicate vertical order entries", () => {

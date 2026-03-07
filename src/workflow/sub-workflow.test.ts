@@ -96,6 +96,81 @@ describe("planRootManagerSubWorkflowStarts", () => {
     const planned = planRootManagerSubWorkflowStarts({ workflow, session });
     expect(planned.map((entry) => entry.id)).toEqual(["sw-b"]);
   });
+
+  test("does not start a sub-workflow again while its manager is already queued", () => {
+    const workflow = {
+      ...makeWorkflow(),
+      subWorkflows: [
+        {
+          ...makeWorkflow().subWorkflows[0]!,
+          managerNodeId: "a-manager",
+        },
+      ],
+      nodes: [
+        ...makeWorkflow().nodes,
+        { id: "a-manager", nodeFile: "node-a-manager.json", kind: "sub-manager", completion: { type: "none" } },
+      ],
+    } satisfies WorkflowJson;
+    const session = makeSession({
+      queue: ["oyakata-manager", "a-manager"],
+      runtimeVariables: { humanInput: { topic: "x" } },
+    });
+
+    const planned = planRootManagerSubWorkflowStarts({ workflow, session });
+
+    expect(planned).toEqual([]);
+  });
+
+  test("does not start a sub-workflow again while a start handoff is still delivered", () => {
+    const workflow = {
+      ...makeWorkflow(),
+      subWorkflows: [
+        {
+          ...makeWorkflow().subWorkflows[0]!,
+          managerNodeId: "a-manager",
+        },
+      ],
+      nodes: [
+        ...makeWorkflow().nodes,
+        { id: "a-manager", nodeFile: "node-a-manager.json", kind: "sub-manager", completion: { type: "none" } },
+      ],
+    } satisfies WorkflowJson;
+    const session = makeSession({
+      runtimeVariables: { humanInput: { topic: "x" } },
+      communications: [
+        {
+          workflowId: "wf",
+          workflowExecutionId: "sess-abc12345",
+          communicationId: "comm-000001",
+          fromNodeId: "oyakata-manager",
+          toNodeId: "a-manager",
+          toSubWorkflowId: "sw-a",
+          routingScope: "parent-to-sub-workflow",
+          sourceNodeExecId: "exec-000001",
+          payloadRef: {
+            workflowExecutionId: "sess-abc12345",
+            workflowId: "wf",
+            outputNodeId: "oyakata-manager",
+            nodeExecId: "exec-000001",
+            artifactDir: "/tmp/oyakata-manager/exec-000001",
+          },
+          deliveryKind: "edge-transition",
+          transitionWhen: "sub-workflow-start:sw-a",
+          status: "delivered",
+          deliveryAttemptIds: ["attempt-000001"],
+          activeDeliveryAttemptId: "attempt-000001",
+          createdAt: "2026-02-24T00:00:00.000Z",
+          deliveredAt: "2026-02-24T00:00:00.000Z",
+          artifactDir: "/tmp/communications/comm-000001",
+        },
+      ],
+      communicationCounter: 1,
+    });
+
+    const planned = planRootManagerSubWorkflowStarts({ workflow, session });
+
+    expect(planned).toEqual([]);
+  });
 });
 
 describe("planSubWorkflowChildInputs", () => {
@@ -116,6 +191,78 @@ describe("planSubWorkflowChildInputs", () => {
       managerNodeId: "a-manager",
     });
     expect(planned).toEqual(["a-input"]);
+  });
+
+  test("does not queue the child input again while it is already queued", () => {
+    const workflow = makeWorkflow();
+    const session = makeSession({
+      queue: ["oyakata-manager", "a-input"],
+    });
+    const planned = planSubWorkflowChildInputs({
+      workflow: {
+        ...workflow,
+        subWorkflows: [
+          {
+            ...workflow.subWorkflows[0]!,
+            managerNodeId: "a-manager",
+          },
+        ],
+      },
+      session,
+      managerNodeId: "a-manager",
+    });
+
+    expect(planned).toEqual([]);
+  });
+
+  test("does not queue the child input again while a delivery is still pending", () => {
+    const workflow = makeWorkflow();
+    const session = makeSession({
+      communications: [
+        {
+          workflowId: "wf",
+          workflowExecutionId: "sess-abc12345",
+          communicationId: "comm-000001",
+          fromNodeId: "a-manager",
+          toNodeId: "a-input",
+          toSubWorkflowId: "sw-a",
+          routingScope: "intra-sub-workflow",
+          sourceNodeExecId: "exec-000001",
+          payloadRef: {
+            workflowExecutionId: "sess-abc12345",
+            workflowId: "wf",
+            subWorkflowId: "sw-a",
+            outputNodeId: "a-output",
+            nodeExecId: "exec-000001",
+            artifactDir: "/tmp/a-output/exec-000001",
+          },
+          deliveryKind: "edge-transition",
+          transitionWhen: "sub-manager-input:a-input",
+          status: "delivered",
+          deliveryAttemptIds: ["attempt-000001"],
+          activeDeliveryAttemptId: "attempt-000001",
+          createdAt: "2026-02-24T00:00:00.000Z",
+          deliveredAt: "2026-02-24T00:00:00.000Z",
+          artifactDir: "/tmp/communications/comm-000001",
+        },
+      ],
+      communicationCounter: 1,
+    });
+    const planned = planSubWorkflowChildInputs({
+      workflow: {
+        ...workflow,
+        subWorkflows: [
+          {
+            ...workflow.subWorkflows[0]!,
+            managerNodeId: "a-manager",
+          },
+        ],
+      },
+      session,
+      managerNodeId: "a-manager",
+    });
+
+    expect(planned).toEqual([]);
   });
 
   test("allows the child input to be re-queued for later manager deliveries", () => {

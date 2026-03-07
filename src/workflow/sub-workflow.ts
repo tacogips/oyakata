@@ -1,4 +1,4 @@
-import type { NodeExecutionRecord, WorkflowSessionState } from "./session";
+import type { CommunicationRecord, NodeExecutionRecord, WorkflowSessionState } from "./session";
 import type { SubWorkflowInputSource, SubWorkflowRef, WorkflowJson } from "./types";
 
 function findLatestSucceededExecution(
@@ -38,10 +38,40 @@ function sourceSatisfied(
   return false;
 }
 
-function subWorkflowAlreadyStarted(subWorkflow: SubWorkflowRef, session: WorkflowSessionState): boolean {
-  return session.nodeExecutions.some(
-    (entry) => entry.nodeId === subWorkflow.inputNodeId || entry.nodeId === subWorkflow.managerNodeId,
-  );
+function hasPendingDeliveryToTargets(
+  communications: readonly CommunicationRecord[],
+  targetNodeIds: ReadonlySet<string>,
+): boolean {
+  return communications.some((communication) => {
+    if (communication.status !== "created" && communication.status !== "delivered") {
+      return false;
+    }
+    return targetNodeIds.has(communication.toNodeId);
+  });
+}
+
+function subWorkflowAlreadyStarted(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, session: WorkflowSessionState): boolean {
+  const targetNodeIds = new Set([subWorkflow.inputNodeId]);
+  if (subWorkflow.managerNodeId !== undefined && subWorkflow.managerNodeId !== workflow.managerNodeId) {
+    targetNodeIds.add(subWorkflow.managerNodeId);
+  }
+  if (session.queue.some((nodeId) => targetNodeIds.has(nodeId))) {
+    return true;
+  }
+  if (session.nodeExecutions.some((entry) => targetNodeIds.has(entry.nodeId))) {
+    return true;
+  }
+  return hasPendingDeliveryToTargets(session.communications, targetNodeIds);
+}
+
+function hasQueuedOrPendingTarget(
+  session: WorkflowSessionState,
+  targetNodeIds: ReadonlySet<string>,
+): boolean {
+  if (session.queue.some((nodeId) => targetNodeIds.has(nodeId))) {
+    return true;
+  }
+  return hasPendingDeliveryToTargets(session.communications, targetNodeIds);
 }
 
 function subWorkflowReady(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, session: WorkflowSessionState): boolean {
@@ -57,7 +87,7 @@ export function planRootManagerSubWorkflowStarts(args: {
 }): readonly SubWorkflowRef[] {
   const planned: SubWorkflowRef[] = [];
   for (const subWorkflow of args.workflow.subWorkflows) {
-    if (subWorkflowAlreadyStarted(subWorkflow, args.session)) {
+    if (subWorkflowAlreadyStarted(subWorkflow, args.workflow, args.session)) {
       continue;
     }
     if (!subWorkflowReady(subWorkflow, args.workflow, args.session)) {
@@ -75,6 +105,9 @@ export function planSubWorkflowChildInputs(args: {
 }): readonly string[] {
   const subWorkflow = args.workflow.subWorkflows.find((entry) => entry.managerNodeId === args.managerNodeId);
   if (subWorkflow === undefined) {
+    return [];
+  }
+  if (hasQueuedOrPendingTarget(args.session, new Set([subWorkflow.inputNodeId]))) {
     return [];
   }
   return [subWorkflow.inputNodeId];

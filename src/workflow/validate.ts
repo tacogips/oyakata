@@ -64,6 +64,10 @@ function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
   );
 }
 
+function requiresProviderModel(executionBackend: NodeExecutionBackend | undefined): boolean {
+  return executionBackend === "official/openai-sdk" || executionBackend === "official/anthropic-sdk";
+}
+
 function makeIssue(
   severity: "error" | "warning",
   path: string,
@@ -752,6 +756,15 @@ function normalizeNodePayload(
       ),
     );
   }
+  if (model !== null && executionBackend !== undefined && requiresProviderModel(executionBackend) && isCliAgentBackend(model)) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.model`,
+        `must be a provider model name when executionBackend is '${executionBackend}', not a tacogips CLI-wrapper identifier`,
+      ),
+    );
+  }
 
   const promptTemplateRaw = payload["promptTemplate"];
   const promptAlias = payload["prompt"];
@@ -914,6 +927,9 @@ function pushCrossingIntervalIssue(
 function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: ValidationIssue[]): void {
   const nodeIdSet = new Set(bundle.workflow.nodes.map((node) => node.id));
   const visOrderByNodeId = new Map(bundle.workflowVis.nodes.map((entry) => [entry.id, entry.order]));
+  const rootManagerNodeIds = bundle.workflow.nodes
+    .filter((node) => node.kind === "root-manager")
+    .map((node) => node.id);
 
   if (!nodeIdSet.has(bundle.workflow.managerNodeId)) {
     issues.push(
@@ -935,6 +951,18 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       ),
     );
   }
+  rootManagerNodeIds.forEach((nodeId) => {
+    if (nodeId === bundle.workflow.managerNodeId) {
+      return;
+    }
+    issues.push(
+      makeIssue(
+        "error",
+        "workflow.nodes",
+        `node '${nodeId}' cannot use kind 'root-manager' unless it is workflow.managerNodeId`,
+      ),
+    );
+  });
 
   const seenNodeIds = new Set<string>();
   bundle.workflow.nodes.forEach((node, index) => {
@@ -984,11 +1012,40 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   const declaredSubWorkflowIds = new Set(bundle.workflow.subWorkflows.map((entry) => entry.id));
   const subWorkflowIdSet = new Set<string>();
   const subWorkflowNodeOwnership = new Map<string, string>();
+  const subWorkflowBoundaryOwnership = new Map<string, string>();
   bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
     if (subWorkflowIdSet.has(subWorkflow.id)) {
       issues.push(makeIssue("error", `workflow.subWorkflows[${index}].id`, `duplicate subWorkflow id '${subWorkflow.id}'`));
     } else {
       subWorkflowIdSet.add(subWorkflow.id);
+    }
+
+    if (subWorkflow.managerNodeId !== undefined && subWorkflow.managerNodeId === subWorkflow.inputNodeId) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].managerNodeId`,
+          "must not reference the same node as inputNodeId",
+        ),
+      );
+    }
+    if (subWorkflow.managerNodeId !== undefined && subWorkflow.managerNodeId === subWorkflow.outputNodeId) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].managerNodeId`,
+          "must not reference the same node as outputNodeId",
+        ),
+      );
+    }
+    if (subWorkflow.inputNodeId === subWorkflow.outputNodeId) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].inputNodeId`,
+          "must not reference the same node as outputNodeId",
+        ),
+      );
     }
 
     if (subWorkflow.managerNodeId !== undefined) {
@@ -1012,6 +1069,18 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
           );
         }
       }
+      const existingBoundaryOwner = subWorkflowBoundaryOwnership.get(subWorkflow.managerNodeId);
+      if (existingBoundaryOwner !== undefined && existingBoundaryOwner !== subWorkflow.id) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].managerNodeId`,
+            `manager node '${subWorkflow.managerNodeId}' is already assigned to subWorkflow '${existingBoundaryOwner}'`,
+          ),
+        );
+      } else {
+        subWorkflowBoundaryOwnership.set(subWorkflow.managerNodeId, subWorkflow.id);
+      }
     }
 
     if (!nodeIdSet.has(subWorkflow.inputNodeId)) {
@@ -1034,6 +1103,18 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         );
       }
     }
+    const existingInputOwner = subWorkflowBoundaryOwnership.get(subWorkflow.inputNodeId);
+    if (existingInputOwner !== undefined && existingInputOwner !== subWorkflow.id) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].inputNodeId`,
+          `input node '${subWorkflow.inputNodeId}' is already assigned to subWorkflow '${existingInputOwner}'`,
+        ),
+      );
+    } else {
+      subWorkflowBoundaryOwnership.set(subWorkflow.inputNodeId, subWorkflow.id);
+    }
 
     if (!nodeIdSet.has(subWorkflow.outputNodeId)) {
       issues.push(
@@ -1055,12 +1136,36 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         );
       }
     }
+    const existingOutputOwner = subWorkflowBoundaryOwnership.get(subWorkflow.outputNodeId);
+    if (existingOutputOwner !== undefined && existingOutputOwner !== subWorkflow.id) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].outputNodeId`,
+          `output node '${subWorkflow.outputNodeId}' is already assigned to subWorkflow '${existingOutputOwner}'`,
+        ),
+      );
+    } else {
+      subWorkflowBoundaryOwnership.set(subWorkflow.outputNodeId, subWorkflow.id);
+    }
 
     if (subWorkflow.nodeIds !== undefined) {
       if (subWorkflow.nodeIds.length === 0) {
         issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must not be empty"));
       }
+      const seenNodeIds = new Set<string>();
       subWorkflow.nodeIds.forEach((nodeId, nodeIndex) => {
+        if (seenNodeIds.has(nodeId)) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
+              `duplicate node id '${nodeId}' is not allowed within the same subWorkflow`,
+            ),
+          );
+          return;
+        }
+        seenNodeIds.add(nodeId);
         if (!nodeIdSet.has(nodeId)) {
           issues.push(
             makeIssue(

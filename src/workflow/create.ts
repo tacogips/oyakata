@@ -69,11 +69,12 @@ export async function createWorkflowTemplate(
         description: "Main sub-workflow",
         inputNodeId: inputId,
         outputNodeId: outputId,
+        nodeIds: [inputId, outputId],
         inputSources: [{ type: "human-input" }],
       },
     ],
     nodes: [
-      { id: managerId, kind: "manager", nodeFile: `node-${managerId}.json`, completion: { type: "none" } },
+      { id: managerId, kind: "root-manager", nodeFile: `node-${managerId}.json`, completion: { type: "none" } },
       { id: inputId, kind: "input", nodeFile: `node-${inputId}.json`, completion: { type: "none" } },
       { id: outputId, kind: "output", nodeFile: `node-${outputId}.json`, completion: { type: "none" } },
     ],

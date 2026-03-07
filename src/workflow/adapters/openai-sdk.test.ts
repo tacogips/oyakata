@@ -25,10 +25,12 @@ const baseContext: AdapterExecutionContext = {
 
 describe("OpenAiSdkAdapter", () => {
   test("normalizes successful SDK output", async () => {
+    let capturedSignal: AbortSignal | undefined;
     const adapter = new OpenAiSdkAdapter({
       clientFactory: () => ({
         responses: {
-          async create() {
+          async create(_request, options) {
+            capturedSignal = options?.signal;
             return {
               output_text: "hello from openai",
             };
@@ -42,5 +44,6 @@ describe("OpenAiSdkAdapter", () => {
     expect(output.provider).toBe("official-openai-sdk");
     expect(output.model).toBe("gpt-5");
     expect(output.payload["text"]).toBe("hello from openai");
+    expect(capturedSignal).toBe(baseContext.signal);
   });
 });

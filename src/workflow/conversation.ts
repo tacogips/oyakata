@@ -36,6 +36,30 @@ function conversationTurnCount(session: WorkflowSessionState, conversationId: st
   return (session.conversationTurns ?? []).filter((entry) => entry.conversationId === conversationId).length;
 }
 
+function lastSentNodeExecIdForConversationSender(
+  session: WorkflowSessionState,
+  conversationId: string,
+  fromSubWorkflowId: string,
+): string | undefined {
+  const matchingTurns = (session.conversationTurns ?? []).filter(
+    (entry) => entry.conversationId === conversationId && entry.fromSubWorkflowId === fromSubWorkflowId,
+  );
+  const latestTurn = matchingTurns.at(-1);
+  return latestTurn?.outputRef.nodeExecId;
+}
+
+function latestReceivedTurnSentAt(
+  session: WorkflowSessionState,
+  conversationId: string,
+  subWorkflowId: string,
+): string | undefined {
+  const matchingTurns = (session.conversationTurns ?? []).filter(
+    (entry) => entry.conversationId === conversationId && entry.toSubWorkflowId === subWorkflowId,
+  );
+  const latestTurn = matchingTurns.at(-1);
+  return latestTurn?.sentAt;
+}
+
 export async function executeConversationRound(args: {
   readonly workflow: WorkflowJson;
   readonly workflowExecutionId: string;
@@ -46,6 +70,7 @@ export async function executeConversationRound(args: {
     return { status: "stopped", turns: [] };
   }
 
+  let blockedByAvailability = false;
   for (const conversation of conversations) {
     const participants = [...conversation.participants];
     if (participants.length < 2) {
@@ -75,11 +100,26 @@ export async function executeConversationRound(args: {
     }
     const outputExecution = findLatestSucceededNodeExecution(args.session, sender.outputNodeId);
     if (outputExecution === undefined) {
+      blockedByAvailability = true;
+      continue;
+    }
+    const lastSentNodeExecId = lastSentNodeExecIdForConversationSender(
+      args.session,
+      conversation.id,
+      fromSubWorkflowId,
+    );
+    if (lastSentNodeExecId === outputExecution.nodeExecId) {
+      blockedByAvailability = true;
+      continue;
+    }
+    const latestReceivedAt = latestReceivedTurnSentAt(args.session, conversation.id, fromSubWorkflowId);
+    if (latestReceivedAt !== undefined && outputExecution.endedAt <= latestReceivedAt) {
+      blockedByAvailability = true;
       continue;
     }
 
     const stopContext: Readonly<Record<string, unknown>> = {
-      turns_exhausted: completedTurns >= conversation.maxTurns,
+      turns_exhausted: completedTurns + 1 >= conversation.maxTurns,
       has_sender_output: true,
       [fromSubWorkflowId]: true,
       [toSubWorkflowId]: true,
@@ -111,5 +151,5 @@ export async function executeConversationRound(args: {
     };
   }
 
-  return { status: "max_turns", turns: [] };
+  return { status: blockedByAvailability ? "stopped" : "max_turns", turns: [] };
 }

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { AdapterExecutionError, DeterministicNodeAdapter } from "./adapter";
+import { AdapterExecutionError, DeterministicNodeAdapter, ScenarioNodeAdapter } from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
 
@@ -719,8 +719,8 @@ describe("runWorkflow", () => {
       upstreamOutputRefs: readonly { subWorkflowId?: string; outputNodeId: string }[];
       upstreamCommunications: readonly string[];
     };
-    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.subWorkflowId === "sw-a")).toBe(true);
-    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.outputNodeId === "a-output")).toBe(true);
+    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.subWorkflowId === "sw-b")).toBe(true);
+    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.outputNodeId === "b-manager")).toBe(true);
     expect(bInputJson.upstreamCommunications.length).toBeGreaterThan(0);
 
     const aOutputExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-output");
@@ -749,6 +749,43 @@ describe("runWorkflow", () => {
       (entry) => entry.routingScope === "parent-to-sub-workflow" && entry.toNodeId === "a-manager",
     );
     expect(parentToSubWorkflowCommunication).toBeDefined();
+  });
+
+  test("does not duplicate a sub-workflow manager handoff when a normal edge already targets that manager", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-dedup-manager-handoff";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const workflowPath = path.join(root, workflowName, "workflow.json");
+    const workflowRaw = await readFile(workflowPath, "utf8");
+    const workflowJson = JSON.parse(workflowRaw) as {
+      edges: Array<{ from: string; to: string; when: string }>;
+    };
+    workflowJson.edges.unshift({ from: "oyakata-manager", to: "a-manager", when: "always" });
+    await writeJson(workflowPath, workflowJson);
+
+    const result = await runWorkflow(workflowName, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      maxSteps: 1,
+      runtimeVariables: {
+        humanInput: { topic: "demo" },
+      },
+    }, deterministicAdapter);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("paused");
+
+    const rootToAManagerCommunications = result.value.session.communications.filter(
+      (entry) => entry.fromNodeId === "oyakata-manager" && entry.toNodeId === "a-manager",
+    );
+
+    expect(rootToAManagerCommunications).toHaveLength(1);
+    expect(rootToAManagerCommunications[0]?.routingScope).toBe("intra-sub-workflow");
   });
 
   test("fails deterministically when a conversation sender output artifact is corrupted", async () => {
@@ -832,5 +869,183 @@ describe("runWorkflow", () => {
     const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
     expect(aInputExecutions).toHaveLength(2);
     expect(bInputExecutions).toHaveLength(2);
+  });
+
+  test("sub-manager forwards its own output to the child input", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-manager-forwarding";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+    await writeJson(path.join(root, workflowName, "node-b-input.json"), {
+      id: "b-input",
+      model: "tacogips/codex-agent",
+      promptTemplate: "b-input",
+      variables: {},
+      argumentsTemplate: { routed: { marker: "" } },
+      argumentBindings: [
+        {
+          targetPath: "routed.marker",
+          source: "node-output",
+          sourceRef: "b-manager",
+          sourcePath: "output.payload.marker",
+          required: true,
+        },
+      ],
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-manager-forwarding",
+        runtimeVariables: { humanInput: { topic: "ping-pong" } },
+      },
+      new ScenarioNodeAdapter({
+        "a-output": { payload: { marker: "from-a-output" } },
+        "b-manager": { payload: { marker: "from-b-manager" } },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    expect(bInputExecutions.length).toBeGreaterThan(0);
+    const firstBInputExecution = bInputExecutions[0];
+    expect(firstBInputExecution).toBeDefined();
+    if (firstBInputExecution === undefined) {
+      return;
+    }
+
+    const inputRaw = await readFile(path.join(firstBInputExecution.artifactDir, "input.json"), "utf8");
+    const inputJson = JSON.parse(inputRaw) as {
+      arguments: { routed: { marker: string } };
+    };
+    expect(inputJson.arguments.routed.marker).toBe("from-b-manager");
+  });
+
+  test("exposes conversation routing metadata in transcript bindings", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-transcript-metadata";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+    await writeJson(path.join(root, workflowName, "node-b-manager.json"), {
+      id: "b-manager",
+      model: "tacogips/codex-agent",
+      promptTemplate: "b-manager",
+      variables: {},
+      argumentsTemplate: {},
+      argumentBindings: [
+        {
+          targetPath: "transcript",
+          source: "conversation-transcript",
+        },
+      ],
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-transcript-metadata",
+        runtimeVariables: { humanInput: { topic: "ping-pong" } },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const bManagerExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-manager");
+    expect(bManagerExecutions.length).toBeGreaterThan(0);
+    const bManagerExec = bManagerExecutions[0];
+    expect(bManagerExec).toBeDefined();
+    if (bManagerExec === undefined) {
+      return;
+    }
+
+    const inputRaw = await readFile(path.join(bManagerExec.artifactDir, "input.json"), "utf8");
+    const inputJson = JSON.parse(inputRaw) as {
+      arguments: {
+        transcript: readonly {
+          fromManagerNodeId: string;
+          toManagerNodeId: string;
+          communicationId: string;
+        }[];
+      };
+    };
+
+    expect(inputJson.arguments.transcript.length).toBeGreaterThan(0);
+    expect(inputJson.arguments.transcript[0]?.fromManagerNodeId).toBe("a-manager");
+    expect(inputJson.arguments.transcript[0]?.toManagerNodeId).toBe("b-manager");
+    expect(inputJson.arguments.transcript[0]?.communicationId).toMatch(/^comm-\d{6}$/);
+  });
+
+  test("routes conversation turns into a sub-workflow that reuses the root manager", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-root-manager-conversation";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const workflowPath = path.join(root, workflowName, "workflow.json");
+    const workflowJson = JSON.parse(await readFile(workflowPath, "utf8")) as {
+      subWorkflows: Array<Record<string, unknown>>;
+      nodes: Array<{ id: string }>;
+    };
+    workflowJson.subWorkflows[1] = {
+      ...workflowJson.subWorkflows[1],
+      managerNodeId: undefined,
+      nodeIds: ["b-input", "b-output"],
+    };
+    workflowJson.nodes = workflowJson.nodes.filter((node) => node.id !== "b-manager");
+    await writeJson(workflowPath, workflowJson);
+
+    const workflowVisPath = path.join(root, workflowName, "workflow-vis.json");
+    const workflowVisJson = JSON.parse(await readFile(workflowVisPath, "utf8")) as {
+      nodes: Array<{ id: string; order: number }>;
+    };
+    workflowVisJson.nodes = workflowVisJson.nodes
+      .filter((node) => node.id !== "b-manager")
+      .map((node, index) => ({ ...node, order: index }));
+    await writeJson(workflowVisPath, workflowVisJson);
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-root-manager-conversation",
+        runtimeVariables: { humanInput: { topic: "ping-pong" } },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    expect(bInputExecutions).toHaveLength(2);
+
+    const toBConversationTurns = (result.value.session.conversationTurns ?? []).filter(
+      (entry) => entry.toSubWorkflowId === "sw-b",
+    );
+    expect(toBConversationTurns.length).toBeGreaterThan(0);
+    expect(toBConversationTurns[0]?.toManagerNodeId).toBe("oyakata-manager");
+
+    const forwardedToBInput = result.value.session.communications.filter(
+      (entry) =>
+        entry.fromNodeId === "oyakata-manager" &&
+        entry.toNodeId === "b-input" &&
+        entry.toSubWorkflowId === "sw-b",
+    );
+    expect(forwardedToBInput.length).toBeGreaterThan(0);
   });
 });

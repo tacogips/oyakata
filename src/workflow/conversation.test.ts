@@ -177,4 +177,177 @@ describe("executeConversationRound", () => {
     expect(result.turns[0]?.toSubWorkflowId).toBe("sw-a");
     expect(result.turns[0]?.outputRef.nodeExecId).toBe("exec-000003");
   });
+
+  test("does not replay the same sender output as a later turn", async () => {
+    const session = {
+      ...makeSession(),
+      conversationTurns: [
+        {
+          conversationId: "conv-1",
+          turnIndex: 1,
+          fromSubWorkflowId: "sw-a",
+          toSubWorkflowId: "sw-b",
+          fromManagerNodeId: "a-manager",
+          toManagerNodeId: "b-manager",
+          communicationId: "comm-000001",
+          outputRef: {
+            workflowExecutionId: "wfexec-000001",
+            workflowId: "wf",
+            subWorkflowId: "sw-a",
+            outputNodeId: "a-output",
+            nodeExecId: "exec-000001",
+            artifactDir: "/tmp/a-output/exec-000001",
+          },
+          sentAt: "2026-02-24T00:00:01.500Z",
+        },
+        {
+          conversationId: "conv-1",
+          turnIndex: 2,
+          fromSubWorkflowId: "sw-b",
+          toSubWorkflowId: "sw-a",
+          fromManagerNodeId: "b-manager",
+          toManagerNodeId: "a-manager",
+          communicationId: "comm-000002",
+          outputRef: {
+            workflowExecutionId: "wfexec-000001",
+            workflowId: "wf",
+            subWorkflowId: "sw-b",
+            outputNodeId: "b-output",
+            nodeExecId: "exec-000003",
+            artifactDir: "/tmp/b-output/exec-000003",
+          },
+          sentAt: "2026-02-24T00:00:05.500Z",
+        },
+      ],
+      nodeExecutions: [
+        ...makeSession().nodeExecutions,
+        {
+          nodeId: "b-output",
+          nodeExecId: "exec-000003",
+          status: "succeeded" as const,
+          artifactDir: "/tmp/b-output/exec-000003",
+          startedAt: "2026-02-24T00:00:04.000Z",
+          endedAt: "2026-02-24T00:00:05.000Z",
+        },
+      ],
+    } satisfies WorkflowSessionState;
+
+    const result = await executeConversationRound({
+      workflow: makeWorkflow(),
+      workflowExecutionId: "wfexec-000001",
+      session,
+    });
+
+    expect(result.turns).toEqual([]);
+  });
+
+  test("waits for the receiver to produce a fresh output before the next turn", async () => {
+    const session = {
+      ...makeSession(),
+      conversationTurns: [
+        {
+          conversationId: "conv-1",
+          turnIndex: 1,
+          fromSubWorkflowId: "sw-a",
+          toSubWorkflowId: "sw-b",
+          fromManagerNodeId: "a-manager",
+          toManagerNodeId: "b-manager",
+          communicationId: "comm-000001",
+          outputRef: {
+            workflowExecutionId: "wfexec-000001",
+            workflowId: "wf",
+            subWorkflowId: "sw-a",
+            outputNodeId: "a-output",
+            nodeExecId: "exec-000002",
+            artifactDir: "/tmp/a-output/exec-000002",
+          },
+          sentAt: "2026-02-24T00:00:06.000Z",
+        },
+      ],
+      nodeExecutions: [
+        {
+          nodeId: "a-output",
+          nodeExecId: "exec-000002",
+          status: "succeeded" as const,
+          artifactDir: "/tmp/a-output/exec-000002",
+          startedAt: "2026-02-24T00:00:04.000Z",
+          endedAt: "2026-02-24T00:00:05.000Z",
+        },
+        {
+          nodeId: "b-output",
+          nodeExecId: "exec-000001",
+          status: "succeeded" as const,
+          artifactDir: "/tmp/b-output/exec-000001",
+          startedAt: "2026-02-24T00:00:01.000Z",
+          endedAt: "2026-02-24T00:00:02.000Z",
+        },
+      ],
+    } satisfies WorkflowSessionState;
+
+    const result = await executeConversationRound({
+      workflow: makeWorkflow(),
+      workflowExecutionId: "wfexec-000001",
+      session,
+    });
+
+    expect(result.turns).toEqual([]);
+  });
+
+  test("exposes turns_exhausted before the final permitted turn is sent", async () => {
+    const workflow = {
+      ...makeWorkflow(),
+      subWorkflowConversations: [
+        {
+          id: "conv-1",
+          participants: ["sw-a", "sw-b"],
+          maxTurns: 1,
+          stopWhen: "turns_exhausted",
+        },
+      ],
+    };
+
+    const result = await executeConversationRound({
+      workflow,
+      workflowExecutionId: "wfexec-000001",
+      session: makeSession(),
+    });
+
+    expect(result.status).toBe("stopped");
+    expect(result.turns).toEqual([]);
+  });
+
+  test("reports stopped when a conversation is waiting for a fresh sender output", async () => {
+    const session = {
+      ...makeSession(),
+      conversationTurns: [
+        {
+          conversationId: "conv-1",
+          turnIndex: 1,
+          fromSubWorkflowId: "sw-a",
+          toSubWorkflowId: "sw-b",
+          fromManagerNodeId: "a-manager",
+          toManagerNodeId: "b-manager",
+          communicationId: "comm-000001",
+          outputRef: {
+            workflowExecutionId: "wfexec-000001",
+            workflowId: "wf",
+            subWorkflowId: "sw-a",
+            outputNodeId: "a-output",
+            nodeExecId: "exec-000001",
+            artifactDir: "/tmp/a-output/exec-000001",
+          },
+          sentAt: "2026-02-24T00:00:01.500Z",
+        },
+      ],
+    } satisfies WorkflowSessionState;
+
+    const result = await executeConversationRound({
+      workflow: makeWorkflow(),
+      workflowExecutionId: "wfexec-000001",
+      session,
+    });
+
+    expect(result.status).toBe("stopped");
+    expect(result.turns).toEqual([]);
+  });
 });

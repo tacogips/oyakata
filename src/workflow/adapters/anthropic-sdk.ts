@@ -20,6 +20,8 @@ interface AnthropicMessagesClient {
       readonly role: "user";
       readonly content: string;
     }>;
+  }, options?: {
+    readonly signal?: AbortSignal;
   }): Promise<unknown>;
 }
 
@@ -109,6 +111,8 @@ export class AnthropicSdkAdapter implements NodeAdapter {
           model: input.node.model,
           max_tokens: maxTokens,
           messages: [{ role: "user", content: input.promptText }],
+        }, {
+          signal: context.signal,
         });
 
         const text = extractAnthropicText(response);

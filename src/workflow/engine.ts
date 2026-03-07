@@ -82,6 +82,8 @@ function sleep(ms: number): Promise<void> {
 
 interface UpstreamOutputRef extends OutputRef {
   readonly fromNodeId: string;
+  readonly fromSubWorkflowId?: string;
+  readonly toSubWorkflowId?: string;
   readonly transitionWhen: string;
   readonly status: NodeExecutionRecord["status"];
   readonly communicationId: string;
@@ -89,6 +91,11 @@ interface UpstreamOutputRef extends OutputRef {
 
 interface UpstreamInput extends UpstreamOutputRef {
   readonly output: Readonly<Record<string, unknown>>;
+}
+
+interface ForwardedManagerPayload {
+  readonly payloadRef: OutputRef;
+  readonly outputPayload: Readonly<Record<string, unknown>>;
 }
 
 function nextNodeExecId(counter: number): string {
@@ -254,6 +261,8 @@ function buildUpstreamOutputRefs(
 
       return {
         fromNodeId: communication.fromNodeId,
+        ...(communication.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: communication.fromSubWorkflowId }),
+        ...(communication.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: communication.toSubWorkflowId }),
         transitionWhen: communication.transitionWhen,
         status: execution.status,
         communicationId: communication.communicationId,
@@ -288,6 +297,20 @@ async function buildUpstreamInputs(
   }
 
   return ok(loaded);
+}
+
+function toForwardedManagerPayload(input: UpstreamInput): ForwardedManagerPayload {
+  return {
+    payloadRef: {
+      workflowExecutionId: input.workflowExecutionId,
+      workflowId: input.workflowId,
+      ...(input.subWorkflowId === undefined ? {} : { subWorkflowId: input.subWorkflowId }),
+      outputNodeId: input.outputNodeId,
+      nodeExecId: input.nodeExecId,
+      artifactDir: input.artifactDir,
+    },
+    outputPayload: input.output,
+  };
 }
 
 function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: OutputRef, nextNodes: readonly string[]): string {
@@ -705,6 +728,9 @@ export async function runWorkflow(
         turnIndex: turn.turnIndex,
         fromSubWorkflowId: turn.fromSubWorkflowId,
         toSubWorkflowId: turn.toSubWorkflowId,
+        fromManagerNodeId: turn.fromManagerNodeId,
+        toManagerNodeId: turn.toManagerNodeId,
+        communicationId: turn.communicationId,
         outputRef: turn.outputRef,
         sentAt: turn.sentAt,
       }));
@@ -1101,14 +1127,18 @@ export async function runWorkflow(
         ...selected.map((edge) => ({ from: edge.from, to: edge.to, when: edge.when })),
       ];
       const transitionNextNodes = selected.map((edge) => edge.to);
+      const pendingSessionState: WorkflowSessionState = {
+        ...session,
+        queue: [...queue, ...transitionNextNodes].filter((value, index, all) => all.indexOf(value) === index),
+        nodeExecutions,
+        communicationCounter: currentCommunicationCounter,
+        communications: currentCommunications,
+      };
       let managerPlannedInputs = isManagerNodeKind(nodeRef.kind)
         ? nodeRef.kind === "sub-manager"
           ? [...planSubWorkflowChildInputs({
               workflow,
-              session: {
-                ...session,
-                nodeExecutions,
-              },
+              session: pendingSessionState,
               managerNodeId: nodeId,
             })]
           : []
@@ -1118,10 +1148,7 @@ export async function runWorkflow(
       if (nodeId === workflow.managerNodeId) {
         const plannedSubWorkflowStarts = planRootManagerSubWorkflowStarts({
           workflow,
-          session: {
-            ...session,
-            nodeExecutions,
-          },
+          session: pendingSessionState,
         });
         const persistedStarts: CommunicationRecord[] = [];
         for (const subWorkflow of plannedSubWorkflowStarts) {
@@ -1150,21 +1177,43 @@ export async function runWorkflow(
           persistedStarts.push(communication);
           managerPlannedInputs.push(subWorkflow.managerNodeId);
         }
-        managerPlannedCommunications = persistedStarts;
+        const persistedChildInputs: CommunicationRecord[] = [];
+        const rootManagedSubWorkflows = workflow.subWorkflows.filter(
+          (entry) => (entry.managerNodeId ?? workflow.managerNodeId) === nodeId,
+        );
+        for (const subWorkflow of rootManagedSubWorkflows) {
+          const forwardedPayloads = upstreamInputs
+            .filter((entry) => entry.toSubWorkflowId === subWorkflow.id)
+            .map((entry) => toForwardedManagerPayload(entry));
+          if (forwardedPayloads.length === 0) {
+            continue;
+          }
+          managerPlannedInputs.push(subWorkflow.inputNodeId);
+          for (const forwarded of forwardedPayloads) {
+            const communication = await persistCommunicationArtifact({
+              artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              workflowId: workflow.workflowId,
+              workflowExecutionId: session.sessionId,
+              communicationCounter: currentCommunicationCounter,
+              fromNodeId: nodeId,
+              toNodeId: subWorkflow.inputNodeId,
+              toSubWorkflowId: subWorkflow.id,
+              routingScope: "intra-sub-workflow",
+              deliveryKind: "edge-transition",
+              transitionWhen: `root-manager-input:${subWorkflow.inputNodeId}`,
+              sourceNodeExecId: forwarded.payloadRef.nodeExecId,
+              payloadRef: forwarded.payloadRef,
+              outputPayload: forwarded.outputPayload,
+              deliveredByNodeId: nodeId,
+              createdAt: endedAt,
+            });
+            currentCommunicationCounter += 1;
+            persistedChildInputs.push(communication);
+          }
+        }
+        managerPlannedCommunications = [...persistedStarts, ...persistedChildInputs];
       } else if (nodeRef.kind === "sub-manager") {
-        const forwardedPayloads = upstreamInputs.length === 0
-          ? [{ payloadRef: outputRef, outputPayload }]
-          : upstreamInputs.map((entry) => ({
-              payloadRef: {
-                workflowExecutionId: entry.workflowExecutionId,
-                workflowId: entry.workflowId,
-                ...(entry.subWorkflowId === undefined ? {} : { subWorkflowId: entry.subWorkflowId }),
-                outputNodeId: entry.outputNodeId,
-                nodeExecId: entry.nodeExecId,
-                artifactDir: entry.artifactDir,
-              },
-              outputPayload: entry.output,
-            }));
+        const forwardedPayloads = [{ payloadRef: outputRef, outputPayload }];
         const persistedChildInputs: CommunicationRecord[] = [];
         for (const inputNodeId of managerPlannedInputs) {
           for (const forwarded of forwardedPayloads) {

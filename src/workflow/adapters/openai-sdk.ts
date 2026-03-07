@@ -15,6 +15,8 @@ interface OpenAiResponsesClient {
   create(request: {
     readonly model: string;
     readonly input: string;
+  }, options?: {
+    readonly signal?: AbortSignal;
   }): Promise<unknown>;
 }
 
@@ -117,6 +119,8 @@ export class OpenAiSdkAdapter implements NodeAdapter {
         const response = await client.responses.create({
           model: input.node.model,
           input: input.promptText,
+        }, {
+          signal: context.signal,
         });
 
         const text = extractOpenAiText(response);

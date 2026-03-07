@@ -229,6 +229,27 @@ function renderWebUi(fixedWorkflowName?: string): string {
       border-radius: 14px;
       padding: 12px;
     }
+    .checkbox-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+    }
+    .checkbox-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.88);
+    }
+    .checkbox-chip.locked {
+      background: rgba(199,223,207,0.5);
+    }
+    .checkbox-chip input {
+      width: auto;
+      margin: 0;
+    }
     .mini-label { display: block; margin: 0 0 4px; font-size: 12px; color: var(--muted); }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
@@ -351,6 +372,9 @@ function renderWebUi(fixedWorkflowName?: string): string {
             <option value="official/openai-sdk">official/openai-sdk</option>
             <option value="official/anthropic-sdk">official/anthropic-sdk</option>
           </select>
+          <div id="nodeBackendHint" class="editor-note">
+            Leave backend empty only when model is a tacogips CLI-wrapper identifier. Official SDK backends require a provider model name such as gpt-5 or claude-sonnet-4-5.
+          </div>
           <label for="nodeModel">Model</label>
           <input id="nodeModel" type="text" placeholder="tacogips/codex-agent or gpt-5 / claude-sonnet-4-5" />
           <label for="nodePromptTemplate">Prompt Template</label>
@@ -390,6 +414,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
     const addLoopButtonEl = document.getElementById("addLoopButton");
     const selectedNodeLabelEl = document.getElementById("selectedNodeLabel");
     const nodeExecutionBackendEl = document.getElementById("nodeExecutionBackend");
+    const nodeBackendHintEl = document.getElementById("nodeBackendHint");
     const nodeModelEl = document.getElementById("nodeModel");
     const nodePromptTemplateEl = document.getElementById("nodePromptTemplate");
     const nodeVariablesEl = document.getElementById("nodeVariables");
@@ -525,7 +550,11 @@ function renderWebUi(fixedWorkflowName?: string): string {
         .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id))
         .map((entry, index) => ({ id: entry.id, order: index }));
       state.bundle.workflowVis.nodes = sorted;
-      state.derivedVisualization = deriveVisualization(state.bundle);
+      refreshDerivedVisualization();
+    }
+
+    function refreshDerivedVisualization() {
+      state.derivedVisualization = state.bundle ? deriveVisualization(state.bundle) : [];
     }
 
     function getWorkflowNode(nodeId) {
@@ -565,6 +594,342 @@ function renderWebUi(fixedWorkflowName?: string): string {
       return state.bundle.workflow.nodes
         .filter((node) => node.kind === kind)
         .map((node) => ({ value: node.id, label: node.id }));
+    }
+
+    function workflowNodeOptionsByKinds(kinds) {
+      if (!state.bundle || !Array.isArray(state.bundle.workflow.nodes)) {
+        return [];
+      }
+      const acceptedKinds = new Set(Array.isArray(kinds) ? kinds : [kinds]);
+      return state.bundle.workflow.nodes
+        .filter((node) => acceptedKinds.has(node.kind || "task"))
+        .map((node) => ({ value: node.id, label: node.id + " (" + (node.kind || "task") + ")" }));
+    }
+
+    function subWorkflowNodeOwnerId(nodeId) {
+      if (!state.bundle) {
+        return undefined;
+      }
+      const owner = state.bundle.workflow.subWorkflows.find((subWorkflow) => (
+        Array.isArray(subWorkflow.nodeIds) && subWorkflow.nodeIds.includes(nodeId)
+      ));
+      return owner ? owner.id : undefined;
+    }
+
+    function nodeReservedByOtherSubWorkflow(nodeId, currentSubWorkflowId) {
+      const usage = subWorkflowUsageForNode(nodeId);
+      return (
+        usage.managerOf.some((subWorkflowId) => subWorkflowId !== currentSubWorkflowId) ||
+        usage.inputOf.some((subWorkflowId) => subWorkflowId !== currentSubWorkflowId) ||
+        usage.outputOf.some((subWorkflowId) => subWorkflowId !== currentSubWorkflowId)
+      );
+    }
+
+    function availableSubWorkflowManagerNodes(currentSubWorkflowId) {
+      if (!state.bundle || !Array.isArray(state.bundle.workflow.nodes)) {
+        return [];
+      }
+      return state.bundle.workflow.nodes.filter((node) => {
+        const usage = subWorkflowUsageForNode(node.id);
+        const kind = node.kind || "task";
+        const managesOtherSubWorkflow = usage.managerOf.some((subWorkflowId) => subWorkflowId !== currentSubWorkflowId);
+        const usedAsBoundaryElsewhere = nodeReservedByOtherSubWorkflow(node.id, currentSubWorkflowId);
+        if (usage.isWorkflowManager || managesOtherSubWorkflow || usedAsBoundaryElsewhere) {
+          return false;
+        }
+        return kind !== "root-manager";
+      });
+    }
+
+    function subWorkflowManagerNodeOptions(currentSubWorkflowId) {
+      return availableSubWorkflowManagerNodes(currentSubWorkflowId)
+        .map((node) => ({ value: node.id, label: node.id + " (" + (node.kind || "task") + ")" }));
+    }
+
+    function firstWorkflowNodeOptionByKind(kind, options) {
+      if (!state.bundle || !Array.isArray(state.bundle.workflow.nodes)) {
+        return null;
+      }
+      const preferUnused = !options || options.preferUnused !== false;
+      const usedNodeIds =
+        preferUnused
+          ? new Set(
+              (state.bundle.workflow.subWorkflows || []).flatMap((subWorkflow) => {
+                const nodeIds = [];
+                if (subWorkflow.inputNodeId) {
+                  nodeIds.push(subWorkflow.inputNodeId);
+                }
+                if (subWorkflow.outputNodeId) {
+                  nodeIds.push(subWorkflow.outputNodeId);
+                }
+                return nodeIds;
+              }),
+            )
+          : new Set();
+      return state.bundle.workflow.nodes.find((node) => node.kind === kind && !usedNodeIds.has(node.id)) || null;
+    }
+
+    function firstUnusedSubWorkflowManagerNodeOption() {
+      if (!state.bundle) {
+        return null;
+      }
+      const usedManagerIds = new Set(
+        (state.bundle.workflow.subWorkflows || [])
+          .map((subWorkflow) => subWorkflow.managerNodeId)
+          .filter((value) => typeof value === "string" && value.length > 0),
+      );
+      return availableSubWorkflowManagerNodes().find((node) => !usedManagerIds.has(node.id)) || null;
+    }
+
+    function normalizeNodeIdList(values) {
+      return (Array.isArray(values) ? values : [])
+        .filter((value, index, all) => typeof value === "string" && value.length > 0 && all.indexOf(value) === index);
+    }
+
+    function collectRequiredSubWorkflowNodeIds(subWorkflow) {
+      return normalizeNodeIdList([
+        subWorkflow.managerNodeId,
+        subWorkflow.inputNodeId,
+        subWorkflow.outputNodeId,
+      ]);
+    }
+
+    function normalizeSubWorkflowNodeIds(subWorkflow) {
+      subWorkflow.nodeIds = normalizeNodeIdList([
+        ...(Array.isArray(subWorkflow.nodeIds) ? subWorkflow.nodeIds : []),
+        ...collectRequiredSubWorkflowNodeIds(subWorkflow),
+      ]);
+      return subWorkflow.nodeIds;
+    }
+
+    function normalizeAllSubWorkflowNodeIds() {
+      if (!state.bundle || !Array.isArray(state.bundle.workflow.subWorkflows)) {
+        return;
+      }
+      state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+        normalizeSubWorkflowNodeIds(subWorkflow);
+      });
+    }
+
+    function subWorkflowUsageForNode(nodeId) {
+      if (!state.bundle) {
+        return {
+          isWorkflowManager: false,
+          managerOf: [],
+          inputOf: [],
+          outputOf: [],
+        };
+      }
+      return {
+        isWorkflowManager: state.bundle.workflow.managerNodeId === nodeId,
+        managerOf: state.bundle.workflow.subWorkflows
+          .filter((subWorkflow) => subWorkflow.managerNodeId === nodeId)
+          .map((subWorkflow) => subWorkflow.id),
+        inputOf: state.bundle.workflow.subWorkflows
+          .filter((subWorkflow) => subWorkflow.inputNodeId === nodeId)
+          .map((subWorkflow) => subWorkflow.id),
+        outputOf: state.bundle.workflow.subWorkflows
+          .filter((subWorkflow) => subWorkflow.outputNodeId === nodeId)
+          .map((subWorkflow) => subWorkflow.id),
+      };
+    }
+
+    function subWorkflowBoundaryNodeOptions(kind, subWorkflow) {
+      if (!state.bundle || !subWorkflow) {
+        return [];
+      }
+      const currentNodeId =
+        kind === "input"
+          ? subWorkflow.inputNodeId
+          : kind === "output"
+            ? subWorkflow.outputNodeId
+            : subWorkflow.managerNodeId;
+      const blockedBoundaryNodeIds = new Set(
+        [subWorkflow.managerNodeId, subWorkflow.inputNodeId, subWorkflow.outputNodeId]
+          .filter((nodeId) => typeof nodeId === "string" && nodeId.length > 0 && nodeId !== currentNodeId),
+      );
+      return state.bundle.workflow.nodes
+        .filter((node) => (node.kind || "task") === kind)
+        .filter((node) => node.id === currentNodeId || !nodeReservedByOtherSubWorkflow(node.id, subWorkflow.id))
+        .filter((node) => node.id === currentNodeId || !blockedBoundaryNodeIds.has(node.id))
+        .map((node) => ({ value: node.id, label: node.id + " (" + (node.kind || "task") + ")" }));
+    }
+
+    function nodeKindOptionsForNode(node) {
+      const usage = subWorkflowUsageForNode(node.id);
+      if (usage.isWorkflowManager) {
+        return [
+          { value: "root-manager", label: "root-manager" },
+          { value: "manager", label: "manager (legacy)" },
+        ];
+      }
+      if (usage.managerOf.length > 0) {
+        return [
+          { value: "sub-manager", label: "sub-manager" },
+          { value: "manager", label: "manager (legacy)" },
+        ];
+      }
+      if (usage.inputOf.length > 0) {
+        return [{ value: "input", label: "input" }];
+      }
+      if (usage.outputOf.length > 0) {
+        return [{ value: "output", label: "output" }];
+      }
+      return [
+        { value: "sub-manager", label: "sub-manager" },
+        { value: "manager", label: "manager (legacy)" },
+        { value: "task", label: "task" },
+        { value: "input", label: "input" },
+        { value: "output", label: "output" },
+        { value: "branch-judge", label: "branch-judge" },
+        { value: "loop-judge", label: "loop-judge" },
+      ];
+    }
+
+    function nodeKindHintForNode(node) {
+      const usage = subWorkflowUsageForNode(node.id);
+      if (usage.isWorkflowManager) {
+        return "The workflow manager node is kept as root-manager so execution entry stays valid.";
+      }
+      if (usage.managerOf.length > 0) {
+        return "This node is assigned as a sub-workflow manager, so its kind stays locked to sub-manager.";
+      }
+      if (usage.inputOf.length > 0) {
+        return "This node is assigned as a sub-workflow input boundary, so its kind stays locked to input.";
+      }
+      if (usage.outputOf.length > 0) {
+        return "This node is assigned as a sub-workflow output boundary, so its kind stays locked to output.";
+      }
+      return "Changing kind can affect validation, routing, and nested workflow visualization.";
+    }
+
+    function replaceSubWorkflowBoundaryNode(subWorkflow, key, nextValue) {
+      const previousValue = subWorkflow[key];
+      const normalizedNextValue = nextValue || undefined;
+      subWorkflow[key] = normalizedNextValue;
+      if (Array.isArray(subWorkflow.nodeIds) && previousValue && previousValue !== normalizedNextValue) {
+        subWorkflow.nodeIds = subWorkflow.nodeIds
+          .map((nodeId) => (nodeId === previousValue ? normalizedNextValue : nodeId))
+          .filter((nodeId) => typeof nodeId === "string" && nodeId.length > 0);
+      }
+      normalizeSubWorkflowNodeIds(subWorkflow);
+    }
+
+    function normalizeSubWorkflowInputSourceFields(source) {
+      if (!source || typeof source !== "object") {
+        return;
+      }
+      if (source.type !== "workflow-output") {
+        delete source.workflowId;
+      }
+      if (source.type !== "node-output") {
+        delete source.nodeId;
+      }
+      if (source.type !== "sub-workflow-output") {
+        delete source.subWorkflowId;
+      }
+    }
+
+    function workflowReferenceOptions() {
+      const currentWorkflowName = workflowEl.value;
+      if (!currentWorkflowName) {
+        return [];
+      }
+      return [{ value: currentWorkflowName, label: currentWorkflowName + " (current)" }];
+    }
+
+    function subWorkflowReferenceOptions(currentSubWorkflowId) {
+      if (!state.bundle || !Array.isArray(state.bundle.workflow.subWorkflows)) {
+        return [];
+      }
+      return state.bundle.workflow.subWorkflows
+        .filter((subWorkflow) => subWorkflow.id !== currentSubWorkflowId)
+        .map((subWorkflow) => ({ value: subWorkflow.id, label: subWorkflow.id }));
+    }
+
+    function syncNodeKindsFromStructure() {
+      if (!state.bundle || !Array.isArray(state.bundle.workflow.nodes)) {
+        return;
+      }
+      const nodeById = new Map(state.bundle.workflow.nodes.map((node) => [node.id, node]));
+      const workflowManagerNode = nodeById.get(state.bundle.workflow.managerNodeId);
+      if (
+        workflowManagerNode &&
+        workflowManagerNode.kind !== "root-manager" &&
+        workflowManagerNode.kind !== "manager"
+      ) {
+        workflowManagerNode.kind = "root-manager";
+      }
+      state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+        const subWorkflowManagerNode =
+          subWorkflow.managerNodeId === undefined ? undefined : nodeById.get(subWorkflow.managerNodeId);
+        if (
+          subWorkflowManagerNode &&
+          subWorkflow.managerNodeId !== state.bundle.workflow.managerNodeId &&
+          subWorkflowManagerNode.kind !== "sub-manager" &&
+          subWorkflowManagerNode.kind !== "manager"
+        ) {
+          subWorkflowManagerNode.kind = "sub-manager";
+        }
+        const inputNode = nodeById.get(subWorkflow.inputNodeId);
+        if (inputNode && inputNode.kind !== "input") {
+          inputNode.kind = "input";
+        }
+        const outputNode = nodeById.get(subWorkflow.outputNodeId);
+        if (outputNode && outputNode.kind !== "output") {
+          outputNode.kind = "output";
+        }
+      });
+    }
+
+    function renameSubWorkflowReferences(oldId, nextId) {
+      if (!state.bundle || !oldId || !nextId || oldId === nextId) {
+        return;
+      }
+      state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+        if (!Array.isArray(subWorkflow.inputSources)) {
+          return;
+        }
+        subWorkflow.inputSources.forEach((source) => {
+          if (source.subWorkflowId === oldId) {
+            source.subWorkflowId = nextId;
+          }
+        });
+      });
+      (state.bundle.workflow.subWorkflowConversations || []).forEach((conversation) => {
+        if (!Array.isArray(conversation.participants)) {
+          return;
+        }
+        conversation.participants = conversation.participants.map((participant) => (
+          participant === oldId ? nextId : participant
+        ));
+      });
+    }
+
+    function removeSubWorkflowReferences(subWorkflowId) {
+      if (!state.bundle || !subWorkflowId) {
+        return;
+      }
+      state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+        if (!Array.isArray(subWorkflow.inputSources)) {
+          return;
+        }
+        subWorkflow.inputSources.forEach((source) => {
+          if (source.subWorkflowId === subWorkflowId) {
+            source.type = "human-input";
+            delete source.subWorkflowId;
+            delete source.nodeId;
+          }
+        });
+      });
+      state.bundle.workflow.subWorkflowConversations = (state.bundle.workflow.subWorkflowConversations || [])
+        .map((conversation) => ({
+          ...conversation,
+          participants: Array.isArray(conversation.participants)
+            ? conversation.participants.filter((participant) => participant !== subWorkflowId)
+            : [],
+        }))
+        .filter((conversation) => new Set(conversation.participants || []).size >= 2);
     }
 
     function createLabeledField(labelText, inputEl) {
@@ -618,6 +983,47 @@ function renderWebUi(fixedWorkflowName?: string): string {
       return select;
     }
 
+    function createCheckboxList(options, selectedValues, lockedValues, disabledValues, onInput) {
+      const selected = new Set(normalizeNodeIdList(selectedValues));
+      const locked = new Set(normalizeNodeIdList(lockedValues));
+      const disabled = new Set(normalizeNodeIdList(disabledValues));
+      const wrap = document.createElement("div");
+      wrap.className = "checkbox-list";
+      options.forEach((option) => {
+        const label = document.createElement("label");
+        label.className =
+          "checkbox-chip" +
+          (locked.has(option.value) ? " locked" : "") +
+          (disabled.has(option.value) ? " locked" : "");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = selected.has(option.value) || locked.has(option.value);
+        input.disabled = locked.has(option.value) || disabled.has(option.value);
+        input.addEventListener("change", () => {
+          const nextSelected = options
+            .filter((entry) => {
+              if (locked.has(entry.value)) {
+                return true;
+              }
+              if (disabled.has(entry.value)) {
+                return selected.has(entry.value);
+              }
+              const checkbox = wrap.querySelector('input[data-node-id="' + entry.value + '"]');
+              return checkbox && checkbox.checked;
+            })
+            .map((entry) => entry.value);
+          onInput(nextSelected);
+        });
+        input.dataset.nodeId = option.value;
+        label.appendChild(input);
+        const text = document.createElement("span");
+        text.textContent = option.label;
+        label.appendChild(text);
+        wrap.appendChild(label);
+      });
+      return wrap;
+    }
+
     function ensureNodePayload(nodeId) {
       if (!state.bundle) return null;
       if (!state.bundle.nodePayloads[nodeId]) {
@@ -649,8 +1055,12 @@ function renderWebUi(fixedWorkflowName?: string): string {
         if (edge.to === oldId) edge.to = nextId;
       });
       state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+        if (subWorkflow.managerNodeId === oldId) subWorkflow.managerNodeId = nextId;
         if (subWorkflow.inputNodeId === oldId) subWorkflow.inputNodeId = nextId;
         if (subWorkflow.outputNodeId === oldId) subWorkflow.outputNodeId = nextId;
+        if (Array.isArray(subWorkflow.nodeIds)) {
+          subWorkflow.nodeIds = subWorkflow.nodeIds.map((nodeId) => (nodeId === oldId ? nextId : nodeId));
+        }
         if (Array.isArray(subWorkflow.inputSources)) {
           subWorkflow.inputSources.forEach((source) => {
             if (source.nodeId === oldId) {
@@ -688,11 +1098,25 @@ function renderWebUi(fixedWorkflowName?: string): string {
         setEditorStatus("The manager node cannot be removed from the workflow editor.", "fail");
         return;
       }
+      const removedSubWorkflowIds = state.bundle.workflow.subWorkflows
+        .filter((subWorkflow) => subWorkflow.inputNodeId === nodeId || subWorkflow.outputNodeId === nodeId)
+        .map((subWorkflow) => subWorkflow.id);
       state.bundle.workflow.nodes = state.bundle.workflow.nodes.filter((node) => node.id !== nodeId);
       state.bundle.workflow.edges = state.bundle.workflow.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
       state.bundle.workflow.subWorkflows = state.bundle.workflow.subWorkflows.filter(
         (subWorkflow) => subWorkflow.inputNodeId !== nodeId && subWorkflow.outputNodeId !== nodeId,
       );
+      removedSubWorkflowIds.forEach((subWorkflowId) => {
+        removeSubWorkflowReferences(subWorkflowId);
+      });
+      state.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+        if (subWorkflow.managerNodeId === nodeId) {
+          delete subWorkflow.managerNodeId;
+        }
+        if (Array.isArray(subWorkflow.nodeIds)) {
+          subWorkflow.nodeIds = subWorkflow.nodeIds.filter((entry) => entry !== nodeId);
+        }
+      });
       state.bundle.workflow.loops = (state.bundle.workflow.loops || []).filter((loop) => loop.judgeNodeId !== nodeId);
       state.bundle.workflowVis.nodes = state.bundle.workflowVis.nodes.filter((entry) => entry.id !== nodeId);
       delete state.bundle.nodePayloads[nodeId];
@@ -743,6 +1167,18 @@ function renderWebUi(fixedWorkflowName?: string): string {
         return;
       }
       if (path.startsWith("nodePayloads")) {
+        if (path.includes(".executionBackend")) {
+          nodeExecutionBackendEl.focus();
+          return;
+        }
+        if (path.includes(".model")) {
+          nodeModelEl.focus();
+          return;
+        }
+        if (path.includes(".variables")) {
+          nodeVariablesEl.focus();
+          return;
+        }
         nodePromptTemplateEl.focus();
       }
     }
@@ -802,6 +1238,8 @@ function renderWebUi(fixedWorkflowName?: string): string {
         workflowLoopsListEl.innerHTML = "";
         return;
       }
+      normalizeAllSubWorkflowNodeIds();
+      syncNodeKindsFromStructure();
       workflowMaxLoopIterationsEl.value = String(state.bundle.workflow.defaults.maxLoopIterations || "");
       workflowNodeTimeoutMsEl.value = String(state.bundle.workflow.defaults.nodeTimeoutMs || "");
       renderNodeStructureEditor();
@@ -850,6 +1288,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         nodeModelEl.value = "tacogips/codex-agent";
         nodePromptTemplateEl.value = "";
         nodeVariablesEl.value = "{}";
+        renderNodeBackendHint();
         return;
       }
       selectedNodeLabelEl.textContent = workflowNode.id + " (" + (workflowNode.kind || "task") + ")";
@@ -857,6 +1296,63 @@ function renderWebUi(fixedWorkflowName?: string): string {
       nodeModelEl.value = payload.model || "tacogips/codex-agent";
       nodePromptTemplateEl.value = payload.promptTemplate || "";
       nodeVariablesEl.value = JSON.stringify(payload.variables || {}, null, 2);
+      renderNodeBackendHint();
+    }
+
+    function renderNodeBackendHint() {
+      if (!nodeBackendHintEl) return;
+      const backend = nodeExecutionBackendEl.value;
+      if (!backend) {
+        nodeBackendHintEl.textContent =
+          "Backend is derived from model. Use tacogips/codex-agent or tacogips/claude-code-agent here, or choose an explicit backend below.";
+        return;
+      }
+      if (backend === "official/openai-sdk") {
+        nodeBackendHintEl.textContent =
+          "official/openai-sdk expects a provider model name such as gpt-5. Do not use tacogips/codex-agent or tacogips/claude-code-agent as the model.";
+        return;
+      }
+      if (backend === "official/anthropic-sdk") {
+        nodeBackendHintEl.textContent =
+          "official/anthropic-sdk expects a provider model name such as claude-sonnet-4-5. Do not use tacogips/codex-agent or tacogips/claude-code-agent as the model.";
+        return;
+      }
+      nodeBackendHintEl.textContent =
+        backend + " sends requests through the tacogips CLI-wrapper service. Set model to whatever that backend expects.";
+    }
+
+    function isCliWrapperModel(modelValue) {
+      return modelValue === "tacogips/codex-agent" || modelValue === "tacogips/claude-code-agent";
+    }
+
+    function syncNodeModelForBackendChange() {
+      const backend = nodeExecutionBackendEl.value;
+      const modelValue = nodeModelEl.value.trim();
+      if (!backend) {
+        nodeModelEl.placeholder = "tacogips/codex-agent or tacogips/claude-code-agent";
+        if (!modelValue) {
+          nodeModelEl.value = "tacogips/codex-agent";
+        }
+        return;
+      }
+      if (backend === "official/openai-sdk") {
+        nodeModelEl.placeholder = "gpt-5";
+        if (!modelValue || isCliWrapperModel(modelValue)) {
+          nodeModelEl.value = "gpt-5";
+        }
+        return;
+      }
+      if (backend === "official/anthropic-sdk") {
+        nodeModelEl.placeholder = "claude-sonnet-4-5";
+        if (!modelValue || isCliWrapperModel(modelValue)) {
+          nodeModelEl.value = "claude-sonnet-4-5";
+        }
+        return;
+      }
+      nodeModelEl.placeholder = backend;
+      if (!modelValue) {
+        nodeModelEl.value = backend;
+      }
     }
 
     function updateSelectedPayload() {
@@ -868,8 +1364,9 @@ function renderWebUi(fixedWorkflowName?: string): string {
       } else {
         delete payload.executionBackend;
       }
-      payload.model = nodeModelEl.value;
+      payload.model = nodeModelEl.value.trim();
       payload.promptTemplate = nodePromptTemplateEl.value;
+      renderNodeBackendHint();
       try {
         payload.variables = JSON.parse(nodeVariablesEl.value || "{}");
         setEditorStatus("Node changes staged locally", "warn");
@@ -904,16 +1401,11 @@ function renderWebUi(fixedWorkflowName?: string): string {
           renderNodeEditor();
           setEditorStatus("Node id changed locally", "warn");
         }, "node-id");
-        const kindSelect = createSelectInput([
-          { value: "manager", label: "manager" },
-          { value: "task", label: "task" },
-          { value: "input", label: "input" },
-          { value: "output", label: "output" },
-          { value: "branch-judge", label: "branch-judge" },
-          { value: "loop-judge", label: "loop-judge" },
-        ], node.kind || "task", (nextValue) => {
+        const kindOptions = nodeKindOptionsForNode(node);
+        const kindSelect = createSelectInput(kindOptions, node.kind || "task", (nextValue) => {
           node.kind = nextValue;
           setEditorStatus("Node kind changed locally", "warn");
+          renderStructureEditors();
           renderWorkflowBoard();
           renderNodeEditor();
         });
@@ -933,6 +1425,10 @@ function renderWebUi(fixedWorkflowName?: string): string {
         grid.appendChild(createLabeledField("Kind", kindSelect));
         grid.appendChild(createLabeledField("Completion", completionSelect));
         item.appendChild(grid);
+        const kindHint = document.createElement("div");
+        kindHint.className = "editor-note";
+        kindHint.textContent = nodeKindHintForNode(node);
+        item.appendChild(kindHint);
 
         const meta = document.createElement("div");
         meta.className = "collection-actions";
@@ -1027,8 +1523,15 @@ function renderWebUi(fixedWorkflowName?: string): string {
         const grid = document.createElement("div");
         grid.className = "row";
         grid.appendChild(createLabeledField("Group ID", createTextInput(subWorkflow.id, (nextValue) => {
-          subWorkflow.id = nextValue.trim();
+          const trimmed = nextValue.trim();
+          if (!trimmed || trimmed === subWorkflow.id) {
+            return;
+          }
+          const previousId = subWorkflow.id;
+          subWorkflow.id = trimmed;
+          renameSubWorkflowReferences(previousId, subWorkflow.id);
           setEditorStatus("Group definition changed locally", "warn");
+          renderStructureEditors();
           renderWorkflowBoard();
         }, "main-group")));
         grid.appendChild(createLabeledField("Description", createTextInput(subWorkflow.description, (nextValue) => {
@@ -1039,17 +1542,57 @@ function renderWebUi(fixedWorkflowName?: string): string {
 
         const row = document.createElement("div");
         row.className = "row";
-        row.appendChild(createLabeledField("Input Node", createSelectInput(workflowNodeOptionsByKind("input"), subWorkflow.inputNodeId, (nextValue) => {
-          subWorkflow.inputNodeId = nextValue;
+        row.appendChild(createLabeledField("Manager Node", createSelectInput(
+          [{ value: "", label: "(use workflow manager)" }, ...subWorkflowManagerNodeOptions(subWorkflow.id)],
+          subWorkflow.managerNodeId || "",
+          (nextValue) => {
+            replaceSubWorkflowBoundaryNode(subWorkflow, "managerNodeId", nextValue || undefined);
+            setEditorStatus("Group boundaries changed locally", "warn");
+            renderStructureEditors();
+            renderWorkflowBoard();
+          },
+        )));
+        row.appendChild(createLabeledField("Input Node", createSelectInput(subWorkflowBoundaryNodeOptions("input", subWorkflow), subWorkflow.inputNodeId, (nextValue) => {
+          replaceSubWorkflowBoundaryNode(subWorkflow, "inputNodeId", nextValue);
           setEditorStatus("Group boundaries changed locally", "warn");
+          renderStructureEditors();
           renderWorkflowBoard();
         })));
-        row.appendChild(createLabeledField("Output Node", createSelectInput(workflowNodeOptionsByKind("output"), subWorkflow.outputNodeId, (nextValue) => {
-          subWorkflow.outputNodeId = nextValue;
+        row.appendChild(createLabeledField("Output Node", createSelectInput(subWorkflowBoundaryNodeOptions("output", subWorkflow), subWorkflow.outputNodeId, (nextValue) => {
+          replaceSubWorkflowBoundaryNode(subWorkflow, "outputNodeId", nextValue);
           setEditorStatus("Group boundaries changed locally", "warn");
+          renderStructureEditors();
           renderWorkflowBoard();
         })));
         item.appendChild(row);
+
+        const memberOptions = workflowNodeOptionsByKinds(
+          (state.bundle && Array.isArray(state.bundle.workflow.nodes))
+            ? state.bundle.workflow.nodes.map((node) => node.kind || "task")
+            : [],
+        );
+        item.appendChild(createLabeledField("Member Nodes", createCheckboxList(
+          memberOptions,
+          subWorkflow.nodeIds,
+          collectRequiredSubWorkflowNodeIds(subWorkflow),
+          memberOptions
+            .map((option) => option.value)
+            .filter((nodeId) => {
+              const ownerId = subWorkflowNodeOwnerId(nodeId);
+              return ownerId !== undefined && ownerId !== subWorkflow.id;
+            }),
+          (nextValues) => {
+            subWorkflow.nodeIds = normalizeNodeIdList(nextValues);
+            normalizeSubWorkflowNodeIds(subWorkflow);
+            setEditorStatus("Group membership changed locally", "warn");
+            renderStructureEditors();
+            renderWorkflowBoard();
+          },
+        )));
+        const memberHint = document.createElement("div");
+        memberHint.className = "editor-note";
+        memberHint.textContent = "Boundary nodes are kept selected automatically. Nodes already owned by another group stay unavailable here so membership and routing do not become ambiguous.";
+        item.appendChild(memberHint);
 
         const source = Array.isArray(subWorkflow.inputSources) && subWorkflow.inputSources[0]
           ? subWorkflow.inputSources[0]
@@ -1057,6 +1600,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         if (!Array.isArray(subWorkflow.inputSources) || subWorkflow.inputSources.length === 0) {
           subWorkflow.inputSources = [source];
         }
+        normalizeSubWorkflowInputSourceFields(source);
         const sourceRow = document.createElement("div");
         sourceRow.className = "row three";
         sourceRow.appendChild(createLabeledField("Input Source", createSelectInput([
@@ -1066,17 +1610,58 @@ function renderWebUi(fixedWorkflowName?: string): string {
           { value: "sub-workflow-output", label: "sub-workflow-output" },
         ], source.type, (nextValue) => {
           source.type = nextValue;
+          normalizeSubWorkflowInputSourceFields(source);
           setEditorStatus("Group inputs changed locally", "warn");
+          renderStructureEditors();
         })));
-        sourceRow.appendChild(createLabeledField("Node Ref", createTextInput(source.nodeId || "", (nextValue) => {
-          source.nodeId = nextValue.trim() || undefined;
-          setEditorStatus("Group inputs changed locally", "warn");
-        }, "node id")));
-        sourceRow.appendChild(createLabeledField("Sub-workflow Ref", createTextInput(source.subWorkflowId || "", (nextValue) => {
-          source.subWorkflowId = nextValue.trim() || undefined;
-          setEditorStatus("Group inputs changed locally", "warn");
-        }, "sub-workflow id")));
+        sourceRow.appendChild(createLabeledField(
+          source.type === "workflow-output" ? "Workflow Ref" : "Node Ref",
+          source.type === "workflow-output"
+            ? createSelectInput(
+                [{ value: "", label: "(select workflow)" }, ...workflowReferenceOptions()],
+                source.workflowId || "",
+                (nextValue) => {
+                  source.workflowId = nextValue || undefined;
+                  setEditorStatus("Group inputs changed locally", "warn");
+                },
+              )
+            : createSelectInput(
+                [{ value: "", label: source.type === "human-input" ? "(not used)" : "(select node)" }, ...workflowNodeOptions()],
+                source.nodeId || "",
+                (nextValue) => {
+                  source.nodeId = nextValue || undefined;
+                  setEditorStatus("Group inputs changed locally", "warn");
+                },
+              ),
+        ));
+        sourceRow.appendChild(createLabeledField(
+          "Sub-workflow Ref",
+          createSelectInput(
+            [{ value: "", label: source.type === "sub-workflow-output" ? "(select sub-workflow)" : "(not used)" }, ...subWorkflowReferenceOptions(subWorkflow.id)],
+            source.subWorkflowId || "",
+            (nextValue) => {
+              source.subWorkflowId = nextValue || undefined;
+              setEditorStatus("Group inputs changed locally", "warn");
+            },
+          ),
+        ));
         item.appendChild(sourceRow);
+        const sourceHint = document.createElement("div");
+        sourceHint.className = "editor-note";
+        sourceHint.textContent =
+          source.type === "human-input"
+            ? "Human-input sources do not need workflow, node, or sub-workflow references."
+            : source.type === "workflow-output"
+              ? "Workflow-output sources require a workflow reference."
+              : source.type === "node-output"
+                ? "Node-output sources require a node reference."
+                : "Sub-workflow-output sources require a sub-workflow reference.";
+        item.appendChild(sourceHint);
+        const boundaryHint = document.createElement("div");
+        boundaryHint.className = "editor-note";
+        boundaryHint.textContent =
+          "Manager, input, and output boundaries must be separate nodes. The editor hides conflicting choices so mailbox routing stays unambiguous.";
+        item.appendChild(boundaryHint);
 
         const actions = document.createElement("div");
         actions.className = "collection-actions";
@@ -1085,6 +1670,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         removeButton.className = "ghost";
         removeButton.textContent = "Remove";
         removeButton.addEventListener("click", () => {
+          removeSubWorkflowReferences(subWorkflow.id);
           state.bundle.workflow.subWorkflows.splice(index, 1);
           renderStructureEditors();
           renderWorkflowBoard();
@@ -1194,19 +1780,47 @@ function renderWebUi(fixedWorkflowName?: string): string {
       setEditorStatus("Edge added locally", "warn");
     }
 
+    function nextSubWorkflowId() {
+      if (!state.bundle) {
+        return "group-1";
+      }
+      let counter = state.bundle.workflow.subWorkflows.length + 1;
+      let subWorkflowId = "group-" + counter;
+      while (state.bundle.workflow.subWorkflows.some((subWorkflow) => subWorkflow.id === subWorkflowId)) {
+        counter += 1;
+        subWorkflowId = "group-" + counter;
+      }
+      return subWorkflowId;
+    }
+
     function addSubWorkflow() {
       if (!state.bundle) return;
-      const inputNode = state.bundle.workflow.nodes.find((node) => node.kind === "input");
-      const outputNode = state.bundle.workflow.nodes.find((node) => node.kind === "output");
+      const inputNode = firstWorkflowNodeOptionByKind("input");
+      const outputNode = firstWorkflowNodeOptionByKind("output");
+      const managerNode = firstUnusedSubWorkflowManagerNodeOption();
       state.bundle.workflow.subWorkflows.push({
-        id: "group-" + (state.bundle.workflow.subWorkflows.length + 1),
+        id: nextSubWorkflowId(),
         description: "New group",
+        managerNodeId: managerNode ? managerNode.id : undefined,
         inputNodeId: inputNode ? inputNode.id : "",
         outputNodeId: outputNode ? outputNode.id : "",
+        nodeIds: normalizeNodeIdList([
+          managerNode ? managerNode.id : undefined,
+          inputNode ? inputNode.id : "",
+          outputNode ? outputNode.id : "",
+        ]),
         inputSources: [{ type: "human-input" }],
       });
       renderStructureEditors();
       renderWorkflowBoard();
+      if (!inputNode || !outputNode) {
+        setEditorStatus("Group added locally; assign input/output nodes to clear validation errors", "warn");
+        return;
+      }
+      if (!managerNode) {
+        setEditorStatus("Group added locally using the workflow manager; assign a dedicated manager node if needed", "warn");
+        return;
+      }
       setEditorStatus("Group added locally", "warn");
     }
 
@@ -1268,6 +1882,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
         workflowBoardEl.innerHTML = '<div class="empty">Choose a workflow to load its vertical sequence.</div>';
         return;
       }
+      refreshDerivedVisualization();
       const entries = [...state.derivedVisualization].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
       if (entries.length === 0) {
         workflowBoardEl.innerHTML = '<div class="empty">This workflow has no ordered nodes.</div>';
@@ -1524,7 +2139,10 @@ function renderWebUi(fixedWorkflowName?: string): string {
     addEdgeButtonEl.addEventListener("click", addEdge);
     addSubWorkflowButtonEl.addEventListener("click", addSubWorkflow);
     addLoopButtonEl.addEventListener("click", addLoop);
-    nodeExecutionBackendEl.addEventListener("change", updateSelectedPayload);
+    nodeExecutionBackendEl.addEventListener("change", () => {
+      syncNodeModelForBackendChange();
+      updateSelectedPayload();
+    });
     nodeModelEl.addEventListener("input", updateSelectedPayload);
     nodePromptTemplateEl.addEventListener("input", updateSelectedPayload);
     nodeVariablesEl.addEventListener("input", updateSelectedPayload);

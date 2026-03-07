@@ -25,10 +25,12 @@ const baseContext: AdapterExecutionContext = {
 
 describe("AnthropicSdkAdapter", () => {
   test("normalizes successful SDK output", async () => {
+    let capturedSignal: AbortSignal | undefined;
     const adapter = new AnthropicSdkAdapter({
       clientFactory: () => ({
         messages: {
-          async create() {
+          async create(_request, options) {
+            capturedSignal = options?.signal;
             return {
               content: [{ type: "text", text: "hello from anthropic" }],
             };
@@ -42,5 +44,6 @@ describe("AnthropicSdkAdapter", () => {
     expect(output.provider).toBe("official-anthropic-sdk");
     expect(output.model).toBe("claude-sonnet-4-5");
     expect(output.payload["text"]).toBe("hello from anthropic");
+    expect(capturedSignal).toBe(baseContext.signal);
   });
 });
