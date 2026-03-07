@@ -51,7 +51,7 @@ Implicit transitions are avoided.
 - Loop limit fallback: use workflow global default when loop-local limit is omitted.
 - Completion: auto-complete nodes are allowed; success-judgment-free nodes can be configured.
 - Timeout: each node can define execution timeout, with workflow-level default fallback.
-- Conversation handoff: `oyakata` routes by explicit `OutputRef` (`workflowExecutionId`, `subWorkflowId`, `outputNodeId`, `nodeExecId`) instead of implicit latest-output inference.
+- Conversation handoff: `oyakata` routes by explicit `OutputRef` (`workflowExecutionId`, `outputNodeId`, `nodeExecId`, and optional `subWorkflowId` for sub-workflow outputs) instead of implicit latest-output inference.
 - Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. The parent workflow manager writes only to the recipient sub-workflow manager inbox, and the recipient sub-workflow manager writes only to nodes inside that sub-workflow (validated via `subWorkflows[].nodeIds`). A re-executed/resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
 
 ### Completion-First Progression

@@ -26,7 +26,7 @@ Fields:
 - `schemaVersion: 1`
 - `generatedAt: string` (ISO timestamp)
 - `nodeId: string`
-- `outputRef`: `{ workflowExecutionId, workflowId, subWorkflowId, outputNodeId, nodeExecId, artifactDir }`
+- `outputRef`: `{ workflowExecutionId, workflowId, outputNodeId, nodeExecId, artifactDir, subWorkflowId? }`
 - `inputHash: "sha256:<hex>"`
 - `outputHash: "sha256:<hex>"`
 - `nextNodes: string[]`
@@ -42,6 +42,7 @@ Fields:
 - `status: "succeeded" | "failed" | "timed_out" | "cancelled"`
 - `workflowExecutionId: string`
 - `workflowId: string`
+- `subWorkflowId?: string`
 - `outputNodeId: string`
 - `nodeExecId: string`
 - `artifactDir: string`

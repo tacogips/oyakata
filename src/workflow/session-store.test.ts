@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -53,5 +53,32 @@ describe("session-store", () => {
     if (!loaded.ok) {
       expect(loaded.error.code).toBe("INVALID_SESSION_ID");
     }
+  });
+
+  test("normalizes legacy sessions without mailbox fields", async () => {
+    const root = await makeTempDir();
+    const session = createSessionState({
+      sessionId: "sess-legacy0",
+      workflowName: "wf",
+      workflowId: "wf",
+      initialNodeId: "manager",
+      runtimeVariables: {},
+    });
+    await saveSession(session, { sessionStoreRoot: root });
+
+    const filePath = path.join(root, `${session.sessionId}.json`);
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    delete parsed["communicationCounter"];
+    delete parsed["communications"];
+    await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+
+    const loaded = await loadSession(session.sessionId, { sessionStoreRoot: root });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.communicationCounter).toBe(0);
+    expect(loaded.value.communications).toEqual([]);
   });
 });

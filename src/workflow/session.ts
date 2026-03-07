@@ -30,8 +30,44 @@ export interface ConversationTurnRecord {
   readonly turnIndex: number;
   readonly fromSubWorkflowId: string;
   readonly toSubWorkflowId: string;
-  readonly outputRef: Readonly<Record<string, unknown>>;
+  readonly fromManagerNodeId: string;
+  readonly toManagerNodeId: string;
+  readonly communicationId: string;
+  readonly outputRef: OutputRef;
   readonly sentAt: string;
+}
+
+export interface OutputRef {
+  readonly workflowExecutionId: string;
+  readonly workflowId: string;
+  readonly subWorkflowId?: string;
+  readonly outputNodeId: string;
+  readonly nodeExecId: string;
+  readonly artifactDir: string;
+}
+
+export interface CommunicationRecord {
+  readonly workflowId: string;
+  readonly workflowExecutionId: string;
+  readonly communicationId: string;
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+  readonly fromSubWorkflowId?: string;
+  readonly toSubWorkflowId?: string;
+  readonly routingScope: "parent-to-sub-workflow" | "cross-sub-workflow" | "intra-sub-workflow";
+  readonly sourceNodeExecId: string;
+  readonly payloadRef: OutputRef;
+  readonly deliveryKind: "edge-transition" | "loop-back" | "manual-rerun" | "conversation-turn";
+  readonly transitionWhen: string;
+  readonly status: "created" | "delivered" | "consumed" | "delivery_failed" | "superseded";
+  readonly deliveryAttemptIds: readonly string[];
+  readonly activeDeliveryAttemptId?: string;
+  readonly createdAt: string;
+  readonly deliveredAt?: string;
+  readonly consumedByNodeExecId?: string;
+  readonly consumedAt?: string;
+  readonly failureReason?: string;
+  readonly artifactDir: string;
 }
 
 export interface WorkflowSessionState {
@@ -50,6 +86,8 @@ export interface WorkflowSessionState {
   readonly restartEvents?: readonly NodeRestartEvent[];
   readonly transitions: readonly SessionTransition[];
   readonly nodeExecutions: readonly NodeExecutionRecord[];
+  readonly communicationCounter: number;
+  readonly communications: readonly CommunicationRecord[];
   readonly conversationTurns?: readonly ConversationTurnRecord[];
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly lastError?: string;
@@ -78,8 +116,28 @@ export function createSessionState(input: CreateSessionInput): WorkflowSessionSt
     restartEvents: [],
     transitions: [],
     nodeExecutions: [],
+    communicationCounter: 0,
+    communications: [],
     conversationTurns: [],
     runtimeVariables: input.runtimeVariables,
+  };
+}
+
+export function normalizeSessionState(session: WorkflowSessionState): WorkflowSessionState {
+  const communications = Array.isArray(session.communications) ? session.communications : [];
+  const communicationCounter =
+    Number.isInteger(session.communicationCounter) && session.communicationCounter >= 0
+      ? session.communicationCounter
+      : communications.length;
+
+  return {
+    ...session,
+    loopIterationCounts: { ...(session.loopIterationCounts ?? {}) },
+    restartCounts: { ...(session.restartCounts ?? {}) },
+    restartEvents: [...(session.restartEvents ?? [])],
+    conversationTurns: [...(session.conversationTurns ?? [])],
+    communicationCounter,
+    communications: [...communications],
   };
 }
 

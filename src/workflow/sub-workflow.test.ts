@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { planManagerSubWorkflowInputs } from "./sub-workflow";
+import { planRootManagerSubWorkflowStarts, planSubWorkflowChildInputs } from "./sub-workflow";
 import type { WorkflowSessionState } from "./session";
 import type { WorkflowJson } from "./types";
 
@@ -53,19 +53,21 @@ function makeSession(overrides: Partial<WorkflowSessionState> = {}): WorkflowSes
     restartEvents: [],
     transitions: [],
     nodeExecutions: [],
+    communicationCounter: 0,
+    communications: [],
     runtimeVariables: {},
     ...overrides,
   };
 }
 
-describe("planManagerSubWorkflowInputs", () => {
+describe("planRootManagerSubWorkflowStarts", () => {
   test("starts sub-workflow whose human-input source is available", () => {
     const workflow = makeWorkflow();
     const session = makeSession({
       runtimeVariables: { humanInput: { topic: "x" } },
     });
-    const planned = planManagerSubWorkflowInputs({ workflow, session });
-    expect(planned).toEqual(["a-input"]);
+    const planned = planRootManagerSubWorkflowStarts({ workflow, session });
+    expect(planned.map((entry) => entry.id)).toEqual(["sw-a"]);
   });
 
   test("starts dependent sub-workflow only after source sub-workflow output succeeded", () => {
@@ -91,7 +93,59 @@ describe("planManagerSubWorkflowInputs", () => {
         },
       ],
     });
-    const planned = planManagerSubWorkflowInputs({ workflow, session });
-    expect(planned).toEqual(["b-input"]);
+    const planned = planRootManagerSubWorkflowStarts({ workflow, session });
+    expect(planned.map((entry) => entry.id)).toEqual(["sw-b"]);
+  });
+});
+
+describe("planSubWorkflowChildInputs", () => {
+  test("queues the child input for a sub-manager that owns a sub-workflow", () => {
+    const workflow = makeWorkflow();
+    const session = makeSession();
+    const planned = planSubWorkflowChildInputs({
+      workflow: {
+        ...workflow,
+        subWorkflows: [
+          {
+            ...workflow.subWorkflows[0]!,
+            managerNodeId: "a-manager",
+          },
+        ],
+      },
+      session,
+      managerNodeId: "a-manager",
+    });
+    expect(planned).toEqual(["a-input"]);
+  });
+
+  test("allows the child input to be re-queued for later manager deliveries", () => {
+    const workflow = makeWorkflow();
+    const session = makeSession({
+      nodeExecutions: [
+        {
+          nodeId: "a-input",
+          nodeExecId: "exec-000001",
+          status: "succeeded",
+          artifactDir: "/tmp/a-input/exec-000001",
+          startedAt: "2026-02-24T00:00:00.000Z",
+          endedAt: "2026-02-24T00:00:01.000Z",
+        },
+      ],
+    });
+    const planned = planSubWorkflowChildInputs({
+      workflow: {
+        ...workflow,
+        subWorkflows: [
+          {
+            ...workflow.subWorkflows[0]!,
+            managerNodeId: "a-manager",
+          },
+        ],
+      },
+      session,
+      managerNodeId: "a-manager",
+    });
+
+    expect(planned).toEqual(["a-input"]);
   });
 });

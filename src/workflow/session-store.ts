@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
-import { isSafeSessionId, type WorkflowSessionState } from "./session";
+import { isSafeSessionId, normalizeSessionState, type WorkflowSessionState } from "./session";
 import { saveSessionSnapshotToRuntimeDb } from "./runtime-db";
 import { DEFAULT_RUNTIME_ROOT, type LoadOptions } from "./types";
 
@@ -87,7 +87,7 @@ export async function loadSession(
     if (typeof parsed !== "object" || parsed === null) {
       return err({ code: "INVALID_DATA", message: "session file content must be an object" });
     }
-    return ok(parsed as WorkflowSessionState);
+    return ok(normalizeSessionState(parsed as WorkflowSessionState));
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     if (message.includes("ENOENT")) {

@@ -1,4 +1,4 @@
-import type { WorkflowSessionState } from "./session";
+import type { OutputRef, WorkflowSessionState } from "./session";
 import { evaluateBranch } from "./semantics";
 import type { SubWorkflowRef, WorkflowJson } from "./types";
 
@@ -7,7 +7,9 @@ export interface ConversationTurn {
   readonly turnIndex: number;
   readonly fromSubWorkflowId: string;
   readonly toSubWorkflowId: string;
-  readonly outputRef: Readonly<Record<string, unknown>>;
+  readonly fromManagerNodeId: string;
+  readonly toManagerNodeId: string;
+  readonly outputRef: OutputRef;
 }
 
 export interface ConversationExecutionResult {
@@ -17,6 +19,10 @@ export interface ConversationExecutionResult {
 
 function findSubWorkflow(workflow: WorkflowJson, subWorkflowId: string): SubWorkflowRef | undefined {
   return workflow.subWorkflows.find((entry) => entry.id === subWorkflowId);
+}
+
+function managerNodeIdForSubWorkflow(workflow: WorkflowJson, subWorkflow: SubWorkflowRef): string {
+  return subWorkflow.managerNodeId ?? workflow.managerNodeId;
 }
 
 function findLatestSucceededNodeExecution(
@@ -32,7 +38,7 @@ function conversationTurnCount(session: WorkflowSessionState, conversationId: st
 
 export async function executeConversationRound(args: {
   readonly workflow: WorkflowJson;
-  readonly sessionId: string;
+  readonly workflowExecutionId: string;
   readonly session: WorkflowSessionState;
 }): Promise<ConversationExecutionResult> {
   const conversations = args.workflow.subWorkflowConversations ?? [];
@@ -67,11 +73,6 @@ export async function executeConversationRound(args: {
     if (receiver === undefined) {
       return { status: "failed", turns: [] };
     }
-    const receiverAlreadyStarted = args.session.nodeExecutions.some((entry) => entry.nodeId === receiver.inputNodeId);
-    if (receiverAlreadyStarted) {
-      continue;
-    }
-
     const outputExecution = findLatestSucceededNodeExecution(args.session, sender.outputNodeId);
     if (outputExecution === undefined) {
       continue;
@@ -92,8 +93,10 @@ export async function executeConversationRound(args: {
       turnIndex: completedTurns + 1,
       fromSubWorkflowId,
       toSubWorkflowId,
+      fromManagerNodeId: managerNodeIdForSubWorkflow(args.workflow, sender),
+      toManagerNodeId: managerNodeIdForSubWorkflow(args.workflow, receiver),
       outputRef: {
-        sessionId: args.sessionId,
+        workflowExecutionId: args.workflowExecutionId,
         workflowId: args.workflow.workflowId,
         subWorkflowId: fromSubWorkflowId,
         outputNodeId: sender.outputNodeId,

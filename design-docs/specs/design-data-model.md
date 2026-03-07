@@ -73,7 +73,7 @@ Scope:
 `OutputRef`:
 - `workflowExecutionId: string`
 - `workflowId: string`
-- `subWorkflowId: string`
+- `subWorkflowId?: string` (required when the referenced output is produced by a sub-workflow)
 - `outputNodeId: string`
 - `nodeExecId: string`
 - `artifactDir: string`
@@ -214,7 +214,7 @@ These are normalized in memory after file loading and validation.
 ### WorkflowNode
 
 - `id: NodeId`
-- `kind: "task" | "branch-judge" | "loop-judge" | "manager" | "input" | "output"`
+- `kind: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-manager" | "input" | "output"`
 - `model: "tacogips/codex-agent" | "tacogips/claude-code-agent"`
 - `promptTemplate: string`
 - `variables: Record<string, unknown>`
@@ -258,14 +258,22 @@ These are normalized in memory after file loading and validation.
 - `communicationId: string`
 - `fromNodeId: NodeId`
 - `toNodeId: NodeId`
+- `fromSubWorkflowId?: SubWorkflowId`
+- `toSubWorkflowId?: SubWorkflowId`
+- `routingScope: "parent-to-sub-workflow" | "cross-sub-workflow" | "intra-sub-workflow"`
 - `sourceNodeExecId: string`
+- `payloadRef: OutputRef`
+- `deliveryKind: "edge-transition" | "loop-back" | "manual-rerun" | "conversation-turn"`
 - `status: "created" | "delivered" | "consumed" | "delivery_failed" | "superseded"`
 - `activeDeliveryAttemptId?: string`
 - `deliveryAttemptIds: string[]`
 - `activeAgentSessionRef?: AgentSessionRef`
 - `agentSessionRefs?: AgentSessionRef[]`
+- `createdAt: string`
+- `deliveredAt?: string`
 - `consumedByNodeExecId?: string`
 - `consumedAt?: string`
+- `failureReason?: string`
 - `supersededByCommunicationId?: string`
 - `supersededAt?: string`
 

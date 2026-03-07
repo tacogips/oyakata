@@ -172,7 +172,7 @@ Rules:
 
 Deterministic handoff contract:
 - `oyakata` routes messages using explicit `OutputRef` metadata.
-- `OutputRef` must include at least: `workflowExecutionId`, `workflowId`, `subWorkflowId`, `outputNodeId`, `nodeExecId`, and `artifactDir`.
+- `OutputRef` must include at least: `workflowExecutionId`, `workflowId`, `outputNodeId`, `nodeExecId`, and `artifactDir` (`subWorkflowId` is required when the source output belongs to a sub-workflow).
 - Downstream consumers resolve input from `OutputRef` instead of implicit "latest output" behavior.
 - If an explicit `nodeExecId` is not provided in config, selection policy must be declared (`latest-succeeded`, `latest-any`, or `by-loop-iteration`).
 

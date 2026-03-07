@@ -50,7 +50,7 @@ Allocation authority:
 - sub-workflow managers must obtain `communicationId` values from that allocator before writing mailbox artifacts
 - each manager owns local `deliveryAttemptId` allocation for attempts it executes
 - each manager owns local `agentSessionId` allocation for worker sessions it starts
-- global uniqueness is represented by `(agentSessionAllocatorNodeId, agentSessionId)` tuple scoped to one `workflowExecutionId`
+- global uniqueness is represented by `(allocatorNodeId, agentSessionId)` tuple scoped to one `workflowExecutionId`
 
 Allocator durability contract:
 - `communicationId` allocation must be linearizable per `workflowExecutionId`
@@ -150,8 +150,8 @@ Envelope rules:
 - payload content may be embedded for convenience, but the canonical source remains the sender execution artifact
 - `payloadRef` must carry the full `OutputRef` identity fields needed for deterministic replay
 - `outbox/{fromNodeId}/output.json` is the canonical mailbox snapshot for filesystem inspection and must byte-match the routed payload resolved from the sender execution at send time
-- `deliveryKind` should initially support `edge-transition`, `loop-back`, and `manual-rerun`
-- `routingScope` should initially support `cross-sub-workflow` and `intra-sub-workflow`
+- `deliveryKind` should initially support `edge-transition`, `loop-back`, `manual-rerun`, and `conversation-turn`
+- `routingScope` should initially support `parent-to-sub-workflow`, `cross-sub-workflow`, and `intra-sub-workflow`
 
 ### `attempts/{deliveryAttemptId}/attempt.json`
 
@@ -174,7 +174,7 @@ Worker-only metadata (present only when recipient execution is AI/code-agent bas
 - `workflowExecutionId`
 - `communicationId`
 - `deliveryAttemptId`
-- `agentSessionAllocatorNodeId` (manager node id that allocated this `agentSessionId`)
+- `allocatorNodeId` (manager node id that allocated this `agentSessionId`)
 - `agentSessionId`
 - `status: "running" | "succeeded" | "failed" | "aborted"`
 - `startedAt`
@@ -250,8 +250,8 @@ This ownership rule is mandatory for auditability and to prevent accidental peer
 1. Sender node execution finishes and persists normal execution artifacts.
 2. The manager that owns the sender scope evaluates workflow edges and chooses downstream recipients.
 3. For parent-to-sub-workflow or peer-sub-workflow delivery, the root workflow manager allocates a `communicationId` whose recipient is the destination sub-workflow manager node.
-4. The root workflow manager writes `{communicationId}/message.json`, `outbox/{fromNodeId}/message.json`, `outbox/{fromNodeId}/output.json`, and the delivered copy in `inbox/{toNodeId}/message.json`.
-5. The root workflow manager allocates a `deliveryAttemptId` for the recipient sub-workflow manager attempt and records delivery in `meta.json` and `attempts/{deliveryAttemptId}/receipt.json`.
+4. The root workflow manager allocates a `deliveryAttemptId`, writes `{communicationId}/message.json`, `outbox/{fromNodeId}/message.json`, `outbox/{fromNodeId}/output.json`, `inbox/{toNodeId}/message.json`, `attempts/{deliveryAttemptId}/attempt.json`, and `attempts/{deliveryAttemptId}/receipt.json`.
+5. Only after the full delivered file set exists durably does the root workflow manager write `meta.json` with `status = "delivered"` and `activeDeliveryAttemptId = {deliveryAttemptId}`.
 6. When the recipient sub-workflow manager execution starts, the root workflow manager allocates a concrete recipient `nodeExecId` and writes the resolved payload to that manager node's `input.json`.
 7. Inside the sub-workflow, the sub-workflow manager evaluates its child-node routing and allocates new intra-sub-workflow `communicationId` values for each child recipient it instructs.
 8. The sub-workflow manager writes child-node mailbox artifacts and resolves them into child-node `input.json`.
@@ -314,7 +314,7 @@ Retry rules:
 - any send re-execution must create a new `communicationId`; prior communication may be marked with `supersededByCommunicationId`, but prior inbox/outbox contents remain immutable
 
 Mailbox status transitions:
-- `created -> delivered`: recipient inbox write completed durably
+- `created -> delivered`: recipient inbox write, `activeDeliveryAttemptId`, and attempt/receipt files completed durably
 - `delivered -> consumed`: recipient `input.json` and binding metadata persisted durably
 - `created|delivered -> delivery_failed`: delivery failed before durable recipient binding
 - `delivery_failed -> created`: operator/runtime requests retry for the same communication; allocate a new `deliveryAttemptId`
@@ -323,7 +323,7 @@ Mailbox status transitions:
 - `consumed` is stable but may transition to `superseded` when explicitly replaced by a newer logical communication
 
 Normative transition guards:
-- `created -> delivered` requires `activeDeliveryAttemptId` and both `attempt.json`/`receipt.json` for that attempt
+- `created -> delivered` requires `inbox/{toNodeId}/message.json`, `activeDeliveryAttemptId`, and both `attempt.json`/`receipt.json` for that attempt
 - `delivered -> consumed` requires recipient `input.json`, `consumedByNodeExecId`, and `consumedAt`
 - `delivery_failed -> created` requires `activeDeliveryAttemptId` to be replaced by a newly allocated attempt id and `failureReason` to be retained as historical metadata (not deleted)
 - `* -> superseded` requires `supersededByCommunicationId` and `supersededAt`
@@ -361,7 +361,7 @@ Conceptual example:
 - every mailbox directory belongs to exactly one workflow execution
 - every `communicationId` is unique within a workflow execution
 - every `deliveryAttemptId` is unique within one `communicationId`
-- every `(agentSessionAllocatorNodeId, agentSessionId)` tuple is unique within one `workflowExecutionId` when present
+- every `(allocatorNodeId, agentSessionId)` tuple is unique within one `workflowExecutionId` when present
 - every send re-execution allocates a new `communicationId` (no reuse)
 - every mailbox item has exactly one sender node and one recipient node
 - every inbox copy must have a matching outbox copy and top-level `message.json`

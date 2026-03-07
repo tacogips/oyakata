@@ -58,8 +58,8 @@ Initial default values:
 - `defaults.maxLoopIterations = 3`
 - `defaults.nodeTimeoutMs = 120000`
 
-Conceptual example:
-(all complete sub-workflow examples must include required `nodeIds`; any abbreviated fragment is explicitly marked as partial and not copy-paste ready.)
+Partial conceptual example (not copy-paste ready):
+(illustrative fragment; node list and edge list are intentionally abbreviated for readability.)
 
 ```json
 {

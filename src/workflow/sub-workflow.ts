@@ -39,7 +39,9 @@ function sourceSatisfied(
 }
 
 function subWorkflowAlreadyStarted(subWorkflow: SubWorkflowRef, session: WorkflowSessionState): boolean {
-  return session.nodeExecutions.some((entry) => entry.nodeId === subWorkflow.inputNodeId);
+  return session.nodeExecutions.some(
+    (entry) => entry.nodeId === subWorkflow.inputNodeId || entry.nodeId === subWorkflow.managerNodeId,
+  );
 }
 
 function subWorkflowReady(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, session: WorkflowSessionState): boolean {
@@ -49,11 +51,11 @@ function subWorkflowReady(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, s
   return subWorkflow.inputSources.every((source) => sourceSatisfied(source, workflow, session));
 }
 
-export function planManagerSubWorkflowInputs(args: {
+export function planRootManagerSubWorkflowStarts(args: {
   readonly workflow: WorkflowJson;
   readonly session: WorkflowSessionState;
-}): readonly string[] {
-  const planned: string[] = [];
+}): readonly SubWorkflowRef[] {
+  const planned: SubWorkflowRef[] = [];
   for (const subWorkflow of args.workflow.subWorkflows) {
     if (subWorkflowAlreadyStarted(subWorkflow, args.session)) {
       continue;
@@ -61,7 +63,19 @@ export function planManagerSubWorkflowInputs(args: {
     if (!subWorkflowReady(subWorkflow, args.workflow, args.session)) {
       continue;
     }
-    planned.push(subWorkflow.inputNodeId);
+    planned.push(subWorkflow);
   }
   return planned;
+}
+
+export function planSubWorkflowChildInputs(args: {
+  readonly workflow: WorkflowJson;
+  readonly session: WorkflowSessionState;
+  readonly managerNodeId: string;
+}): readonly string[] {
+  const subWorkflow = args.workflow.subWorkflows.find((entry) => entry.managerNodeId === args.managerNodeId);
+  if (subWorkflow === undefined) {
+    return [];
+  }
+  return [subWorkflow.inputNodeId];
 }
