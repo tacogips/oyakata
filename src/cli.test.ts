@@ -74,6 +74,20 @@ describe("runCli", () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
     const createCapture = createIoCapture();
     const createCode = await runCli(["workflow", "create", "demo", "--workflow-root", root], createCapture.io);
@@ -91,6 +105,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
         "--max-steps",
         "1",
         "--output",
@@ -136,6 +152,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
       ],
       resumeCapture.io,
     );
@@ -202,6 +220,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
         "--output",
         "json",
       ],
@@ -228,6 +248,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
         "--output",
         "json",
       ],
@@ -348,6 +370,20 @@ describe("runCli", () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
     expect(
       await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
@@ -364,6 +400,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
         "--max-steps",
         "1",
       ],
@@ -394,6 +432,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
       ],
       resumeCapture.io,
       {
@@ -411,6 +451,20 @@ describe("runCli", () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
 
     expect(
       await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
@@ -428,6 +482,8 @@ describe("runCli", () => {
           artifactsRoot,
           "--session-store",
           sessionsRoot,
+          "--mock-scenario",
+          scenarioPath,
           "--max-steps",
           "1",
         ],
@@ -459,6 +515,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
       ],
       resumeCapture.io,
       {
@@ -475,13 +533,27 @@ describe("runCli", () => {
 
   test("tui supports --workflow option in non-interactive mode", async () => {
     const root = await makeTempDir();
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
     expect(
       await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
     ).toBe(0);
 
     const capture = createIoCapture();
     const code = await runCli(
-      ["tui", "--workflow", "demo", "--workflow-root", root, "--max-steps", "1"],
+      ["tui", "--workflow", "demo", "--workflow-root", root, "--mock-scenario", scenarioPath, "--max-steps", "1"],
       capture.io,
       {
         startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
@@ -522,7 +594,21 @@ describe("runCli", () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
     const variablesPath = path.join(root, "runtime-variables.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
     await writeFile(
       variablesPath,
       JSON.stringify({ topic: "tui-fallback", humanInput: { request: "alpha" } }, null, 2),
@@ -544,6 +630,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
         "--variables",
         variablesPath,
         "--max-steps",
@@ -591,7 +679,21 @@ describe("runCli", () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
     const resumeVariablesPath = path.join(root, "resume-variables.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+          "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+          "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
     await writeFile(resumeVariablesPath, JSON.stringify({ resumeNote: "from-file" }, null, 2), "utf8");
 
     expect(
@@ -610,6 +712,8 @@ describe("runCli", () => {
           artifactsRoot,
           "--session-store",
           sessionsRoot,
+          "--mock-scenario",
+          scenarioPath,
           "--max-steps",
           "1",
         ],
@@ -639,6 +743,8 @@ describe("runCli", () => {
         artifactsRoot,
         "--session-store",
         sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
         "--variables",
         resumeVariablesPath,
       ],

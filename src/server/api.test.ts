@@ -355,7 +355,16 @@ describe("handleApiRequest", () => {
     const executeRes = await handleApiRequest(
       new Request("http://localhost/api/workflows/demo/execute", {
         method: "POST",
-        body: JSON.stringify({ maxSteps: 1 }),
+        body: JSON.stringify({
+          maxSteps: 1,
+          mockScenario: {
+            "oyakata-manager": {
+              provider: "scenario-mock",
+              when: { always: true },
+              payload: { stage: "manager" },
+            },
+          },
+        }),
       }),
       {
         workflowRoot: root,

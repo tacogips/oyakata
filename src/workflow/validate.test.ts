@@ -55,6 +55,42 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.workflow.nodes).toHaveLength(2);
   });
 
+  test("accepts official sdk backend with arbitrary model string", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "gpt-5",
+      executionBackend: "official/openai-sdk",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.executionBackend).toBe("official/openai-sdk");
+    expect(result.value.nodePayloads["worker-1"]?.model).toBe("gpt-5");
+  });
+
+  test("requires executionBackend for non-tacogips model strings", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "gpt-5",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.some((issue) => issue.path === "nodePayloads.node-worker-1.json.executionBackend")).toBe(true);
+  });
+
   test("normalizes legacy prompt and variable fields", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {
@@ -133,6 +169,28 @@ describe("validateWorkflowBundle", () => {
     const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
     expect(messages).toContain("workflow.nodes[0].id:must match ^[a-z0-9][a-z0-9-]{1,63}$");
     expect(messages).toContain("workflow.managerNodeId:must reference an existing node id");
+  });
+
+  test("rejects workflow managerNodeId that does not reference a root manager node", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "task", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "worker-1", kind: "task", nodeFile: "node-worker-1.json", completion: { type: "none" } },
+      ],
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain(
+      "workflow.managerNodeId:must reference a node with kind 'root-manager' (legacy 'manager' is still accepted during transition)",
+    );
   });
 
   test("rejects duplicate vertical order entries", () => {

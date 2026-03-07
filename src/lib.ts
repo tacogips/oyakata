@@ -21,6 +21,7 @@ export interface ExecuteWorkflowInput extends OyakataOptions {
 
 export interface ResumeWorkflowInput extends OyakataOptions {
   readonly sessionId: string;
+  readonly mockScenario?: MockNodeScenario;
 }
 
 export interface RerunWorkflowInput extends OyakataOptions {
@@ -91,6 +92,7 @@ export async function resumeWorkflow(
     ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.mockScenario === undefined ? {} : { mockScenario: input.mockScenario }),
     resumeSessionId: existing.value.sessionId,
   });
   if (!result.ok) {

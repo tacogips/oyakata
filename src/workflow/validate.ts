@@ -3,10 +3,11 @@ import {
   DEFAULT_MAX_LOOP_ITERATIONS,
   DEFAULT_NODE_TIMEOUT_MS,
   NODE_ID_PATTERN,
-  type AgentModel,
   type ArgumentBinding,
+  type CliAgentBackend,
   type CompletionRule,
   type LoopRule,
+  type NodeExecutionBackend,
   type NodePayload,
   type NormalizedWorkflowBundle,
   type SubWorkflowConversation,
@@ -51,8 +52,16 @@ function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isAgentModel(value: unknown): value is AgentModel {
+function isCliAgentBackend(value: unknown): value is CliAgentBackend {
   return value === "tacogips/codex-agent" || value === "tacogips/claude-code-agent";
+}
+
+function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
+  return (
+    isCliAgentBackend(value) ||
+    value === "official/openai-sdk" ||
+    value === "official/anthropic-sdk"
+  );
 }
 
 function makeIssue(
@@ -135,7 +144,7 @@ function normalizeNodeRef(value: unknown, index: number, issues: ValidationIssue
   const completion = normalizeCompletion(value["completion"], `${path}.completion`, issues);
 
   const kindRaw = value["kind"];
-  const allowedKinds = new Set(["task", "branch-judge", "loop-judge", "manager", "input", "output"]);
+  const allowedKinds = new Set(["task", "branch-judge", "loop-judge", "root-manager", "sub-manager", "manager", "input", "output"]);
   let kind: WorkflowNodeRef["kind"];
   if (kindRaw !== undefined) {
     if (typeof kindRaw !== "string" || !allowedKinds.has(kindRaw)) {
@@ -313,8 +322,19 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
 
   const id = readStringField(value, "id", path, issues);
   const description = readStringField(value, "description", path, issues);
+  const managerNodeId = typeof value["managerNodeId"] === "string" ? value["managerNodeId"] : undefined;
   const inputNodeId = readStringField(value, "inputNodeId", path, issues);
   const outputNodeId = readStringField(value, "outputNodeId", path, issues);
+  const nodeIdsRaw = value["nodeIds"];
+  if (nodeIdsRaw !== undefined && !Array.isArray(nodeIdsRaw)) {
+    issues.push(makeIssue("error", `${path}.nodeIds`, "must be an array when provided"));
+  }
+  const nodeIds = Array.isArray(nodeIdsRaw)
+    ? nodeIdsRaw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : undefined;
+  if (Array.isArray(nodeIdsRaw) && nodeIds !== undefined && nodeIds.length !== nodeIdsRaw.length) {
+    issues.push(makeIssue("error", `${path}.nodeIds`, "must contain only non-empty strings"));
+  }
 
   const inputSourcesAlias = value["inputs"];
   const inputSourcesRaw = value["inputSources"] ?? inputSourcesAlias;
@@ -345,8 +365,10 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
   return {
     id,
     description,
+    ...(managerNodeId === undefined ? {} : { managerNodeId }),
     inputNodeId,
     outputNodeId,
+    ...(nodeIds === undefined ? {} : { nodeIds }),
     inputSources,
   };
 }
@@ -702,8 +724,33 @@ function normalizeNodePayload(
   }
 
   const modelRaw = payload["model"];
-  if (!isAgentModel(modelRaw)) {
-    issues.push(makeIssue("error", `${path}.model`, "must be tacogips/codex-agent or tacogips/claude-code-agent"));
+  const model = typeof modelRaw === "string" && modelRaw.length > 0 ? modelRaw : null;
+  if (model === null) {
+    issues.push(makeIssue("error", `${path}.model`, "must be a non-empty string"));
+  }
+
+  const executionBackendRaw = payload["executionBackend"];
+  let executionBackend: NodeExecutionBackend | undefined;
+  if (executionBackendRaw !== undefined) {
+    if (isNodeExecutionBackend(executionBackendRaw)) {
+      executionBackend = executionBackendRaw;
+    } else {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.executionBackend`,
+          "must be tacogips/codex-agent, tacogips/claude-code-agent, official/openai-sdk, or official/anthropic-sdk",
+        ),
+      );
+    }
+  } else if (model !== null && !isCliAgentBackend(model)) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.executionBackend`,
+        "is required when model is not one of the tacogips CLI-wrapper backend identifiers",
+      ),
+    );
   }
 
   const promptTemplateRaw = payload["promptTemplate"];
@@ -801,13 +848,14 @@ function normalizeNodePayload(
   const templateEngineRaw = payload["templateEngine"];
   const templateEngine = typeof templateEngineRaw === "string" ? templateEngineRaw : undefined;
 
-  if (id === null || !isAgentModel(modelRaw) || promptTemplate === null || variables === null) {
+  if (id === null || model === null || promptTemplate === null || variables === null) {
     return null;
   }
 
   return {
     id,
-    model: modelRaw,
+    model,
+    ...(executionBackend === undefined ? {} : { executionBackend }),
     promptTemplate,
     variables,
     ...(argumentsTemplate === undefined ? {} : { argumentsTemplate }),
@@ -878,8 +926,14 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   }
 
   const managerNode = bundle.workflow.nodes.find((node) => node.id === bundle.workflow.managerNodeId);
-  if (managerNode?.kind !== "manager") {
-    issues.push(makeIssue("error", "workflow.managerNodeId", "must reference a node with kind 'manager'"));
+  if (managerNode?.kind !== "manager" && managerNode?.kind !== "root-manager") {
+    issues.push(
+      makeIssue(
+        "error",
+        "workflow.managerNodeId",
+        "must reference a node with kind 'root-manager' (legacy 'manager' is still accepted during transition)",
+      ),
+    );
   }
 
   const seenNodeIds = new Set<string>();
@@ -929,11 +983,35 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
 
   const declaredSubWorkflowIds = new Set(bundle.workflow.subWorkflows.map((entry) => entry.id));
   const subWorkflowIdSet = new Set<string>();
+  const subWorkflowNodeOwnership = new Map<string, string>();
   bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
     if (subWorkflowIdSet.has(subWorkflow.id)) {
       issues.push(makeIssue("error", `workflow.subWorkflows[${index}].id`, `duplicate subWorkflow id '${subWorkflow.id}'`));
     } else {
       subWorkflowIdSet.add(subWorkflow.id);
+    }
+
+    if (subWorkflow.managerNodeId !== undefined) {
+      if (!nodeIdSet.has(subWorkflow.managerNodeId)) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].managerNodeId`,
+            "must reference an existing node id",
+          ),
+        );
+      } else {
+        const subManagerNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.managerNodeId);
+        if (subManagerNode?.kind !== "sub-manager" && subManagerNode?.kind !== "manager") {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.subWorkflows[${index}].managerNodeId`,
+              "must reference a node with kind 'sub-manager'",
+            ),
+          );
+        }
+      }
     }
 
     if (!nodeIdSet.has(subWorkflow.inputNodeId)) {
@@ -975,6 +1053,52 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
             "must reference a node with kind 'output'",
           ),
         );
+      }
+    }
+
+    if (subWorkflow.nodeIds !== undefined) {
+      if (subWorkflow.nodeIds.length === 0) {
+        issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must not be empty"));
+      }
+      subWorkflow.nodeIds.forEach((nodeId, nodeIndex) => {
+        if (!nodeIdSet.has(nodeId)) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
+              "must reference an existing node id",
+            ),
+          );
+          return;
+        }
+        const existingOwner = subWorkflowNodeOwnership.get(nodeId);
+        if (existingOwner !== undefined && existingOwner !== subWorkflow.id) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.subWorkflows[${index}].nodeIds[${nodeIndex}]`,
+              `node id '${nodeId}' is already owned by subWorkflow '${existingOwner}'`,
+            ),
+          );
+          return;
+        }
+        subWorkflowNodeOwnership.set(nodeId, subWorkflow.id);
+      });
+
+      if (subWorkflow.managerNodeId !== undefined && !subWorkflow.nodeIds.includes(subWorkflow.managerNodeId)) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.subWorkflows[${index}].nodeIds`,
+            "must include managerNodeId when managerNodeId is provided",
+          ),
+        );
+      }
+      if (!subWorkflow.nodeIds.includes(subWorkflow.inputNodeId)) {
+        issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include inputNodeId"));
+      }
+      if (!subWorkflow.nodeIds.includes(subWorkflow.outputNodeId)) {
+        issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include outputNodeId"));
       }
     }
 

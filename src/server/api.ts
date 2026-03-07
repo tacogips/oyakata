@@ -343,11 +343,16 @@ function renderWebUi(fixedWorkflowName?: string): string {
         <div class="card">
           <h2>Node Properties</h2>
           <div id="selectedNodeLabel" class="muted">Select a node card to edit its payload.</div>
-          <label for="nodeModel">Model</label>
-          <select id="nodeModel">
+          <label for="nodeExecutionBackend">Execution Backend</label>
+          <select id="nodeExecutionBackend">
+            <option value="">derive from model</option>
             <option value="tacogips/codex-agent">tacogips/codex-agent</option>
             <option value="tacogips/claude-code-agent">tacogips/claude-code-agent</option>
+            <option value="official/openai-sdk">official/openai-sdk</option>
+            <option value="official/anthropic-sdk">official/anthropic-sdk</option>
           </select>
+          <label for="nodeModel">Model</label>
+          <input id="nodeModel" type="text" placeholder="tacogips/codex-agent or gpt-5 / claude-sonnet-4-5" />
           <label for="nodePromptTemplate">Prompt Template</label>
           <textarea id="nodePromptTemplate" placeholder="Prompt template"></textarea>
           <label for="nodeVariables">Variables JSON</label>
@@ -384,6 +389,7 @@ function renderWebUi(fixedWorkflowName?: string): string {
     const addSubWorkflowButtonEl = document.getElementById("addSubWorkflowButton");
     const addLoopButtonEl = document.getElementById("addLoopButton");
     const selectedNodeLabelEl = document.getElementById("selectedNodeLabel");
+    const nodeExecutionBackendEl = document.getElementById("nodeExecutionBackend");
     const nodeModelEl = document.getElementById("nodeModel");
     const nodePromptTemplateEl = document.getElementById("nodePromptTemplate");
     const nodeVariablesEl = document.getElementById("nodeVariables");
@@ -840,12 +846,14 @@ function renderWebUi(fixedWorkflowName?: string): string {
       const payload = nodeId ? getNodePayload(nodeId) : null;
       if (!workflowNode || !payload) {
         selectedNodeLabelEl.textContent = "Select a node card to edit its payload.";
+        nodeExecutionBackendEl.value = "";
         nodeModelEl.value = "tacogips/codex-agent";
         nodePromptTemplateEl.value = "";
         nodeVariablesEl.value = "{}";
         return;
       }
       selectedNodeLabelEl.textContent = workflowNode.id + " (" + (workflowNode.kind || "task") + ")";
+      nodeExecutionBackendEl.value = payload.executionBackend || "";
       nodeModelEl.value = payload.model || "tacogips/codex-agent";
       nodePromptTemplateEl.value = payload.promptTemplate || "";
       nodeVariablesEl.value = JSON.stringify(payload.variables || {}, null, 2);
@@ -855,6 +863,11 @@ function renderWebUi(fixedWorkflowName?: string): string {
       if (!state.bundle || !state.selectedNodeId) return;
       const payload = ensureNodePayload(state.selectedNodeId);
       if (!payload) return;
+      if (nodeExecutionBackendEl.value) {
+        payload.executionBackend = nodeExecutionBackendEl.value;
+      } else {
+        delete payload.executionBackend;
+      }
       payload.model = nodeModelEl.value;
       payload.promptTemplate = nodePromptTemplateEl.value;
       try {
@@ -1511,7 +1524,8 @@ function renderWebUi(fixedWorkflowName?: string): string {
     addEdgeButtonEl.addEventListener("click", addEdge);
     addSubWorkflowButtonEl.addEventListener("click", addSubWorkflow);
     addLoopButtonEl.addEventListener("click", addLoop);
-    nodeModelEl.addEventListener("change", updateSelectedPayload);
+    nodeExecutionBackendEl.addEventListener("change", updateSelectedPayload);
+    nodeModelEl.addEventListener("input", updateSelectedPayload);
     nodePromptTemplateEl.addEventListener("input", updateSelectedPayload);
     nodeVariablesEl.addEventListener("input", updateSelectedPayload);
 

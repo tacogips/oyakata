@@ -2,11 +2,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { AdapterExecutionError } from "./adapter";
+import { AdapterExecutionError, DeterministicNodeAdapter } from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
 
 const tempDirs: string[] = [];
+const deterministicAdapter = new DeterministicNodeAdapter();
 
 async function makeTempDir(): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "oyakata-engine-test-"));
@@ -116,15 +117,19 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
       {
         id: "sw-a",
         description: "A",
+        managerNodeId: "a-manager",
         inputNodeId: "a-input",
         outputNodeId: "a-output",
+        nodeIds: ["a-manager", "a-input", "a-output"],
         inputSources: [{ type: "human-input" }],
       },
       {
         id: "sw-b",
         description: "B",
+        managerNodeId: "b-manager",
         inputNodeId: "b-input",
         outputNodeId: "b-output",
+        nodeIds: ["b-manager", "b-input", "b-output"],
         inputSources: [{ type: "sub-workflow-output", subWorkflowId: "sw-a" }],
       },
     ],
@@ -137,9 +142,11 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
       },
     ],
     nodes: [
-      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "a-manager", kind: "sub-manager", nodeFile: "node-a-manager.json", completion: { type: "none" } },
       { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
       { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
+      { id: "b-manager", kind: "sub-manager", nodeFile: "node-b-manager.json", completion: { type: "none" } },
       { id: "b-input", kind: "input", nodeFile: "node-b-input.json", completion: { type: "none" } },
       { id: "b-output", kind: "output", nodeFile: "node-b-output.json", completion: { type: "none" } },
     ],
@@ -156,10 +163,12 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
   await writeJson(path.join(workflowDir, "workflow-vis.json"), {
     nodes: [
       { id: "oyakata-manager", order: 0 },
-      { id: "a-input", order: 1 },
-      { id: "a-output", order: 2 },
-      { id: "b-input", order: 3 },
-      { id: "b-output", order: 4 },
+      { id: "a-manager", order: 1 },
+      { id: "a-input", order: 2 },
+      { id: "a-output", order: 3 },
+      { id: "b-manager", order: 4 },
+      { id: "b-input", order: 5 },
+      { id: "b-output", order: 6 },
     ],
   });
 
@@ -167,6 +176,12 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
     id: "oyakata-manager",
     model: "tacogips/codex-agent",
     promptTemplate: "manager",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-a-manager.json"), {
+    id: "a-manager",
+    model: "tacogips/codex-agent",
+    promptTemplate: "a-manager",
     variables: {},
   });
   await writeJson(path.join(workflowDir, "node-a-input.json"), {
@@ -179,6 +194,12 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
     id: "a-output",
     model: "tacogips/codex-agent",
     promptTemplate: "a-output",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDir, "node-b-manager.json"), {
+    id: "b-manager",
+    model: "tacogips/codex-agent",
+    promptTemplate: "b-manager",
     variables: {},
   });
   await writeJson(path.join(workflowDir, "node-b-input.json"), {
@@ -205,7 +226,7 @@ describe("runWorkflow", () => {
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
       runtimeVariables: { topic: "B" },
-    });
+    }, deterministicAdapter);
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -226,12 +247,40 @@ describe("runWorkflow", () => {
       upstreamOutputRefs: readonly {
         fromNodeId: string;
         workflowId: string;
+        workflowExecutionId: string;
       }[];
+      upstreamCommunications: readonly string[];
     };
     expect(inputJson.promptText).toContain("B");
     expect(inputJson.upstreamOutputRefs.length).toBe(1);
     expect(inputJson.upstreamOutputRefs[0]?.fromNodeId).toBe("oyakata-manager");
     expect(inputJson.upstreamOutputRefs[0]?.workflowId).toBe("linear");
+    expect(inputJson.upstreamOutputRefs[0]?.workflowExecutionId).toBe(result.value.session.sessionId);
+    expect(inputJson.upstreamCommunications).toEqual(["comm-000001"]);
+
+    const communicationMessageRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "linear",
+        "executions",
+        result.value.session.sessionId,
+        "communications",
+        "comm-000001",
+        "message.json",
+      ),
+      "utf8",
+    );
+    const communicationMessageJson = JSON.parse(communicationMessageRaw) as {
+      workflowExecutionId: string;
+      communicationId: string;
+      fromNodeId: string;
+      toNodeId: string;
+    };
+    expect(communicationMessageJson.workflowExecutionId).toBe(result.value.session.sessionId);
+    expect(communicationMessageJson.communicationId).toBe("comm-000001");
+    expect(communicationMessageJson.fromNodeId).toBe("oyakata-manager");
+    expect(communicationMessageJson.toNodeId).toBe("step-1");
 
     const handoffRaw = await readFile(path.join(step1Exec.artifactDir, "handoff.json"), "utf8");
     const handoffJson = JSON.parse(handoffRaw) as {
@@ -283,7 +332,7 @@ describe("runWorkflow", () => {
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
       runtimeVariables: { topic: "B" },
-    });
+    }, deterministicAdapter);
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -332,12 +381,54 @@ describe("runWorkflow", () => {
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
       runtimeVariables: { topic: "B" },
-    });
+    }, deterministicAdapter);
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.exitCode).toBe(3);
       expect(result.error.message).toContain("input assembly failed");
+    }
+  });
+
+  test("fails deterministically when an upstream communication output artifact is corrupted", async () => {
+    const root = await makeTempDir();
+    const workflowName = "corrupt-upstream-output";
+    await createWorkflowFixture(root, workflowName, false);
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const paused = await runWorkflow(workflowName, {
+      ...options,
+      sessionId: "sess-corrupt-upstream",
+      maxSteps: 1,
+    }, deterministicAdapter);
+    expect(paused.ok).toBe(true);
+    if (!paused.ok) {
+      return;
+    }
+    expect(paused.value.session.status).toBe("paused");
+
+    const managerExec = paused.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
+    expect(managerExec).toBeDefined();
+    if (managerExec === undefined) {
+      return;
+    }
+    await writeFile(path.join(managerExec.artifactDir, "output.json"), "\"corrupted\"\n", "utf8");
+
+    const resumed = await runWorkflow(workflowName, {
+      ...options,
+      resumeSessionId: paused.value.session.sessionId,
+    }, deterministicAdapter);
+
+    expect(resumed.ok).toBe(false);
+    if (!resumed.ok) {
+      expect(resumed.error.exitCode).toBe(1);
+      expect(resumed.error.message).toContain("failed to resolve upstream communication");
+      expect(resumed.error.message).toContain("comm-000001");
     }
   });
 
@@ -364,7 +455,16 @@ describe("runWorkflow", () => {
     }
     expect(result.value.session.status).toBe("completed");
     expect(result.value.session.loopIterationCounts?.["main-loop"]).toBe(2);
-    expect(result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-1")).toHaveLength(3);
+    const stepExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-1");
+    expect(stepExecutions).toHaveLength(3);
+    const upstreamCommunications = await Promise.all(
+      stepExecutions.map(async (execution) => {
+        const inputRaw = await readFile(path.join(execution.artifactDir, "input.json"), "utf8");
+        const inputJson = JSON.parse(inputRaw) as { upstreamCommunications: readonly string[] };
+        return inputJson.upstreamCommunications;
+      }),
+    );
+    expect(upstreamCommunications).toEqual([["comm-000001"], ["comm-000002"], ["comm-000003"]]);
   });
 
   test("supports dry-run without adapter execution", async () => {
@@ -441,6 +541,7 @@ describe("runWorkflow", () => {
   test("fails with timeout when stuck restart budget is exhausted", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "restart-fail", false);
+    const sessionId = "sess-restart-fail";
 
     const stuckAdapter: NodeAdapter = {
       async execute(input) {
@@ -462,6 +563,7 @@ describe("runWorkflow", () => {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
+        sessionId,
         defaultTimeoutMs: 10,
         maxStuckRestarts: 0,
       },
@@ -471,6 +573,12 @@ describe("runWorkflow", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.exitCode).toBe(6);
+      const timedOutSessionRaw = await readFile(path.join(root, "sessions", `${sessionId}.json`), "utf8");
+      const timedOutSession = JSON.parse(timedOutSessionRaw) as {
+        communications: readonly { status: string; fromNodeId: string; toNodeId: string }[];
+      };
+      const timedOutNodeOutgoing = timedOutSession.communications.filter((entry) => entry.fromNodeId === "step-1");
+      expect(timedOutNodeOutgoing).toEqual([]);
     }
   });
 
@@ -547,7 +655,7 @@ describe("runWorkflow", () => {
       sessionStoreRoot: path.join(root, "sessions"),
     };
 
-    const first = await runWorkflow("rerun", options);
+    const first = await runWorkflow("rerun", options, deterministicAdapter);
     expect(first.ok).toBe(true);
     if (!first.ok) {
       return;
@@ -557,7 +665,7 @@ describe("runWorkflow", () => {
       ...options,
       rerunFromSessionId: first.value.session.sessionId,
       rerunFromNodeId: "step-1",
-    });
+    }, deterministicAdapter);
     expect(rerun.ok).toBe(true);
     if (!rerun.ok) {
       return;
@@ -580,7 +688,7 @@ describe("runWorkflow", () => {
       runtimeVariables: {
         humanInput: { topic: "demo" },
       },
-    });
+    }, deterministicAdapter);
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -589,11 +697,140 @@ describe("runWorkflow", () => {
     expect(result.value.session.status).toBe("completed");
 
     const executionOrder = result.value.session.nodeExecutions.map((entry) => entry.nodeId);
+    expect(executionOrder.indexOf("a-manager")).toBeGreaterThan(executionOrder.indexOf("oyakata-manager"));
+    expect(executionOrder.indexOf("a-input")).toBeGreaterThan(executionOrder.indexOf("a-manager"));
     expect(executionOrder.indexOf("a-output")).toBeGreaterThan(executionOrder.indexOf("a-input"));
+    expect(executionOrder.indexOf("b-manager")).toBeGreaterThan(executionOrder.indexOf("a-output"));
     expect(executionOrder.indexOf("b-input")).toBeGreaterThan(executionOrder.indexOf("a-output"));
+    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(executionOrder.indexOf("b-manager"));
     expect(executionOrder.indexOf("b-output")).toBeGreaterThan(executionOrder.indexOf("b-input"));
     expect((result.value.session.conversationTurns ?? []).length).toBeGreaterThan(0);
     expect(result.value.session.conversationTurns?.[0]?.fromSubWorkflowId).toBe("sw-a");
     expect(result.value.session.conversationTurns?.[0]?.toSubWorkflowId).toBe("sw-b");
+    expect(result.value.session.conversationTurns?.[0]?.communicationId).toMatch(/^comm-\d{6}$/);
+
+    const bInputExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "b-input");
+    expect(bInputExec).toBeDefined();
+    if (bInputExec === undefined) {
+      return;
+    }
+    const bInputRaw = await readFile(path.join(bInputExec.artifactDir, "input.json"), "utf8");
+    const bInputJson = JSON.parse(bInputRaw) as {
+      upstreamOutputRefs: readonly { subWorkflowId?: string; outputNodeId: string }[];
+      upstreamCommunications: readonly string[];
+    };
+    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.subWorkflowId === "sw-a")).toBe(true);
+    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.outputNodeId === "a-output")).toBe(true);
+    expect(bInputJson.upstreamCommunications.length).toBeGreaterThan(0);
+
+    const aOutputExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-output");
+    expect(aOutputExec).toBeDefined();
+    if (aOutputExec === undefined) {
+      return;
+    }
+    const aOutputHandoffRaw = await readFile(path.join(aOutputExec.artifactDir, "handoff.json"), "utf8");
+    const aOutputHandoffJson = JSON.parse(aOutputHandoffRaw) as {
+      outputRef: { subWorkflowId?: string };
+    };
+    expect(aOutputHandoffJson.outputRef.subWorkflowId).toBe("sw-a");
+
+    const aOutputCommitMessage = await readFile(path.join(aOutputExec.artifactDir, "commit-message.txt"), "utf8");
+    expect(aOutputCommitMessage).toContain("Subworkflow-ID: sw-a");
+
+    const conversationCommunication = result.value.session.communications.find(
+      (entry) => entry.deliveryKind === "conversation-turn",
+    );
+    expect(conversationCommunication).toBeDefined();
+    expect(conversationCommunication?.fromSubWorkflowId).toBe("sw-a");
+    expect(conversationCommunication?.toSubWorkflowId).toBe("sw-b");
+    expect(conversationCommunication?.payloadRef.outputNodeId).toBe("a-output");
+
+    const parentToSubWorkflowCommunication = result.value.session.communications.find(
+      (entry) => entry.routingScope === "parent-to-sub-workflow" && entry.toNodeId === "a-manager",
+    );
+    expect(parentToSubWorkflowCommunication).toBeDefined();
+  });
+
+  test("fails deterministically when a conversation sender output artifact is corrupted", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-corrupt-conversation";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const paused = await runWorkflow(workflowName, {
+      ...options,
+      sessionId: "sess-corrupt-conversation",
+      runtimeVariables: {
+        humanInput: { topic: "demo" },
+      },
+      maxSteps: 4,
+    }, deterministicAdapter);
+    expect(paused.ok).toBe(true);
+    if (!paused.ok) {
+      return;
+    }
+    expect(paused.value.session.status).toBe("paused");
+
+    const senderExec = paused.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-output");
+    expect(senderExec).toBeDefined();
+    if (senderExec === undefined) {
+      return;
+    }
+    await writeFile(path.join(senderExec.artifactDir, "output.json"), "\"corrupted\"\n", "utf8");
+
+    const resumed = await runWorkflow(workflowName, {
+      ...options,
+      resumeSessionId: paused.value.session.sessionId,
+    }, deterministicAdapter);
+
+    expect(resumed.ok).toBe(false);
+    if (!resumed.ok) {
+      expect(resumed.error.exitCode).toBe(1);
+      expect(resumed.error.message).toContain("failed to resolve upstream communication");
+      expect(resumed.error.message).toContain("comm-");
+      expect(resumed.error.message).toContain("oyakata-manager");
+      expect(resumed.error.message).toContain("a-output");
+    }
+  });
+
+  test("replays multi-turn sub-workflow conversations through manager mailboxes", async () => {
+    const root = await makeTempDir();
+    const workflowName = "subworkflow-multi-turn-conversation";
+    await createSubWorkflowRuntimeFixture(root, workflowName);
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-multi-turn-conversation",
+        runtimeVariables: { humanInput: { topic: "ping-pong" } },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const conversationTurns = result.value.session.conversationTurns ?? [];
+    expect(conversationTurns).toHaveLength(3);
+    expect(conversationTurns.map((entry) => `${entry.fromSubWorkflowId}->${entry.toSubWorkflowId}`)).toEqual([
+      "sw-a->sw-b",
+      "sw-b->sw-a",
+      "sw-a->sw-b",
+    ]);
+
+    const aInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "a-input");
+    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    expect(aInputExecutions).toHaveLength(2);
+    expect(bInputExecutions).toHaveLength(2);
   });
 });

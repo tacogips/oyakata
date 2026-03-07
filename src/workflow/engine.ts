@@ -1,9 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   AdapterExecutionError,
-  DeterministicNodeAdapter,
   ScenarioNodeAdapter,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -11,21 +10,24 @@ import {
   type MockNodeScenario,
   type NodeAdapter,
 } from "./adapter";
+import { DispatchingNodeAdapter } from "./adapters/dispatch";
 import { loadWorkflowFromDisk } from "./load";
 import { assembleNodeInput } from "./input-assembly";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import { executeConversationRound } from "./conversation";
 import { evaluateBranch, evaluateCompletion, resolveLoopTransition } from "./semantics";
-import { planManagerSubWorkflowInputs } from "./sub-workflow";
+import { planRootManagerSubWorkflowStarts, planSubWorkflowChildInputs } from "./sub-workflow";
 import {
   createSessionId,
   createSessionState,
+  type CommunicationRecord,
   type NodeExecutionRecord,
+  type OutputRef,
   type WorkflowSessionState,
 } from "./session";
 import { loadSession, saveSession, type SessionStoreOptions } from "./session-store";
-import type { LoadOptions, LoopRule, NodePayload, WorkflowEdge } from "./types";
+import type { LoadOptions, LoopRule, NodePayload, SubWorkflowRef, WorkflowEdge, WorkflowJson } from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
@@ -78,18 +80,11 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-interface OutputRef {
-  readonly sessionId: string;
-  readonly workflowId: string;
-  readonly outputNodeId: string;
-  readonly nodeExecId: string;
-  readonly artifactDir: string;
-}
-
 interface UpstreamOutputRef extends OutputRef {
   readonly fromNodeId: string;
   readonly transitionWhen: string;
   readonly status: NodeExecutionRecord["status"];
+  readonly communicationId: string;
 }
 
 interface UpstreamInput extends UpstreamOutputRef {
@@ -98,6 +93,14 @@ interface UpstreamInput extends UpstreamOutputRef {
 
 function nextNodeExecId(counter: number): string {
   return `exec-${String(counter).padStart(6, "0")}`;
+}
+
+function nextCommunicationId(counter: number): string {
+  return `comm-${String(counter).padStart(6, "0")}`;
+}
+
+function initialDeliveryAttemptId(): string {
+  return "attempt-000001";
 }
 
 function resolveTimeoutMs(
@@ -157,7 +160,10 @@ async function executeAdapterWithTimeout(
 }
 
 async function writeJsonFile(filePath: string, payload: unknown): Promise<void> {
-  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await rename(tempPath, filePath);
 }
 
 function stableJson(payload: unknown): string {
@@ -168,75 +174,120 @@ function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+async function readOutputPayloadArtifact(artifactDir: string): Promise<Result<Readonly<Record<string, unknown>>, string>> {
+  const outputPath = path.join(artifactDir, "output.json");
+
+  try {
+    const outputRaw = await readFile(outputPath, "utf8");
+    const parsed = JSON.parse(outputRaw) as unknown;
+    if (typeof parsed !== "object" || parsed === null) {
+      return err(`output artifact '${outputPath}' must contain a JSON object`);
+    }
+    return ok(parsed as Readonly<Record<string, unknown>>);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    return err(`unable to read output artifact '${outputPath}': ${message}`);
+  }
+}
+
 function outputRefForExecution(
+  workflow: WorkflowJson,
   session: WorkflowSessionState,
   execution: NodeExecutionRecord,
   nodeId: string,
 ): OutputRef {
+  const owningSubWorkflow = workflow.subWorkflows.find((entry) => {
+    if (entry.nodeIds?.includes(nodeId) ?? false) {
+      return true;
+    }
+    return entry.managerNodeId === nodeId || entry.inputNodeId === nodeId || entry.outputNodeId === nodeId;
+  });
   return {
-    sessionId: session.sessionId,
+    workflowExecutionId: session.sessionId,
     workflowId: session.workflowId,
+    ...(owningSubWorkflow === undefined ? {} : { subWorkflowId: owningSubWorkflow.id }),
     outputNodeId: nodeId,
     nodeExecId: execution.nodeExecId,
     artifactDir: execution.artifactDir,
   };
 }
 
+function isManagerNodeKind(kind: WorkflowJson["nodes"][number]["kind"]): boolean {
+  return kind === "manager" || kind === "root-manager" || kind === "sub-manager";
+}
+
+function findOwningSubWorkflowByInputNodeId(workflow: WorkflowJson, nodeId: string): SubWorkflowRef | undefined {
+  return workflow.subWorkflows.find((entry) => entry.inputNodeId === nodeId);
+}
+
 function buildUpstreamOutputRefs(
+  workflow: WorkflowJson,
   session: WorkflowSessionState,
   nodeId: string,
 ): readonly UpstreamOutputRef[] {
-  const matchingTransitions = session.transitions.filter((transition) => transition.to === nodeId);
-  if (matchingTransitions.length === 0) {
+  const owningSubWorkflow = findOwningSubWorkflowByInputNodeId(workflow, nodeId);
+  const matchingCommunications = session.communications.filter((communication) => {
+    if (communication.status !== "delivered") {
+      return false;
+    }
+    if (communication.toNodeId === nodeId) {
+      return true;
+    }
+    if (owningSubWorkflow === undefined) {
+      return false;
+    }
+    return (
+      communication.toSubWorkflowId === owningSubWorkflow.id &&
+      communication.toNodeId === (owningSubWorkflow.managerNodeId ?? workflow.managerNodeId)
+    );
+  });
+  if (matchingCommunications.length === 0) {
     return [];
   }
 
-  return matchingTransitions
-    .map((transition) => {
-      const execution = [...session.nodeExecutions]
-        .reverse()
-        .find((candidate) => candidate.nodeId === transition.from);
+  return matchingCommunications
+    .map((communication) => {
+      const execution = session.nodeExecutions.find((candidate) => candidate.nodeExecId === communication.sourceNodeExecId);
       if (execution === undefined) {
         return undefined;
       }
+
       return {
-        fromNodeId: transition.from,
-        transitionWhen: transition.when,
+        fromNodeId: communication.fromNodeId,
+        transitionWhen: communication.transitionWhen,
         status: execution.status,
-        ...outputRefForExecution(session, execution, transition.from),
+        communicationId: communication.communicationId,
+        ...communication.payloadRef,
       };
     })
     .filter((entry): entry is UpstreamOutputRef => entry !== undefined);
 }
 
 async function buildUpstreamInputs(
+  workflow: WorkflowJson,
   session: WorkflowSessionState,
   nodeId: string,
-): Promise<readonly UpstreamInput[]> {
-  const refs = buildUpstreamOutputRefs(session, nodeId);
+): Promise<Result<readonly UpstreamInput[], string>> {
+  const refs = buildUpstreamOutputRefs(workflow, session, nodeId);
   if (refs.length === 0) {
-    return [];
+    return ok([]);
   }
 
-  const loaded = await Promise.all(
-    refs.map(async (ref) => {
-      try {
-        const outputRaw = await readFile(path.join(ref.artifactDir, "output.json"), "utf8");
-        const parsed = JSON.parse(outputRaw) as unknown;
-        if (typeof parsed !== "object" || parsed === null) {
-          return null;
-        }
-        return {
-          ...ref,
-          output: parsed as Readonly<Record<string, unknown>>,
-        };
-      } catch {
-        return null;
-      }
-    }),
-  );
+  const loaded: UpstreamInput[] = [];
+  for (const ref of refs) {
+    const output = await readOutputPayloadArtifact(ref.artifactDir);
+    if (!output.ok) {
+      return err(
+        `failed to resolve upstream communication '${ref.communicationId}' for node '${nodeId}': ${output.error}`,
+      );
+    }
+    loaded.push({
+      ...ref,
+      output: output.value,
+    });
+  }
 
-  return loaded.filter((entry): entry is UpstreamInput => entry !== null);
+  return ok(loaded);
 }
 
 function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: OutputRef, nextNodes: readonly string[]): string {
@@ -248,8 +299,8 @@ function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: 
     "Node execution checkpoint for deterministic output-to-input handoff.",
     "",
     `Node-ID: ${ref.outputNodeId}`,
-    `Subworkflow-ID: (unset)`,
-    `Run-ID: ${ref.sessionId}`,
+    `Subworkflow-ID: ${ref.subWorkflowId ?? "(unset)"}`,
+    `Run-ID: ${ref.workflowExecutionId}`,
     `Workflow-ID: ${ref.workflowId}`,
     `Node-Exec-ID: ${ref.nodeExecId}`,
     `Artifact-Dir: ${ref.artifactDir}`,
@@ -257,6 +308,183 @@ function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: 
     `Output-Hash: sha256:${outputHash}`,
     `Next-Node: ${nextNodeValue}`,
   ].join("\n");
+}
+
+interface CreateCommunicationInput {
+  readonly artifactWorkflowRoot: string;
+  readonly workflowId: string;
+  readonly workflowExecutionId: string;
+  readonly communicationCounter: number;
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+  readonly fromSubWorkflowId?: string;
+  readonly toSubWorkflowId?: string;
+  readonly routingScope: CommunicationRecord["routingScope"];
+  readonly deliveryKind: CommunicationRecord["deliveryKind"];
+  readonly transitionWhen: string;
+  readonly sourceNodeExecId: string;
+  readonly payloadRef: OutputRef;
+  readonly outputPayload: Readonly<Record<string, unknown>>;
+  readonly deliveredByNodeId: string;
+  readonly createdAt: string;
+}
+
+async function persistCommunicationArtifact(input: CreateCommunicationInput): Promise<CommunicationRecord> {
+  const communicationId = nextCommunicationId(input.communicationCounter + 1);
+  const deliveryAttemptId = initialDeliveryAttemptId();
+  const communicationDir = path.join(
+    input.artifactWorkflowRoot,
+    "executions",
+    input.workflowExecutionId,
+    "communications",
+    communicationId,
+  );
+  const envelope = {
+    workflowId: input.workflowId,
+    workflowExecutionId: input.workflowExecutionId,
+    communicationId,
+    fromNodeId: input.fromNodeId,
+    toNodeId: input.toNodeId,
+    ...(input.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: input.fromSubWorkflowId }),
+    ...(input.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: input.toSubWorkflowId }),
+    routingScope: input.routingScope,
+    sourceNodeExecId: input.sourceNodeExecId,
+    deliveryKind: input.deliveryKind,
+    payloadRef: {
+      ...input.payloadRef,
+      outputFile: "output.json",
+    },
+    createdAt: input.createdAt,
+  };
+  const meta = {
+    status: "delivered",
+    workflowId: input.workflowId,
+    workflowExecutionId: input.workflowExecutionId,
+    communicationId,
+    fromNodeId: input.fromNodeId,
+    toNodeId: input.toNodeId,
+    sourceNodeExecId: input.sourceNodeExecId,
+    ...(input.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: input.fromSubWorkflowId }),
+    ...(input.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: input.toSubWorkflowId }),
+    routingScope: input.routingScope,
+    deliveryKind: input.deliveryKind,
+    activeDeliveryAttemptId: deliveryAttemptId,
+    deliveryAttemptIds: [deliveryAttemptId],
+    createdAt: input.createdAt,
+    deliveredAt: input.createdAt,
+  };
+  const attempt = {
+    workflowId: input.workflowId,
+    workflowExecutionId: input.workflowExecutionId,
+    communicationId,
+    deliveryAttemptId,
+    toNodeId: input.toNodeId,
+    status: "succeeded",
+    startedAt: input.createdAt,
+    endedAt: input.createdAt,
+  };
+  const receipt = {
+    communicationId,
+    deliveryAttemptId,
+    deliveredByNodeId: input.deliveredByNodeId,
+    deliveredAt: input.createdAt,
+  };
+
+  await mkdir(path.join(communicationDir, "outbox", input.fromNodeId), { recursive: true });
+  await mkdir(path.join(communicationDir, "inbox", input.toNodeId), { recursive: true });
+  await mkdir(path.join(communicationDir, "attempts", deliveryAttemptId), { recursive: true });
+
+  await writeJsonFile(path.join(communicationDir, "message.json"), envelope);
+  await writeJsonFile(path.join(communicationDir, "outbox", input.fromNodeId, "message.json"), envelope);
+  await writeJsonFile(path.join(communicationDir, "outbox", input.fromNodeId, "output.json"), input.outputPayload);
+  await writeJsonFile(path.join(communicationDir, "inbox", input.toNodeId, "message.json"), envelope);
+  await writeJsonFile(path.join(communicationDir, "attempts", deliveryAttemptId, "attempt.json"), attempt);
+  await writeJsonFile(path.join(communicationDir, "attempts", deliveryAttemptId, "receipt.json"), receipt);
+  await writeJsonFile(path.join(communicationDir, "meta.json"), meta);
+
+  return {
+    workflowId: input.workflowId,
+    workflowExecutionId: input.workflowExecutionId,
+    communicationId,
+    fromNodeId: input.fromNodeId,
+    toNodeId: input.toNodeId,
+    ...(input.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: input.fromSubWorkflowId }),
+    ...(input.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: input.toSubWorkflowId }),
+    routingScope: input.routingScope,
+    sourceNodeExecId: input.sourceNodeExecId,
+    payloadRef: input.payloadRef,
+    deliveryKind: input.deliveryKind,
+    transitionWhen: input.transitionWhen,
+    status: "delivered",
+    activeDeliveryAttemptId: deliveryAttemptId,
+    deliveryAttemptIds: [deliveryAttemptId],
+    createdAt: input.createdAt,
+    deliveredAt: input.createdAt,
+    artifactDir: communicationDir,
+  };
+}
+
+async function markCommunicationsConsumed(
+  session: WorkflowSessionState,
+  communicationIds: readonly string[],
+  consumedByNodeExecId: string,
+  consumedAt: string,
+): Promise<Result<readonly CommunicationRecord[], string>> {
+  if (communicationIds.length === 0) {
+    return ok(session.communications);
+  }
+
+  const consumedSet = new Set(communicationIds);
+  const updates: CommunicationRecord[] = [];
+  for (const communication of session.communications) {
+    if (!consumedSet.has(communication.communicationId)) {
+      updates.push(communication);
+      continue;
+    }
+
+    const activeAttemptId =
+      communication.activeDeliveryAttemptId ??
+      communication.deliveryAttemptIds[communication.deliveryAttemptIds.length - 1] ??
+      initialDeliveryAttemptId();
+    const metaPath = path.join(communication.artifactDir, "meta.json");
+    const receiptPath = path.join(communication.artifactDir, "attempts", activeAttemptId, "receipt.json");
+
+    let parsedMeta: Record<string, unknown>;
+    let parsedReceipt: Record<string, unknown>;
+    try {
+      parsedMeta = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
+      parsedReceipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      return err(`failed to load mailbox delivery metadata for '${communication.communicationId}': ${message}`);
+    }
+
+    try {
+      await writeJsonFile(receiptPath, {
+        ...parsedReceipt,
+        consumedByNodeExecId,
+        consumedAt,
+      });
+      await writeJsonFile(metaPath, {
+        ...parsedMeta,
+        status: "consumed",
+        consumedByNodeExecId,
+        consumedAt,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      return err(`failed to persist mailbox consumption for '${communication.communicationId}': ${message}`);
+    }
+
+    updates.push({
+      ...communication,
+      status: "consumed",
+      consumedByNodeExecId,
+      consumedAt,
+    });
+  }
+
+  return ok(updates);
 }
 
 function isTerminalStatus(status: WorkflowSessionState["status"]): boolean {
@@ -273,6 +501,8 @@ function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
     restartEvents: [...(session.restartEvents ?? [])],
     transitions: [...session.transitions],
     nodeExecutions: [...session.nodeExecutions],
+    communicationCounter: session.communicationCounter,
+    communications: [...session.communications],
     conversationTurns: [...(session.conversationTurns ?? [])],
     runtimeVariables: { ...session.runtimeVariables },
   };
@@ -298,7 +528,8 @@ export async function runWorkflow(
   const workflowNodes = new Map(workflow.nodes.map((entry) => [entry.id, entry]));
   const loopRuleByJudgeNodeId = new Map<string, LoopRule>((workflow.loops ?? []).map((entry) => [entry.judgeNodeId, entry]));
   const effectiveAdapter =
-    adapter ?? (options.mockScenario === undefined ? new DeterministicNodeAdapter() : new ScenarioNodeAdapter(options.mockScenario));
+    adapter ??
+    (options.mockScenario === undefined ? new DispatchingNodeAdapter() : new ScenarioNodeAdapter(options.mockScenario));
   const cancellationProbe =
     guards?.cancellationProbe ??
     ({
@@ -438,33 +669,37 @@ export async function runWorkflow(
       const nextCount = (session.nodeExecutionCounts[nodeId] ?? 0) + 1;
       const updatedCounts = { ...session.nodeExecutionCounts, [nodeId]: nextCount };
       const loopRule = loopRuleByJudgeNodeId.get(nodeId);
-      if (loopRule === undefined && nextCount > maxLoopIterations) {
+
+      const nextExecutionCounter = session.nodeExecutionCounter + 1;
+      const nodeExecId = nextNodeExecId(nextExecutionCounter);
+      const workflowExecutionRoot = path.join(loaded.value.artifactWorkflowRoot, "executions", session.sessionId);
+      const artifactDir = path.join(workflowExecutionRoot, "nodes", nodeId, nodeExecId);
+      await mkdir(artifactDir, { recursive: true });
+
+      const mergedVariables = mergeVariables(nodePayload.variables, session.runtimeVariables);
+      const upstreamOutputRefs = buildUpstreamOutputRefs(workflow, session, nodeId);
+      const upstreamInputsResult = await buildUpstreamInputs(workflow, session, nodeId);
+      if (!upstreamInputsResult.ok) {
         const failed: WorkflowSessionState = {
           ...session,
           queue,
           status: "failed",
           currentNodeId: nodeId,
           endedAt: nowIso(),
-          lastError: `loop budget exceeded for node '${nodeId}'`,
+          lastError: upstreamInputsResult.error,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 4, message: failed.lastError ?? "loop budget exceeded" });
+        return err({ exitCode: 1, message: failed.lastError ?? "upstream communication resolution failed" });
       }
-
-      const nextExecutionCounter = session.nodeExecutionCounter + 1;
-      const nodeExecId = nextNodeExecId(nextExecutionCounter);
-      const artifactDir = path.join(loaded.value.artifactWorkflowRoot, nodeId, nodeExecId);
-      await mkdir(artifactDir, { recursive: true });
-
-      const mergedVariables = mergeVariables(nodePayload.variables, session.runtimeVariables);
-      const upstreamOutputRefs = buildUpstreamOutputRefs(session, nodeId);
-      const upstreamInputs = await buildUpstreamInputs(session, nodeId);
+      const upstreamInputs = upstreamInputsResult.value;
       const upstreamBindingInputs = upstreamInputs.map((entry) => ({
         fromNodeId: entry.fromNodeId,
         transitionWhen: entry.transitionWhen,
         status: entry.status,
+        communicationId: entry.communicationId,
         output: entry.output,
       }));
+      const upstreamCommunicationIds = upstreamInputs.map((entry) => entry.communicationId);
       const transcriptInput = (session.conversationTurns ?? []).map((turn) => ({
         conversationId: turn.conversationId,
         turnIndex: turn.turnIndex,
@@ -510,6 +745,7 @@ export async function runWorkflow(
         arguments: assembledArguments,
         variables: mergedVariables,
         upstreamOutputRefs,
+        upstreamCommunications: upstreamCommunicationIds,
         restartAttempt,
         ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
         dryRun: options.dryRun ?? false,
@@ -644,6 +880,7 @@ export async function runWorkflow(
         ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
       };
       const outputRef = outputRefForExecution(
+        workflow,
         { ...session, workflowId: workflow.workflowId },
         {
           nodeId,
@@ -657,6 +894,8 @@ export async function runWorkflow(
       );
       const inputHash = sha256Hex(inputJson);
       const outputHash = sha256Hex(outputJson);
+      let currentCommunications: readonly CommunicationRecord[] = session.communications;
+      let currentCommunicationCounter = session.communicationCounter;
 
       const handoffPayload = {
         schemaVersion: 1,
@@ -735,6 +974,8 @@ export async function runWorkflow(
             restartCounts: { ...(session.restartCounts ?? {}), [nodeId]: restartCountForNode },
             restartEvents,
             nodeExecutions,
+            communicationCounter: currentCommunicationCounter,
+            communications: currentCommunications,
             lastError: `stuck detected at '${nodeId}', restarting attempt ${restartAttempt + 1}`,
           };
           await saveSession(session, options);
@@ -756,6 +997,8 @@ export async function runWorkflow(
           nodeExecutionCounter: nextExecutionCounter,
           nodeExecutionCounts: updatedCounts,
           nodeExecutions,
+          communicationCounter: currentCommunicationCounter,
+          communications: currentCommunications,
           lastError: `node timeout at '${nodeId}'`,
         };
         await saveSession(failed, options);
@@ -772,6 +1015,8 @@ export async function runWorkflow(
           nodeExecutionCounter: nextExecutionCounter,
           nodeExecutionCounts: updatedCounts,
           nodeExecutions,
+          communicationCounter: currentCommunicationCounter,
+          communications: currentCommunications,
           lastError: `adapter failure at '${nodeId}'`,
         };
         await saveSession(failed, options);
@@ -793,6 +1038,8 @@ export async function runWorkflow(
           nodeExecutionCounts: updatedCounts,
           nodeExecutions,
           loopIterationCounts: updatedLoopIterationCounts,
+          communicationCounter: currentCommunicationCounter,
+          communications: currentCommunications,
           lastError:
             completion.reason === null
               ? `completion condition not met at '${nodeId}'`
@@ -801,33 +1048,162 @@ export async function runWorkflow(
         await saveSession(failed, options);
         return err({ exitCode: 3, message: failed.lastError ?? "completion condition not met" });
       }
+      const consumedCommunicationsResult = await markCommunicationsConsumed(
+        { ...session, communications: currentCommunications },
+        upstreamCommunicationIds,
+        nodeExecId,
+        endedAt,
+      );
+      if (!consumedCommunicationsResult.ok) {
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt,
+          nodeExecutionCounter: nextExecutionCounter,
+          nodeExecutionCounts: updatedCounts,
+          nodeExecutions,
+          loopIterationCounts: updatedLoopIterationCounts,
+          communicationCounter: currentCommunicationCounter,
+          communications: currentCommunications,
+          lastError: consumedCommunicationsResult.error,
+        };
+        await saveSession(failed, options);
+        return err({ exitCode: 1, message: failed.lastError ?? "mailbox consumption persistence failed" });
+      }
+      currentCommunications = consumedCommunicationsResult.value;
+      const transitionCommunications = await Promise.all(
+        selected.map((edge, index) =>
+          persistCommunicationArtifact({
+            artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+            workflowId: workflow.workflowId,
+            workflowExecutionId: session.sessionId,
+            communicationCounter: currentCommunicationCounter + index,
+            fromNodeId: edge.from,
+            toNodeId: edge.to,
+            routingScope: "intra-sub-workflow",
+            deliveryKind: edge.to === edge.from ? "loop-back" : "edge-transition",
+            transitionWhen: edge.when,
+            sourceNodeExecId: nodeExecId,
+            payloadRef: outputRef,
+            outputPayload,
+            deliveredByNodeId: workflow.managerNodeId,
+            createdAt: endedAt,
+          }),
+        ),
+      );
+      currentCommunications = [...currentCommunications, ...transitionCommunications];
+      currentCommunicationCounter += transitionCommunications.length;
 
       const transitions = [
         ...session.transitions,
         ...selected.map((edge) => ({ from: edge.from, to: edge.to, when: edge.when })),
       ];
       const transitionNextNodes = selected.map((edge) => edge.to);
-      const managerPlannedInputs =
-        nodeRef.kind === "manager"
-          ? planManagerSubWorkflowInputs({
+      let managerPlannedInputs = isManagerNodeKind(nodeRef.kind)
+        ? nodeRef.kind === "sub-manager"
+          ? [...planSubWorkflowChildInputs({
               workflow,
               session: {
                 ...session,
                 nodeExecutions,
               },
-            })
-          : [];
+              managerNodeId: nodeId,
+            })]
+          : []
+        : [];
+
+      let managerPlannedCommunications: readonly CommunicationRecord[] = [];
+      if (nodeId === workflow.managerNodeId) {
+        const plannedSubWorkflowStarts = planRootManagerSubWorkflowStarts({
+          workflow,
+          session: {
+            ...session,
+            nodeExecutions,
+          },
+        });
+        const persistedStarts: CommunicationRecord[] = [];
+        for (const subWorkflow of plannedSubWorkflowStarts) {
+          if (subWorkflow.managerNodeId === undefined || subWorkflow.managerNodeId === workflow.managerNodeId) {
+            managerPlannedInputs.push(subWorkflow.inputNodeId);
+            continue;
+          }
+          const communication = await persistCommunicationArtifact({
+            artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+            workflowId: workflow.workflowId,
+            workflowExecutionId: session.sessionId,
+            communicationCounter: currentCommunicationCounter,
+            fromNodeId: nodeId,
+            toNodeId: subWorkflow.managerNodeId,
+            toSubWorkflowId: subWorkflow.id,
+            routingScope: "parent-to-sub-workflow",
+            deliveryKind: "edge-transition",
+            transitionWhen: `sub-workflow-start:${subWorkflow.id}`,
+            sourceNodeExecId: nodeExecId,
+            payloadRef: outputRef,
+            outputPayload,
+            deliveredByNodeId: nodeId,
+            createdAt: endedAt,
+          });
+          currentCommunicationCounter += 1;
+          persistedStarts.push(communication);
+          managerPlannedInputs.push(subWorkflow.managerNodeId);
+        }
+        managerPlannedCommunications = persistedStarts;
+      } else if (nodeRef.kind === "sub-manager") {
+        const forwardedPayloads = upstreamInputs.length === 0
+          ? [{ payloadRef: outputRef, outputPayload }]
+          : upstreamInputs.map((entry) => ({
+              payloadRef: {
+                workflowExecutionId: entry.workflowExecutionId,
+                workflowId: entry.workflowId,
+                ...(entry.subWorkflowId === undefined ? {} : { subWorkflowId: entry.subWorkflowId }),
+                outputNodeId: entry.outputNodeId,
+                nodeExecId: entry.nodeExecId,
+                artifactDir: entry.artifactDir,
+              },
+              outputPayload: entry.output,
+            }));
+        const persistedChildInputs: CommunicationRecord[] = [];
+        for (const inputNodeId of managerPlannedInputs) {
+          for (const forwarded of forwardedPayloads) {
+            const communication = await persistCommunicationArtifact({
+              artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              workflowId: workflow.workflowId,
+              workflowExecutionId: session.sessionId,
+              communicationCounter: currentCommunicationCounter,
+              fromNodeId: nodeId,
+              toNodeId: inputNodeId,
+              routingScope: "intra-sub-workflow",
+              deliveryKind: "edge-transition",
+              transitionWhen: `sub-manager-input:${inputNodeId}`,
+              sourceNodeExecId: forwarded.payloadRef.nodeExecId,
+              payloadRef: forwarded.payloadRef,
+              outputPayload: forwarded.outputPayload,
+              deliveredByNodeId: nodeId,
+              createdAt: endedAt,
+            });
+            currentCommunicationCounter += 1;
+            persistedChildInputs.push(communication);
+          }
+        }
+        managerPlannedCommunications = persistedChildInputs;
+      }
+      currentCommunications = [...currentCommunications, ...managerPlannedCommunications];
 
       let conversationTurns = [...(session.conversationTurns ?? [])];
       let conversationPlannedInputs: string[] = [];
-      if (nodeRef.kind === "manager") {
+      if (isManagerNodeKind(nodeRef.kind)) {
         const conversationRound = await executeConversationRound({
           workflow,
-          sessionId: session.sessionId,
+          workflowExecutionId: session.sessionId,
           session: {
             ...session,
             nodeExecutions,
             conversationTurns,
+            communicationCounter: currentCommunicationCounter,
+            communications: currentCommunications,
           },
         });
 
@@ -842,6 +1218,8 @@ export async function runWorkflow(
             nodeExecutionCounts: updatedCounts,
             nodeExecutions,
             loopIterationCounts: updatedLoopIterationCounts,
+            communicationCounter: currentCommunicationCounter,
+            communications: currentCommunications,
             conversationTurns,
             lastError: "conversation round execution failed",
           };
@@ -850,16 +1228,68 @@ export async function runWorkflow(
         }
 
         if (conversationRound.turns.length > 0) {
+          const successfulTurnDeliveries: Array<{
+            readonly turn: (typeof conversationRound.turns)[number];
+            readonly communication: CommunicationRecord;
+            readonly receiverManagerNodeId: string;
+          }> = [];
+          for (const turn of conversationRound.turns) {
+            if (turn.toManagerNodeId === undefined) {
+              continue;
+            }
+            const parsedOutput = await readOutputPayloadArtifact(turn.outputRef.artifactDir);
+            if (!parsedOutput.ok) {
+              const failed: WorkflowSessionState = {
+                ...session,
+                queue,
+                status: "failed",
+                currentNodeId: nodeId,
+                endedAt,
+                nodeExecutionCounter: nextExecutionCounter,
+                nodeExecutionCounts: updatedCounts,
+                nodeExecutions,
+                loopIterationCounts: updatedLoopIterationCounts,
+                communicationCounter: currentCommunicationCounter,
+                communications: currentCommunications,
+                conversationTurns,
+                lastError:
+                  `failed to resolve conversation output for '${turn.fromSubWorkflowId}' -> '${turn.toSubWorkflowId}': ` +
+                  parsedOutput.error,
+              };
+              await saveSession(failed, options);
+              return err({ exitCode: 1, message: failed.lastError ?? "conversation output resolution failed" });
+            }
+            const communication = await persistCommunicationArtifact({
+              artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              workflowId: workflow.workflowId,
+              workflowExecutionId: session.sessionId,
+              communicationCounter: currentCommunicationCounter,
+              fromNodeId: turn.fromManagerNodeId,
+              toNodeId: turn.toManagerNodeId,
+              fromSubWorkflowId: turn.fromSubWorkflowId,
+              toSubWorkflowId: turn.toSubWorkflowId,
+              routingScope: "cross-sub-workflow",
+              deliveryKind: "conversation-turn",
+              transitionWhen: `conversation:${turn.conversationId}:${turn.turnIndex}`,
+              sourceNodeExecId: turn.outputRef.nodeExecId,
+              payloadRef: turn.outputRef,
+              outputPayload: parsedOutput.value,
+              deliveredByNodeId: workflow.managerNodeId,
+              createdAt: endedAt,
+            });
+            currentCommunicationCounter += 1;
+            successfulTurnDeliveries.push({ turn, communication, receiverManagerNodeId: turn.toManagerNodeId });
+          }
+          currentCommunications = [...currentCommunications, ...successfulTurnDeliveries.map((entry) => entry.communication)];
           conversationTurns = [
             ...conversationTurns,
-            ...conversationRound.turns.map((turn) => ({
-              ...turn,
+            ...successfulTurnDeliveries.map((entry) => ({
+              ...entry.turn,
+              communicationId: entry.communication.communicationId,
               sentAt: endedAt,
             })),
           ];
-          conversationPlannedInputs = conversationRound.turns
-            .map((turn) => workflow.subWorkflows.find((entry) => entry.id === turn.toSubWorkflowId)?.inputNodeId)
-            .filter((entry): entry is string => entry !== undefined);
+          conversationPlannedInputs = successfulTurnDeliveries.map((entry) => entry.receiverManagerNodeId);
         }
       }
 
@@ -877,6 +1307,8 @@ export async function runWorkflow(
         loopIterationCounts: updatedLoopIterationCounts,
         transitions,
         nodeExecutions,
+        communicationCounter: currentCommunicationCounter,
+        communications: currentCommunications,
         conversationTurns,
       };
 

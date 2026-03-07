@@ -38,6 +38,11 @@ describe("library api", () => {
       artifactRoot: path.join(root, "artifacts"),
       cwd: root,
     };
+    const mockScenario = {
+      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+      "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+    } as const;
 
     const summary = await inspectWorkflow("demo", options);
     expect(summary.workflowName).toBe("demo");
@@ -45,6 +50,7 @@ describe("library api", () => {
     const paused = await executeWorkflow({
       workflowName: "demo",
       ...options,
+      mockScenario,
       maxSteps: 1,
     });
     expect(paused.status).toBe("paused");
@@ -56,6 +62,7 @@ describe("library api", () => {
     const resumed = await resumeWorkflow({
       ...options,
       sessionId: paused.sessionId,
+      mockScenario,
     });
     expect(resumed.status).toBe("completed");
     expect(resumed.exitCode).toBe(0);

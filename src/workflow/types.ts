@@ -1,9 +1,16 @@
-export type AgentModel = "tacogips/codex-agent" | "tacogips/claude-code-agent";
+export type CliAgentBackend = "tacogips/codex-agent" | "tacogips/claude-code-agent";
+
+export type NodeExecutionBackend =
+  | CliAgentBackend
+  | "official/openai-sdk"
+  | "official/anthropic-sdk";
 
 export type NodeKind =
   | "task"
   | "branch-judge"
   | "loop-judge"
+  | "root-manager"
+  | "sub-manager"
   | "manager"
   | "input"
   | "output";
@@ -76,8 +83,10 @@ export interface SubWorkflowInputSource {
 export interface SubWorkflowRef {
   readonly id: string;
   readonly description: string;
+  readonly managerNodeId?: string;
   readonly inputNodeId: string;
   readonly outputNodeId: string;
+  readonly nodeIds?: readonly string[];
   readonly inputSources: readonly SubWorkflowInputSource[];
 }
 
@@ -119,7 +128,8 @@ export interface ArgumentBinding {
 
 export interface NodePayload {
   readonly id: string;
-  readonly model: AgentModel;
+  readonly model: string;
+  readonly executionBackend?: NodeExecutionBackend;
   readonly promptTemplate: string;
   readonly variables: Readonly<Record<string, unknown>>;
   readonly argumentsTemplate?: Readonly<Record<string, unknown>>;

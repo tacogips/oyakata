@@ -269,6 +269,17 @@ async function readMockScenario(pathToJson: string): Promise<MockNodeScenario> {
   return parsed as MockNodeScenario;
 }
 
+async function readMockScenarioOption(
+  pathToJson: string | undefined,
+): Promise<Readonly<{ mockScenario?: MockNodeScenario }>> {
+  if (pathToJson === undefined) {
+    return {};
+  }
+  return {
+    mockScenario: await readMockScenario(pathToJson),
+  };
+}
+
 function emitJson(io: CliIo, payload: unknown): void {
   io.stdout(JSON.stringify(payload, null, 2));
 }
@@ -400,13 +411,21 @@ async function runTui(
         io.stderr(`failed to load resume session: ${session.error.message}`);
         return 1;
       }
+      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
+      try {
+        mockScenarioOptions = await readMockScenarioOption(parsedOptions.mockScenarioPath);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        return 1;
+      }
       return runAndReportProgress(
         session.value.workflowName,
         {
           ...optionRuntimeVariables,
           resumedFromSessionId: session.value.sessionId,
         },
-        undefined,
+        mockScenarioOptions.mockScenario,
         session.value.sessionId,
       );
     }
@@ -671,7 +690,6 @@ export async function runCli(
 
     if (command === "run") {
       let runtimeVariables: Readonly<Record<string, unknown>> = {};
-      let mockScenario: MockNodeScenario | undefined;
       if (parsed.options.variablesPath !== undefined) {
         try {
           runtimeVariables = await readRuntimeVariables(parsed.options.variablesPath);
@@ -681,20 +699,19 @@ export async function runCli(
           return 1;
         }
       }
-      if (parsed.options.mockScenarioPath !== undefined) {
-        try {
-          mockScenario = await readMockScenario(parsed.options.mockScenarioPath);
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          io.stderr(`failed to read --mock-scenario file: ${message}`);
-          return 1;
-        }
+      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
+      try {
+        mockScenarioOptions = await readMockScenarioOption(parsed.options.mockScenarioPath);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        return 1;
       }
 
       const result = await runWorkflow(target, {
         ...sharedOptions,
         runtimeVariables,
-        ...(mockScenario === undefined ? {} : { mockScenario }),
+        ...mockScenarioOptions,
         dryRun: parsed.options.dryRun,
         ...(parsed.options.maxSteps === undefined ? {} : { maxSteps: parsed.options.maxSteps }),
         ...(parsed.options.maxLoopIterations === undefined
@@ -807,9 +824,19 @@ export async function runCli(
         return 1;
       }
 
+      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
+      try {
+        mockScenarioOptions = await readMockScenarioOption(parsed.options.mockScenarioPath);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        return 1;
+      }
+
       const result = await runWorkflow(session.value.workflowName, {
         ...sharedOptions,
         resumeSessionId: session.value.sessionId,
+        ...mockScenarioOptions,
       });
 
       if (!result.ok) {
@@ -844,10 +871,20 @@ export async function runCli(
         return 1;
       }
 
+      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
+      try {
+        mockScenarioOptions = await readMockScenarioOption(parsed.options.mockScenarioPath);
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        return 1;
+      }
+
       const result = await runWorkflow(source.value.workflowName, {
         ...sharedOptions,
         rerunFromSessionId: source.value.sessionId,
         rerunFromNodeId: fromNodeId,
+        ...mockScenarioOptions,
       });
 
       if (!result.ok) {

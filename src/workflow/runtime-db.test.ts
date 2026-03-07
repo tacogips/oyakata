@@ -73,7 +73,11 @@ describe("runtime-db", () => {
       cwd: root,
     };
 
-    const result = await runWorkflow("sqlite-index", options);
+    const mockScenario = {
+      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "step-1": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+    };
+    const result = await runWorkflow("sqlite-index", { ...options, mockScenario });
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
