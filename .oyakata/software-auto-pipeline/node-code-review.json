@@ -1,8 +1,0 @@
-{
-  "id": "code-review",
-  "model": "tacogips/claude-code-agent",
-  "promptTemplate": "Perform code review and report findings for {{featureName}}.",
-  "variables": {
-    "featureName": "deterministic-pipeline"
-  }
-}

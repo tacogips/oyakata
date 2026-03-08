@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+ui/dist/
 *.tsbuildinfo
 
 # SvelteKit
@@ -54,7 +55,11 @@ impl-plans/.progress.lock
 .private*/
 
 # oyakata runtime artifacts and session store (default paths)
-.oyakata/workflow/
-.oyakata/workflow/**
+.oyakata/
+.oyakata/**
+.oyakata-data/
+.oyakata-data/**
 .oyakata-opt/
 .oyakata-opt/**
+.oyakata-datas/
+.oyakata-datas/**

@@ -62,6 +62,9 @@ Outputs:
 
 7. Local HTTP Server (`oyakata serve`)
 - Hosts browser UI (Svelte) and local API on one process
+- Serves a built frontend bundle from `ui/dist/` when present
+- Falls back to the legacy inline browser editor until the Svelte bundle is available
+- Exposes a small UI bootstrap/config endpoint so frontend assets do not need server mode baked in at build time
 - Supports workflow listing/loading/saving/validation
 - Supports workflow execution start/observe/cancel
 - Restricts by default to local interface (`127.0.0.1`)
@@ -72,6 +75,11 @@ Outputs:
 - Node payload editing (`executionBackend`, `model`, `promptTemplate`, `variables`, `timeoutMs`)
 - Layout editing persisted to `workflow-vis.json`
 - Run controls and execution trace view for local sessions
+- Uses the existing local JSON API; frontend build output is treated as replaceable static assets rather than inline server-rendered HTML
+- Migration from the current inline browser editor is phased so `oyakata serve` stays usable during the rewrite
+- The frontend build is a separate project rooted at `ui/`; repository automation must invoke explicit UI verification because the root Bun/TypeScript pipeline does not discover Svelte sources automatically
+- UI verification uses `svelte-check` rather than plain `tsc` alone, because `.svelte` components are part of the executable frontend surface
+- Reserved structure node roles (`root-manager`, `sub-manager`, `input`, `output`) are assigned from workflow structure metadata and sub-workflow boundaries, not treated as freeform node-kind values
 
 9. TUI Runtime (Bun + `neo-blessed`)
 - Full-screen terminal workflow selector and execution console
@@ -105,7 +113,7 @@ Where:
 - `{artifact-root}` resolution order:
   1. CLI `--artifact-root`
   2. `OYAKATA_ARTIFACT_ROOT`
-  3. `./.oyakata/workflow` (default)
+  3. `./.oyakata-datas/workflow` (default)
 - `{workflow_id}` is `workflow.json.workflowId`.
 - `{workflowExecutionId}` is the unique id for the enclosing workflow run.
 - `{node}` is the workflow node id.
@@ -160,6 +168,7 @@ Rules:
 - Sub-workflows do not communicate directly; all messages are routed by the `oyakata` manager node.
 - Cross-sub-workflow transport terminates at the recipient sub-workflow manager node, never at a leaf task node inside that sub-workflow.
 - After receipt, the recipient sub-workflow manager node is solely responsible for routing the message to child nodes inside that sub-workflow.
+- Workflow validation must reject cross-scope edges that bypass those manager boundaries, including root-to-child and child-to-root-worker direct edges.
 - Prompt composition details for this nested manager model are defined in `design-docs/specs/design-oyakata-manager-prompt-contract.md`.
 - Conversation participants are declared in workflow configuration.
 - Each conversation enforces termination controls:
@@ -201,6 +210,7 @@ Mailbox transport contract:
 - when a node declares an output contract, external LLM adapters must receive only the reserved candidate staging path for structured-output submission, not the final publish path
 - detailed storage and replay rules are defined in `design-docs/specs/design-node-mailbox.md`
 - node output contract and schema-validation publication rules are defined in `design-docs/specs/design-node-output-contract.md`
+- external workflow result publication is runtime-owned and must resolve from the latest accepted root-scope `output` node artifact, never from an arbitrary last session response; see `design-docs/specs/design-runtime-owned-external-output-publication.md`
 
 ### Node Model
 
@@ -320,9 +330,12 @@ Primary API groups:
 - `GET /api/workflows/:name`: load normalized workflow + node payloads + vis state
 - `PUT /api/workflows/:name`: save workflow changes to file set
 - `POST /api/workflows/:name/validate`: run structural and semantic validation
-- `POST /api/workflows/:name/execute`: start execution session
-- `GET /api/sessions/:id`: poll current execution state
-- `POST /api/sessions/:id/cancel`: request cancellation
+- `POST /api/workflows/:name/execute`: start execution session and return canonical `workflowExecutionId` plus compatibility `sessionId`
+- `GET /api/workflow-executions/:id`: poll current execution state
+- `POST /api/workflow-executions/:id/cancel`: request cancellation
+- Legacy compatibility aliases through `2026-09-30`:
+  - `GET /api/sessions/:id`
+  - `POST /api/sessions/:id/cancel`
 
 Design constraints:
 - File writes must be atomic (temp file + rename) to avoid JSON corruption.

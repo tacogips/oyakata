@@ -77,5 +77,5 @@
 - Resolution order:
   1. CLI `--artifact-root`
   2. `OYAKATA_ARTIFACT_ROOT`
-  3. `./.oyakata/workflow` (default)
+  3. `./.oyakata-datas/workflow` (default)
 - Artifact path format remains `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`.

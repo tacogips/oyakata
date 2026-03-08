@@ -1,8 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { handleApiRequest } from "./api";
+import { handleApiRequest, resolveDefaultUiDistRoot } from "./api";
 import { createWorkflowTemplate } from "../workflow/create";
 
 const tempDirs: string[] = [];
@@ -35,6 +35,7 @@ describe("handleApiRequest", () => {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
+      uiDistRoot: path.join(root, "missing-ui-dist"),
     });
     expect(uiRes.status).toBe(200);
     expect(uiRes.headers.get("content-type")).toContain("text/html");
@@ -125,6 +126,7 @@ describe("handleApiRequest", () => {
       fixedWorkflowName: "demo",
       readOnly: true,
       noExec: true,
+      uiDistRoot: path.join(root, "missing-ui-dist"),
     });
 
     expect(uiRes.status).toBe(200);
@@ -162,6 +164,106 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("if (polledSessionId !== sessionId || state.selectedSessionId !== sessionId)");
     expect(uiText).toContain('loadSessions(undefined, { refreshSelectedDetails: true }).catch((error) => {');
     expect(uiText).toContain('loadSessions(state.selectedSessionId, { refreshSelectedDetails: true }).catch((error) => {');
+  });
+
+  test("returns UI bootstrap config with legacy frontend mode when no built UI exists", async () => {
+    const root = await makeTempDir();
+
+    const res = await handleApiRequest(new Request("http://localhost/api/ui-config"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      fixedWorkflowName: "demo",
+      readOnly: true,
+      noExec: true,
+      uiDistRoot: path.join(root, "missing-ui-dist"),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      fixedWorkflowName: "demo",
+      readOnly: true,
+      noExec: true,
+      frontend: "legacy-inline",
+    });
+  });
+
+  test("resolves default ui/dist relative to the package root instead of cwd", () => {
+    const fakeBuiltModuleUrl = new URL("file:///tmp/oyakata-installed/dist/server/api.js").href;
+    expect(resolveDefaultUiDistRoot(fakeBuiltModuleUrl)).toBe(path.join("/tmp/oyakata-installed", "ui", "dist"));
+
+    const fakeSourceModuleUrl = new URL("file:///tmp/oyakata-dev/src/server/api.ts").href;
+    expect(resolveDefaultUiDistRoot(fakeSourceModuleUrl)).toBe(path.join("/tmp/oyakata-dev", "ui", "dist"));
+  });
+
+  test("serves built UI assets when ui/dist output is available", async () => {
+    const root = await makeTempDir();
+    const uiDistRoot = path.join(root, "ui-dist");
+    await mkdir(path.join(uiDistRoot, "assets"), { recursive: true });
+    await writeFile(
+      path.join(uiDistRoot, "index.html"),
+      "<!doctype html><html><body><div id=\"app\">svelte build</div><script src=\"/assets/app.js\"></script></body></html>",
+      "utf8",
+    );
+    await writeFile(path.join(uiDistRoot, "assets", "app.js"), "console.log('svelte asset');", "utf8");
+    await writeFile(path.join(uiDistRoot, "favicon.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", "utf8");
+
+    const uiRes = await handleApiRequest(new Request("http://localhost/"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      uiDistRoot,
+    });
+    expect(uiRes.status).toBe(200);
+    expect(uiRes.headers.get("content-type")).toContain("text/html");
+    await expect(uiRes.text()).resolves.toContain("svelte build");
+
+    const assetRes = await handleApiRequest(new Request("http://localhost/assets/app.js"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      uiDistRoot,
+    });
+    expect(assetRes.status).toBe(200);
+    expect(assetRes.headers.get("content-type")).toContain("text/javascript");
+    await expect(assetRes.text()).resolves.toContain("svelte asset");
+
+    const iconRes = await handleApiRequest(new Request("http://localhost/favicon.svg"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      uiDistRoot,
+    });
+    expect(iconRes.status).toBe(200);
+    expect(iconRes.headers.get("content-type")).toContain("image/svg+xml");
+    await expect(iconRes.text()).resolves.toContain("<svg");
+
+    const configRes = await handleApiRequest(new Request("http://localhost/api/ui-config"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      uiDistRoot,
+    });
+    await expect(configRes.json()).resolves.toMatchObject({
+      frontend: "svelte-dist",
+    });
+  });
+
+  test("does not serve encoded traversal-like asset paths outside the built UI root", async () => {
+    const root = await makeTempDir();
+    const uiDistRoot = path.join(root, "ui-dist");
+    await mkdir(uiDistRoot, { recursive: true });
+    await writeFile(path.join(uiDistRoot, "index.html"), "<!doctype html><html><body>safe</body></html>", "utf8");
+    await writeFile(path.join(root, "secret.txt"), "do not expose", "utf8");
+
+    const res = await handleApiRequest(new Request("http://localhost/%2e%2e%2fsecret.txt"), {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      uiDistRoot,
+    });
+
+    expect(res.status).toBe(404);
   });
 
   test("lists and gets workflows", async () => {
@@ -330,19 +432,30 @@ describe("handleApiRequest", () => {
       },
     );
     expect(executeRes.status).toBe(200);
-    const executeJson = (await executeRes.json()) as { sessionId: string; status: string };
+    const executeJson = (await executeRes.json()) as {
+      workflowExecutionId: string;
+      sessionId: string;
+      status: string;
+    };
+    expect(executeJson.workflowExecutionId).toBe(executeJson.sessionId);
     expect(executeJson.sessionId).toContain("sess-");
     expect(executeJson.status).toBe("paused");
 
-    const statusRes = await handleApiRequest(new Request(`http://localhost/api/sessions/${executeJson.sessionId}`), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const statusRes = await handleApiRequest(
+      new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(statusRes.status).toBe(200);
+    const statusJson = (await statusRes.json()) as { workflowExecutionId: string; sessionId: string };
+    expect(statusJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    expect(statusJson.sessionId).toBe(executeJson.sessionId);
 
     const cancelRes = await handleApiRequest(
-      new Request(`http://localhost/api/sessions/${executeJson.sessionId}/cancel`, { method: "POST" }),
+      new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}/cancel`, { method: "POST" }),
       {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -350,9 +463,75 @@ describe("handleApiRequest", () => {
       },
     );
     expect(cancelRes.status).toBe(200);
-    const cancelJson = (await cancelRes.json()) as { accepted: boolean; status: string };
+    const cancelJson = (await cancelRes.json()) as {
+      accepted: boolean;
+      status: string;
+      workflowExecutionId: string;
+      sessionId: string;
+    };
     expect(cancelJson.accepted).toBe(true);
     expect(cancelJson.status).toBe("cancelled");
+    expect(cancelJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    expect(cancelJson.sessionId).toBe(executeJson.sessionId);
+  });
+
+  test("supports legacy session status and cancel aliases with workflowExecutionId fields", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const context = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const executeRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo/execute", {
+        method: "POST",
+        body: JSON.stringify({
+          runtimeVariables: { topic: "x", humanInput: { request: "start demo workflow" } },
+          maxSteps: 1,
+          mockScenario: makeDefaultTemplateScenario(),
+        }),
+      }),
+      context,
+    );
+    expect(executeRes.status).toBe(200);
+    const executeJson = (await executeRes.json()) as {
+      workflowExecutionId: string;
+      sessionId: string;
+      status: string;
+    };
+
+    const legacyStatusRes = await handleApiRequest(
+      new Request(`http://localhost/api/sessions/${executeJson.sessionId}`),
+      context,
+    );
+    expect(legacyStatusRes.status).toBe(200);
+    const legacyStatusJson = (await legacyStatusRes.json()) as {
+      workflowExecutionId: string;
+      sessionId: string;
+      status: string;
+    };
+    expect(legacyStatusJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    expect(legacyStatusJson.sessionId).toBe(executeJson.sessionId);
+    expect(legacyStatusJson.status).toBe(executeJson.status);
+
+    const legacyCancelRes = await handleApiRequest(
+      new Request(`http://localhost/api/sessions/${executeJson.sessionId}/cancel`, { method: "POST" }),
+      context,
+    );
+    expect(legacyCancelRes.status).toBe(200);
+    const legacyCancelJson = (await legacyCancelRes.json()) as {
+      accepted: boolean;
+      status: string;
+      workflowExecutionId: string;
+      sessionId: string;
+    };
+    expect(legacyCancelJson.accepted).toBe(true);
+    expect(legacyCancelJson.status).toBe("cancelled");
+    expect(legacyCancelJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    expect(legacyCancelJson.sessionId).toBe(executeJson.sessionId);
   });
 
   test("validates an in-memory bundle before save", async () => {
@@ -527,13 +706,18 @@ describe("handleApiRequest", () => {
       context,
     );
     expect(executeRes.status).toBe(202);
-    const executeJson = (await executeRes.json()) as { sessionId: string; accepted: boolean };
+    const executeJson = (await executeRes.json()) as {
+      workflowExecutionId: string;
+      sessionId: string;
+      accepted: boolean;
+    };
     expect(executeJson.accepted).toBe(true);
+    expect(executeJson.workflowExecutionId).toBe(executeJson.sessionId);
 
     let foundSession = false;
     for (let index = 0; index < 20; index += 1) {
       const statusRes = await handleApiRequest(
-        new Request(`http://localhost/api/sessions/${executeJson.sessionId}`),
+        new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`),
         context,
       );
       if (statusRes.status === 200) {
@@ -547,13 +731,18 @@ describe("handleApiRequest", () => {
     const listRes = await handleApiRequest(new Request("http://localhost/api/sessions"), context);
     expect(listRes.status).toBe(200);
     const listJson = (await listRes.json()) as {
-      sessions: Array<{ sessionId: string; workflowName: string; status: string }>;
+      sessions: Array<{ workflowExecutionId: string; sessionId: string; workflowName: string; status: string }>;
     };
-    expect(listJson.sessions.some((session) => session.sessionId === executeJson.sessionId)).toBe(true);
+    expect(
+      listJson.sessions.some(
+        (session) =>
+          session.workflowExecutionId === executeJson.workflowExecutionId && session.sessionId === executeJson.sessionId,
+      ),
+    ).toBe(true);
 
     for (let index = 0; index < 40; index += 1) {
       const statusRes = await handleApiRequest(
-        new Request(`http://localhost/api/sessions/${executeJson.sessionId}`),
+        new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`),
         context,
       );
       if (statusRes.status !== 200) {

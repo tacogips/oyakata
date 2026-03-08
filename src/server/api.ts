@@ -1,5 +1,6 @@
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { MockNodeScenario } from "../workflow/adapter";
 import { createWorkflowTemplate } from "../workflow/create";
 import { runWorkflow } from "../workflow/engine";
@@ -17,6 +18,25 @@ export interface ApiContext extends LoadOptions, SessionStoreOptions {
   readonly readOnly?: boolean;
   readonly noExec?: boolean;
   readonly fixedWorkflowName?: string;
+  readonly uiDistRoot?: string;
+}
+
+type FrontendMode = "legacy-inline" | "svelte-dist";
+
+export function resolveDefaultUiDistRoot(moduleUrl: string = import.meta.url): string {
+  const packageRoot = fileURLToPath(new URL("../../", moduleUrl));
+  return path.join(packageRoot, "ui", "dist");
+}
+
+const DEFAULT_UI_DIST_ROOT = resolveDefaultUiDistRoot();
+
+function withWorkflowExecutionId<T extends { readonly sessionId: string }>(
+  value: T,
+): T & { readonly workflowExecutionId: string } {
+  return {
+    ...value,
+    workflowExecutionId: value.sessionId,
+  };
 }
 
 function json(payload: unknown, status = 200): Response {
@@ -34,6 +54,139 @@ function html(content: string, status = 200): Response {
     headers: {
       "content-type": "text/html; charset=utf-8",
     },
+  });
+}
+
+function resolveUiDistRoot(context: ApiContext): string {
+  return context.uiDistRoot ?? DEFAULT_UI_DIST_ROOT;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const details = await stat(filePath);
+    return details.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function detectFrontendMode(context: ApiContext): Promise<FrontendMode> {
+  const indexPath = path.join(resolveUiDistRoot(context), "index.html");
+  return (await fileExists(indexPath)) ? "svelte-dist" : "legacy-inline";
+}
+
+function buildUiConfigResponse(context: ApiContext, frontend: FrontendMode): {
+  readonly fixedWorkflowName: string | null;
+  readonly readOnly: boolean;
+  readonly noExec: boolean;
+  readonly frontend: FrontendMode;
+} {
+  return {
+    fixedWorkflowName: context.fixedWorkflowName ?? null,
+    readOnly: context.readOnly === true,
+    noExec: context.noExec === true,
+    frontend,
+  };
+}
+
+function contentTypeForUiAsset(filePath: string): string {
+  switch (path.extname(filePath)) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".ico":
+      return "image/x-icon";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+async function tryServeBuiltUiAsset(urlPath: string, context: ApiContext): Promise<Response | undefined> {
+  const normalizedPath = urlPath === "/" || urlPath === "/ui" || urlPath === "/ui/" ? "/index.html" : urlPath;
+  const relativePath = normalizedPath.startsWith("/") ? normalizedPath.slice(1) : normalizedPath;
+  if (relativePath.length === 0) {
+    return undefined;
+  }
+
+  const segments = relativePath.split("/").filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return undefined;
+  }
+
+  const root = resolveUiDistRoot(context);
+  const candidatePath = path.join(root, ...segments);
+  const relativeToRoot = path.relative(root, candidatePath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    return undefined;
+  }
+
+  if (!(await fileExists(candidatePath))) {
+    return undefined;
+  }
+
+  const body = await readFile(candidatePath);
+  return new Response(new Uint8Array(body), {
+    status: 200,
+    headers: {
+      "content-type": contentTypeForUiAsset(candidatePath),
+    },
+  });
+}
+
+async function loadWorkflowExecutionResponse(workflowExecutionId: string, context: ApiContext): Promise<Response> {
+  const loaded = await loadSession(workflowExecutionId, context);
+  if (!loaded.ok) {
+    return json({ error: loaded.error.message }, 404);
+  }
+
+  return json(withWorkflowExecutionId(loaded.value));
+}
+
+async function cancelWorkflowExecutionResponse(workflowExecutionId: string, context: ApiContext): Promise<Response> {
+  if (context.noExec === true) {
+    return json({ error: "execution is disabled (no-exec mode)" }, 403);
+  }
+
+  const loaded = await loadSession(workflowExecutionId, context);
+  if (!loaded.ok) {
+    return json({ error: loaded.error.message }, 404);
+  }
+
+  if (loaded.value.status === "completed" || loaded.value.status === "failed" || loaded.value.status === "cancelled") {
+    return json({
+      accepted: false,
+      status: loaded.value.status,
+      workflowExecutionId: loaded.value.sessionId,
+      sessionId: loaded.value.sessionId,
+    });
+  }
+
+  const cancelled = {
+    ...loaded.value,
+    status: "cancelled" as const,
+    endedAt: new Date().toISOString(),
+    lastError: "cancelled by API request",
+  };
+
+  const saved = await saveSession(cancelled, context);
+  if (!saved.ok) {
+    return json({ error: saved.error.message }, 500);
+  }
+
+  return json({
+    accepted: true,
+    status: "cancelled",
+    workflowExecutionId: loaded.value.sessionId,
+    sessionId: loaded.value.sessionId,
   });
 }
 
@@ -2721,7 +2874,17 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
   const url = new URL(request.url);
   const parts = routeParts(url.pathname);
 
+  if (url.pathname === "/api/ui-config" && request.method === "GET") {
+    const frontend = await detectFrontendMode(context);
+    return json(buildUiConfigResponse(context, frontend));
+  }
+
   if (url.pathname === "/" || url.pathname === "/ui") {
+    const builtUi = await tryServeBuiltUiAsset(url.pathname, context);
+    if (builtUi !== undefined) {
+      return builtUi;
+    }
+
     return html(
       renderWebUi({
         fixedWorkflowName: context.fixedWorkflowName,
@@ -2733,6 +2896,13 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
 
   if (url.pathname === "/healthz") {
     return json({ service: "oyakata-serve", status: "ok" });
+  }
+
+  if (request.method === "GET" && parts[0] !== "api") {
+    const builtUi = await tryServeBuiltUiAsset(url.pathname, context);
+    if (builtUi !== undefined) {
+      return builtUi;
+    }
   }
 
   if (parts.length === 2 && parts[0] === "api" && parts[1] === "workflows" && request.method === "GET") {
@@ -2792,7 +2962,7 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
         if (!loaded.ok) {
           return undefined;
         }
-        return {
+        return withWorkflowExecutionId({
           sessionId: loaded.value.sessionId,
           workflowName: loaded.value.workflowName,
           status: loaded.value.status,
@@ -2800,7 +2970,7 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
           nodeExecutionCounter: loaded.value.nodeExecutionCounter,
           startedAt: loaded.value.startedAt,
           endedAt: loaded.value.endedAt ?? null,
-        };
+        });
       }),
     );
     return json({ sessions: sessions.filter((entry) => entry !== undefined) });
@@ -2962,7 +3132,7 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
             : {}),
           ...(bodyObj["dryRun"] === true ? { dryRun: true } : {}),
         });
-        return json({ accepted: true, sessionId, status: "running" }, 202);
+        return json({ accepted: true, workflowExecutionId: sessionId, sessionId, status: "running" }, 202);
       }
 
       const runResult = await runWorkflow(workflowName, {
@@ -2985,10 +3155,26 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
       }
 
       return json({
+        workflowExecutionId: runResult.value.session.sessionId,
         sessionId: runResult.value.session.sessionId,
         status: runResult.value.session.status,
         exitCode: runResult.value.exitCode,
       });
+    }
+  }
+
+  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "workflow-executions") {
+    const workflowExecutionId = parts[2];
+    if (workflowExecutionId === undefined) {
+      return json({ error: "workflow execution id is required" }, 400);
+    }
+
+    if (parts.length === 3 && request.method === "GET") {
+      return await loadWorkflowExecutionResponse(workflowExecutionId, context);
+    }
+
+    if (parts.length === 4 && parts[3] === "cancel" && request.method === "POST") {
+      return await cancelWorkflowExecutionResponse(workflowExecutionId, context);
     }
   }
 
@@ -2999,40 +3185,11 @@ export async function handleApiRequest(request: Request, context: ApiContext): P
     }
 
     if (parts.length === 3 && request.method === "GET") {
-      const loaded = await loadSession(sessionId, context);
-      if (!loaded.ok) {
-        return json({ error: loaded.error.message }, 404);
-      }
-      return json(loaded.value);
+      return await loadWorkflowExecutionResponse(sessionId, context);
     }
 
     if (parts.length === 4 && parts[3] === "cancel" && request.method === "POST") {
-      if (context.noExec === true) {
-        return json({ error: "execution is disabled (no-exec mode)" }, 403);
-      }
-
-      const loaded = await loadSession(sessionId, context);
-      if (!loaded.ok) {
-        return json({ error: loaded.error.message }, 404);
-      }
-
-      if (loaded.value.status === "completed" || loaded.value.status === "failed" || loaded.value.status === "cancelled") {
-        return json({ accepted: false, status: loaded.value.status });
-      }
-
-      const cancelled = {
-        ...loaded.value,
-        status: "cancelled" as const,
-        endedAt: new Date().toISOString(),
-        lastError: "cancelled by API request",
-      };
-
-      const saved = await saveSession(cancelled, context);
-      if (!saved.ok) {
-        return json({ error: saved.error.message }, 500);
-      }
-
-      return json({ accepted: true, status: "cancelled" });
+      return await cancelWorkflowExecutionResponse(sessionId, context);
     }
 
     if (parts.length === 4 && parts[3] === "rerun" && request.method === "POST") {

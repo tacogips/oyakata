@@ -21,7 +21,7 @@ Scope:
 5. Artifact root is configurable and resolved by:
    1. CLI `--artifact-root`
    2. `OYAKATA_ARTIFACT_ROOT`
-   3. `./.oyakata/workflow`
+   3. `./.oyakata-datas/workflow`
 6. Conversation handoff uses explicit output references (`OutputRef`), not implicit "latest output" inference.
 7. Complex node input must be assembled as structured `arguments` via bindings/mappings, not by embedding heavy logic in template syntax.
 

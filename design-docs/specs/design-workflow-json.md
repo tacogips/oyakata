@@ -36,7 +36,7 @@ Path variable mapping:
 - `{artifact-root}` resolution order:
   1. CLI `--artifact-root`
   2. `OYAKATA_ARTIFACT_ROOT`
-  3. `./.oyakata/workflow` (default)
+  3. `./.oyakata-datas/workflow` (default)
 - `{workflow_id}` = `workflow.json.workflowId`
 
 ## workflow.json

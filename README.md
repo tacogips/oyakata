@@ -112,14 +112,14 @@ Default policy for version control:
   - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/input.json`
   - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/output.json`
   - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/meta.json`
-  - dynamic session/progress files under `.oyakata-opt/`
+  - dynamic session/progress files under `.oyakata-datas/`
 
 Default runtime paths:
-- persistent artifact root: `.oyakata/workflow/`
-- dynamic operational state root: `.oyakata-opt/` (for example session store files)
-- runtime SQLite index: `.oyakata-opt/oyakata.db`
+- persistent artifact root: `.oyakata-datas/workflow/`
+- dynamic operational state root: `.oyakata-datas/` (for example session store files)
+- runtime SQLite index: `.oyakata-datas/oyakata.db`
 
-The repository `.gitignore` enforces this for `.oyakata/workflow/` and `.oyakata-opt/`.
+The repository `.gitignore` enforces this for `.oyakata-datas/`.
 If you use a custom `--artifact-root` or `OYAKATA_ARTIFACT_ROOT`, add that path to your local/project ignore rules.
 
 Runtime SQLite behavior:
@@ -137,6 +137,12 @@ Runtime SQLite behavior:
   - Resume: `--resume-session` resumes an existing session directly.
 - Web UI: `oyakata serve`, then open `http://127.0.0.1:5173/`
   - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
+
+Frontend verification:
+- The Svelte frontend lives under `ui/` and is verified separately from the root TypeScript program.
+- Plain `tsc` is not sufficient to validate `.svelte` components; the verification contract is `svelte-check` plus the production bundle build.
+- Run `bun run typecheck:ui` for the Svelte-aware UI check and `bun run check:ui` for the UI check plus bundle verification.
+- Run `bun run typecheck` to verify both server and UI projects together.
 
 ## Library API
 
@@ -160,7 +166,7 @@ import { executeWorkflow, getRuntimeSessionView } from "oyakata";
 const run = await executeWorkflow({
   workflowName: "software-auto-pipeline",
   workflowRoot: "./.oyakata",
-  artifactRoot: "./.oyakata/workflow",
+  artifactRoot: "./.oyakata-datas/workflow",
   runtimeVariables: { prompt: "Implement feature X" },
 });
 

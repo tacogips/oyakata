@@ -18,10 +18,10 @@ afterEach(async () => {
 });
 
 describe("session-store", () => {
-  test("uses .oyakata-opt as default dynamic session store root", async () => {
+  test("uses .oyakata-datas as default dynamic session store root", async () => {
     const root = await makeTempDir();
     const resolved = getSessionStoreRoot({ cwd: root });
-    expect(resolved).toBe(path.join(root, ".oyakata-opt", "sessions"));
+    expect(resolved).toBe(path.join(root, ".oyakata-datas", "sessions"));
   });
 
   test("save/load roundtrip", async () => {

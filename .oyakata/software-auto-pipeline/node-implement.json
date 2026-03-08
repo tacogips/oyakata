@@ -1,8 +1,0 @@
-{
-  "id": "implement",
-  "model": "tacogips/claude-code-agent",
-  "promptTemplate": "Implement the agreed design for {{featureName}}.",
-  "variables": {
-    "featureName": "deterministic-pipeline"
-  }
-}

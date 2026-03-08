@@ -65,7 +65,7 @@ When the execution engine reaches `human-input`:
 ## Data and Artifact Integration
 
 Per-node execution output location:
-- `.oyakata/workflow/{workflow_id}/{node}/{node-exec-id}/`
+- `.oyakata-datas/workflow/{workflow_id}/{node}/{node-exec-id}/`
 
 TUI behavior:
 - displays active artifact directory for current node run

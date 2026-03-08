@@ -1,8 +1,0 @@
-{
-  "id": "workflow-output",
-  "model": "tacogips/codex-agent",
-  "promptTemplate": "Finalize workflow report for {{productName}}.",
-  "variables": {
-    "productName": "sample-product"
-  }
-}

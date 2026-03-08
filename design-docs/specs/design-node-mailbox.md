@@ -73,6 +73,8 @@ Manager scoping rules:
 - the root workflow manager owns parent-to-sub-workflow and cross-sub-workflow communication
 - each sub-workflow manager (`sub oyakata`) owns communication between nodes inside that sub-workflow
 - a cross-boundary communication must terminate at the recipient sub-workflow manager node
+- workflow validation must reject any edge that crosses workflow scope but targets a child node instead of the recipient manager boundary
+- child-to-root returns must likewise target the root workflow manager node, not an arbitrary root-scope worker node
 
 ## Mailbox Directory Layout
 
@@ -102,6 +104,7 @@ Path rules:
 - fan-out to multiple downstream nodes creates one `communicationId` per recipient
 - `inbox/{toNodeId}` and `outbox/{fromNodeId}` are both required, even though the sender/recipient are also present in metadata; this keeps filesystem inspection simple
 - `outbox/{fromNodeId}/output.json` is a manager-written immutable snapshot copy of the sender payload at send time
+- mailbox artifacts that publish raw text payloads such as `outbox/{fromNodeId}/output.json` must use the same atomic temp-file-plus-rename persistence rule as JSON artifacts; partial in-place overwrites are not acceptable
 - `inbox/{toNodeId}/message.json` is the delivered transport envelope; inbox does not duplicate `output.json`
 - one send event maps to one `communicationId`
 - retries allocate new `deliveryAttemptId` and/or `agentSessionId` under the same `communicationId` only when retrying delivery/execution of that already-created send event
@@ -152,6 +155,10 @@ Envelope rules:
 - `outbox/{fromNodeId}/output.json` is the canonical mailbox snapshot for filesystem inspection and must byte-match the routed payload resolved from the sender execution at send time
 - `deliveryKind` should initially support `edge-transition`, `loop-back`, `manual-rerun`, and `conversation-turn`
 - `routingScope` should initially support `parent-to-sub-workflow`, `cross-sub-workflow`, and `intra-sub-workflow`
+- a normal workflow edge that targets a sub-workflow manager is still a cross-boundary manager handoff, not an intra-sub-workflow child delivery
+- `parent-to-sub-workflow` means a root-scope sender delivered to a sub-workflow manager recipient
+- `cross-sub-workflow` means the sender and recipient are in different workflow scopes, including child-to-root-manager returns and peer sub-workflow manager handoffs
+- `fromSubWorkflowId` / `toSubWorkflowId` should be populated whenever the sender or recipient belongs to a sub-workflow scope
 
 ### `attempts/{deliveryAttemptId}/attempt.json`
 
@@ -209,7 +216,9 @@ Worker-only metadata (present only when recipient execution is AI/code-agent bas
 Per-attempt receipt records manager delivery and downstream consumption for one recipient attempt:
 - `communicationId`
 - `deliveryAttemptId`
-- `deliveredByNodeId` = workflow manager node id
+- `deliveredByNodeId` = the manager node id that owns that recipient delivery attempt
+  - root manager for root-scope deliveries, external input/output boundary deliveries, cross-sub-workflow manager handoffs, and conversation-turn deliveries
+  - sub-workflow manager for deliveries to child nodes inside that sub-workflow
 - `deliveredAt`
 - `consumedByNodeExecId?`
 - `consumedAt?`
@@ -228,19 +237,22 @@ Write permissions by component:
   - owns global allocation of `communicationId` for the workflow execution
   - allocates `deliveryAttemptId` for concrete recipient attempts it executes
   - allocates `agentSessionId` only when it starts AI/code-agent worker sessions
-  - creates mailbox directories
+  - creates mailbox directories for every recipient delivery it owns
   - writes `outbox/*/message.json`
   - writes `outbox/*/output.json`
-  - writes `inbox/*/message.json` only when the recipient is a sub-workflow manager node
-  - writes mailbox metadata and per-session receipts
-  - resolves mailbox messages into recipient manager `input.json`
+  - writes `inbox/*/message.json` for every recipient delivery it owns
+  - root-owned recipients include root-scope nodes, external mailbox boundary pseudo-nodes, destination sub-workflow manager nodes for cross-boundary delivery, and conversation-turn manager handoffs
+  - writes `meta.json` and per-attempt `attempt.json` / `receipt.json` for every recipient delivery it owns
+  - resolves mailbox messages into recipient `input.json` for the deliveries it owns
 - sub-workflow manager:
   - reads mailbox deliveries addressed to that sub-workflow manager node
   - obtains `communicationId` values from the root-manager allocator for delivery to child nodes inside that same sub-workflow
   - allocates `deliveryAttemptId` for concrete recipient attempts it executes
   - allocates `agentSessionId` only when it starts AI/code-agent worker sessions
+  - creates mailbox directories for every recipient delivery it owns inside that same sub-workflow
   - writes `outbox/*/message.json` and `outbox/*/output.json` for intra-sub-workflow delivery
-  - writes `inbox/*/message.json` only for nodes that belong to that same sub-workflow
+  - writes `inbox/*/message.json` for every recipient delivery it owns inside that same sub-workflow
+  - writes `meta.json` and per-attempt `attempt.json` / `receipt.json` for every recipient delivery it owns inside that same sub-workflow
   - resolves mailbox messages into child-node `input.json`
 
 This ownership rule is mandatory for auditability and to prevent accidental peer-to-peer coupling between worker nodes.
@@ -250,8 +262,8 @@ This ownership rule is mandatory for auditability and to prevent accidental peer
 1. Sender node execution finishes and persists normal execution artifacts.
 2. The manager that owns the sender scope evaluates workflow edges and chooses downstream recipients.
 3. For parent-to-sub-workflow or peer-sub-workflow delivery, the root workflow manager allocates a `communicationId` whose recipient is the destination sub-workflow manager node.
-4. The root workflow manager allocates a `deliveryAttemptId`, writes `{communicationId}/message.json`, `outbox/{fromNodeId}/message.json`, `outbox/{fromNodeId}/output.json`, `inbox/{toNodeId}/message.json`, `attempts/{deliveryAttemptId}/attempt.json`, and `attempts/{deliveryAttemptId}/receipt.json`.
-5. Only after the full delivered file set exists durably does the root workflow manager write `meta.json` with `status = "delivered"` and `activeDeliveryAttemptId = {deliveryAttemptId}`.
+4. The manager that owns that recipient delivery attempt allocates a `deliveryAttemptId`, writes `{communicationId}/message.json`, `outbox/{fromNodeId}/message.json`, `outbox/{fromNodeId}/output.json`, `inbox/{toNodeId}/message.json`, `attempts/{deliveryAttemptId}/attempt.json`, and `attempts/{deliveryAttemptId}/receipt.json`.
+5. Only after the full delivered file set exists durably does the manager that owns that recipient delivery attempt write `meta.json` with `status = "delivered"` and `activeDeliveryAttemptId = {deliveryAttemptId}`.
 6. When the recipient sub-workflow manager execution starts, the root workflow manager allocates a concrete recipient `nodeExecId` and writes the resolved payload to that manager node's `input.json`.
 7. Inside the sub-workflow, the sub-workflow manager evaluates its child-node routing and allocates new intra-sub-workflow `communicationId` values for each child recipient it instructs.
 8. The sub-workflow manager writes child-node mailbox artifacts and resolves them into child-node `input.json`.

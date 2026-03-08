@@ -60,9 +60,24 @@ tasks:
       - vitest --ui
 
   typecheck:
-    desc: Run TypeScript type checking
+    desc: Run server and UI TypeScript type checking
     cmds:
       - bun run typecheck
+
+  typecheck-server:
+    desc: Run server TypeScript type checking
+    cmds:
+      - bun run typecheck:server
+
+  typecheck-ui:
+    desc: Run Svelte-aware UI type checking
+    cmds:
+      - bun run typecheck:ui
+
+  check-ui:
+    desc: Run Svelte-aware UI verification and production build
+    cmds:
+      - bun run check:ui
 
   fmt:
     desc: Format code with prettier
@@ -90,5 +105,4 @@ tasks:
     cmds:
       - task: fmt-check
       - task: typecheck
-      - task: test
-      - task: build
+      - task: test-all

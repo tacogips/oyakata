@@ -1062,8 +1062,8 @@ describe("validateWorkflowBundle", () => {
         { id: "sw2-output", kind: "output", nodeFile: "node-sw2-output.json", completion: { type: "none" } },
       ],
       edges: [
-        { from: "oyakata-manager", to: "sw1-input", when: "always" },
-        { from: "sw1-output", to: "sw2-input", when: "always" },
+        { from: "oyakata-manager", to: "sw1-manager", when: "always" },
+        { from: "sw1-output", to: "sw2-manager", when: "always" },
       ],
       subWorkflows: [
         {
@@ -1300,6 +1300,180 @@ describe("validateWorkflowBundle", () => {
 
     const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
     expect(messages).toContain("workflow.subWorkflows:vertical subWorkflow groups 'a' and 'b' cross");
+  });
+
+  test("rejects root-to-child edges that bypass the sub-workflow manager boundary", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "root-worker", kind: "task", nodeFile: "node-root-worker.json", completion: { type: "none" } },
+        { id: "sw-manager", kind: "sub-manager", nodeFile: "node-sw-manager.json", completion: { type: "none" } },
+        { id: "sw-input", kind: "input", nodeFile: "node-sw-input.json", completion: { type: "none" } },
+        { id: "sw-output", kind: "output", nodeFile: "node-sw-output.json", completion: { type: "none" } },
+      ],
+      edges: [{ from: "root-worker", to: "sw-input", when: "always" }],
+      subWorkflows: [
+        {
+          id: "sw",
+          description: "sw",
+          managerNodeId: "sw-manager",
+          inputNodeId: "sw-input",
+          outputNodeId: "sw-output",
+          nodeIds: ["sw-manager", "sw-input", "sw-output"],
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "root-worker", order: 1 },
+        { id: "sw-manager", order: 2 },
+        { id: "sw-input", order: 3 },
+        { id: "sw-output", order: 4 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-root-worker.json": { id: "root-worker", model: "tacogips/codex-agent", promptTemplate: "root-worker", variables: {} },
+      "node-sw-manager.json": { id: "sw-manager", model: "tacogips/codex-agent", promptTemplate: "sw-manager", variables: {} },
+      "node-sw-input.json": { id: "sw-input", model: "tacogips/codex-agent", promptTemplate: "sw-input", variables: {} },
+      "node-sw-output.json": { id: "sw-output", model: "tacogips/codex-agent", promptTemplate: "sw-output", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain(
+      "workflow.edges[0].to:cross-scope edge from root scope must target recipient sub-workflow manager 'sw-manager', not child node 'sw-input'",
+    );
+  });
+
+  test("rejects child-to-root-worker edges that bypass the root manager boundary", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "root-worker", kind: "task", nodeFile: "node-root-worker.json", completion: { type: "none" } },
+        { id: "sw-manager", kind: "sub-manager", nodeFile: "node-sw-manager.json", completion: { type: "none" } },
+        { id: "sw-input", kind: "input", nodeFile: "node-sw-input.json", completion: { type: "none" } },
+        { id: "sw-output", kind: "output", nodeFile: "node-sw-output.json", completion: { type: "none" } },
+      ],
+      edges: [{ from: "sw-output", to: "root-worker", when: "always" }],
+      subWorkflows: [
+        {
+          id: "sw",
+          description: "sw",
+          managerNodeId: "sw-manager",
+          inputNodeId: "sw-input",
+          outputNodeId: "sw-output",
+          nodeIds: ["sw-manager", "sw-input", "sw-output"],
+          inputSources: [{ type: "human-input" }],
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "root-worker", order: 1 },
+        { id: "sw-manager", order: 2 },
+        { id: "sw-input", order: 3 },
+        { id: "sw-output", order: 4 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-root-worker.json": { id: "root-worker", model: "tacogips/codex-agent", promptTemplate: "root-worker", variables: {} },
+      "node-sw-manager.json": { id: "sw-manager", model: "tacogips/codex-agent", promptTemplate: "sw-manager", variables: {} },
+      "node-sw-input.json": { id: "sw-input", model: "tacogips/codex-agent", promptTemplate: "sw-input", variables: {} },
+      "node-sw-output.json": { id: "sw-output", model: "tacogips/codex-agent", promptTemplate: "sw-output", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain(
+      "workflow.edges[0].to:cross-scope edge from sub-workflow 'sw' to root scope must target workflow manager 'oyakata-manager', not root node 'root-worker'",
+    );
+  });
+
+  test("rejects cross-sub-workflow edges that bypass the recipient manager boundary", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "a-manager", kind: "sub-manager", nodeFile: "node-a-manager.json", completion: { type: "none" } },
+        { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
+        { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
+        { id: "b-manager", kind: "sub-manager", nodeFile: "node-b-manager.json", completion: { type: "none" } },
+        { id: "b-input", kind: "input", nodeFile: "node-b-input.json", completion: { type: "none" } },
+        { id: "b-output", kind: "output", nodeFile: "node-b-output.json", completion: { type: "none" } },
+      ],
+      edges: [{ from: "a-output", to: "b-input", when: "always" }],
+      subWorkflows: [
+        {
+          id: "a",
+          description: "a",
+          managerNodeId: "a-manager",
+          inputNodeId: "a-input",
+          outputNodeId: "a-output",
+          nodeIds: ["a-manager", "a-input", "a-output"],
+          inputSources: [{ type: "human-input" }],
+        },
+        {
+          id: "b",
+          description: "b",
+          managerNodeId: "b-manager",
+          inputNodeId: "b-input",
+          outputNodeId: "b-output",
+          nodeIds: ["b-manager", "b-input", "b-output"],
+          inputSources: [{ type: "sub-workflow-output", subWorkflowId: "a" }],
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "a-manager", order: 1 },
+        { id: "a-input", order: 2 },
+        { id: "a-output", order: 3 },
+        { id: "b-manager", order: 4 },
+        { id: "b-input", order: 5 },
+        { id: "b-output", order: 6 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-a-manager.json": { id: "a-manager", model: "tacogips/codex-agent", promptTemplate: "a-manager", variables: {} },
+      "node-a-input.json": { id: "a-input", model: "tacogips/codex-agent", promptTemplate: "a-input", variables: {} },
+      "node-a-output.json": { id: "a-output", model: "tacogips/codex-agent", promptTemplate: "a-output", variables: {} },
+      "node-b-manager.json": { id: "b-manager", model: "tacogips/codex-agent", promptTemplate: "b-manager", variables: {} },
+      "node-b-input.json": { id: "b-input", model: "tacogips/codex-agent", promptTemplate: "b-input", variables: {} },
+      "node-b-output.json": { id: "b-output", model: "tacogips/codex-agent", promptTemplate: "b-output", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    const messages = result.error.map((entry) => `${entry.path}:${entry.message}`).join("\n");
+    expect(messages).toContain(
+      "workflow.edges[0].to:cross-scope edge from sub-workflow 'a' to sub-workflow 'b' must target recipient manager 'b-manager', not child node 'b-input'",
+    );
   });
 
   test("rejects loop continue target placed after the loop judge", () => {

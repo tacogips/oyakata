@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { AdapterExecutionError, DeterministicNodeAdapter, ScenarioNodeAdapter } from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
-import { getSessionStoreRoot, loadSession } from "./session-store";
+import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
 
 const tempDirs: string[] = [];
 const deterministicAdapter = new DeterministicNodeAdapter();
@@ -883,6 +883,124 @@ async function createManagerAfterOutputFixture(root: string, workflowName: strin
   });
 }
 
+async function createSingleRootOutputFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "single-root-output fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
+    ],
+    edges: [{ from: "oyakata-manager", to: "workflow-output", when: "always" }],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "workflow-output", order: 1 },
+    ],
+  });
+
+  for (const nodeId of ["oyakata-manager", "workflow-output"]) {
+    await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
+      id: nodeId,
+      model: "tacogips/codex-agent",
+      promptTemplate: nodeId,
+      variables: {},
+    });
+  }
+}
+
+async function createMultipleRootOutputsFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "multiple-root-outputs fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "first-output", kind: "output", nodeFile: "node-first-output.json", completion: { type: "none" } },
+      { id: "second-output", kind: "output", nodeFile: "node-second-output.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "oyakata-manager", to: "first-output", when: "always" },
+      { from: "first-output", to: "second-output", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "first-output", order: 1 },
+      { id: "second-output", order: 2 },
+    ],
+  });
+
+  for (const nodeId of ["oyakata-manager", "first-output", "second-output"]) {
+    await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
+      id: nodeId,
+      model: "tacogips/codex-agent",
+      promptTemplate: nodeId,
+      variables: {},
+    });
+  }
+}
+
+async function createRootOutputThenTaskFixture(root: string, workflowName: string): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "root-output-then-task fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
+      { id: "final-task", kind: "task", nodeFile: "node-final-task.json", completion: { type: "none" } },
+    ],
+    edges: [
+      { from: "oyakata-manager", to: "workflow-output", when: "always" },
+      { from: "workflow-output", to: "final-task", when: "always" },
+    ],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "workflow-output", order: 1 },
+      { id: "final-task", order: 2 },
+    ],
+  });
+
+  for (const nodeId of ["oyakata-manager", "workflow-output", "final-task"]) {
+    await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
+      id: nodeId,
+      model: "tacogips/codex-agent",
+      promptTemplate: nodeId,
+      variables: {},
+    });
+  }
+}
+
 async function createWorkflowOutputDrivenSubWorkflowFixture(root: string, workflowName: string): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
@@ -1008,6 +1126,55 @@ describe("runWorkflow", () => {
     expect(communicationMessageJson.communicationId).toBe("comm-000001");
     expect(communicationMessageJson.fromNodeId).toBe("oyakata-manager");
     expect(communicationMessageJson.toNodeId).toBe("step-1");
+
+    const receiptRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "linear",
+        "executions",
+        result.value.session.sessionId,
+        "communications",
+        "comm-000001",
+        "attempts",
+        "attempt-000001",
+        "receipt.json",
+      ),
+      "utf8",
+    );
+    const receiptJson = JSON.parse(receiptRaw) as { deliveredByNodeId: string };
+    expect(receiptJson.deliveredByNodeId).toBe("oyakata-manager");
+
+    const managerOutputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "linear",
+        "executions",
+        result.value.session.sessionId,
+        "nodes",
+        "oyakata-manager",
+        "exec-000001",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const mailboxOutputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "linear",
+        "executions",
+        result.value.session.sessionId,
+        "communications",
+        "comm-000001",
+        "outbox",
+        "oyakata-manager",
+        "output.json",
+      ),
+      "utf8",
+    );
+    expect(mailboxOutputRaw).toBe(managerOutputRaw);
 
     const handoffRaw = await readFile(path.join(step1Exec.artifactDir, "handoff.json"), "utf8");
     const handoffJson = JSON.parse(handoffRaw) as {
@@ -1254,11 +1421,42 @@ describe("runWorkflow", () => {
     expect(managerInput.upstreamOutputRefs.some((entry) => entry.fromNodeId === "__workflow-input-mailbox__")).toBe(true);
     expect(managerInput.upstreamCommunications).toContain(bootstrapCommunication.communicationId);
     expect(managerInput.promptText).toContain('"request":"ship release B"');
+
+    const receiptRaw = await readFile(
+      path.join(
+        bootstrapCommunication.artifactDir,
+        "attempts",
+        bootstrapCommunication.activeDeliveryAttemptId ?? "attempt-000001",
+        "receipt.json",
+      ),
+      "utf8",
+    );
+    const receiptJson = JSON.parse(receiptRaw) as { deliveredByNodeId: string };
+    expect(receiptJson.deliveredByNodeId).toBe("oyakata-manager");
+
+    const sourceOutputRaw = await readFile(
+      path.join(
+        root,
+        "artifacts",
+        "root-mailbox-input",
+        "executions",
+        result.value.session.sessionId,
+        "external-mailbox",
+        "input",
+        "output.json",
+      ),
+      "utf8",
+    );
+    const mailboxOutputRaw = await readFile(
+      path.join(bootstrapCommunication.artifactDir, "outbox", "__workflow-input-mailbox__", "output.json"),
+      "utf8",
+    );
+    expect(mailboxOutputRaw).toBe(sourceOutputRaw);
   });
 
   test("publishes the completed workflow result to an external mailbox", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "root-mailbox-output", false);
+    await createSingleRootOutputFixture(root, "root-mailbox-output");
 
     const result = await runWorkflow(
       "root-mailbox-output",
@@ -1280,16 +1478,39 @@ describe("runWorkflow", () => {
       (entry) =>
         entry.toNodeId === "__workflow-output-mailbox__" &&
         entry.deliveryKind === "external-output" &&
-        entry.fromNodeId === "step-1",
+        entry.fromNodeId === "workflow-output",
     );
     expect(outputCommunication).toBeDefined();
     if (outputCommunication === undefined) {
       return;
     }
 
-    const outputRaw = await readFile(path.join(outputCommunication.artifactDir, "outbox", "step-1", "output.json"), "utf8");
+    const outputRaw = await readFile(
+      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      "utf8",
+    );
     const outputJson = JSON.parse(outputRaw) as { payload: { nodeId: string } };
-    expect(outputJson.payload.nodeId).toBe("step-1");
+    expect(outputJson.payload.nodeId).toBe("workflow-output");
+
+    const receiptRaw = await readFile(
+      path.join(
+        outputCommunication.artifactDir,
+        "attempts",
+        outputCommunication.activeDeliveryAttemptId ?? "attempt-000001",
+        "receipt.json",
+      ),
+      "utf8",
+    );
+    const receiptJson = JSON.parse(receiptRaw) as { deliveredByNodeId: string };
+    expect(receiptJson.deliveredByNodeId).toBe("oyakata-manager");
+
+    const publishedExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "workflow-output");
+    expect(publishedExec).toBeDefined();
+    if (publishedExec === undefined) {
+      return;
+    }
+    const sourceOutputRaw = await readFile(path.join(publishedExec.artifactDir, "output.json"), "utf8");
+    expect(outputRaw).toBe(sourceOutputRaw);
   });
 
   test("publishes the latest root output node result when a manager runs again afterward", async () => {
@@ -1334,6 +1555,123 @@ describe("runWorkflow", () => {
     );
     const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
     expect(outputJson.payload.final).toBe("published-result");
+  });
+
+  test("publishes the later root output node result when multiple root output executions succeed", async () => {
+    const root = await makeTempDir();
+    await createMultipleRootOutputsFixture(root, "multiple-root-outputs");
+
+    const result = await runWorkflow(
+      "multiple-root-outputs",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
+        "first-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "first" } },
+        "second-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "second" } },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const outputCommunication = result.value.session.communications.find(
+      (entry) =>
+        entry.toNodeId === "__workflow-output-mailbox__" &&
+        entry.deliveryKind === "external-output",
+    );
+    expect(outputCommunication).toBeDefined();
+    if (outputCommunication === undefined) {
+      return;
+    }
+
+    expect(outputCommunication.fromNodeId).toBe("second-output");
+    const outputRaw = await readFile(
+      path.join(outputCommunication.artifactDir, "outbox", "second-output", "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
+    expect(outputJson.payload.final).toBe("second");
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({ final: "second" });
+  });
+
+  test("keeps the latest root output publication source when a later non-output worker runs", async () => {
+    const root = await makeTempDir();
+    await createRootOutputThenTaskFixture(root, "root-output-then-task");
+
+    const result = await runWorkflow(
+      "root-output-then-task",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter({
+        "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
+        "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "published" } },
+        "final-task": { provider: "scenario-mock", when: { always: true }, payload: { final: "not-publishable" } },
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.session.nodeExecutions.at(-1)?.nodeId).toBe("final-task");
+    const outputCommunication = result.value.session.communications.find(
+      (entry) =>
+        entry.toNodeId === "__workflow-output-mailbox__" &&
+        entry.deliveryKind === "external-output",
+    );
+    expect(outputCommunication).toBeDefined();
+    if (outputCommunication === undefined) {
+      return;
+    }
+
+    expect(outputCommunication.fromNodeId).toBe("workflow-output");
+    const outputRaw = await readFile(
+      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
+    expect(outputJson.payload.final).toBe("published");
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({ final: "published" });
+  });
+
+  test("does not publish an external output when no root output execution succeeds", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "no-root-output-publication", false);
+
+    const result = await runWorkflow(
+      "no-root-output-publication",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.session.status).toBe("completed");
+    expect(
+      result.value.session.communications.some(
+        (entry) =>
+          entry.toNodeId === "__workflow-output-mailbox__" &&
+          entry.deliveryKind === "external-output",
+      ),
+    ).toBe(false);
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toBeUndefined();
   });
 
   test("enables workflow-output input sources after a root output node succeeds", async () => {
@@ -2783,6 +3121,245 @@ describe("runWorkflow", () => {
     }
   });
 
+  test("fails deterministically when the selected external output artifact is corrupted", async () => {
+    const root = await makeTempDir();
+    const workflowName = "corrupt-selected-external-output";
+    await createSingleRootOutputFixture(root, workflowName);
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const completed = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId: "sess-corrupt-selected-output",
+      },
+      deterministicAdapter,
+    );
+    expect(completed.ok).toBe(true);
+    if (!completed.ok) {
+      return;
+    }
+    expect(completed.value.session.status).toBe("completed");
+
+    const outputExec = completed.value.session.nodeExecutions.find((entry) => entry.nodeId === "workflow-output");
+    expect(outputExec).toBeDefined();
+    if (outputExec === undefined) {
+      return;
+    }
+
+    await writeFile(path.join(outputExec.artifactDir, "output.json"), "[]\n", "utf8");
+
+    const resumableCommunications = completed.value.session.communications.filter(
+      (entry) => entry.deliveryKind !== "external-output",
+    );
+    const { endedAt: _endedAt, lastError: _lastError, ...completedWithoutTerminalFields } = completed.value.session;
+    const resumableSession = {
+      ...completedWithoutTerminalFields,
+      status: "paused" as const,
+      communications: resumableCommunications,
+      communicationCounter: resumableCommunications.length,
+    };
+    const saved = await saveSession(resumableSession, options);
+    expect(saved.ok).toBe(true);
+
+    const resumed = await runWorkflow(workflowName, {
+      ...options,
+      resumeSessionId: completed.value.session.sessionId,
+    }, deterministicAdapter);
+
+    expect(resumed.ok).toBe(false);
+    if (!resumed.ok) {
+      expect(resumed.error.exitCode).toBe(1);
+      expect(resumed.error.message).toContain("failed to publish selected external output");
+      expect(resumed.error.message).toContain("workflow-output");
+      expect(resumed.error.message).toContain(outputExec.nodeExecId);
+      expect(resumed.error.message).toContain("output artifact");
+      expect(resumed.error.message).toContain(path.join(outputExec.artifactDir, "output.json"));
+      expect(resumed.error.message).toContain("must contain a JSON object");
+    }
+
+    const failedSession = await loadSession(completed.value.session.sessionId, options);
+    expect(failedSession.ok).toBe(true);
+    if (!failedSession.ok) {
+      return;
+    }
+
+    expect(failedSession.value.status).toBe("failed");
+    expect(failedSession.value.lastError).toContain("failed to publish selected external output");
+    expect(failedSession.value.lastError).toContain("workflow-output");
+    expect(failedSession.value.lastError).toContain(outputExec.nodeExecId);
+    expect(failedSession.value.lastError).toContain(path.join(outputExec.artifactDir, "output.json"));
+  });
+
+  test("preserves selected external output artifact bytes when publication resumes", async () => {
+    const root = await makeTempDir();
+    const workflowName = "resume-external-output-byte-preservation";
+    const sessionId = "sess-resume-external-output-byte-preservation";
+    await createSingleRootOutputFixture(root, workflowName);
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const completed = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId,
+      },
+      deterministicAdapter,
+    );
+    expect(completed.ok).toBe(true);
+    if (!completed.ok) {
+      return;
+    }
+
+    const outputExec = completed.value.session.nodeExecutions.find((entry) => entry.nodeId === "workflow-output");
+    expect(outputExec).toBeDefined();
+    if (outputExec === undefined) {
+      return;
+    }
+
+    const outputPath = path.join(outputExec.artifactDir, "output.json");
+    const originalOutputJson = JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+    const reformattedOutputRaw = `${JSON.stringify(originalOutputJson, null, 4)}\n`;
+    await writeFile(outputPath, reformattedOutputRaw, "utf8");
+
+    const resumableCommunications = completed.value.session.communications.filter(
+      (entry) => entry.deliveryKind !== "external-output",
+    );
+    const { endedAt: _endedAt, lastError: _lastError, ...completedWithoutTerminalFields } = completed.value.session;
+    const resumableSession = {
+      ...completedWithoutTerminalFields,
+      status: "paused" as const,
+      communications: resumableCommunications,
+      communicationCounter: resumableCommunications.length,
+    };
+    const saved = await saveSession(resumableSession, options);
+    expect(saved.ok).toBe(true);
+
+    const resumed = await runWorkflow(workflowName, {
+      ...options,
+      resumeSessionId: sessionId,
+    }, deterministicAdapter);
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) {
+      return;
+    }
+
+    const outputCommunication = resumed.value.session.communications.find(
+      (entry) =>
+        entry.toNodeId === "__workflow-output-mailbox__" &&
+        entry.deliveryKind === "external-output" &&
+        entry.fromNodeId === "workflow-output",
+    );
+    expect(outputCommunication).toBeDefined();
+    if (outputCommunication === undefined) {
+      return;
+    }
+
+    const mailboxOutputRaw = await readFile(
+      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      "utf8",
+    );
+    expect(mailboxOutputRaw).toBe(reformattedOutputRaw);
+  });
+
+  test("fails deterministically when external output publication cannot persist its mailbox artifacts", async () => {
+    const root = await makeTempDir();
+    const workflowName = "external-output-publication-write-failure";
+    const sessionId = "sess-publication-write-failure";
+    await createSingleRootOutputFixture(root, workflowName);
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const communicationsRoot = path.join(
+      options.artifactRoot,
+      workflowName,
+      "executions",
+      sessionId,
+      "communications",
+    );
+    await mkdir(communicationsRoot, { recursive: true });
+    await writeFile(
+      path.join(communicationsRoot, "comm-000002"),
+      "block external communication directory creation\n",
+      "utf8",
+    );
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.exitCode).toBe(1);
+      expect(result.error.message).toContain("failed to persist external output publication");
+      expect(result.error.message).toContain("workflow-output");
+      expect(result.error.message).toContain("exec-000002");
+    }
+
+    const failedSession = await loadSession(sessionId, options);
+    expect(failedSession.ok).toBe(true);
+    if (!failedSession.ok) {
+      return;
+    }
+
+    expect(failedSession.value.status).toBe("failed");
+    expect(failedSession.value.lastError).toContain("failed to persist external output publication");
+    expect(failedSession.value.lastError).toContain("exec-000002");
+    expect(
+      failedSession.value.communications.some((entry) => entry.deliveryKind === "external-output"),
+    ).toBe(false);
+  });
+
+  test("reports completed-session persistence failure when the session file target path is invalid", async () => {
+    const root = await makeTempDir();
+    const workflowName = "completed-session-save-failure";
+    const sessionId = "sess-completed-save-failure";
+    await createSingleRootOutputFixture(root, workflowName);
+
+    const sessionFilePath = path.join(getSessionStoreRoot({
+      sessionStoreRoot: path.join(root, "sessions"),
+    }), `${sessionId}.json`);
+    await mkdir(path.dirname(sessionFilePath), { recursive: true });
+    await mkdir(sessionFilePath, { recursive: true });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.exitCode).toBe(1);
+      expect(result.error.message).toContain("failed to persist completed workflow session state");
+      expect(result.error.message).toContain("failed writing session file");
+    }
+  });
+
   test("uses loop semantics to force exit when max loop iterations are reached", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "looped", true);
@@ -3140,6 +3717,48 @@ describe("runWorkflow", () => {
       (entry) => entry.routingScope === "parent-to-sub-workflow" && entry.toNodeId === "a-manager",
     );
     expect(parentToSubWorkflowCommunication).toBeDefined();
+    if (parentToSubWorkflowCommunication === undefined) {
+      return;
+    }
+
+    const childEdgeCommunication = result.value.session.communications.find(
+      (entry) => entry.fromNodeId === "a-input" && entry.toNodeId === "a-output",
+    );
+    expect(childEdgeCommunication).toBeDefined();
+    if (childEdgeCommunication === undefined) {
+      return;
+    }
+
+    const childReceiptRaw = await readFile(
+      path.join(
+        childEdgeCommunication.artifactDir,
+        "attempts",
+        childEdgeCommunication.activeDeliveryAttemptId ?? "attempt-000001",
+        "receipt.json",
+      ),
+      "utf8",
+    );
+    const childReceiptJson = JSON.parse(childReceiptRaw) as { deliveredByNodeId: string };
+    expect(childReceiptJson.deliveredByNodeId).toBe("a-manager");
+
+    const rootReceiptRaw = await readFile(
+      path.join(
+        parentToSubWorkflowCommunication.artifactDir,
+        "attempts",
+        parentToSubWorkflowCommunication.activeDeliveryAttemptId ?? "attempt-000001",
+        "receipt.json",
+      ),
+      "utf8",
+    );
+    const rootReceiptJson = JSON.parse(rootReceiptRaw) as { deliveredByNodeId: string };
+    expect(rootReceiptJson.deliveredByNodeId).toBe("oyakata-manager");
+
+    const childToRootCommunication = result.value.session.communications.find(
+      (entry) => entry.fromNodeId === "a-output" && entry.toNodeId === "oyakata-manager",
+    );
+    expect(childToRootCommunication).toBeDefined();
+    expect(childToRootCommunication?.routingScope).toBe("cross-sub-workflow");
+    expect(childToRootCommunication?.fromSubWorkflowId).toBe("sw-a");
   });
 
   test("does not duplicate a sub-workflow manager handoff when a normal edge already targets that manager", async () => {
@@ -3176,7 +3795,8 @@ describe("runWorkflow", () => {
     );
 
     expect(rootToAManagerCommunications).toHaveLength(1);
-    expect(rootToAManagerCommunications[0]?.routingScope).toBe("intra-sub-workflow");
+    expect(rootToAManagerCommunications[0]?.routingScope).toBe("parent-to-sub-workflow");
+    expect(rootToAManagerCommunications[0]?.toSubWorkflowId).toBe("sw-a");
   });
 
   test("fails deterministically when a conversation sender output artifact is corrupted", async () => {

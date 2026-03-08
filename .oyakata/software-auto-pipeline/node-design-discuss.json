@@ -1,8 +1,0 @@
-{
-  "id": "design-discuss",
-  "model": "tacogips/codex-agent",
-  "promptTemplate": "Discuss and refine design decisions for {{featureName}}.",
-  "variables": {
-    "featureName": "deterministic-pipeline"
-  }
-}

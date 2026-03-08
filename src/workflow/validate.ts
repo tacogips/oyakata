@@ -1360,6 +1360,63 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     });
   });
 
+  bundle.workflow.edges.forEach((edge, index) => {
+    const sourceSubWorkflowId = subWorkflowNodeOwnership.get(edge.from);
+    const targetSubWorkflowId = subWorkflowNodeOwnership.get(edge.to);
+
+    if (sourceSubWorkflowId === targetSubWorkflowId) {
+      return;
+    }
+
+    if (sourceSubWorkflowId === undefined && targetSubWorkflowId !== undefined) {
+      const targetSubWorkflow = bundle.workflow.subWorkflows.find(
+        (entry) => entry.id === targetSubWorkflowId,
+      );
+      if (
+        targetSubWorkflow !== undefined &&
+        edge.to !== targetSubWorkflow.managerNodeId
+      ) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.edges[${index}].to`,
+            `cross-scope edge from root scope must target recipient sub-workflow manager '${targetSubWorkflow.managerNodeId}', not child node '${edge.to}'`,
+          ),
+        );
+      }
+      return;
+    }
+
+    if (sourceSubWorkflowId !== undefined && targetSubWorkflowId === undefined) {
+      if (edge.to !== bundle.workflow.managerNodeId) {
+        issues.push(
+          makeIssue(
+            "error",
+            `workflow.edges[${index}].to`,
+            `cross-scope edge from sub-workflow '${sourceSubWorkflowId}' to root scope must target workflow manager '${bundle.workflow.managerNodeId}', not root node '${edge.to}'`,
+          ),
+        );
+      }
+      return;
+    }
+
+    const targetSubWorkflow = bundle.workflow.subWorkflows.find(
+      (entry) => entry.id === targetSubWorkflowId,
+    );
+    if (
+      targetSubWorkflow !== undefined &&
+      edge.to !== targetSubWorkflow.managerNodeId
+    ) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.edges[${index}].to`,
+          `cross-scope edge from sub-workflow '${sourceSubWorkflowId}' to sub-workflow '${targetSubWorkflowId}' must target recipient manager '${targetSubWorkflow.managerNodeId}', not child node '${edge.to}'`,
+        ),
+      );
+    }
+  });
+
   bundle.workflow.subWorkflowConversations?.forEach((conversation, index) => {
     if (conversation.participants.length < 2) {
       issues.push(

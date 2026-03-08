@@ -1,8 +1,0 @@
-{
-  "id": "oyakata-manager",
-  "model": "tacogips/codex-agent",
-  "promptTemplate": "Manage software lifecycle workflow for {{productName}}.",
-  "variables": {
-    "productName": "sample-product"
-  }
-}

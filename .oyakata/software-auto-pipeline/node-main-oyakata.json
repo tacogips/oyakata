@@ -1,8 +1,0 @@
-{
-  "id": "main-oyakata",
-  "model": "tacogips/codex-agent",
-  "promptTemplate": "Translate the parent oyakata instruction for {{productName}} into the main software lifecycle sub-workflow plan.",
-  "variables": {
-    "productName": "sample-product"
-  }
-}

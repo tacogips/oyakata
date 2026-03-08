@@ -207,7 +207,7 @@ export interface EffectiveRoots {
 export const DEFAULT_MAX_LOOP_ITERATIONS = 3;
 export const DEFAULT_NODE_TIMEOUT_MS = 120000;
 export const DEFAULT_WORKFLOW_ROOT = "./.oyakata";
-export const DEFAULT_ARTIFACT_ROOT = "./.oyakata/workflow";
-export const DEFAULT_RUNTIME_ROOT = "./.oyakata-opt";
+export const DEFAULT_RUNTIME_ROOT = "./.oyakata-datas";
+export const DEFAULT_ARTIFACT_ROOT = `${DEFAULT_RUNTIME_ROOT}/workflow`;
 
 export const NODE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;

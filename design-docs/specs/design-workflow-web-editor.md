@@ -11,6 +11,11 @@ Add a local web interface so users can:
 
 The server and UI are local-first and operate on the existing `.oyakata/<workflow-name>/` directory contract.
 
+Current-state note:
+- The documented target is Svelte, but the current implementation still ships a large inline HTML/JavaScript editor from the Bun server.
+- This is an implementation mismatch, not a design mismatch.
+- Migration must therefore preserve behavior while replacing the inline editor with a built Svelte frontend over multiple iterations.
+
 ## Goals
 
 1. Provide visual workflow editing without changing canonical file split.
@@ -50,9 +55,11 @@ The server and UI are local-first and operate on the existing `.oyakata/<workflo
 ## Server Architecture
 
 Single-process local runtime:
-- Static asset serving for Svelte app
+- Static asset serving for Svelte app from `ui/dist/`
 - JSON API for workflow and session operations
 - Shared workflow validation and execution services used by CLI commands
+- UI bootstrap/config endpoint (`GET /api/ui-config`) for fixed-workflow, read-only, and no-exec mode flags
+- Compatibility fallback to the legacy inline editor while `ui/dist/` is absent
 
 Data safety:
 - Atomic writes (`*.tmp` then rename)
@@ -88,6 +95,28 @@ Data safety:
 
 ## Svelte UI Design
 
+### Migration Strategy
+
+1. Introduce a frontend asset boundary in `oyakata serve`.
+2. Add a standalone Svelte app under `ui/` that consumes the existing JSON API.
+3. Port browser editor capabilities in slices:
+- bootstrap/config + workflow list/loading
+- create/save/validate
+- structure and node payload editing
+- execution/session inspection
+4. Cut over the default `/` route to the built Svelte bundle once feature parity is acceptable.
+5. Remove the legacy inline editor after parity and browser verification are complete.
+
+### Frontend Build Contract
+
+- Svelte source lives under `ui/src/`.
+- The Vite project root is `ui/`, even when build commands are run from the repository root.
+- Production assets are emitted to `ui/dist/`.
+- The server serves `index.html` for `/` and `/ui` and serves any existing built file under `ui/dist/` by exact path for non-API requests.
+- The frontend must not require server mode flags at build time; it must fetch `/api/ui-config` on startup.
+- Repository-level verification must explicitly run Svelte-aware frontend checks in addition to the Bun server tests because the root TypeScript config does not include `ui/`, and plain `tsc` is not sufficient to validate `.svelte` components.
+- Repository automation therefore exposes distinct server and UI verification commands, and the UI path uses `svelte-check` plus a production bundle build so Svelte verification is not accidentally skipped during migration.
+
 ### Editor Surface
 
 - Vertical workflow list (top-to-bottom) with card-based node rendering
@@ -101,6 +130,7 @@ Data safety:
 - Reordering uses row drag-handle and/or move-up/move-down controls.
 - Nesting for loop/group semantics uses derived `indent` level from graph structure.
 - Loop/group visual distinction uses derived semantic `color` tokens from loop/group scope.
+- Reserved structure roles (`root-manager`, `sub-manager`, `input`, `output`) are derived from workflow manager and sub-workflow boundary configuration, not assigned manually through generic node-kind editing.
 - Edge creation/editing is form-driven (source/target/when), not canvas drawing.
 - Validation blocks invalid links (self-loop rules, missing node, duplicate edge policy).
 

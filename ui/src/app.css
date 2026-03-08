@@ -1,0 +1,125 @@
+:root {
+  --bg: #f2f0e8;
+  --bg-accent: #e4eddc;
+  --panel: rgba(255, 255, 255, 0.88);
+  --line: #c8c4b8;
+  --text: #1b2b24;
+  --muted: #5b6a61;
+  --accent: #8b3d16;
+  --accent-2: #2d5b46;
+  --danger: #a03030;
+  --shadow: 0 18px 48px rgba(25, 41, 31, 0.08);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.85), transparent 28%),
+    linear-gradient(180deg, var(--bg-accent), var(--bg));
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: var(--accent-2);
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text);
+}
+
+textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.selection-group {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(200, 196, 184, 0.7);
+}
+
+.section-head.compact {
+  margin-bottom: 0.8rem;
+}
+
+.section-head.compact h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.65rem;
+}
+
+.check-chip {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 0.6rem;
+  align-items: center;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.check-chip input {
+  width: auto;
+  margin: 0;
+}
+
+.check-chip small {
+  grid-column: 2;
+  color: var(--muted);
+}
+
+.check-chip.locked {
+  background: rgba(228, 237, 220, 0.85);
+}
+
+.empty.compact {
+  min-height: 0;
+  margin: 0;
+}
+
+.issue-card.nested {
+  background: rgba(242, 240, 232, 0.55);
+}

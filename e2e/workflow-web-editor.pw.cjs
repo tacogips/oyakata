@@ -136,36 +136,43 @@ test.afterAll(async () => {
 test("creates, edits, and executes a workflow from the browser", async ({ page }) => {
   await page.goto(`${currentBaseUrl}/`);
 
-  await page.getByLabel("New Workflow").fill("browser-demo");
-  await page.getByRole("button", { name: "Create Workflow" }).click();
+  await expect(page.getByRole("heading", { name: "oyakata Svelte UI" })).toBeVisible();
 
-  await expect(page.getByLabel("Workflow")).toHaveValue("browser-demo");
-  await expect(page.locator("#editorStatus")).toContainText("Created workflow browser-demo");
-  await expect(page.locator("#sessionLine")).toContainText("No session selected.");
+  await page.getByLabel("Create Workflow").fill("browser-demo");
+  await page.getByRole("button", { name: "Create" }).click();
+
+  await expect(page.getByLabel("Select Workflow")).toHaveValue("browser-demo");
+  await expect(page.locator(".message.info")).toContainText("Created workflow 'browser-demo'.");
+  await expect(page.locator(".session-detail")).toContainText("Select a session to inspect status, queue, and node execution history.");
 
   await page.getByLabel("Workflow Description").fill("Workflow created through browser E2E");
-  await page.getByRole("button", { name: "Save Workflow" }).click();
-  await expect(page.locator("#editorStatus")).toContainText("Saved revision");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator(".message.info")).toContainText("Saved workflow 'browser-demo' at revision", { timeout: 15_000 });
 
-  await page.getByLabel("Mock Scenario JSON (optional)").fill(
+  await page.getByLabel("Mock Scenario JSON").fill(
     '{"oyakata-manager":{"provider":"scenario-mock","when":{"always":true},"payload":{"stage":"design"}}}',
   );
-  await page.getByLabel("Max Steps (optional pause)").fill("1");
-  await page.getByRole("button", { name: "Run (Async)" }).click();
+  await page.getByLabel("Max Steps").fill("1");
+  await page.getByRole("button", { name: "Run Workflow" }).click();
 
-  await expect(page.locator("#sessionLine")).toContainText("sessionId=sess-", { timeout: 15_000 });
-  await expect(page.locator("#sessionLine")).toContainText("status=paused", { timeout: 15_000 });
-  await expect(page.locator("#sessionsList")).toContainText("sess-", { timeout: 15_000 });
-  await expect(page.locator("#sessionJson")).toContainText('"workflowName": "browser-demo"');
-  await expect(page.locator("#sessionJson")).toContainText('"status": "paused"');
+  await expect(page.locator(".message.info")).toContainText("Execution accepted for 'browser-demo' as execution sess-", {
+    timeout: 15_000,
+  });
+  await expect(page.locator(".sessions")).toContainText("sess-", { timeout: 15_000 });
+  await expect(page.locator(".session-detail")).toContainText("Execution ID", { timeout: 15_000 });
+  await expect(page.locator(".session-detail")).toContainText("Session ID", { timeout: 15_000 });
+  await expect(page.locator(".session-detail")).toContainText("paused", { timeout: 15_000 });
+  await expect(page.locator(".session-detail")).toContainText('"workflowName": "browser-demo"');
+  await expect(page.locator(".execution-history")).toContainText("oyakata-manager");
 
-  await expect(page.getByRole("button", { name: "Cancel Selected Session" })).toBeEnabled();
-  await page.getByRole("button", { name: "Cancel Selected Session" }).click();
-  await expect(page.locator("#sessionLine")).toContainText("status=cancelled", { timeout: 15_000 });
+  await expect(page.getByRole("button", { name: "Cancel Selected" })).toBeEnabled();
+  await page.getByRole("button", { name: "Cancel Selected" }).click();
+  await expect(page.locator(".message.info")).toContainText("Cancelled execution sess-", { timeout: 15_000 });
+  await expect(page.locator(".session-detail")).toContainText("cancelled", { timeout: 15_000 });
 
-  await page.getByLabel("New Workflow").fill("browser-demo-2");
-  await page.getByRole("button", { name: "Create Workflow" }).click();
-  await expect(page.getByLabel("Workflow")).toHaveValue("browser-demo-2");
-  await expect(page.locator("#editorStatus")).toContainText("Created workflow browser-demo-2");
-  await expect(page.locator("#sessionLine")).toContainText("No session selected.");
+  await page.getByLabel("Create Workflow").fill("browser-demo-2");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.getByLabel("Select Workflow")).toHaveValue("browser-demo-2");
+  await expect(page.locator(".message.info")).toContainText("Created workflow 'browser-demo-2'.");
+  await expect(page.locator(".session-detail")).toContainText("Select a session to inspect status, queue, and node execution history.");
 });

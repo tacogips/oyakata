@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-03-07T13:05:00Z",
+  "lastUpdated": "2026-03-08T16:00:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -17,7 +17,13 @@
     "14": { "status": "IN_PROGRESS" },
     "15": { "status": "COMPLETED" },
     "16": { "status": "COMPLETED" },
-    "17": { "status": "COMPLETED" }
+    "17": { "status": "COMPLETED" },
+    "18": { "status": "IN_PROGRESS" },
+    "19": { "status": "COMPLETED" },
+    "20": { "status": "COMPLETED" },
+    "21": { "status": "COMPLETED" },
+    "22": { "status": "COMPLETED" },
+    "23": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -210,6 +216,68 @@
         "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
         "TASK-002": { "status": "Completed", "parallelizable": true, "deps": ["TASK-001"] },
         "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001", "TASK-002"] }
+      }
+    },
+    "workflow-web-editor-svelte-migration": {
+      "phase": 18,
+      "status": "In Progress",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["workflow-web-editor-execution:TASK-002"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "runtime-owned-external-output-publication": {
+      "phase": 18,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["oyakata-manager-prompt-contract:TASK-003", "node-output-contract-and-validation:TASK-005"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-004": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001", "TASK-002", "TASK-003"] }
+      }
+    },
+    "mailbox-delivery-manager-ownership": {
+      "phase": 19,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "mailbox-output-snapshot-fidelity": {
+      "phase": 20,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["mailbox-delivery-manager-ownership:TASK-003"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] }
+      }
+    },
+    "mailbox-cross-boundary-routing-scope": {
+      "phase": 21,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["mailbox-delivery-manager-ownership:TASK-003"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001", "TASK-002"] }
+      }
+    },
+    "mailbox-cross-boundary-edge-validation": {
+      "phase": 22,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["mailbox-cross-boundary-routing-scope:TASK-003"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001", "TASK-002"] }
+      }
+    },
+    "mailbox-artifact-atomic-writes": {
+      "phase": 23,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["mailbox-output-snapshot-fidelity:TASK-002"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] }
       }
     }
   }

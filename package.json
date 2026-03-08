@@ -15,18 +15,23 @@
   },
   "scripts": {
     "dev": "bun run --watch src/main.ts",
-    "build": "bun build src/main.ts --outdir dist --target bun",
+    "build": "bun run build:server && bun run build:ui",
+    "build:server": "bun build src/main.ts --outdir dist --target bun",
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "typecheck:server": "tsc --noEmit",
+    "typecheck:ui": "svelte-check --tsconfig ./ui/tsconfig.json",
     "start": "bun run src/main.ts",
     "test": "vitest run",
-    "test:e2e": "playwright test -c playwright.config.cjs",
-    "test:all": "bun run test && bun run test:e2e",
+    "test:e2e": "bun run build:ui && playwright test -c playwright.config.cjs",
+    "test:all": "bun run test && bun run build:ui && bun run test:e2e",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "typecheck": "tsc --noEmit",
+    "check:ui": "bun run typecheck:ui && bun run build:ui",
+    "typecheck": "bun run typecheck:server && bun run typecheck:ui",
     "lint": "bun run typecheck",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist ui/dist"
   },
   "homepage": "https://github.com/user/repo",
   "repository": {
@@ -42,11 +47,15 @@
     "openai": "6.27.0"
   },
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "@playwright/test": "1.58.1",
     "@types/bun": "1.1.14",
     "@vitest/ui": "2.1.8",
     "typescript": "5.7.2",
     "prettier": "3.4.2",
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.1.1",
+    "vite": "^5.4.21",
     "vitest": "2.1.8"
   }
 }

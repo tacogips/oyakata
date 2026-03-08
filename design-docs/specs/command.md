@@ -37,7 +37,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 |------|------|---------|-------------|
 | `--variables` | string (path) | none | JSON file supplying runtime prompt variables (merged with node variables) |
 | `--workflow-root` | string (path) | `./.oyakata` | Root directory containing workflow definitions |
-| `--artifact-root` | string (path) | `./.oyakata/workflow` | Root directory for execution artifacts |
+| `--artifact-root` | string (path) | `./.oyakata-datas/workflow` | Root directory for execution artifacts |
 | `--workflow` | string | none | Workflow name for direct TUI launch (skip workflow chooser) |
 | `--resume-session` | string | none | Session id to resume in TUI |
 | `--tui-log-level` | string | `info` | Log verbosity in TUI panel (`error`, `warn`, `info`, `debug`) |
@@ -57,7 +57,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OYAKATA_DEFAULT_MODEL` | No | none | Default model used only by create/template flows; runtime still requires explicit node `model` |
-| `OYAKATA_ARTIFACT_ROOT` | No | `./.oyakata/workflow` | Default root directory for execution artifacts |
+| `OYAKATA_ARTIFACT_ROOT` | No | `./.oyakata-datas/workflow` | Default root directory for execution artifacts |
 | `OYAKATA_WORKFLOW_ROOT` | No | `./.oyakata` | Default workflow definition root directory |
 | `OYAKATA_TUI_LOG_LEVEL` | No | `info` | Default TUI log panel verbosity |
 | `OYAKATA_SESSION_STORE` | No | local file store | Session state backend selector |
@@ -73,7 +73,7 @@ Workflow root resolution order:
 Artifact root resolution order:
 1. `--artifact-root`
 2. `OYAKATA_ARTIFACT_ROOT`
-3. `./.oyakata/workflow`
+3. `./.oyakata-datas/workflow`
 
 ### Exit Codes
 

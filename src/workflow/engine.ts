@@ -14,14 +14,24 @@ import { DispatchingNodeAdapter } from "./adapters/dispatch";
 import { resolveNodeExecutionBackend } from "./adapters/dispatch";
 import { loadWorkflowFromDisk } from "./load";
 import { assembleNodeInput } from "./input-assembly";
-import { validateJsonValueAgainstSchema, type JsonSchemaValidationError } from "./json-schema";
+import {
+  validateJsonValueAgainstSchema,
+  type JsonSchemaValidationError,
+} from "./json-schema";
 import { composeExecutionPrompt } from "./prompt-composition";
 import { parseManagerControlPayload } from "./manager-control";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import { executeConversationRound } from "./conversation";
-import { evaluateBranch, evaluateCompletion, resolveLoopTransition } from "./semantics";
-import { planRootManagerSubWorkflowStarts, planSubWorkflowChildInputs } from "./sub-workflow";
+import {
+  evaluateBranch,
+  evaluateCompletion,
+  resolveLoopTransition,
+} from "./semantics";
+import {
+  planRootManagerSubWorkflowStarts,
+  planSubWorkflowChildInputs,
+} from "./sub-workflow";
 import {
   createSessionId,
   createSessionState,
@@ -31,8 +41,20 @@ import {
   type OutputRef,
   type WorkflowSessionState,
 } from "./session";
-import { loadSession, saveSession, type SessionStoreOptions } from "./session-store";
-import type { JsonObject, LoadOptions, LoopRule, NodePayload, SubWorkflowRef, WorkflowEdge, WorkflowJson } from "./types";
+import {
+  loadSession,
+  saveSession,
+  type SessionStoreOptions,
+} from "./session-store";
+import type {
+  JsonObject,
+  LoadOptions,
+  LoopRule,
+  NodePayload,
+  SubWorkflowRef,
+  WorkflowEdge,
+  WorkflowJson,
+} from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
@@ -90,21 +112,33 @@ interface UpstreamOutputRef extends OutputRef {
   readonly fromSubWorkflowId?: string;
   readonly toSubWorkflowId?: string;
   readonly transitionWhen: string;
-  readonly status: NodeExecutionRecord["status"] | CommunicationRecord["status"];
+  readonly status:
+    | NodeExecutionRecord["status"]
+    | CommunicationRecord["status"];
   readonly communicationId: string;
 }
 
 interface UpstreamInput extends UpstreamOutputRef {
   readonly output: Readonly<Record<string, unknown>>;
+  readonly outputRaw: string;
 }
 
 interface ForwardedManagerPayload {
   readonly payloadRef: OutputRef;
-  readonly outputPayload: Readonly<Record<string, unknown>>;
+  readonly outputRaw: string;
+}
+
+interface OutputArtifact {
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly raw: string;
 }
 
 interface AdapterExecutionFailure {
-  readonly code: "provider_error" | "timeout" | "invalid_output" | "policy_blocked";
+  readonly code:
+    | "provider_error"
+    | "timeout"
+    | "invalid_output"
+    | "policy_blocked";
   readonly message: string;
 }
 
@@ -134,7 +168,10 @@ function resolveTimeoutMs(
   return workflowTimeoutMs;
 }
 
-function evaluateEdge(edge: WorkflowEdge, output: Readonly<Record<string, unknown>>): boolean {
+function evaluateEdge(
+  edge: WorkflowEdge,
+  output: Readonly<Record<string, unknown>>,
+): boolean {
   return evaluateBranch({ when: edge.when, output });
 }
 
@@ -148,7 +185,9 @@ async function executeAdapterWithTimeout(
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(new AdapterExecutionError("timeout", "adapter execution timed out"));
+      reject(
+        new AdapterExecutionError("timeout", "adapter execution timed out"),
+      );
     }, timeoutMs);
   });
 
@@ -176,7 +215,10 @@ async function executeAdapterWithTimeout(
     }
     return err({
       code: "provider_error",
-      message: error instanceof Error ? error.message : "unknown adapter execution failure",
+      message:
+        error instanceof Error
+          ? error.message
+          : "unknown adapter execution failure",
     });
   } finally {
     if (timer !== undefined) {
@@ -185,15 +227,76 @@ async function executeAdapterWithTimeout(
   }
 }
 
-async function writeJsonFile(filePath: string, payload: unknown): Promise<void> {
+async function writeJsonFile(
+  filePath: string,
+  payload: unknown,
+): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   await rename(tempPath, filePath);
 }
 
+async function writeRawTextFile(
+  filePath: string,
+  content: string,
+): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  await writeFile(tempPath, content, "utf8");
+  await rename(tempPath, filePath);
+}
+
+async function persistTerminalSessionState(
+  session: WorkflowSessionState,
+  options: SessionStoreOptions,
+  contextMessage: string,
+): Promise<Result<void, string>> {
+  const saved = await saveSession(session, options);
+  if (!saved.ok) {
+    return err(
+      `${contextMessage}; additionally failed to persist terminal session state: ${saved.error.message}`,
+    );
+  }
+  return ok(undefined);
+}
+
+async function persistCompletedSessionState(
+  session: WorkflowSessionState,
+  options: SessionStoreOptions,
+): Promise<Result<void, string>> {
+  const saved = await saveSession(session, options);
+  if (!saved.ok) {
+    return err(
+      `failed to persist completed workflow session state: ${saved.error.message}`,
+    );
+  }
+  return ok(undefined);
+}
+
+async function failTerminalSession(
+  session: WorkflowSessionState,
+  options: SessionStoreOptions,
+  message: string,
+): Promise<Result<never, WorkflowRunFailure>> {
+  const failed: WorkflowSessionState = {
+    ...session,
+    status: "failed",
+    lastError: message,
+  };
+  const persisted = await persistTerminalSessionState(failed, options, message);
+  return err({
+    exitCode: 1,
+    message: persisted.ok ? message : persisted.error,
+  });
+}
+
 function stableJson(payload: unknown): string {
   return JSON.stringify(payload, null, 2);
+}
+
+function outputArtifactJsonText(payload: unknown): string {
+  return `${stableJson(payload)}\n`;
 }
 
 function sha256Hex(value: string): string {
@@ -249,7 +352,9 @@ function buildReservedCandidateSubmissionPath(input: {
   );
 }
 
-async function cleanupReservedCandidateSubmissionPath(candidatePath: string): Promise<void> {
+async function cleanupReservedCandidateSubmissionPath(
+  candidatePath: string,
+): Promise<void> {
   await rm(path.dirname(candidatePath), { recursive: true, force: true });
 }
 
@@ -310,13 +415,15 @@ const WORKFLOW_EXTERNAL_OUTPUT_NODE_ID = "__workflow-output-mailbox__";
 function formatOutputValidationErrors(
   errors: readonly JsonSchemaValidationError[],
 ): readonly JsonSchemaValidationError[] {
-  return errors.slice(0, MAX_OUTPUT_VALIDATION_FEEDBACK_ERRORS).map((entry) => ({
-    path: entry.path,
-    message:
-      entry.message.length <= MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH
-        ? entry.message
-        : `${entry.message.slice(0, MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH - 3)}...`,
-  }));
+  return errors
+    .slice(0, MAX_OUTPUT_VALIDATION_FEEDBACK_ERRORS)
+    .map((entry) => ({
+      path: entry.path,
+      message:
+        entry.message.length <= MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH
+          ? entry.message
+          : `${entry.message.slice(0, MAX_OUTPUT_VALIDATION_FEEDBACK_MESSAGE_LENGTH - 3)}...`,
+    }));
 }
 
 function buildRetryValidationFeedback(
@@ -335,11 +442,17 @@ interface CandidatePayloadResolutionError {
 
 async function readCandidatePayloadFromFile(
   filePath: string,
-): Promise<Result<Readonly<Record<string, unknown>>, CandidatePayloadResolutionError>> {
+): Promise<
+  Result<Readonly<Record<string, unknown>>, CandidatePayloadResolutionError>
+> {
   try {
     const raw = await readFile(filePath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return err({
         message: `candidate file '${filePath}' must contain a JSON object`,
         retryable: true,
@@ -358,15 +471,22 @@ async function readCandidatePayloadFromFile(
 async function resolveCandidatePayload(input: {
   readonly expectedCandidatePath: string;
   readonly execution: AdapterExecutionOutput;
-}): Promise<Result<Readonly<Record<string, unknown>>, CandidatePayloadResolutionError>> {
+}): Promise<
+  Result<Readonly<Record<string, unknown>>, CandidatePayloadResolutionError>
+> {
   if (input.execution.candidateFilePath === undefined) {
     return ok(input.execution.payload);
   }
 
   const resolvedPath = path.isAbsolute(input.execution.candidateFilePath)
     ? input.execution.candidateFilePath
-    : path.resolve(path.dirname(input.expectedCandidatePath), input.execution.candidateFilePath);
-  if (path.resolve(resolvedPath) !== path.resolve(input.expectedCandidatePath)) {
+    : path.resolve(
+        path.dirname(input.expectedCandidatePath),
+        input.execution.candidateFilePath,
+      );
+  if (
+    path.resolve(resolvedPath) !== path.resolve(input.expectedCandidatePath)
+  ) {
     return err({
       message: `candidate file path must resolve to the reserved candidate path '${input.expectedCandidatePath}'`,
       retryable: false,
@@ -375,20 +495,45 @@ async function resolveCandidatePayload(input: {
   return readCandidatePayloadFromFile(resolvedPath);
 }
 
-async function readOutputPayloadArtifact(artifactDir: string): Promise<Result<Readonly<Record<string, unknown>>, string>> {
+async function readOutputPayloadArtifact(
+  artifactDir: string,
+): Promise<Result<OutputArtifact, string>> {
   const outputPath = path.join(artifactDir, "output.json");
 
   try {
     const outputRaw = await readFile(outputPath, "utf8");
     const parsed = JSON.parse(outputRaw) as unknown;
-    if (typeof parsed !== "object" || parsed === null) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       return err(`output artifact '${outputPath}' must contain a JSON object`);
     }
-    return ok(parsed as Readonly<Record<string, unknown>>);
+    return ok({
+      payload: parsed as Readonly<Record<string, unknown>>,
+      raw: outputRaw,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err(`unable to read output artifact '${outputPath}': ${message}`);
   }
+}
+
+function findOwningSubWorkflowByRuntimeNodeId(
+  workflow: WorkflowJson,
+  nodeId: string,
+): SubWorkflowRef | undefined {
+  return workflow.subWorkflows.find((entry) => {
+    if (entry.nodeIds?.includes(nodeId) ?? false) {
+      return true;
+    }
+    return (
+      entry.managerNodeId === nodeId ||
+      entry.inputNodeId === nodeId ||
+      entry.outputNodeId === nodeId
+    );
+  });
 }
 
 function outputRefForExecution(
@@ -397,37 +542,148 @@ function outputRefForExecution(
   execution: NodeExecutionRecord,
   nodeId: string,
 ): OutputRef {
-  const owningSubWorkflow = workflow.subWorkflows.find((entry) => {
-    if (entry.nodeIds?.includes(nodeId) ?? false) {
-      return true;
-    }
-    return entry.managerNodeId === nodeId || entry.inputNodeId === nodeId || entry.outputNodeId === nodeId;
-  });
+  const owningSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
+    workflow,
+    nodeId,
+  );
   return {
     workflowExecutionId: session.sessionId,
     workflowId: session.workflowId,
-    ...(owningSubWorkflow === undefined ? {} : { subWorkflowId: owningSubWorkflow.id }),
+    ...(owningSubWorkflow === undefined
+      ? {}
+      : { subWorkflowId: owningSubWorkflow.id }),
     outputNodeId: nodeId,
     nodeExecId: execution.nodeExecId,
     artifactDir: execution.artifactDir,
   };
 }
 
-function isManagerNodeKind(kind: WorkflowJson["nodes"][number]["kind"]): boolean {
-  return kind === "manager" || kind === "root-manager" || kind === "sub-manager";
+function isManagerNodeKind(
+  kind: WorkflowJson["nodes"][number]["kind"],
+): boolean {
+  return (
+    kind === "manager" || kind === "root-manager" || kind === "sub-manager"
+  );
 }
 
-function findOwningSubWorkflowByInputNodeId(workflow: WorkflowJson, nodeId: string): SubWorkflowRef | undefined {
+function findOwningSubWorkflowByInputNodeId(
+  workflow: WorkflowJson,
+  nodeId: string,
+): SubWorkflowRef | undefined {
   return workflow.subWorkflows.find((entry) => entry.inputNodeId === nodeId);
 }
 
-function isRootScopeNode(workflow: WorkflowJson, nodeId: string): boolean {
-  return !workflow.subWorkflows.some((entry) => entry.nodeIds.includes(nodeId));
+function findOwningSubWorkflowByNodeId(
+  workflow: WorkflowJson,
+  nodeId: string,
+): SubWorkflowRef | undefined {
+  return findOwningSubWorkflowByRuntimeNodeId(workflow, nodeId);
 }
 
-function isRootScopeOutputNode(workflow: WorkflowJson, nodeId: string): boolean {
+function isRootScopeNode(workflow: WorkflowJson, nodeId: string): boolean {
+  return findOwningSubWorkflowByNodeId(workflow, nodeId) === undefined;
+}
+
+function isRootScopeOutputNode(
+  workflow: WorkflowJson,
+  nodeId: string,
+): boolean {
   const node = workflow.nodes.find((entry) => entry.id === nodeId);
   return node?.kind === "output" && isRootScopeNode(workflow, nodeId);
+}
+
+function mailboxDeliveryManagerNodeId(
+  workflow: WorkflowJson,
+  toNodeId: string,
+): string {
+  if (toNodeId === workflow.managerNodeId) {
+    return workflow.managerNodeId;
+  }
+
+  if (workflow.subWorkflows.some((entry) => entry.managerNodeId === toNodeId)) {
+    return workflow.managerNodeId;
+  }
+
+  return (
+    findOwningSubWorkflowByRuntimeNodeId(workflow, toNodeId)?.managerNodeId ??
+    workflow.managerNodeId
+  );
+}
+
+function resolveCommunicationBoundary(input: {
+  readonly workflow: WorkflowJson;
+  readonly fromNodeId: string;
+  readonly toNodeId: string;
+}): {
+  readonly routingScope: CommunicationRecord["routingScope"];
+  readonly fromSubWorkflowId?: string;
+  readonly toSubWorkflowId?: string;
+} {
+  const fromSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
+    input.workflow,
+    input.fromNodeId,
+  );
+  const toSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
+    input.workflow,
+    input.toNodeId,
+  );
+  const recipientManagerSubWorkflow = input.workflow.subWorkflows.find(
+    (entry) => entry.managerNodeId === input.toNodeId,
+  );
+
+  if (recipientManagerSubWorkflow !== undefined) {
+    if (fromSubWorkflow === undefined) {
+      return {
+        routingScope: "parent-to-sub-workflow",
+        toSubWorkflowId: recipientManagerSubWorkflow.id,
+      };
+    }
+    if (fromSubWorkflow.id === recipientManagerSubWorkflow.id) {
+      return {
+        routingScope: "intra-sub-workflow",
+        fromSubWorkflowId: fromSubWorkflow.id,
+        toSubWorkflowId: recipientManagerSubWorkflow.id,
+      };
+    }
+    return {
+      routingScope: "cross-sub-workflow",
+      fromSubWorkflowId: fromSubWorkflow.id,
+      toSubWorkflowId: recipientManagerSubWorkflow.id,
+    };
+  }
+
+  if (fromSubWorkflow !== undefined && toSubWorkflow !== undefined) {
+    if (fromSubWorkflow.id === toSubWorkflow.id) {
+      return {
+        routingScope: "intra-sub-workflow",
+        fromSubWorkflowId: fromSubWorkflow.id,
+        toSubWorkflowId: toSubWorkflow.id,
+      };
+    }
+    return {
+      routingScope: "cross-sub-workflow",
+      fromSubWorkflowId: fromSubWorkflow.id,
+      toSubWorkflowId: toSubWorkflow.id,
+    };
+  }
+
+  if (fromSubWorkflow !== undefined) {
+    return {
+      routingScope: "cross-sub-workflow",
+      fromSubWorkflowId: fromSubWorkflow.id,
+    };
+  }
+
+  if (toSubWorkflow !== undefined) {
+    return {
+      routingScope: "intra-sub-workflow",
+      toSubWorkflowId: toSubWorkflow.id,
+    };
+  }
+
+  return {
+    routingScope: "intra-sub-workflow",
+  };
 }
 
 function findLatestPublishedWorkflowResult(
@@ -436,7 +692,11 @@ function findLatestPublishedWorkflowResult(
 ): NodeExecutionRecord | undefined {
   return [...session.nodeExecutions]
     .reverse()
-    .find((entry) => entry.status === "succeeded" && isRootScopeOutputNode(workflow, entry.nodeId));
+    .find(
+      (entry) =>
+        entry.status === "succeeded" &&
+        isRootScopeOutputNode(workflow, entry.nodeId),
+    );
 }
 
 function buildUpstreamOutputRefs(
@@ -444,33 +704,44 @@ function buildUpstreamOutputRefs(
   session: WorkflowSessionState,
   nodeId: string,
 ): readonly UpstreamOutputRef[] {
-  const owningSubWorkflow = findOwningSubWorkflowByInputNodeId(workflow, nodeId);
-  const matchingCommunications = session.communications.filter((communication) => {
-    if (communication.status !== "delivered") {
-      return false;
-    }
-    if (communication.toNodeId === nodeId) {
-      return true;
-    }
-    if (owningSubWorkflow === undefined) {
-      return false;
-    }
-    return (
-      communication.toSubWorkflowId === owningSubWorkflow.id &&
-      communication.toNodeId === owningSubWorkflow.managerNodeId
-    );
-  });
+  const owningSubWorkflow = findOwningSubWorkflowByInputNodeId(
+    workflow,
+    nodeId,
+  );
+  const matchingCommunications = session.communications.filter(
+    (communication) => {
+      if (communication.status !== "delivered") {
+        return false;
+      }
+      if (communication.toNodeId === nodeId) {
+        return true;
+      }
+      if (owningSubWorkflow === undefined) {
+        return false;
+      }
+      return (
+        communication.toSubWorkflowId === owningSubWorkflow.id &&
+        communication.toNodeId === owningSubWorkflow.managerNodeId
+      );
+    },
+  );
   if (matchingCommunications.length === 0) {
     return [];
   }
 
   return matchingCommunications
     .map((communication) => {
-      const execution = session.nodeExecutions.find((candidate) => candidate.nodeExecId === communication.sourceNodeExecId);
+      const execution = session.nodeExecutions.find(
+        (candidate) => candidate.nodeExecId === communication.sourceNodeExecId,
+      );
       return {
         fromNodeId: communication.fromNodeId,
-        ...(communication.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: communication.fromSubWorkflowId }),
-        ...(communication.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: communication.toSubWorkflowId }),
+        ...(communication.fromSubWorkflowId === undefined
+          ? {}
+          : { fromSubWorkflowId: communication.fromSubWorkflowId }),
+        ...(communication.toSubWorkflowId === undefined
+          ? {}
+          : { toSubWorkflowId: communication.toSubWorkflowId }),
         transitionWhen: communication.transitionWhen,
         status: execution?.status ?? communication.status,
         communicationId: communication.communicationId,
@@ -500,30 +771,41 @@ async function buildUpstreamInputs(
     }
     loaded.push({
       ...ref,
-      output: output.value,
+      output: output.value.payload,
+      outputRaw: output.value.raw,
     });
   }
 
   return ok(loaded);
 }
 
-function toForwardedManagerPayload(input: UpstreamInput): ForwardedManagerPayload {
+function toForwardedManagerPayload(
+  input: UpstreamInput,
+): ForwardedManagerPayload {
   return {
     payloadRef: {
       workflowExecutionId: input.workflowExecutionId,
       workflowId: input.workflowId,
-      ...(input.subWorkflowId === undefined ? {} : { subWorkflowId: input.subWorkflowId }),
+      ...(input.subWorkflowId === undefined
+        ? {}
+        : { subWorkflowId: input.subWorkflowId }),
       outputNodeId: input.outputNodeId,
       nodeExecId: input.nodeExecId,
       artifactDir: input.artifactDir,
     },
-    outputPayload: input.output,
+    outputRaw: input.outputRaw,
   };
 }
 
-function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: OutputRef, nextNodes: readonly string[]): string {
+function buildCommitMessageTemplate(
+  inputHash: string,
+  outputHash: string,
+  ref: OutputRef,
+  nextNodes: readonly string[],
+): string {
   const summary = `chore(workflow): checkpoint node ${ref.outputNodeId}`;
-  const nextNodeValue = nextNodes.length === 0 ? "(terminal)" : nextNodes.join(",");
+  const nextNodeValue =
+    nextNodes.length === 0 ? "(terminal)" : nextNodes.join(",");
   return [
     summary,
     "",
@@ -541,7 +823,9 @@ function buildCommitMessageTemplate(inputHash: string, outputHash: string, ref: 
   ].join("\n");
 }
 
-function normalizeExternalMailboxBusinessPayload(value: unknown): Readonly<Record<string, unknown>> {
+function normalizeExternalMailboxBusinessPayload(
+  value: unknown,
+): Readonly<Record<string, unknown>> {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return value as Readonly<Record<string, unknown>>;
   }
@@ -562,12 +846,14 @@ interface CreateCommunicationInput {
   readonly transitionWhen: string;
   readonly sourceNodeExecId: string;
   readonly payloadRef: OutputRef;
-  readonly outputPayload: Readonly<Record<string, unknown>>;
+  readonly outputRaw: string;
   readonly deliveredByNodeId: string;
   readonly createdAt: string;
 }
 
-async function persistCommunicationArtifact(input: CreateCommunicationInput): Promise<CommunicationRecord> {
+async function persistCommunicationArtifact(
+  input: CreateCommunicationInput,
+): Promise<CommunicationRecord> {
   const communicationId = nextCommunicationId(input.communicationCounter + 1);
   const deliveryAttemptId = initialDeliveryAttemptId();
   const communicationDir = path.join(
@@ -583,8 +869,12 @@ async function persistCommunicationArtifact(input: CreateCommunicationInput): Pr
     communicationId,
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
-    ...(input.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: input.fromSubWorkflowId }),
-    ...(input.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: input.toSubWorkflowId }),
+    ...(input.fromSubWorkflowId === undefined
+      ? {}
+      : { fromSubWorkflowId: input.fromSubWorkflowId }),
+    ...(input.toSubWorkflowId === undefined
+      ? {}
+      : { toSubWorkflowId: input.toSubWorkflowId }),
     routingScope: input.routingScope,
     sourceNodeExecId: input.sourceNodeExecId,
     deliveryKind: input.deliveryKind,
@@ -602,8 +892,12 @@ async function persistCommunicationArtifact(input: CreateCommunicationInput): Pr
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
     sourceNodeExecId: input.sourceNodeExecId,
-    ...(input.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: input.fromSubWorkflowId }),
-    ...(input.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: input.toSubWorkflowId }),
+    ...(input.fromSubWorkflowId === undefined
+      ? {}
+      : { fromSubWorkflowId: input.fromSubWorkflowId }),
+    ...(input.toSubWorkflowId === undefined
+      ? {}
+      : { toSubWorkflowId: input.toSubWorkflowId }),
     routingScope: input.routingScope,
     deliveryKind: input.deliveryKind,
     activeDeliveryAttemptId: deliveryAttemptId,
@@ -628,16 +922,37 @@ async function persistCommunicationArtifact(input: CreateCommunicationInput): Pr
     deliveredAt: input.createdAt,
   };
 
-  await mkdir(path.join(communicationDir, "outbox", input.fromNodeId), { recursive: true });
-  await mkdir(path.join(communicationDir, "inbox", input.toNodeId), { recursive: true });
-  await mkdir(path.join(communicationDir, "attempts", deliveryAttemptId), { recursive: true });
+  await mkdir(path.join(communicationDir, "outbox", input.fromNodeId), {
+    recursive: true,
+  });
+  await mkdir(path.join(communicationDir, "inbox", input.toNodeId), {
+    recursive: true,
+  });
+  await mkdir(path.join(communicationDir, "attempts", deliveryAttemptId), {
+    recursive: true,
+  });
 
   await writeJsonFile(path.join(communicationDir, "message.json"), envelope);
-  await writeJsonFile(path.join(communicationDir, "outbox", input.fromNodeId, "message.json"), envelope);
-  await writeJsonFile(path.join(communicationDir, "outbox", input.fromNodeId, "output.json"), input.outputPayload);
-  await writeJsonFile(path.join(communicationDir, "inbox", input.toNodeId, "message.json"), envelope);
-  await writeJsonFile(path.join(communicationDir, "attempts", deliveryAttemptId, "attempt.json"), attempt);
-  await writeJsonFile(path.join(communicationDir, "attempts", deliveryAttemptId, "receipt.json"), receipt);
+  await writeJsonFile(
+    path.join(communicationDir, "outbox", input.fromNodeId, "message.json"),
+    envelope,
+  );
+  await writeRawTextFile(
+    path.join(communicationDir, "outbox", input.fromNodeId, "output.json"),
+    input.outputRaw,
+  );
+  await writeJsonFile(
+    path.join(communicationDir, "inbox", input.toNodeId, "message.json"),
+    envelope,
+  );
+  await writeJsonFile(
+    path.join(communicationDir, "attempts", deliveryAttemptId, "attempt.json"),
+    attempt,
+  );
+  await writeJsonFile(
+    path.join(communicationDir, "attempts", deliveryAttemptId, "receipt.json"),
+    receipt,
+  );
   await writeJsonFile(path.join(communicationDir, "meta.json"), meta);
 
   return {
@@ -646,8 +961,12 @@ async function persistCommunicationArtifact(input: CreateCommunicationInput): Pr
     communicationId,
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
-    ...(input.fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId: input.fromSubWorkflowId }),
-    ...(input.toSubWorkflowId === undefined ? {} : { toSubWorkflowId: input.toSubWorkflowId }),
+    ...(input.fromSubWorkflowId === undefined
+      ? {}
+      : { fromSubWorkflowId: input.fromSubWorkflowId }),
+    ...(input.toSubWorkflowId === undefined
+      ? {}
+      : { toSubWorkflowId: input.toSubWorkflowId }),
     routingScope: input.routingScope,
     sourceNodeExecId: input.sourceNodeExecId,
     payloadRef: input.payloadRef,
@@ -667,6 +986,7 @@ async function persistExternalMailboxInputCommunication(input: {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
   readonly communicationCounter: number;
+  readonly deliveredByNodeId: string;
   readonly toNodeId: string;
   readonly humanInput: unknown;
   readonly createdAt: string;
@@ -687,8 +1007,12 @@ async function persistExternalMailboxInputCommunication(input: {
     when: { always: true },
     payload: normalizeExternalMailboxBusinessPayload(input.humanInput),
   };
+  const outputRaw = outputArtifactJsonText(outputPayload);
   await mkdir(externalArtifactDir, { recursive: true });
-  await writeJsonFile(path.join(externalArtifactDir, "output.json"), outputPayload);
+  await writeRawTextFile(
+    path.join(externalArtifactDir, "output.json"),
+    outputRaw,
+  );
 
   return persistCommunicationArtifact({
     artifactWorkflowRoot: input.artifactWorkflowRoot,
@@ -708,8 +1032,8 @@ async function persistExternalMailboxInputCommunication(input: {
       nodeExecId: sourceNodeExecId,
       artifactDir: externalArtifactDir,
     },
-    outputPayload,
-    deliveredByNodeId: WORKFLOW_EXTERNAL_INPUT_NODE_ID,
+    outputRaw,
+    deliveredByNodeId: input.deliveredByNodeId,
     createdAt: input.createdAt,
   });
 }
@@ -719,7 +1043,7 @@ async function persistExternalMailboxOutputCommunication(input: {
   readonly workflow: WorkflowJson;
   readonly session: WorkflowSessionState;
   readonly execution: NodeExecutionRecord;
-  readonly outputPayload: Readonly<Record<string, unknown>>;
+  readonly outputRaw: string;
   readonly communicationCounter: number;
   readonly createdAt: string;
 }): Promise<CommunicationRecord> {
@@ -734,9 +1058,14 @@ async function persistExternalMailboxOutputCommunication(input: {
     deliveryKind: "external-output",
     transitionWhen: "external-mailbox:workflow-output",
     sourceNodeExecId: input.execution.nodeExecId,
-    payloadRef: outputRefForExecution(input.workflow, input.session, input.execution, input.execution.nodeId),
-    outputPayload: input.outputPayload,
-    deliveredByNodeId: input.execution.nodeId,
+    payloadRef: outputRefForExecution(
+      input.workflow,
+      input.session,
+      input.execution,
+      input.execution.nodeId,
+    ),
+    outputRaw: input.outputRaw,
+    deliveredByNodeId: input.workflow.managerNodeId,
     createdAt: input.createdAt,
   });
 }
@@ -761,19 +1090,34 @@ async function markCommunicationsConsumed(
 
     const activeAttemptId =
       communication.activeDeliveryAttemptId ??
-      communication.deliveryAttemptIds[communication.deliveryAttemptIds.length - 1] ??
+      communication.deliveryAttemptIds[
+        communication.deliveryAttemptIds.length - 1
+      ] ??
       initialDeliveryAttemptId();
     const metaPath = path.join(communication.artifactDir, "meta.json");
-    const receiptPath = path.join(communication.artifactDir, "attempts", activeAttemptId, "receipt.json");
+    const receiptPath = path.join(
+      communication.artifactDir,
+      "attempts",
+      activeAttemptId,
+      "receipt.json",
+    );
 
     let parsedMeta: Record<string, unknown>;
     let parsedReceipt: Record<string, unknown>;
     try {
-      parsedMeta = JSON.parse(await readFile(metaPath, "utf8")) as Record<string, unknown>;
-      parsedReceipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
+      parsedMeta = JSON.parse(await readFile(metaPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      parsedReceipt = JSON.parse(await readFile(receiptPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "unknown error";
-      return err(`failed to load mailbox delivery metadata for '${communication.communicationId}': ${message}`);
+      return err(
+        `failed to load mailbox delivery metadata for '${communication.communicationId}': ${message}`,
+      );
     }
 
     try {
@@ -790,7 +1134,9 @@ async function markCommunicationsConsumed(
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "unknown error";
-      return err(`failed to persist mailbox consumption for '${communication.communicationId}': ${message}`);
+      return err(
+        `failed to persist mailbox consumption for '${communication.communicationId}': ${message}`,
+      );
     }
 
     updates.push({
@@ -805,12 +1151,20 @@ async function markCommunicationsConsumed(
 }
 
 function isTerminalStatus(status: WorkflowSessionState["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
 }
 
-function readBusinessPayload(value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | null {
+function readBusinessPayload(
+  value: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> | null {
   const payload = value["payload"];
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
     return null;
   }
   return payload as Readonly<Record<string, unknown>>;
@@ -903,7 +1257,11 @@ export async function runWorkflow(
   const loaded = await loadWorkflowFromDisk(workflowName, options);
   if (!loaded.ok) {
     return err({
-      exitCode: loaded.error.code === "VALIDATION" || loaded.error.code === "INVALID_WORKFLOW_NAME" ? 2 : 1,
+      exitCode:
+        loaded.error.code === "VALIDATION" ||
+        loaded.error.code === "INVALID_WORKFLOW_NAME"
+          ? 2
+          : 1,
       message: loaded.error.message,
     });
   }
@@ -911,11 +1269,17 @@ export async function runWorkflow(
   const runtimeVariables = options.runtimeVariables ?? {};
   const workflow = loaded.value.bundle.workflow;
   const nodeMap = loaded.value.bundle.nodePayloads;
-  const workflowNodes = new Map(workflow.nodes.map((entry) => [entry.id, entry]));
-  const loopRuleByJudgeNodeId = new Map<string, LoopRule>((workflow.loops ?? []).map((entry) => [entry.judgeNodeId, entry]));
+  const workflowNodes = new Map(
+    workflow.nodes.map((entry) => [entry.id, entry]),
+  );
+  const loopRuleByJudgeNodeId = new Map<string, LoopRule>(
+    (workflow.loops ?? []).map((entry) => [entry.judgeNodeId, entry]),
+  );
   const effectiveAdapter =
     adapter ??
-    (options.mockScenario === undefined ? new DispatchingNodeAdapter() : new ScenarioNodeAdapter(options.mockScenario));
+    (options.mockScenario === undefined
+      ? new DispatchingNodeAdapter()
+      : new ScenarioNodeAdapter(options.mockScenario));
   const cancellationProbe =
     guards?.cancellationProbe ??
     ({
@@ -928,10 +1292,16 @@ export async function runWorkflow(
   let session: WorkflowSessionState;
   if (options.rerunFromSessionId !== undefined) {
     if (options.rerunFromNodeId === undefined) {
-      return err({ exitCode: 1, message: "rerunFromNodeId is required when rerunFromSessionId is set" });
+      return err({
+        exitCode: 1,
+        message: "rerunFromNodeId is required when rerunFromSessionId is set",
+      });
     }
     if (!workflowNodes.has(options.rerunFromNodeId)) {
-      return err({ exitCode: 1, message: `unknown rerun node '${options.rerunFromNodeId}'` });
+      return err({
+        exitCode: 1,
+        message: `unknown rerun node '${options.rerunFromNodeId}'`,
+      });
     }
 
     const source = await loadSession(options.rerunFromSessionId, options);
@@ -939,7 +1309,10 @@ export async function runWorkflow(
       return err({ exitCode: 1, message: source.error.message });
     }
     if (source.value.workflowName !== workflowName) {
-      return err({ exitCode: 1, message: "source session workflow does not match command workflow" });
+      return err({
+        exitCode: 1,
+        message: "source session workflow does not match command workflow",
+      });
     }
 
     session = createSessionState({
@@ -947,7 +1320,10 @@ export async function runWorkflow(
       workflowName,
       workflowId: workflow.workflowId,
       initialNodeId: options.rerunFromNodeId,
-      runtimeVariables: { ...source.value.runtimeVariables, ...runtimeVariables },
+      runtimeVariables: {
+        ...source.value.runtimeVariables,
+        ...runtimeVariables,
+      },
     });
   } else if (options.resumeSessionId !== undefined) {
     const existing = await loadSession(options.resumeSessionId, options);
@@ -955,7 +1331,10 @@ export async function runWorkflow(
       return err({ exitCode: 1, message: existing.error.message });
     }
     if (existing.value.workflowName !== workflowName) {
-      return err({ exitCode: 1, message: "session workflow does not match command workflow" });
+      return err({
+        exitCode: 1,
+        message: "session workflow does not match command workflow",
+      });
     }
     session = cloneSession(existing.value);
     if (session.status === "completed") {
@@ -979,15 +1358,17 @@ export async function runWorkflow(
   if (options.resumeSessionId === undefined) {
     const humanInput = session.runtimeVariables["humanInput"];
     if (humanInput !== undefined) {
-      const bootstrapCommunication = await persistExternalMailboxInputCommunication({
-        artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-        workflowId: workflow.workflowId,
-        workflowExecutionId: session.sessionId,
-        communicationCounter: session.communicationCounter,
-        toNodeId: workflow.managerNodeId,
-        humanInput,
-        createdAt: session.startedAt,
-      });
+      const bootstrapCommunication =
+        await persistExternalMailboxInputCommunication({
+          artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+          workflowId: workflow.workflowId,
+          workflowExecutionId: session.sessionId,
+          communicationCounter: session.communicationCounter,
+          deliveredByNodeId: workflow.managerNodeId,
+          toNodeId: workflow.managerNodeId,
+          humanInput,
+          createdAt: session.startedAt,
+        });
       session = {
         ...session,
         communicationCounter: session.communicationCounter + 1,
@@ -1008,7 +1389,8 @@ export async function runWorkflow(
     outgoingEdges.set(edge.from, [edge]);
   });
 
-  const maxLoopIterations = options.maxLoopIterations ?? workflow.defaults.maxLoopIterations;
+  const maxLoopIterations =
+    options.maxLoopIterations ?? workflow.defaults.maxLoopIterations;
   const maxSteps = options.maxSteps;
   const restartOnStuck = options.restartOnStuck ?? true;
   const maxStuckRestarts = options.maxStuckRestarts ?? 2;
@@ -1021,25 +1403,36 @@ export async function runWorkflow(
         return ok({ session: persisted.value, exitCode: 0 });
       }
       const exitCode = persisted.value.status === "cancelled" ? 130 : 1;
-      return err({ exitCode, message: persisted.value.lastError ?? `session ${persisted.value.status}` });
+      return err({
+        exitCode,
+        message:
+          persisted.value.lastError ?? `session ${persisted.value.status}`,
+      });
     }
     if (await cancellationProbe.isCancelled(session.sessionId)) {
       const cancelled: WorkflowSessionState = {
         ...session,
         status: "cancelled",
-        ...(session.queue[0] === undefined ? {} : { currentNodeId: session.queue[0] }),
+        ...(session.queue[0] === undefined
+          ? {}
+          : { currentNodeId: session.queue[0] }),
         endedAt: nowIso(),
         lastError: "cancelled by external request",
       };
       await saveSession(cancelled, options);
-      return err({ exitCode: 130, message: cancelled.lastError ?? "cancelled" });
+      return err({
+        exitCode: 130,
+        message: cancelled.lastError ?? "cancelled",
+      });
     }
 
     if (maxSteps !== undefined && session.nodeExecutionCounter >= maxSteps) {
       const paused: WorkflowSessionState = {
         ...session,
         status: "paused",
-        ...(session.queue[0] === undefined ? {} : { currentNodeId: session.queue[0] }),
+        ...(session.queue[0] === undefined
+          ? {}
+          : { currentNodeId: session.queue[0] }),
         endedAt: nowIso(),
         lastError: `max steps reached (${maxSteps})`,
       };
@@ -1065,7 +1458,10 @@ export async function runWorkflow(
         lastError: `missing node definition for '${nodeId}'`,
       };
       await saveSession(failed, options);
-      return err({ exitCode: 1, message: failed.lastError ?? "missing node definition" });
+      return err({
+        exitCode: 1,
+        message: failed.lastError ?? "missing node definition",
+      });
     }
 
     let restartAttempt = 0;
@@ -1073,18 +1469,41 @@ export async function runWorkflow(
 
     for (;;) {
       const nextCount = (session.nodeExecutionCounts[nodeId] ?? 0) + 1;
-      const updatedCounts = { ...session.nodeExecutionCounts, [nodeId]: nextCount };
+      const updatedCounts = {
+        ...session.nodeExecutionCounts,
+        [nodeId]: nextCount,
+      };
       const loopRule = loopRuleByJudgeNodeId.get(nodeId);
 
       const nextExecutionCounter = session.nodeExecutionCounter + 1;
       const nodeExecId = nextNodeExecId(nextExecutionCounter);
-      const workflowExecutionRoot = path.join(loaded.value.artifactWorkflowRoot, "executions", session.sessionId);
-      const artifactDir = path.join(workflowExecutionRoot, "nodes", nodeId, nodeExecId);
+      const workflowExecutionRoot = path.join(
+        loaded.value.artifactWorkflowRoot,
+        "executions",
+        session.sessionId,
+      );
+      const artifactDir = path.join(
+        workflowExecutionRoot,
+        "nodes",
+        nodeId,
+        nodeExecId,
+      );
       await mkdir(artifactDir, { recursive: true });
 
-      const mergedVariables = mergeVariables(nodePayload.variables, session.runtimeVariables);
-      const upstreamOutputRefs = buildUpstreamOutputRefs(workflow, session, nodeId);
-      const upstreamInputsResult = await buildUpstreamInputs(workflow, session, nodeId);
+      const mergedVariables = mergeVariables(
+        nodePayload.variables,
+        session.runtimeVariables,
+      );
+      const upstreamOutputRefs = buildUpstreamOutputRefs(
+        workflow,
+        session,
+        nodeId,
+      );
+      const upstreamInputsResult = await buildUpstreamInputs(
+        workflow,
+        session,
+        nodeId,
+      );
       if (!upstreamInputsResult.ok) {
         const failed: WorkflowSessionState = {
           ...session,
@@ -1095,7 +1514,11 @@ export async function runWorkflow(
           lastError: upstreamInputsResult.error,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 1, message: failed.lastError ?? "upstream communication resolution failed" });
+        return err({
+          exitCode: 1,
+          message:
+            failed.lastError ?? "upstream communication resolution failed",
+        });
       }
       const upstreamInputs = upstreamInputsResult.value;
       const upstreamBindingInputs = upstreamInputs.map((entry) => ({
@@ -1105,7 +1528,9 @@ export async function runWorkflow(
         communicationId: entry.communicationId,
         output: entry.output,
       }));
-      const upstreamCommunicationIds = upstreamInputs.map((entry) => entry.communicationId);
+      const upstreamCommunicationIds = upstreamInputs.map(
+        (entry) => entry.communicationId,
+      );
       const transcriptInput = (session.conversationTurns ?? []).map((turn) => ({
         conversationId: turn.conversationId,
         turnIndex: turn.turnIndex,
@@ -1139,7 +1564,10 @@ export async function runWorkflow(
         });
         assembledArguments = assembled.arguments;
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown input assembly failure";
+        const message =
+          error instanceof Error
+            ? error.message
+            : "unknown input assembly failure";
         const failed: WorkflowSessionState = {
           ...session,
           queue,
@@ -1149,7 +1577,10 @@ export async function runWorkflow(
           lastError: `input assembly failed at '${nodeId}': ${message}`,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 3, message: failed.lastError ?? "input assembly failed" });
+        return err({
+          exitCode: 3,
+          message: failed.lastError ?? "input assembly failed",
+        });
       }
 
       let backendSession = resolveRequestedBackendSession(session, nodePayload);
@@ -1177,18 +1608,25 @@ export async function runWorkflow(
             : {
                 description: nodePayload.output.description,
                 jsonSchema: nodePayload.output.jsonSchema,
-                maxValidationAttempts: resolveOutputValidationAttempts(nodePayload),
+                maxValidationAttempts:
+                  resolveOutputValidationAttempts(nodePayload),
                 publication: buildOutputPublicationPolicy(),
               },
         ...(backendSession === undefined ? {} : { backendSession }),
-        ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+        ...(previousNodeExecId === undefined
+          ? {}
+          : { restartedFromNodeExecId: previousNodeExecId }),
         dryRun: options.dryRun ?? false,
       };
       const inputJson = stableJson(inputPayload);
-      await writeFile(path.join(artifactDir, "input.json"), `${inputJson}\n`, "utf8");
+      await writeRawTextFile(path.join(artifactDir, "input.json"), `${inputJson}\n`);
 
       const startedAt = nowIso();
-      const timeoutMs = resolveTimeoutMs(nodePayload, workflow.defaults.nodeTimeoutMs, options.defaultTimeoutMs);
+      const timeoutMs = resolveTimeoutMs(
+        nodePayload,
+        workflow.defaults.nodeTimeoutMs,
+        options.defaultTimeoutMs,
+      );
 
       let outputPayload: Readonly<Record<string, unknown>>;
       let nodeStatus: NodeExecutionRecord["status"] = "succeeded";
@@ -1207,15 +1645,27 @@ export async function runWorkflow(
       } else {
         let finalizedOutput: Readonly<Record<string, unknown>> | undefined;
         const hasOutputContract = nodePayload.output !== undefined;
-        const maxOutputAttempts = hasOutputContract ? resolveOutputValidationAttempts(nodePayload) : 1;
+        const maxOutputAttempts = hasOutputContract
+          ? resolveOutputValidationAttempts(nodePayload)
+          : 1;
 
-        for (let outputAttempt = 1; outputAttempt <= maxOutputAttempts; outputAttempt += 1) {
+        for (
+          let outputAttempt = 1;
+          outputAttempt <= maxOutputAttempts;
+          outputAttempt += 1
+        ) {
           outputAttemptCount = outputAttempt;
-          const outputAttemptId = hasOutputContract ? nextOutputAttemptId(outputAttempt) : undefined;
+          const outputAttemptId = hasOutputContract
+            ? nextOutputAttemptId(outputAttempt)
+            : undefined;
           const attemptDir =
-            outputAttemptId === undefined ? undefined : path.join(artifactDir, "output-attempts", outputAttemptId);
+            outputAttemptId === undefined
+              ? undefined
+              : path.join(artifactDir, "output-attempts", outputAttemptId);
           const candidateArtifactPath =
-            attemptDir === undefined ? undefined : path.join(attemptDir, "candidate.json");
+            attemptDir === undefined
+              ? undefined
+              : path.join(attemptDir, "candidate.json");
           const candidatePath =
             outputAttemptId === undefined
               ? undefined
@@ -1226,9 +1676,19 @@ export async function runWorkflow(
                   nodeExecId,
                   outputAttemptId,
                 });
-          const requestPath = attemptDir === undefined ? undefined : path.join(attemptDir, "request.json");
-          const validationPath = attemptDir === undefined ? undefined : path.join(attemptDir, "validation.json");
-          if (attemptDir !== undefined && candidatePath !== undefined && requestPath !== undefined) {
+          const requestPath =
+            attemptDir === undefined
+              ? undefined
+              : path.join(attemptDir, "request.json");
+          const validationPath =
+            attemptDir === undefined
+              ? undefined
+              : path.join(attemptDir, "validation.json");
+          if (
+            attemptDir !== undefined &&
+            candidatePath !== undefined &&
+            requestPath !== undefined
+          ) {
             await mkdir(attemptDir, { recursive: true });
             await mkdir(path.dirname(candidatePath), { recursive: true });
             await rm(candidatePath, { force: true });
@@ -1242,7 +1702,9 @@ export async function runWorkflow(
                   candidatePath,
                   validationErrors: outputValidationErrors,
                 });
-          const retryValidationFeedback = buildRetryValidationFeedback(outputValidationErrors);
+          const retryValidationFeedback = buildRetryValidationFeedback(
+            outputValidationErrors,
+          );
           if (requestPath !== undefined && candidatePath !== undefined) {
             await writeJsonFile(requestPath, {
               attempt: outputAttempt,
@@ -1252,9 +1714,13 @@ export async function runWorkflow(
             });
           }
           try {
-            const contractCandidatePath = hasOutputContract ? candidatePath : undefined;
+            const contractCandidatePath = hasOutputContract
+              ? candidatePath
+              : undefined;
             if (hasOutputContract && contractCandidatePath === undefined) {
-              throw new Error("candidate path must exist when node.output is configured");
+              throw new Error(
+                "candidate path must exist when node.output is configured",
+              );
             }
             const adapterOutputContract =
               !hasOutputContract || nodePayload.output === undefined
@@ -1287,14 +1753,22 @@ export async function runWorkflow(
                 artifactDir,
                 upstreamCommunicationIds,
                 ...(backendSession === undefined ? {} : { backendSession }),
-                ...(adapterOutputContract === undefined ? {} : { output: adapterOutputContract }),
+                ...(adapterOutputContract === undefined
+                  ? {}
+                  : { output: adapterOutputContract }),
               },
               timeoutMs,
             );
 
             if (!execution.ok) {
-              if (execution.error.code === "invalid_output" && hasOutputContract && validationPath !== undefined) {
-                outputValidationErrors = [{ path: "$", message: execution.error.message }];
+              if (
+                execution.error.code === "invalid_output" &&
+                hasOutputContract &&
+                validationPath !== undefined
+              ) {
+                outputValidationErrors = [
+                  { path: "$", message: execution.error.message },
+                ];
                 await writeJsonFile(validationPath, {
                   valid: false,
                   errors: outputValidationErrors,
@@ -1320,7 +1794,8 @@ export async function runWorkflow(
               }
 
               outputValidationErrors = [];
-              nodeStatus = execution.error.code === "timeout" ? "timed_out" : "failed";
+              nodeStatus =
+                execution.error.code === "timeout" ? "timed_out" : "failed";
               finalizedOutput = {
                 provider: "deterministic-local",
                 model: nodePayload.model,
@@ -1342,8 +1817,13 @@ export async function runWorkflow(
               backendSessionId = execution.value.backendSession.sessionId;
             }
 
-            if (!hasOutputContract && execution.value.candidateFilePath !== undefined) {
-              outputValidationErrors = [{ path: "$", message: NON_CONTRACT_CANDIDATE_FILE_ERROR }];
+            if (
+              !hasOutputContract &&
+              execution.value.candidateFilePath !== undefined
+            ) {
+              outputValidationErrors = [
+                { path: "$", message: NON_CONTRACT_CANDIDATE_FILE_ERROR },
+              ];
               nodeStatus = "failed";
               finalizedOutput = {
                 provider: execution.value.provider,
@@ -1370,7 +1850,9 @@ export async function runWorkflow(
               break;
             }
             if (contractCandidatePath === undefined) {
-              throw new Error("candidate path must exist when resolving contract output");
+              throw new Error(
+                "candidate path must exist when resolving contract output",
+              );
             }
 
             const candidateResult = await resolveCandidatePayload({
@@ -1378,7 +1860,9 @@ export async function runWorkflow(
               execution: execution.value,
             });
             if (!candidateResult.ok) {
-              outputValidationErrors = [{ path: "$", message: candidateResult.error.message }];
+              outputValidationErrors = [
+                { path: "$", message: candidateResult.error.message },
+              ];
               if (validationPath !== undefined) {
                 await writeJsonFile(validationPath, {
                   valid: false,
@@ -1387,7 +1871,10 @@ export async function runWorkflow(
                 });
               }
 
-              if (candidateResult.error.retryable && outputAttempt < maxOutputAttempts) {
+              if (
+                candidateResult.error.retryable &&
+                outputAttempt < maxOutputAttempts
+              ) {
                 continue;
               }
 
@@ -1399,7 +1886,9 @@ export async function runWorkflow(
                 completionPassed: false,
                 when: {},
                 payload: {},
-                error: candidateResult.error.retryable ? "output_validation_failed" : "invalid_output",
+                error: candidateResult.error.retryable
+                  ? "output_validation_failed"
+                  : "invalid_output",
                 validationErrors: outputValidationErrors,
               };
               break;
@@ -1473,10 +1962,15 @@ export async function runWorkflow(
         session,
         node: nodePayload,
         nodeExecId,
-        provider: backendSessionProvider ?? outputPayload["provider"]?.toString() ?? "unknown-provider",
+        provider:
+          backendSessionProvider ??
+          outputPayload["provider"]?.toString() ??
+          "unknown-provider",
         endedAt,
         backendSession,
-        ...(backendSessionId === undefined ? {} : { returnedSessionId: backendSessionId }),
+        ...(backendSessionId === undefined
+          ? {}
+          : { returnedSessionId: backendSessionId }),
       });
       const nodeExecutionRecord: NodeExecutionRecord = {
         nodeId,
@@ -1487,10 +1981,16 @@ export async function runWorkflow(
         endedAt,
         ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
         ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
-        ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
+        ...(outputValidationErrors.length === 0
+          ? {}
+          : { outputValidationErrors }),
         ...(backendSessionId === undefined ? {} : { backendSessionId }),
-        ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
-        ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+        ...(requestedBackendSessionMode === undefined
+          ? {}
+          : { backendSessionMode: requestedBackendSessionMode }),
+        ...(previousNodeExecId === undefined
+          ? {}
+          : { restartedFromNodeExecId: previousNodeExecId }),
       };
       const nodeExecutions = [...session.nodeExecutions, nodeExecutionRecord];
       let managerControl = null;
@@ -1505,7 +2005,10 @@ export async function runWorkflow(
                   managerKind: nodeRef.kind,
                 });
         } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : "unknown manager control parsing failure";
+          const message =
+            error instanceof Error
+              ? error.message
+              : "unknown manager control parsing failure";
           const failed: WorkflowSessionState = {
             ...session,
             queue,
@@ -1521,10 +2024,16 @@ export async function runWorkflow(
             lastError: `invalid manager control at '${nodeId}': ${message}`,
           };
           await saveSession(failed, options);
-          return err({ exitCode: 5, message: failed.lastError ?? "invalid manager control" });
+          return err({
+            exitCode: 5,
+            message: failed.lastError ?? "invalid manager control",
+          });
         }
 
-        if (nodeId !== workflow.managerNodeId && (managerControl?.startSubWorkflowIds.length ?? 0) > 0) {
+        if (
+          nodeId !== workflow.managerNodeId &&
+          (managerControl?.startSubWorkflowIds.length ?? 0) > 0
+        ) {
           const failed: WorkflowSessionState = {
             ...session,
             queue,
@@ -1540,10 +2049,16 @@ export async function runWorkflow(
             lastError: `invalid manager control at '${nodeId}': only the root manager can start sub-workflows`,
           };
           await saveSession(failed, options);
-          return err({ exitCode: 5, message: failed.lastError ?? "invalid manager control" });
+          return err({
+            exitCode: 5,
+            message: failed.lastError ?? "invalid manager control",
+          });
         }
 
-        if (nodeRef.kind !== "sub-manager" && (managerControl?.childInputNodeIds.length ?? 0) > 0) {
+        if (
+          nodeRef.kind !== "sub-manager" &&
+          (managerControl?.childInputNodeIds.length ?? 0) > 0
+        ) {
           const failed: WorkflowSessionState = {
             ...session,
             queue,
@@ -1559,7 +2074,10 @@ export async function runWorkflow(
             lastError: `invalid manager control at '${nodeId}': only a sub-manager can dispatch child input nodes`,
           };
           await saveSession(failed, options);
-          return err({ exitCode: 5, message: failed.lastError ?? "invalid manager control" });
+          return err({
+            exitCode: 5,
+            message: failed.lastError ?? "invalid manager control",
+          });
         }
       }
       const edges = outgoingEdges.get(nodeId) ?? [];
@@ -1579,16 +2097,22 @@ export async function runWorkflow(
           state: { loopId: loopRule.id, iteration },
         });
         if (transition === "continue") {
-          selected = edges.filter((edge) => edge.when === effectiveLoopRule.continueWhen);
+          selected = edges.filter(
+            (edge) => edge.when === effectiveLoopRule.continueWhen,
+          );
           updatedLoopIterationCounts = {
             ...loopIterationCounts,
             [loopRule.id]: iteration + 1,
           };
         } else if (transition === "exit") {
-          selected = edges.filter((edge) => edge.when === effectiveLoopRule.exitWhen);
+          selected = edges.filter(
+            (edge) => edge.when === effectiveLoopRule.exitWhen,
+          );
         } else {
           selected = matched.filter(
-            (edge) => edge.when !== effectiveLoopRule.continueWhen && edge.when !== effectiveLoopRule.exitWhen,
+            (edge) =>
+              edge.when !== effectiveLoopRule.continueWhen &&
+              edge.when !== effectiveLoopRule.exitWhen,
           );
         }
 
@@ -1610,12 +2134,20 @@ export async function runWorkflow(
                 artifactDir,
                 startedAt,
                 endedAt,
-                ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
+                ...(restartAttempt === 0
+                  ? {}
+                  : { attempt: restartAttempt + 1 }),
                 ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
-                ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
+                ...(outputValidationErrors.length === 0
+                  ? {}
+                  : { outputValidationErrors }),
                 ...(backendSessionId === undefined ? {} : { backendSessionId }),
-                ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
-                ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+                ...(requestedBackendSessionMode === undefined
+                  ? {}
+                  : { backendSessionMode: requestedBackendSessionMode }),
+                ...(previousNodeExecId === undefined
+                  ? {}
+                  : { restartedFromNodeExecId: previousNodeExecId }),
               },
             ],
             loopIterationCounts: updatedLoopIterationCounts,
@@ -1623,12 +2155,16 @@ export async function runWorkflow(
             lastError: `loop transition '${transition}' has no matching edge at '${nodeId}'`,
           };
           await saveSession(failed, options);
-          return err({ exitCode: 4, message: failed.lastError ?? "invalid loop transition" });
+          return err({
+            exitCode: 4,
+            message: failed.lastError ?? "invalid loop transition",
+          });
         }
       }
       const nextNodes = selected.map((edge) => edge.to);
 
       const outputJson = stableJson(outputPayload);
+      const outputRaw = `${outputJson}\n`;
       const metaPayload = {
         nodeId,
         nodeExecId,
@@ -1640,9 +2176,15 @@ export async function runWorkflow(
         restartAttempt,
         outputAttemptCount,
         ...(backendSessionId === undefined ? {} : { backendSessionId }),
-        ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
-        ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
-        ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+        ...(requestedBackendSessionMode === undefined
+          ? {}
+          : { backendSessionMode: requestedBackendSessionMode }),
+        ...(outputValidationErrors.length === 0
+          ? {}
+          : { outputValidationErrors }),
+        ...(previousNodeExecId === undefined
+          ? {}
+          : { restartedFromNodeExecId: previousNodeExecId }),
       };
       const outputRef = outputRefForExecution(
         workflow,
@@ -1659,7 +2201,8 @@ export async function runWorkflow(
       );
       const inputHash = sha256Hex(inputJson);
       const outputHash = sha256Hex(outputJson);
-      let currentCommunications: readonly CommunicationRecord[] = session.communications;
+      let currentCommunications: readonly CommunicationRecord[] =
+        session.communications;
       let currentCommunicationCounter = session.communicationCounter;
       const currentRuntimeVariables = isRootScopeOutputNode(workflow, nodeId)
         ? {
@@ -1677,12 +2220,23 @@ export async function runWorkflow(
         outputHash: `sha256:${outputHash}`,
         nextNodes,
       };
-      const commitMessageTemplate = buildCommitMessageTemplate(inputHash, outputHash, outputRef, nextNodes);
+      const commitMessageTemplate = buildCommitMessageTemplate(
+        inputHash,
+        outputHash,
+        outputRef,
+        nextNodes,
+      );
 
-      await writeFile(path.join(artifactDir, "output.json"), `${outputJson}\n`, "utf8");
+      await writeRawTextFile(path.join(artifactDir, "output.json"), outputRaw);
       await writeJsonFile(path.join(artifactDir, "meta.json"), metaPayload);
-      await writeJsonFile(path.join(artifactDir, "handoff.json"), handoffPayload);
-      await writeFile(path.join(artifactDir, "commit-message.txt"), `${commitMessageTemplate}\n`, "utf8");
+      await writeJsonFile(
+        path.join(artifactDir, "handoff.json"),
+        handoffPayload,
+      );
+      await writeRawTextFile(
+        path.join(artifactDir, "commit-message.txt"),
+        `${commitMessageTemplate}\n`,
+      );
 
       try {
         await saveNodeExecutionToRuntimeDb(
@@ -1696,10 +2250,16 @@ export async function runWorkflow(
             endedAt,
             ...(restartAttempt === 0 ? {} : { attempt: restartAttempt + 1 }),
             ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
-            ...(outputValidationErrors.length === 0 ? {} : { outputValidationErrors }),
-            ...(requestedBackendSessionMode === undefined ? {} : { backendSessionMode: requestedBackendSessionMode }),
+            ...(outputValidationErrors.length === 0
+              ? {}
+              : { outputValidationErrors }),
+            ...(requestedBackendSessionMode === undefined
+              ? {}
+              : { backendSessionMode: requestedBackendSessionMode }),
             ...(backendSessionId === undefined ? {} : { backendSessionId }),
-            ...(previousNodeExecId === undefined ? {} : { restartedFromNodeExecId: previousNodeExecId }),
+            ...(previousNodeExecId === undefined
+              ? {}
+              : { restartedFromNodeExecId: previousNodeExecId }),
             inputJson,
             outputJson,
             inputHash: `sha256:${inputHash}`,
@@ -1713,7 +2273,8 @@ export async function runWorkflow(
 
       if (nodeStatus === "timed_out") {
         if (restartOnStuck && restartAttempt < maxStuckRestarts) {
-          const restartCountForNode = (session.restartCounts?.[nodeId] ?? 0) + 1;
+          const restartCountForNode =
+            (session.restartCounts?.[nodeId] ?? 0) + 1;
           const restartEvents = [
             ...(session.restartEvents ?? []),
             {
@@ -1732,7 +2293,10 @@ export async function runWorkflow(
             currentNodeId: nodeId,
             nodeExecutionCounter: nextExecutionCounter,
             nodeExecutionCounts: updatedCounts,
-            restartCounts: { ...(session.restartCounts ?? {}), [nodeId]: restartCountForNode },
+            restartCounts: {
+              ...(session.restartCounts ?? {}),
+              [nodeId]: restartCountForNode,
+            },
             restartEvents,
             nodeExecutions,
             communicationCounter: currentCommunicationCounter,
@@ -1765,7 +2329,10 @@ export async function runWorkflow(
           lastError: `node timeout at '${nodeId}'`,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 6, message: failed.lastError ?? "node timeout" });
+        return err({
+          exitCode: 6,
+          message: failed.lastError ?? "node timeout",
+        });
       }
 
       if (nodeStatus === "failed") {
@@ -1790,7 +2357,10 @@ export async function runWorkflow(
           lastError: failureReason,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 5, message: failed.lastError ?? "adapter failure" });
+        return err({
+          exitCode: 5,
+          message: failed.lastError ?? "adapter failure",
+        });
       }
 
       const completion = evaluateCompletion({
@@ -1817,7 +2387,10 @@ export async function runWorkflow(
               : `completion condition not met at '${nodeId}': ${completion.reason}`,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 3, message: failed.lastError ?? "completion condition not met" });
+        return err({
+          exitCode: 3,
+          message: failed.lastError ?? "completion condition not met",
+        });
       }
       const consumedCommunicationsResult = await markCommunicationsConsumed(
         { ...session, communications: currentCommunications },
@@ -1842,40 +2415,64 @@ export async function runWorkflow(
           lastError: consumedCommunicationsResult.error,
         };
         await saveSession(failed, options);
-        return err({ exitCode: 1, message: failed.lastError ?? "mailbox consumption persistence failed" });
+        return err({
+          exitCode: 1,
+          message: failed.lastError ?? "mailbox consumption persistence failed",
+        });
       }
       currentCommunications = consumedCommunicationsResult.value;
       const transitionCommunications = await Promise.all(
-        selected.map((edge, index) =>
-          persistCommunicationArtifact({
+        selected.map((edge, index) => {
+          const boundary = resolveCommunicationBoundary({
+            workflow,
+            fromNodeId: edge.from,
+            toNodeId: edge.to,
+          });
+          return persistCommunicationArtifact({
             artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
             workflowId: workflow.workflowId,
             workflowExecutionId: session.sessionId,
             communicationCounter: currentCommunicationCounter + index,
             fromNodeId: edge.from,
             toNodeId: edge.to,
-            routingScope: "intra-sub-workflow",
-            deliveryKind: edge.to === edge.from ? "loop-back" : "edge-transition",
+            ...(boundary.fromSubWorkflowId === undefined
+              ? {}
+              : { fromSubWorkflowId: boundary.fromSubWorkflowId }),
+            ...(boundary.toSubWorkflowId === undefined
+              ? {}
+              : { toSubWorkflowId: boundary.toSubWorkflowId }),
+            routingScope: boundary.routingScope,
+            deliveryKind:
+              edge.to === edge.from ? "loop-back" : "edge-transition",
             transitionWhen: edge.when,
             sourceNodeExecId: nodeExecId,
             payloadRef: outputRef,
-            outputPayload,
-            deliveredByNodeId: workflow.managerNodeId,
+            outputRaw,
+            deliveredByNodeId: mailboxDeliveryManagerNodeId(workflow, edge.to),
             createdAt: endedAt,
-          }),
-        ),
+          });
+        }),
       );
-      currentCommunications = [...currentCommunications, ...transitionCommunications];
+      currentCommunications = [
+        ...currentCommunications,
+        ...transitionCommunications,
+      ];
       currentCommunicationCounter += transitionCommunications.length;
 
       const transitions = [
         ...session.transitions,
-        ...selected.map((edge) => ({ from: edge.from, to: edge.to, when: edge.when })),
+        ...selected.map((edge) => ({
+          from: edge.from,
+          to: edge.to,
+          when: edge.when,
+        })),
       ];
       const transitionNextNodes = selected.map((edge) => edge.to);
       const pendingSessionState: WorkflowSessionState = {
         ...session,
-        queue: [...queue, ...transitionNextNodes].filter((value, index, all) => all.indexOf(value) === index),
+        queue: [...queue, ...transitionNextNodes].filter(
+          (value, index, all) => all.indexOf(value) === index,
+        ),
         nodeExecutions,
         communicationCounter: currentCommunicationCounter,
         communications: currentCommunications,
@@ -1900,8 +2497,15 @@ export async function runWorkflow(
         const plannedSubWorkflowStarts =
           managerControl?.overridesRootSubWorkflowPlanning === true
             ? managerControl.startSubWorkflowIds
-                .map((subWorkflowId) => workflow.subWorkflows.find((entry) => entry.id === subWorkflowId))
-                .filter((subWorkflow): subWorkflow is SubWorkflowRef => subWorkflow !== undefined)
+                .map((subWorkflowId) =>
+                  workflow.subWorkflows.find(
+                    (entry) => entry.id === subWorkflowId,
+                  ),
+                )
+                .filter(
+                  (subWorkflow): subWorkflow is SubWorkflowRef =>
+                    subWorkflow !== undefined,
+                )
             : planRootManagerSubWorkflowStarts({
                 workflow,
                 session: pendingSessionState,
@@ -1925,8 +2529,11 @@ export async function runWorkflow(
             transitionWhen: `sub-workflow-start:${subWorkflow.id}`,
             sourceNodeExecId: nodeExecId,
             payloadRef: outputRef,
-            outputPayload,
-            deliveredByNodeId: nodeId,
+            outputRaw,
+            deliveredByNodeId: mailboxDeliveryManagerNodeId(
+              workflow,
+              subWorkflow.managerNodeId,
+            ),
             createdAt: endedAt,
           });
           currentCommunicationCounter += 1;
@@ -1934,7 +2541,9 @@ export async function runWorkflow(
           managerPlannedInputs.push(subWorkflow.managerNodeId);
         }
         const persistedChildInputs: CommunicationRecord[] = [];
-        const rootManagedSubWorkflows = workflow.subWorkflows.filter((entry) => entry.managerNodeId === nodeId);
+        const rootManagedSubWorkflows = workflow.subWorkflows.filter(
+          (entry) => entry.managerNodeId === nodeId,
+        );
         for (const subWorkflow of rootManagedSubWorkflows) {
           const forwardedPayloads = upstreamInputs
             .filter((entry) => entry.toSubWorkflowId === subWorkflow.id)
@@ -1957,17 +2566,23 @@ export async function runWorkflow(
               transitionWhen: `root-manager-input:${subWorkflow.inputNodeId}`,
               sourceNodeExecId: forwarded.payloadRef.nodeExecId,
               payloadRef: forwarded.payloadRef,
-              outputPayload: forwarded.outputPayload,
-              deliveredByNodeId: nodeId,
+              outputRaw: forwarded.outputRaw,
+              deliveredByNodeId: mailboxDeliveryManagerNodeId(
+                workflow,
+                subWorkflow.inputNodeId,
+              ),
               createdAt: endedAt,
             });
             currentCommunicationCounter += 1;
             persistedChildInputs.push(communication);
           }
         }
-        managerPlannedCommunications = [...persistedStarts, ...persistedChildInputs];
+        managerPlannedCommunications = [
+          ...persistedStarts,
+          ...persistedChildInputs,
+        ];
       } else if (nodeRef.kind === "sub-manager") {
-        const forwardedPayloads = [{ payloadRef: outputRef, outputPayload }];
+        const forwardedPayloads = [{ payloadRef: outputRef, outputRaw }];
         const persistedChildInputs: CommunicationRecord[] = [];
         for (const inputNodeId of managerPlannedInputs) {
           for (const forwarded of forwardedPayloads) {
@@ -1983,8 +2598,11 @@ export async function runWorkflow(
               transitionWhen: `sub-manager-input:${inputNodeId}`,
               sourceNodeExecId: forwarded.payloadRef.nodeExecId,
               payloadRef: forwarded.payloadRef,
-              outputPayload: forwarded.outputPayload,
-              deliveredByNodeId: nodeId,
+              outputRaw: forwarded.outputRaw,
+              deliveredByNodeId: mailboxDeliveryManagerNodeId(
+                workflow,
+                inputNodeId,
+              ),
               createdAt: endedAt,
             });
             currentCommunicationCounter += 1;
@@ -1993,7 +2611,10 @@ export async function runWorkflow(
         }
         managerPlannedCommunications = persistedChildInputs;
       }
-      currentCommunications = [...currentCommunications, ...managerPlannedCommunications];
+      currentCommunications = [
+        ...currentCommunications,
+        ...managerPlannedCommunications,
+      ];
 
       let conversationTurns = [...(session.conversationTurns ?? [])];
       let conversationPlannedInputs: string[] = [];
@@ -2028,7 +2649,10 @@ export async function runWorkflow(
             lastError: "conversation round execution failed",
           };
           await saveSession(failed, options);
-          return err({ exitCode: 1, message: failed.lastError ?? "conversation round execution failed" });
+          return err({
+            exitCode: 1,
+            message: failed.lastError ?? "conversation round execution failed",
+          });
         }
 
         if (conversationRound.turns.length > 0) {
@@ -2041,7 +2665,9 @@ export async function runWorkflow(
             if (turn.toManagerNodeId === undefined) {
               continue;
             }
-            const parsedOutput = await readOutputPayloadArtifact(turn.outputRef.artifactDir);
+            const parsedOutput = await readOutputPayloadArtifact(
+              turn.outputRef.artifactDir,
+            );
             if (!parsedOutput.ok) {
               const failed: WorkflowSessionState = {
                 ...session,
@@ -2062,7 +2688,11 @@ export async function runWorkflow(
                   parsedOutput.error,
               };
               await saveSession(failed, options);
-              return err({ exitCode: 1, message: failed.lastError ?? "conversation output resolution failed" });
+              return err({
+                exitCode: 1,
+                message:
+                  failed.lastError ?? "conversation output resolution failed",
+              });
             }
             const communication = await persistCommunicationArtifact({
               artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
@@ -2078,14 +2708,21 @@ export async function runWorkflow(
               transitionWhen: `conversation:${turn.conversationId}:${turn.turnIndex}`,
               sourceNodeExecId: turn.outputRef.nodeExecId,
               payloadRef: turn.outputRef,
-              outputPayload: parsedOutput.value,
+              outputRaw: parsedOutput.value.raw,
               deliveredByNodeId: workflow.managerNodeId,
               createdAt: endedAt,
             });
             currentCommunicationCounter += 1;
-            successfulTurnDeliveries.push({ turn, communication, receiverManagerNodeId: turn.toManagerNodeId });
+            successfulTurnDeliveries.push({
+              turn,
+              communication,
+              receiverManagerNodeId: turn.toManagerNodeId,
+            });
           }
-          currentCommunications = [...currentCommunications, ...successfulTurnDeliveries.map((entry) => entry.communication)];
+          currentCommunications = [
+            ...currentCommunications,
+            ...successfulTurnDeliveries.map((entry) => entry.communication),
+          ];
           conversationTurns = [
             ...conversationTurns,
             ...successfulTurnDeliveries.map((entry) => ({
@@ -2094,15 +2731,22 @@ export async function runWorkflow(
               sentAt: endedAt,
             })),
           ];
-          conversationPlannedInputs = successfulTurnDeliveries.map((entry) => entry.receiverManagerNodeId);
+          conversationPlannedInputs = successfulTurnDeliveries.map(
+            (entry) => entry.receiverManagerNodeId,
+          );
         }
       }
 
       const retryNodeIds = managerControl?.retryNodeIds ?? [];
-      const nextQueue = [...queue, ...transitionNextNodes, ...managerPlannedInputs, ...conversationPlannedInputs].filter(
+      const nextQueue = [
+        ...queue,
+        ...transitionNextNodes,
+        ...managerPlannedInputs,
+        ...conversationPlannedInputs,
+      ].filter((value, index, all) => all.indexOf(value) === index);
+      const nextQueueWithRetries = [...nextQueue, ...retryNodeIds].filter(
         (value, index, all) => all.indexOf(value) === index,
       );
-      const nextQueueWithRetries = [...nextQueue, ...retryNodeIds].filter((value, index, all) => all.indexOf(value) === index);
 
       session = {
         ...session,
@@ -2132,7 +2776,12 @@ export async function runWorkflow(
       return ok({ session: beforeComplete.value, exitCode: 0 });
     }
     const exitCode = beforeComplete.value.status === "cancelled" ? 130 : 1;
-    return err({ exitCode, message: beforeComplete.value.lastError ?? `session ${beforeComplete.value.status}` });
+    return err({
+      exitCode,
+      message:
+        beforeComplete.value.lastError ??
+        `session ${beforeComplete.value.status}`,
+    });
   }
 
   let completed: WorkflowSessionState = {
@@ -2142,30 +2791,66 @@ export async function runWorkflow(
     queue: [],
   };
 
-  const publishedResultExecution =
-    findLatestPublishedWorkflowResult(workflow, completed) ??
-    completed.nodeExecutions[completed.nodeExecutions.length - 1];
+  const publishedResultExecution = findLatestPublishedWorkflowResult(
+    workflow,
+    completed,
+  );
   if (publishedResultExecution !== undefined) {
-    const outputPayload = await readOutputPayloadArtifact(publishedResultExecution.artifactDir);
+    const outputPayload = await readOutputPayloadArtifact(
+      publishedResultExecution.artifactDir,
+    );
     if (!outputPayload.ok) {
-      return err({ exitCode: 1, message: outputPayload.error });
+      const publicationFailureMessage =
+        `failed to publish selected external output for '${publishedResultExecution.nodeId}' ` +
+        `(${publishedResultExecution.nodeExecId}): ${outputPayload.error}`;
+      return await failTerminalSession(
+        completed,
+        options,
+        publicationFailureMessage,
+      );
     }
-    const externalOutputCommunication = await persistExternalMailboxOutputCommunication({
-      artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-      workflow,
-      session: completed,
-      execution: publishedResultExecution,
-      outputPayload: outputPayload.value,
-      communicationCounter: completed.communicationCounter,
-      createdAt: completed.endedAt ?? nowIso(),
-    });
+    let externalOutputCommunication: CommunicationRecord;
+    try {
+      externalOutputCommunication =
+        await persistExternalMailboxOutputCommunication({
+          artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+          workflow,
+          session: completed,
+          execution: publishedResultExecution,
+          outputRaw: outputPayload.value.raw,
+          communicationCounter: completed.communicationCounter,
+          createdAt: completed.endedAt ?? nowIso(),
+        });
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "unknown external output publication failure";
+      const publicationFailureMessage =
+        `failed to persist external output publication for '${publishedResultExecution.nodeId}' ` +
+        `(${publishedResultExecution.nodeExecId}): ${message}`;
+      return await failTerminalSession(
+        completed,
+        options,
+        publicationFailureMessage,
+      );
+    }
     completed = {
       ...completed,
       communicationCounter: completed.communicationCounter + 1,
-      communications: [...completed.communications, externalOutputCommunication],
+      communications: [
+        ...completed.communications,
+        externalOutputCommunication,
+      ],
     };
   }
 
-  await saveSession(completed, options);
+  const persistedCompleted = await persistCompletedSessionState(
+    completed,
+    options,
+  );
+  if (!persistedCompleted.ok) {
+    return err({ exitCode: 1, message: persistedCompleted.error });
+  }
   return ok({ session: completed, exitCode: 0 });
 }
