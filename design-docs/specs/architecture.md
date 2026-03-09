@@ -62,24 +62,44 @@ Outputs:
 - Writes node execution artifacts to `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
 
 7. Local HTTP Server (`oyakata serve`)
-- Hosts browser UI (Svelte) and local API on one process
-- Serves a built frontend bundle from `ui/dist/` when present
-- Falls back to the legacy inline browser editor until the Svelte bundle is available
+- Hosts the built browser UI and local API on one process
+- Serves the built frontend bundle from `ui/dist/`
+- Returns an explicit setup error page when the built frontend bundle is unavailable instead of embedding a second browser implementation in the server
 - Exposes a small UI bootstrap/config endpoint so frontend assets do not need server mode baked in at build time
+- Derives the reported frontend mode for that bootstrap/config endpoint from the checked-in UI entrypoint by default, while still allowing an explicit override for tests or forced deployments
+- Fails the UI bootstrap/config request explicitly when the checked-in frontend entrypoint is missing or ambiguous, rather than silently defaulting to a stale framework mode
+- Owns the canonical JSON transport contract consumed by the browser UI through shared TypeScript definitions under `src/shared/`, rather than duplicating response shapes inside frontend components
+- Keeps repeated request-body normalization and workflow-run option parsing in server-owned helpers under `src/server/` so route handlers stay focused on routing, mode checks, orchestration, and responses
+- Keeps browser workflow bundle save/validate request parsing and validation-time node-payload remapping in dedicated server-owned helpers under `src/server/`, so the main API route module does not own ad hoc bundle shape checks
+- Keeps built frontend asset resolution, path-safety checks, content-type mapping, and explicit missing-UI responses in a dedicated server-owned helper under `src/server/`, so the main API route module does not mix static-asset concerns with workflow/session endpoints
 - Supports workflow listing/loading/saving/validation
 - Supports workflow execution start/observe/cancel
 - Restricts by default to local interface (`127.0.0.1`)
 
-8. Browser Workflow Editor (Svelte)
+8. Browser Workflow Editor
 - Vertical workflow editing for nodes, edges, branch/loop rules, and defaults
 - Ordered list interaction for reorder, indent, and color-based group/loop expression
 - Node payload editing (`executionBackend`, `model`, `promptTemplate`, `variables`, `timeoutMs`)
 - Layout editing persisted to `workflow-vis.json`
 - Run controls and execution trace view for local sessions
 - Uses the existing local JSON API; frontend build output is treated as replaceable static assets rather than inline server-rendered HTML
-- Migration from the current inline browser editor is phased so `oyakata serve` stays usable during the rewrite
-- The frontend build is a separate project rooted at `ui/`; repository automation must invoke explicit UI verification because the root Bun/TypeScript pipeline does not discover Svelte sources automatically
-- UI verification uses `svelte-check` rather than plain `tsc` alone, because `.svelte` components are part of the executable frontend surface
+- Consumes shared transport contracts from `src/shared/` for API/bootstrap/session payloads; mutable editor-local state remains frontend-owned
+- Reuses shared workflow domain types from `src/workflow/types.ts` for persisted workflow structures; any editor-only fields must be modeled as explicit additive extensions
+- The current checked-in implementation is still Svelte-based, but the active migration target is SolidJS and the server/browser contract must remain framework-agnostic during the transition
+- Keeps pure editor workflow-structure operations in frontend-owned helper modules under `ui/src/lib/`; the top-level app component is the orchestration layer for UI state, requests, and user-facing messages
+- Keeps pure editor support helpers such as parsing, validation merging, status presentation, and error-message normalization in frontend-owned helper modules under `ui/src/lib/`; the top-level app component should not be the canonical home for those pure utilities
+- Keeps pure workflow/session state-transition helpers such as reset-state factories, loaded-workflow adaptation, selected-node reconciliation, and workflow-scoped session filtering in frontend-owned helper modules under `ui/src/lib/`
+- Keeps bundle-local editor mutation commands for nodes, edges, loops, and sub-workflows in frontend-owned helper modules under `ui/src/lib/`; the top-level app component should orchestrate edits, not remain the canonical home for structure-changing mutation rules
+- Keeps multi-request workflow/session hydration and selection-reconciliation flows in frontend-owned loader modules under `ui/src/lib/`; the top-level app component should coordinate loading, polling, and messages, but not duplicate those async data-loading rules
+- Keeps bundle and node-property update rules such as node kind/completion changes, edge/default numeric updates, payload string updates, and variable JSON synchronization in frontend-owned helper modules under `ui/src/lib/`; the top-level app component should bind events and orchestrate UI state rather than remain the canonical home for those pure editing rules
+- Keeps pure execution-form parsing and execute-request assembly in frontend-owned helper modules under `ui/src/lib/`; the top-level app component should dispatch execution requests and own messages/polling, not remain the canonical home for request-shaping rules
+- Keeps the workflow editor center-panel markup in dedicated frontend components under `ui/src/lib/components/`; the top-level app component should own orchestration and state, not the full editor surface markup
+- The legacy inline browser editor has been removed; `oyakata serve` now expects the built frontend assets
+- The frontend build is a separate project rooted at `ui/`; repository automation must invoke explicit UI verification because the root Bun/TypeScript pipeline does not discover frontend framework sources automatically
+- UI verification is framework-specific and now routes through a framework-detecting repository command: the current checked-in Svelte path still resolves to `svelte-check`, while the future SolidJS cutover should switch the detected entrypoint/dependencies and continue using the same repository-level typecheck/build commands plus browser checks
+- Repository Bun unit-test commands must scope discovery to source roots (`src/`, `ui/src/`) rather than repository-wide default discovery, so generated `dist/` artifacts cannot re-run stale compiled tests during migration work
+- Framework-detecting UI verification must fail with an explicit dependency-install message when the detected frontend framework is not actually installed, so migration-time failures stay actionable instead of surfacing as opaque plugin/import errors
+- Repository development environments such as `flake.nix` must provide a real `node` binary in addition to Bun, because Vite, Vitest, and Playwright remain Node-owned tooling in this architecture
 - Reserved structure node roles (`root-manager`, `sub-manager`, `input`, `output`) are assigned from workflow structure metadata and sub-workflow boundaries, not treated as freeform node-kind values
 
 9. TUI Runtime (Bun + `neo-blessed`)

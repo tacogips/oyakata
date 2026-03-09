@@ -28,6 +28,9 @@
           # Bun runtime
           pkgs-unstable.bun
 
+          # Real Node.js runtime for Vite/Vitest/Playwright tooling
+          nodejs_22
+
           # TypeScript tooling
           pkgs-unstable.typescript
           pkgs-unstable.typescript-language-server

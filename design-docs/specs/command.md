@@ -25,7 +25,8 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 - `serve [workflow-name]`
   - Start local HTTP server for browser-based workflow editing and execution.
   - If `workflow-name` is omitted, server starts in workflow selection mode.
-  - Serves Svelte application and exposes local API for workflow CRUD/validation/run operations.
+  - Serves the built browser frontend from `ui/dist/` and exposes local API for workflow CRUD/validation/run operations.
+  - Returns an explicit UI-unavailable response when the built frontend bundle is missing.
 - `tui`
   - Start interactive terminal UI for workflow selection and execution.
   - Supports selecting a workflow from `<workflow-root>`.

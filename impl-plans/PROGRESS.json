@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-03-09T16:10:00Z",
+  "lastUpdated": "2026-03-09T23:58:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -18,13 +18,31 @@
     "15": { "status": "COMPLETED" },
     "16": { "status": "COMPLETED" },
     "17": { "status": "COMPLETED" },
-    "18": { "status": "IN_PROGRESS" },
+    "18": { "status": "COMPLETED" },
     "19": { "status": "COMPLETED" },
     "20": { "status": "COMPLETED" },
     "21": { "status": "COMPLETED" },
     "22": { "status": "COMPLETED" },
     "23": { "status": "COMPLETED" },
-    "24": { "status": "COMPLETED" }
+    "24": { "status": "COMPLETED" },
+    "25": { "status": "COMPLETED" },
+    "26": { "status": "COMPLETED" },
+    "27": { "status": "COMPLETED" },
+    "28": { "status": "COMPLETED" },
+    "29": { "status": "COMPLETED" },
+    "30": { "status": "COMPLETED" },
+    "31": { "status": "COMPLETED" },
+    "32": { "status": "COMPLETED" },
+    "33": { "status": "COMPLETED" },
+    "34": { "status": "COMPLETED" },
+    "35": { "status": "COMPLETED" },
+    "36": { "status": "COMPLETED" },
+    "37": { "status": "COMPLETED" },
+    "38": { "status": "COMPLETED" },
+    "39": { "status": "COMPLETED" },
+    "40": { "status": "COMPLETED" },
+    "41": { "status": "COMPLETED" },
+    "42": { "status": "IN_PROGRESS" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -219,15 +237,6 @@
         "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001", "TASK-002"] }
       }
     },
-    "workflow-web-editor-svelte-migration": {
-      "phase": 18,
-      "status": "In Progress",
-      "tasks": {
-        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": ["workflow-web-editor-execution:TASK-002"] },
-        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
-        "TASK-003": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-002"] }
-      }
-    },
     "runtime-owned-external-output-publication": {
       "phase": 18,
       "status": "Completed",
@@ -287,6 +296,201 @@
       "tasks": {
         "TASK-001": { "status": "Completed", "parallelizable": false, "deps": [] },
         "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-shared-ui-contract": {
+      "phase": 25,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": true, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": true, "deps": ["TASK-001"] },
+        "TASK-004": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002", "TASK-003"] }
+      }
+    },
+    "refactoring-shared-visualization-derivation": {
+      "phase": 26,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-shared-editable-workflow-types": {
+      "phase": 27,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-api-client": {
+      "phase": 28,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-shared-ui-contract:TASK-003"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-workflow-operations": {
+      "phase": 29,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-shared-editable-workflow-types:TASK-002", "refactoring-shared-visualization-derivation:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-support-helpers": {
+      "phase": 30,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-editor-api-client:TASK-002", "refactoring-editor-workflow-operations:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-state-helpers": {
+      "phase": 31,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-editor-support-helpers:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-mutation-helpers": {
+      "phase": 32,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-editor-workflow-operations:TASK-002", "refactoring-editor-support-helpers:TASK-002", "refactoring-editor-state-helpers:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-data-loaders": {
+      "phase": 33,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-editor-api-client:TASK-002", "refactoring-editor-state-helpers:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-field-updates": {
+      "phase": 34,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-editor-support-helpers:TASK-002", "refactoring-editor-state-helpers:TASK-002", "refactoring-editor-mutation-helpers:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-server-api-request-parsing": {
+      "phase": 35,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-execution-helpers": {
+      "phase": 36,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["refactoring-editor-support-helpers:TASK-002", "refactoring-editor-api-client:TASK-002"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-action-helpers": {
+      "phase": 37,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "refactoring-editor-api-client:TASK-002",
+            "refactoring-editor-data-loaders:TASK-002",
+            "refactoring-editor-support-helpers:TASK-002",
+            "refactoring-editor-execution-helpers:TASK-002"
+          ]
+        },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-server-ui-asset-serving": {
+      "phase": 38,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": false, "deps": [] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-component-boundaries": {
+      "phase": 39,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": ["refactoring-editor-action-helpers:TASK-003"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
+        "TASK-004": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002", "TASK-003"] }
+      }
+    },
+    "refactoring-server-workflow-bundle-parsing": {
+      "phase": 40,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": ["refactoring-server-api-request-parsing:TASK-002"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-editor-main-panel-component": {
+      "phase": 41,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": ["refactoring-editor-component-boundaries:TASK-004"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "refactoring-frontend-solidjs-migration": {
+      "phase": 42,
+      "status": "In Progress",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["refactoring-editor-main-panel-component:TASK-003"]
+        },
+        "TASK-002": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] },
+        "TASK-004": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
+        "TASK-005": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
+        "TASK-006": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
+        "TASK-007": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-003", "TASK-004", "TASK-005", "TASK-006"] },
+        "TASK-008": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-007"] }
+      }
+    },
+    "refactoring-editor-session-controller": {
+      "phase": 42,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": { "status": "Completed", "parallelizable": true, "deps": ["refactoring-editor-action-helpers:TASK-003"] },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "refactoring-frontend-solidjs-migration:TASK-007"]
+        },
         "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
       }
     }

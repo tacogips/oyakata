@@ -13,7 +13,6 @@ export interface StartedServe {
 }
 
 interface ServeRuntime {
-  readonly allocatePort: (host: string) => Promise<number>;
   readonly serve: (options: {
     readonly hostname: string;
     readonly port: number;
@@ -22,22 +21,48 @@ interface ServeRuntime {
     readonly port: number;
     stop(): void;
   };
+  readonly reservePort?: (host: string) => Promise<number>;
 }
 
-async function allocatePort(host: string): Promise<number> {
+const DEFAULT_RUNTIME: ServeRuntime = {
+  serve: (options) => Bun.serve(options),
+  reservePort: reserveEphemeralPort,
+};
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined;
+  }
+
+  const value = error.code;
+  return typeof value === "string" ? value : undefined;
+}
+
+function isEphemeralPortListenFailure(
+  error: unknown,
+  requestedPort: number,
+): boolean {
+  return requestedPort === 0 && errorCode(error) === "EADDRINUSE";
+}
+
+async function reserveEphemeralPort(host: string): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
-    const probe = net.createServer();
-    probe.once("error", reject);
-    probe.listen(0, host, () => {
-      const address = probe.address();
-      const port = typeof address === "object" && address !== null ? address.port : undefined;
-      probe.close((error) => {
+    const server = net.createServer();
+
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close(() => {
+          reject(new Error("failed to reserve an ephemeral serve port"));
+        });
+        return;
+      }
+
+      const { port } = address;
+      server.close((error) => {
         if (error !== undefined) {
           reject(error);
-          return;
-        }
-        if (typeof port !== "number") {
-          reject(new Error("failed to resolve ephemeral port"));
           return;
         }
         resolve(port);
@@ -46,25 +71,54 @@ async function allocatePort(host: string): Promise<number> {
   });
 }
 
-const DEFAULT_RUNTIME: ServeRuntime = {
-  allocatePort,
-  serve: (options) => Bun.serve(options),
-};
+export async function startServe(
+  options: ServeStartOptions = {},
+  runtime: ServeRuntime = DEFAULT_RUNTIME,
+): Promise<StartedServe> {
+  const host =
+    options.host ?? options.env?.["OYAKATA_SERVE_HOST"] ?? "127.0.0.1";
+  const rawPort = options.port ?? options.env?.["OYAKATA_SERVE_PORT"] ?? "5173";
+  const port = typeof rawPort === "number" ? rawPort : Number(rawPort);
 
-export async function startServe(options: ServeStartOptions = {}, runtime: ServeRuntime = DEFAULT_RUNTIME): Promise<StartedServe> {
-  const host = options.host ?? options.env?.["OYAKATA_SERVE_HOST"] ?? "127.0.0.1";
-  const port = options.port ?? Number(options.env?.["OYAKATA_SERVE_PORT"] ?? "5173");
-
-  if (!Number.isFinite(port) || port < 0 || port > 65535) {
-    throw new Error(`invalid serve port '${String(options.port)}'`);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`invalid serve port '${String(rawPort)}'`);
   }
 
-  const requestedPort = port === 0 ? await runtime.allocatePort(host) : port;
-  const server = runtime.serve({
-    hostname: host,
-    port: requestedPort,
-    fetch: (request: Request) => handleApiRequest(request, options),
-  });
+  const fetch = (request: Request) => handleApiRequest(request, options);
+
+  let server:
+    | {
+        readonly port: number;
+        stop(): void;
+      }
+    | undefined;
+  let candidatePort = port;
+  let lastError: unknown;
+  const reservePort = runtime.reservePort ?? reserveEphemeralPort;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      server = runtime.serve({
+        hostname: host,
+        port: candidatePort,
+        fetch,
+      });
+      break;
+    } catch (error: unknown) {
+      lastError = error;
+      if (!isEphemeralPortListenFailure(error, candidatePort)) {
+        throw error;
+      }
+
+      candidatePort = await reservePort(host);
+    }
+  }
+
+  if (server === undefined) {
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("failed to start server");
+  }
 
   return {
     host,

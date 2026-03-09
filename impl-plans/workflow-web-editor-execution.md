@@ -3,7 +3,7 @@
 **Status**: In Progress
 **Design Reference**: design-docs/specs/design-workflow-web-editor.md#overview
 **Created**: 2026-03-07
-**Last Updated**: 2026-03-07
+**Last Updated**: 2026-03-09
 
 ---
 
@@ -69,7 +69,7 @@ interface ApiWorkflowCreationExpectation {
 
 ### 3. End-to-End Verification
 
-#### e2e/workflow-web-editor.spec.js
+#### e2e/workflow-web-editor.pw.cjs, e2e/workflow-web-editor-file-harness.pw.cjs
 
 **Status**: IN_PROGRESS
 
@@ -92,7 +92,7 @@ interface WorkflowEditorFixture {
 |--------|-----------|--------|-------|
 | Workflow creation and status UX | `src/server/api.ts` | COMPLETED | Smoke verified |
 | API coverage | `src/server/api.test.ts` | COMPLETED | Targeted Bun test run passes |
-| Browser E2E verification | `e2e/workflow-web-editor.spec.js` | IN_PROGRESS | Added, live serve/tooling blocked |
+| Browser E2E verification | `e2e/workflow-web-editor.pw.cjs`, `e2e/workflow-web-editor-file-harness.pw.cjs` | IN_PROGRESS | File-backed coverage added, live serve/browser blocked |
 
 ## Dependencies
 
@@ -208,6 +208,36 @@ interface WorkflowEditorFixture {
 **Tasks In Progress**: TASK-003
 **Blockers**: Live `oyakata serve` still cannot bind `127.0.0.1` in this sandbox (`serve failed: Failed to listen at 127.0.0.1`), so the full HTTP browser path remains environment-blocked here. Playwright test discovery works, but a full browser run still needs an environment that allows local listening sockets.
 **Notes**: Reviewed the pending browser diff again and fixed a concrete usability gap: browser-side workflow creation now enforces the same name rules as the server before submission, disabling the create button for empty/invalid names and showing a clear validation error if submission is attempted anyway. Re-ran targeted Bun tests (`src/server/api.test.ts`, `src/server/serve.test.ts`, `src/cli.test.ts`) and `tsc --noEmit` successfully, and confirmed `bunx playwright test --config playwright.config.cjs --list` still discovers the workflow web-editor spec.
+
+### Session: 2026-03-09 23:50
+**Tasks Completed**: Additional TASK-003 startup regression review
+**Tasks In Progress**: TASK-003
+**Blockers**: Live `oyakata serve` remains sandbox-blocked because this environment rejects local socket binds on `127.0.0.1` with `EPERM`, including plain Node `listen()` probes. Playwright still cannot complete here for that environment reason.
+**Notes**: Re-verified the current browser-serving path and found that the earlier `serve --port 0` mitigation was still structurally wrong: it probed a free port and then rebound it later, leaving a race window. `src/server/serve.ts` now passes `0` directly to the runtime so ephemeral-port allocation stays runtime-owned when binds are permitted. Updated focused `src/server/serve.test.ts` coverage to assert the new contract without relying on sandbox networking. Source-based tests still pass; browser E2E remains environment-blocked rather than code-regressed here.
+
+### Session: 2026-03-09 18:10
+**Tasks Completed**: Additional TASK-003 browser regression harness hardening
+**Tasks In Progress**: TASK-003
+**Blockers**: Live `oyakata serve` integration remains sandbox-blocked because loopback listen on `127.0.0.1` is denied here. The live Playwright spec now skips only for that explicit environment failure and still fails for other startup regressions.
+**Notes**: Added a second Playwright browser regression path that loads the built `ui/dist` bundle from `file://` and mocks the browser API contract in-page. This preserves real-browser coverage for create/save/execute/cancel UI flows even when the sandbox forbids local TCP listening, while keeping the existing live `serve` spec as the true integration test when loopback sockets are available. Also hardened `scripts/run-ui-e2e.mjs` with an explicit browser-launch prerequisite probe so sandbox Chromium startup failures now report a clear skip reason instead of a misleading product-test failure.
+
+### Session: 2026-03-09 19:25
+**Tasks Completed**: Additional TASK-003 file-harness asset parsing hardening
+**Tasks In Progress**: TASK-003
+**Blockers**: Playwright browser launch is still sandbox-blocked here because Chromium exits during startup (`SIGTRAP`) after a local `setsockopt` permission failure, so the browser path still cannot complete end-to-end in this environment.
+**Notes**: Re-reviewed the current diff against the intended browser-regression purpose and did not find an architecture mismatch that requires a design rewrite. I did find a concrete migration-preparation fragility in the file-backed Playwright harness: it parsed `ui/dist/index.html` with regexes that depended on Vite emitting one exact attribute order. Extracted built-asset parsing into `scripts/ui-built-assets.mjs`, added Bun regression coverage for reordered/single-quoted attributes plus stylesheet-optional builds, and updated the harness to reuse that parser so future Svelte-to-Solid or Vite HTML serialization changes do not break the mock-browser verification path spuriously. Re-ran `bun run test`, `bun run typecheck`, `bun run build:ui`, `git diff --check`, and `bun run test:e2e`; the source/type/build paths passed and `test:e2e` still exited early only because Chromium launch is blocked by the sandbox.
+
+### Session: 2026-03-09 20:10
+**Tasks Completed**: Additional TASK-003 harness consistency hardening
+**Tasks In Progress**: TASK-003
+**Blockers**: Playwright browser launch is still sandbox-blocked here, so browser execution still cannot complete end-to-end in this environment.
+**Notes**: Reviewed the ongoing Solid migration branch against the intended framework-agnostic server/browser contract and confirmed the architecture still matches the design, so no design rewrite or new plan was necessary for this iteration. Fixed a concrete regression-harness drift by removing duplicated frontend-entrypoint detection from `e2e/workflow-web-editor-file-harness.pw.cjs` and reusing the canonical `scripts/ui-framework.mjs` detector instead, which keeps the file-backed browser path aligned with the real server/tooling rules during the Svelte-to-Solid cutover. Also ignored generated Playwright artifact directories so iterative regression runs do not leave unrelated worktree noise.
+
+### Session: 2026-03-09 23:58
+**Tasks Completed**: Task-progress audit sync for current diff
+**Tasks In Progress**: TASK-003
+**Blockers**: The execution plan still stops short of completion because this sandbox blocks both loopback listen on `127.0.0.1` and Chromium startup, so the live browser path cannot finish here even though the regression harness files are now in place.
+**Notes**: Re-reviewed the current diff specifically to sync task progress. TASK-001 and TASK-002 remain complete. TASK-003 also remains correctly `IN_PROGRESS`, but the plan now points at the actual checked-in E2E files (`workflow-web-editor.pw.cjs` and `workflow-web-editor-file-harness.pw.cjs`) instead of the obsolete older spec path. The current implementation state is: live serve/browser verification is environment-blocked, while file-backed browser regression coverage and serve/runtime hardening are already part of the diff.
 
 ## Related Plans
 

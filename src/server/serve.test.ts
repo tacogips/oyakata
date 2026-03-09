@@ -11,18 +11,67 @@ describe("startServe", () => {
         port: 0,
       },
       {
-        allocatePort: async () => 48321,
         serve: ({ port }) => {
           capturedPort = port;
           return {
-            port,
+            port: 48321,
             stop: () => {},
           };
         },
       },
     );
 
-    expect(capturedPort).toBe(48321);
+    expect(started.host).toBe("127.0.0.1");
+    expect(capturedPort).toBe(0);
+    expect(started.port).toBe(48321);
+  });
+
+  test("surfaces runtime listen failures for port-0 binds without masking them", async () => {
+    await expect(
+      startServe(
+        {
+          host: "127.0.0.1",
+          port: 0,
+        },
+        {
+          serve: () => {
+            throw new Error("Failed to listen at 127.0.0.1");
+          },
+        },
+      ),
+    ).rejects.toThrow("Failed to listen at 127.0.0.1");
+  });
+
+  test("retries port-0 serve startup with a concrete ephemeral port when the runtime rejects port 0", async () => {
+    const attemptedPorts: number[] = [];
+
+    const started = await startServe(
+      {
+        host: "127.0.0.1",
+        port: 0,
+      },
+      {
+        serve: ({ port }) => {
+          attemptedPorts.push(port);
+          if (port === 0) {
+            const error = new Error(
+              "Failed to start server. Is port 0 in use?",
+            ) as Error & { code?: string };
+            error.code = "EADDRINUSE";
+            throw error;
+          }
+
+          return {
+            port,
+            stop: () => {},
+          };
+        },
+        reservePort: async () => 48321,
+      },
+    );
+
+    expect(attemptedPorts[0]).toBe(0);
+    expect(attemptedPorts[1]).toBe(48321);
     expect(started.port).toBe(48321);
   });
 
@@ -33,7 +82,6 @@ describe("startServe", () => {
         port: 41000,
       },
       {
-        allocatePort: async () => 49999,
         serve: () => ({
           port: 41001,
           stop: () => {},
@@ -52,7 +100,6 @@ describe("startServe", () => {
           port: -1,
         },
         {
-          allocatePort: async () => 48321,
           serve: ({ port }) => ({
             port,
             stop: () => {},
@@ -60,5 +107,41 @@ describe("startServe", () => {
         },
       ),
     ).rejects.toThrow("invalid serve port '-1'");
+  });
+
+  test("rejects invalid serve port values coming from the environment", async () => {
+    await expect(
+      startServe(
+        {
+          host: "127.0.0.1",
+          env: {
+            OYAKATA_SERVE_PORT: "abc",
+          },
+        },
+        {
+          serve: ({ port }) => ({
+            port,
+            stop: () => {},
+          }),
+        },
+      ),
+    ).rejects.toThrow("invalid serve port 'abc'");
+  });
+
+  test("rejects non-integer ports", async () => {
+    await expect(
+      startServe(
+        {
+          host: "127.0.0.1",
+          port: 5173.5,
+        },
+        {
+          serve: ({ port }) => ({
+            port,
+            stop: () => {},
+          }),
+        },
+      ),
+    ).rejects.toThrow("invalid serve port '5173.5'");
   });
 });

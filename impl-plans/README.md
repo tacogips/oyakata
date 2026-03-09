@@ -26,7 +26,7 @@ impl-plans/
 | Plan | Status | Design Reference | Last Updated |
 |------|--------|------------------|--------------|
 | `workflow-web-editor-execution` | In Progress | `design-workflow-web-editor` | 2026-03-07 |
-| `workflow-web-editor-svelte-migration` | In Progress | `design-workflow-web-editor` | 2026-03-08 |
+| `refactoring-frontend-solidjs-migration` | In Progress | `design-workflow-web-editor`, `design-refactoring-investigation-plan` | 2026-03-09 |
 
 ## Completed Plans
 
@@ -55,6 +55,24 @@ impl-plans/
 | `mailbox-cross-boundary-edge-validation` | 2026-03-09 | `design-node-mailbox`, `design-workflow-json`, `architecture` |
 | `mailbox-artifact-atomic-writes` | 2026-03-09 | `design-node-mailbox`, `architecture` |
 | `branch-and-loop-block-subworkflows` | 2026-03-09 | `design-workflow-json`, `design-data-model`, `architecture`, `design-workflow-web-editor` |
+| `refactoring-shared-ui-contract` | 2026-03-10 | `design-refactoring-shared-ui-contract` |
+| `refactoring-shared-visualization-derivation` | 2026-03-10 | `design-refactoring-shared-visualization-derivation` |
+| `refactoring-shared-editable-workflow-types` | 2026-03-10 | `design-refactoring-shared-editable-workflow-types` |
+| `refactoring-editor-api-client` | 2026-03-10 | `design-refactoring-editor-api-client` |
+| `refactoring-editor-workflow-operations` | 2026-03-10 | `design-refactoring-editor-workflow-operations` |
+| `refactoring-editor-support-helpers` | 2026-03-10 | `design-refactoring-editor-support-helpers` |
+| `refactoring-editor-state-helpers` | 2026-03-10 | `design-refactoring-editor-state-helpers` |
+| `refactoring-editor-mutation-helpers` | 2026-03-10 | `design-refactoring-editor-mutation-helpers` |
+| `refactoring-editor-data-loaders` | 2026-03-10 | `design-refactoring-editor-data-loaders` |
+| `refactoring-editor-field-updates` | 2026-03-09 | `design-refactoring-editor-field-updates` |
+| `refactoring-server-api-request-parsing` | 2026-03-09 | `design-refactoring-server-api-request-parsing` |
+| `refactoring-editor-execution-helpers` | 2026-03-09 | `design-refactoring-editor-execution-helpers` |
+| `refactoring-editor-action-helpers` | 2026-03-10 | `design-refactoring-editor-action-helpers` |
+| `refactoring-server-ui-asset-serving` | 2026-03-10 | `design-refactoring-server-ui-asset-serving` |
+| `refactoring-editor-component-boundaries` | 2026-03-09 | `design-refactoring-editor-component-boundaries` |
+| `refactoring-server-workflow-bundle-parsing` | 2026-03-09 | `design-refactoring-server-workflow-bundle-parsing` |
+| `refactoring-editor-main-panel-component` | 2026-03-09 | `design-refactoring-editor-main-panel-component` |
+| `refactoring-editor-session-controller` | 2026-03-09 | `design-refactoring-editor-session-controller`, `design-workflow-web-editor` |
 
 ## Phase Dependencies
 
@@ -77,13 +95,31 @@ impl-plans/
 | 15 | COMPLETED | Phase 14 |
 | 16 | COMPLETED | Phase 15 |
 | 17 | COMPLETED | Phase 16 |
-| 18 | IN_PROGRESS | Phase 17 |
+| 18 | COMPLETED | Phase 17 |
 | 19 | COMPLETED | Phase 18 |
 | 20 | COMPLETED | Phase 19 |
 | 21 | COMPLETED | Phase 20 |
 | 22 | COMPLETED | Phase 21 |
 | 23 | COMPLETED | Phase 22 |
 | 24 | COMPLETED | Phase 23 |
+| 25 | COMPLETED | Phase 24 |
+| 26 | COMPLETED | Phase 25 |
+| 27 | COMPLETED | Phase 26 |
+| 28 | COMPLETED | Phase 27 |
+| 29 | COMPLETED | Phase 28 |
+| 30 | COMPLETED | Phase 29 |
+| 31 | COMPLETED | Phase 30 |
+| 32 | COMPLETED | Phase 31 |
+| 33 | COMPLETED | Phase 32 |
+| 34 | COMPLETED | Phase 33 |
+| 35 | COMPLETED | Phase 34 |
+| 36 | COMPLETED | Phase 35 |
+| 37 | COMPLETED | Phase 36 |
+| 38 | COMPLETED | Phase 37 |
+| 39 | COMPLETED | Phase 38 |
+| 40 | COMPLETED | Phase 39 |
+| 41 | COMPLETED | Phase 40 |
+| 42 | IN_PROGRESS | Phase 41 |
 
 ### Phase to Plans Mapping
 
@@ -106,15 +142,30 @@ PHASE_TO_PLANS = {
   15: ["impl-plans/oyakata-manager-prompt-contract.md"],
   16: ["impl-plans/node-session-reuse.md"],
   17: ["impl-plans/node-backend-model-separation.md"],
-  18: [
-    "impl-plans/workflow-web-editor-svelte-migration.md",
-    "impl-plans/runtime-owned-external-output-publication.md"
-  ],
+  18: ["impl-plans/runtime-owned-external-output-publication.md"],
   19: ["impl-plans/mailbox-delivery-manager-ownership.md"],
   20: ["impl-plans/mailbox-output-snapshot-fidelity.md"],
   21: ["impl-plans/mailbox-cross-boundary-routing-scope.md"],
   22: ["impl-plans/mailbox-cross-boundary-edge-validation.md"],
   23: ["impl-plans/mailbox-artifact-atomic-writes.md"],
-  24: ["impl-plans/branch-and-loop-block-subworkflows.md"]
+  24: ["impl-plans/branch-and-loop-block-subworkflows.md"],
+  25: ["impl-plans/refactoring-shared-ui-contract.md"],
+  26: ["impl-plans/refactoring-shared-visualization-derivation.md"],
+  27: ["impl-plans/refactoring-shared-editable-workflow-types.md"],
+  28: ["impl-plans/refactoring-editor-api-client.md"],
+  29: ["impl-plans/refactoring-editor-workflow-operations.md"],
+  30: ["impl-plans/refactoring-editor-support-helpers.md"],
+  31: ["impl-plans/refactoring-editor-state-helpers.md"],
+  32: ["impl-plans/refactoring-editor-mutation-helpers.md"],
+  33: ["impl-plans/refactoring-editor-data-loaders.md"],
+  34: ["impl-plans/refactoring-editor-field-updates.md"],
+  35: ["impl-plans/refactoring-server-api-request-parsing.md"],
+  36: ["impl-plans/refactoring-editor-execution-helpers.md"],
+  37: ["impl-plans/refactoring-editor-action-helpers.md"],
+  38: ["impl-plans/refactoring-server-ui-asset-serving.md"],
+  39: ["impl-plans/refactoring-editor-component-boundaries.md"],
+  40: ["impl-plans/refactoring-server-workflow-bundle-parsing.md"],
+  41: ["impl-plans/refactoring-editor-main-panel-component.md"],
+  42: ["impl-plans/refactoring-frontend-solidjs-migration.md", "impl-plans/refactoring-editor-session-controller.md"]
 }
 ```

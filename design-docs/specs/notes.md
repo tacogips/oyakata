@@ -69,3 +69,24 @@ This supports quality gates in collaborative writing workflows.
 - New design docs must use `workflowExecutionId` for workflow-run scope and `agentSessionId` for worker retry scope.
 - Bare `sessionId` is allowed only as a temporary compatibility alias in existing APIs and persisted workflow-run state.
 - Compatibility window is fixed: keep `sessionId` alias support through `2026-09-30`, then remove it in the first subsequent minor release.
+
+### Refactoring Investigation Plan
+
+- Repository-wide refactoring investigation is tracked in `design-docs/specs/design-refactoring-investigation-plan.md`.
+- The investigation is intentionally split into multiple passes so architectural, type-safety, DRY, hardcoding, and test-safety concerns can be analyzed separately before implementation planning.
+- Shared browser/server transport typing is tracked in `design-docs/specs/design-refactoring-shared-ui-contract.md`.
+- Shared derived visualization reuse is tracked in `design-docs/specs/design-refactoring-shared-visualization-derivation.md`.
+- Shared editable workflow typing is tracked in `design-docs/specs/design-refactoring-shared-editable-workflow-types.md`.
+- Frontend browser/API client extraction is tracked in `design-docs/specs/design-refactoring-editor-api-client.md`.
+- Frontend workflow-structure operations extraction is tracked in `design-docs/specs/design-refactoring-editor-workflow-operations.md`.
+- Frontend support-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-support-helpers.md`.
+- Frontend state-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-state-helpers.md`.
+- Frontend mutation-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-mutation-helpers.md`.
+- Frontend workflow/session data-loader extraction is tracked in `design-docs/specs/design-refactoring-editor-data-loaders.md`.
+- Frontend async action-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-action-helpers.md`.
+- Frontend field/property update helper extraction is tracked in `design-docs/specs/design-refactoring-editor-field-updates.md`.
+- Frontend execution-form request helper extraction is tracked in `design-docs/specs/design-refactoring-editor-execution-helpers.md`.
+- Frontend center-panel component extraction is tracked in `design-docs/specs/design-refactoring-editor-main-panel-component.md`.
+- Server API request-parsing helper extraction is tracked in `design-docs/specs/design-refactoring-server-api-request-parsing.md`.
+- Server UI asset-serving helper extraction is tracked in `design-docs/specs/design-refactoring-server-ui-asset-serving.md`.
+- SolidJS migration-preparation also requires framework-aware UI tooling to validate dependency availability explicitly before build/typecheck execution, because the repository can temporarily keep a checked-in Svelte entrypoint while SolidJS remains the active architectural target.

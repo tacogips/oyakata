@@ -55,9 +55,14 @@ tasks:
       - vitest run --reporter=verbose
 
   test-ui:
-    desc: Run tests with Vitest UI
+    desc: Run UI unit tests non-interactively
     cmds:
-      - vitest --ui
+      - bun run test:ui
+
+  test-ui-interactive:
+    desc: Run the interactive Vitest UI server (opt-in)
+    cmds:
+      - bun run test:ui:interactive
 
   typecheck:
     desc: Run server and UI TypeScript type checking
@@ -70,12 +75,12 @@ tasks:
       - bun run typecheck:server
 
   typecheck-ui:
-    desc: Run Svelte-aware UI type checking
+    desc: Run framework-aware UI type checking
     cmds:
       - bun run typecheck:ui
 
   check-ui:
-    desc: Run Svelte-aware UI verification and production build
+    desc: Run framework-aware UI verification and production build
     cmds:
       - bun run check:ui
 

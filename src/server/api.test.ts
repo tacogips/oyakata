@@ -2,7 +2,23 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { handleApiRequest, resolveDefaultUiDistRoot } from "./api";
+import {
+  handleApiRequest,
+  resolveDefaultUiDistRoot,
+  type ApiContext,
+} from "./api";
+import { detectFrontendMode } from "./ui-assets";
+import type {
+  CancelWorkflowExecutionResponse,
+  ExecuteWorkflowResponse,
+  RerunWorkflowResponse,
+  SaveWorkflowResponse,
+  SessionsResponse,
+  ValidationResponse,
+  WorkflowExecutionStateResponse,
+  WorkflowListResponse,
+  WorkflowResponse,
+} from "../shared/ui-contract";
 import { createWorkflowTemplate } from "../workflow/create";
 
 const tempDirs: string[] = [];
@@ -13,21 +29,47 @@ async function makeTempDir(): Promise<string> {
   return directory;
 }
 
+async function readJson<T>(response: Response): Promise<T> {
+  return (await response.json()) as T;
+}
+
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
-function makeDefaultTemplateScenario(stage = "design"): Readonly<Record<string, unknown>> {
+function makeDefaultTemplateScenario(
+  stage = "design",
+): Readonly<Record<string, unknown>> {
   return {
-    "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage } },
-    "main-oyakata": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
-    "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
-    "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+    "oyakata-manager": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage },
+    },
+    "main-oyakata": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "dispatch" },
+    },
+    "workflow-input": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "implement" },
+    },
+    "workflow-output": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "review" },
+    },
   };
 }
 
 describe("handleApiRequest", () => {
-  test("serves web UI and health endpoint", async () => {
+  test("returns a clear unavailable page when built UI assets are missing", async () => {
     const root = await makeTempDir();
     await createWorkflowTemplate("demo", { workflowRoot: root });
 
@@ -37,74 +79,21 @@ describe("handleApiRequest", () => {
       sessionStoreRoot: path.join(root, "sessions"),
       uiDistRoot: path.join(root, "missing-ui-dist"),
     });
-    expect(uiRes.status).toBe(200);
+    expect(uiRes.status).toBe(503);
     expect(uiRes.headers.get("content-type")).toContain("text/html");
     const uiText = await uiRes.text();
-    expect(uiText).toContain("oyakata Vertical Workflow Editor");
-    expect(uiText).toContain("Vertical Workflow");
-    expect(uiText).toContain("Workflow Structure");
-    expect(uiText).toContain("Create Workflow");
-    expect(uiText).toContain("New Workflow");
-    expect(uiText).toContain("Validate Workflow");
-    expect(uiText).toContain("modeBanner");
-    expect(uiText).toContain("Read-only mode disables create and save actions.");
-    expect(uiText).toContain("Execution is disabled, so run and cancel actions are unavailable.");
-    expect(uiText).toContain("derive from model (legacy)");
-    expect(uiText).toContain("placeholder=\"gpt-5 / claude-sonnet-4-5 / claude-opus-4-1\"");
-    expect(uiText).toContain('backendPill.textContent = payload && payload.executionBackend ? payload.executionBackend : "legacy backend";');
-    expect(uiText).toContain("Add Node");
-    expect(uiText).toContain("Refresh Sessions");
-    expect(uiText).toContain("Cancel Selected Session");
-    expect(uiText).toContain("root-manager");
-    expect(uiText).toContain("Member Nodes");
-    expect(uiText).toContain("Block Type");
-    expect(uiText).toContain("loop-body");
-    expect(uiText).toContain("branch-block");
-    expect(uiText).toContain("Nodes already owned by another group stay unavailable here");
-    expect(uiText).toContain("function availableSubWorkflowManagerNodes(currentSubWorkflowId)");
-    expect(uiText).toContain("subWorkflowManagerNodeOptions(subWorkflow.id)");
-    expect(uiText).toContain("function subWorkflowBoundaryNodeOptions(kind, subWorkflow)");
-    expect(uiText).toContain("function subWorkflowNodeOwnerId(nodeId)");
-    expect(uiText).toContain("function nodeReservedByOtherSubWorkflow(nodeId, currentSubWorkflowId)");
-    expect(uiText).toContain("function normalizeAllSubWorkflowNodeIds()");
-    expect(uiText).toContain("function normalizeSubWorkflowInputSourceFields(source)");
-    expect(uiText).toContain("function workflowReferenceOptions()");
-    expect(uiText).toContain("function subWorkflowReferenceOptions(currentSubWorkflowId)");
-    expect(uiText).toContain("function colorForSubWorkflow(subWorkflow)");
-    expect(uiText).toContain('if (color.startsWith("branch:")) return "branch";');
-    expect(uiText).toContain('if (kind === "branch") return "var(--branch-scope)";');
-    expect(uiText).toContain('subWorkflow.block = { type: nextValue };');
-    expect(uiText).toContain('subWorkflow.block = existingLoopId ? { type: "loop-body", loopId: existingLoopId } : { type: "loop-body" };');
-    expect(uiText).toContain("nodeKindOptionsForNode(node)");
-    expect(uiText).toContain("function syncNodeKindsFromStructure()");
-    expect(uiText).toContain("function nextSubWorkflowId()");
-    expect(uiText).toContain('while (state.bundle.workflow.subWorkflows.some((subWorkflow) => subWorkflow.id === subWorkflowId))');
-    expect(uiText).toContain('workflowManagerNode.kind = "root-manager"');
-    expect(uiText).toContain('subWorkflowManagerNode.kind = "sub-manager"');
-    expect(uiText).toContain('inputNode.kind = "input"');
-    expect(uiText).toContain('outputNode.kind = "output"');
-    expect(uiText).toContain("function refreshDerivedVisualization()");
-    expect(uiText).toContain("refreshDerivedVisualization();");
-    expect(uiText).toContain("Workflow Ref");
-    expect(uiText).toContain("Human-input sources do not need workflow, node, or sub-workflow references.");
-    expect(uiText).toContain("Workflow-output sources require a workflow reference.");
-    expect(uiText).toContain("The workflow manager node is kept as root-manager so execution entry stays valid.");
-    expect(uiText).toContain("This node is assigned as a sub-workflow input boundary, so its kind stays locked to input.");
-    expect(uiText).toContain("This node is assigned as a sub-workflow output boundary, so its kind stays locked to output.");
-    expect(uiText).toContain("Add a dedicated sub-manager node before creating another group.");
-    expect(uiText).toContain("Manager, input, and output boundaries must be separate nodes.");
-    expect(uiText).toContain("if (!trimmed || trimmed === subWorkflow.id)");
-    expect(uiText).toContain("Group membership changed locally");
-    expect(uiText).toContain("subWorkflow.managerNodeId === nodeId");
-    expect(uiText).not.toContain('workflowNodeOptionsByKinds(["root-manager", "sub-manager", "manager"])');
-    expect(uiText).not.toContain("(use workflow manager)");
-    expect(uiText).not.toContain("Nodes JSON");
+    expect(uiText).toContain("oyakata UI is unavailable");
+    expect(uiText).toContain("ui/dist/");
+    expect(uiText).toContain("bun run build:ui");
 
-    const healthRes = await handleApiRequest(new Request("http://localhost/healthz"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const healthRes = await handleApiRequest(
+      new Request("http://localhost/healthz"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(healthRes.status).toBe(200);
   });
 
@@ -112,96 +101,298 @@ describe("handleApiRequest", () => {
     const root = await makeTempDir();
     const missingWorkflowRoot = path.join(root, "missing-workflows");
 
-    const listRes = await handleApiRequest(new Request("http://localhost/api/workflows"), {
-      workflowRoot: missingWorkflowRoot,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const listRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows"),
+      {
+        workflowRoot: missingWorkflowRoot,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
 
     expect(listRes.status).toBe(200);
-    const listJson = (await listRes.json()) as { workflows: string[] };
+    const listJson = await readJson<WorkflowListResponse>(listRes);
     expect(listJson.workflows).toEqual([]);
   });
 
-  test("renders browser UI capability hints for fixed, read-only, and no-exec modes", async () => {
+  test("serves built UI assets for root and non-api asset requests", async () => {
     const root = await makeTempDir();
-    await createWorkflowTemplate("demo", { workflowRoot: root });
+    const uiDistRoot = path.join(root, "ui-dist");
+    await mkdir(path.join(uiDistRoot, "assets"), { recursive: true });
+    await writeFile(
+      path.join(uiDistRoot, "index.html"),
+      "<!doctype html><html><body><div id='app'>solid-ui</div></body></html>",
+    );
+    await writeFile(
+      path.join(uiDistRoot, "assets", "entry.js"),
+      "console.log('ui asset');",
+    );
 
-    const uiRes = await handleApiRequest(new Request("http://localhost/"), {
+    const rootRes = await handleApiRequest(new Request("http://localhost/"), {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
-      fixedWorkflowName: "demo",
-      readOnly: true,
-      noExec: true,
-      uiDistRoot: path.join(root, "missing-ui-dist"),
+      uiDistRoot,
     });
+    expect(rootRes.status).toBe(200);
+    await expect(rootRes.text()).resolves.toContain("solid-ui");
 
-    expect(uiRes.status).toBe(200);
-    const uiText = await uiRes.text();
-    expect(uiText).toContain('const fixedWorkflow = uiConfig.fixedWorkflowName;');
-    expect(uiText).toContain('const readOnlyMode = uiConfig.readOnly === true;');
-    expect(uiText).toContain('const noExecMode = uiConfig.noExec === true;');
-    expect(uiText).toContain("function hasLoadedWorkflow()");
-    expect(uiText).toContain("function isValidWorkflowNameInput(value)");
-    expect(uiText).toContain("createWorkflowButtonEl.disabled = !isValidWorkflowNameInput(newWorkflowNameEl.value.trim());");
-    expect(uiText).toContain("workflowDescriptionEl.disabled = readOnlyMode;");
-    expect(uiText).toContain("reloadButtonEl.disabled = !hasLoadedWorkflow();");
-    expect(uiText).toContain("validateButtonEl.disabled = !hasLoadedWorkflow();");
-    expect(uiText).toContain("addNodeButtonEl.disabled = readOnlyMode || !hasLoadedWorkflow();");
-    expect(uiText).toContain("nodeExecutionBackendEl.disabled = readOnlyMode || !hasLoadedWorkflow();");
-    expect(uiText).toContain("promptEl.disabled = noExecMode || !hasLoadedWorkflow();");
-    expect(uiText).toContain("scenarioEl.disabled = noExecMode || !hasLoadedWorkflow();");
-    expect(uiText).toContain("maxStepsEl.disabled = noExecMode || !hasLoadedWorkflow();");
-    expect(uiText).toContain("runButtonEl.disabled = noExecMode || !hasLoadedWorkflow();");
-    expect(uiText).toContain("refreshSessionsButtonEl.disabled = !workflowEl.value;");
-    expect(uiText).toContain("cancelSessionButtonEl.disabled = noExecMode || !selectedSessionCanCancel();");
-    expect(uiText).toContain("Select or create a workflow to inspect executions.");
-    expect(uiText).toContain("input.disabled = readOnlyMode || locked.has(option.value) || disabled.has(option.value);");
-    expect(uiText).toContain("Fixed workflow mode is active.");
-    expect(uiText).toContain("Read-only mode disables create and save actions.");
-    expect(uiText).toContain("Execution is disabled, so run and cancel actions are unavailable.");
-    expect(uiText).toContain("Read-only mode does not allow saving");
-    expect(uiText).toContain("execution is disabled in no-exec mode");
-    expect(uiText).toContain("Workflow names must start with a letter or number and use only letters, numbers, '-' or '_'");
-    expect(uiText).toContain("workflowDescriptionEl.focus();");
-    expect(uiText).toContain("const previousSelectedSessionId = state.selectedSessionId;");
-    expect(uiText).toContain("previousSelectedSessionId !== state.selectedSessionId");
-    expect(uiText).toContain("let polledSessionId = null;");
-    expect(uiText).toContain("if (polledSessionId && polledSessionId !== state.selectedSessionId)");
-    expect(uiText).toContain("if (polledSessionId !== sessionId || state.selectedSessionId !== sessionId)");
-    expect(uiText).toContain('loadSessions(undefined, { refreshSelectedDetails: true }).catch((error) => {');
-    expect(uiText).toContain('loadSessions(state.selectedSessionId, { refreshSelectedDetails: true }).catch((error) => {');
+    const assetRes = await handleApiRequest(
+      new Request("http://localhost/assets/entry.js"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
+    expect(assetRes.status).toBe(200);
+    expect(assetRes.headers.get("content-type")).toContain("text/javascript");
+    await expect(assetRes.text()).resolves.toContain("ui asset");
   });
 
-  test("returns UI bootstrap config with legacy frontend mode when no built UI exists", async () => {
+  test("serves common built frontend asset types with stable content types", async () => {
+    const root = await makeTempDir();
+    const uiDistRoot = path.join(root, "ui-dist");
+    await mkdir(path.join(uiDistRoot, "assets"), { recursive: true });
+    await writeFile(
+      path.join(uiDistRoot, "index.html"),
+      "<!doctype html><html><body><div id='app'>ui</div></body></html>",
+    );
+    await writeFile(
+      path.join(uiDistRoot, "assets", "entry.mjs"),
+      "export const value = 1;\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(uiDistRoot, "assets", "entry.js.map"),
+      '{"version":3}',
+      "utf8",
+    );
+    await writeFile(
+      path.join(uiDistRoot, "assets", "font.woff2"),
+      "font-data",
+      "utf8",
+    );
+    await writeFile(
+      path.join(uiDistRoot, "assets", "image.webp"),
+      "image-data",
+      "utf8",
+    );
+
+    const mjsRes = await handleApiRequest(
+      new Request("http://localhost/assets/entry.mjs"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
+    expect(mjsRes.status).toBe(200);
+    expect(mjsRes.headers.get("content-type")).toContain("text/javascript");
+
+    const mapRes = await handleApiRequest(
+      new Request("http://localhost/assets/entry.js.map"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
+    expect(mapRes.status).toBe(200);
+    expect(mapRes.headers.get("content-type")).toContain("application/json");
+
+    const fontRes = await handleApiRequest(
+      new Request("http://localhost/assets/font.woff2"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
+    expect(fontRes.status).toBe(200);
+    expect(fontRes.headers.get("content-type")).toContain("font/woff2");
+
+    const imageRes = await handleApiRequest(
+      new Request("http://localhost/assets/image.webp"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
+    expect(imageRes.status).toBe(200);
+    expect(imageRes.headers.get("content-type")).toContain("image/webp");
+  });
+
+  test("returns UI bootstrap config with the default frontend mode", async () => {
     const root = await makeTempDir();
 
-    const res = await handleApiRequest(new Request("http://localhost/api/ui-config"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      fixedWorkflowName: "demo",
-      readOnly: true,
-      noExec: true,
-      uiDistRoot: path.join(root, "missing-ui-dist"),
-    });
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        fixedWorkflowName: "demo",
+        readOnly: true,
+        noExec: true,
+        uiDistRoot: path.join(root, "missing-ui-dist"),
+      },
+    );
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
       fixedWorkflowName: "demo",
       readOnly: true,
       noExec: true,
-      frontend: "legacy-inline",
+      frontend: "solid-dist",
+    });
+  });
+
+  test("detects frontend mode from the checked-in UI entrypoint when no override is provided", () => {
+    expect(detectFrontendMode()).toBe("solid-dist");
+  });
+
+  test("detects a Solid frontend entrypoint from a package-relative ui/src/main.tsx", async () => {
+    const root = await makeTempDir();
+    const uiSourceRoot = path.join(root, "ui", "src");
+    await mkdir(uiSourceRoot, { recursive: true });
+    await writeFile(
+      path.join(uiSourceRoot, "main.tsx"),
+      "export {};\n",
+      "utf8",
+    );
+
+    const fakeModuleUrl = new URL(
+      `file://${path.join(root, "src", "server", "api.ts")}`,
+    ).href;
+    expect(detectFrontendMode({}, fakeModuleUrl)).toBe("solid-dist");
+  });
+
+  test("rejects a legacy Svelte entrypoint instead of silently defaulting", async () => {
+    const root = await makeTempDir();
+    const uiSourceRoot = path.join(root, "ui", "src");
+    await mkdir(uiSourceRoot, { recursive: true });
+    await writeFile(path.join(uiSourceRoot, "main.ts"), "export {};\n", "utf8");
+
+    const fakeModuleUrl = new URL(
+      `file://${path.join(root, "src", "server", "api.ts")}`,
+    ).href;
+    expect(() =>
+      detectFrontendMode({ frontendModeModuleUrl: fakeModuleUrl }),
+    ).toThrow(/legacy Svelte entrypoint/i);
+
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        frontendModeModuleUrl: fakeModuleUrl,
+      },
+    );
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/legacy Svelte entrypoint/i),
+    });
+  });
+
+  test("rejects a missing checked-in frontend entrypoint instead of silently defaulting", async () => {
+    const root = await makeTempDir();
+    const uiSourceRoot = path.join(root, "ui", "src");
+    await mkdir(uiSourceRoot, { recursive: true });
+
+    const fakeModuleUrl = new URL(
+      `file://${path.join(root, "src", "server", "api.ts")}`,
+    ).href;
+    expect(() =>
+      detectFrontendMode({ frontendModeModuleUrl: fakeModuleUrl }),
+    ).toThrow(/unable to detect Solid frontend/i);
+
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        frontendModeModuleUrl: fakeModuleUrl,
+      },
+    );
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/unable to detect Solid frontend/i),
+    });
+  });
+
+  test("returns UI bootstrap config with an overridden frontend mode", async () => {
+    const root = await makeTempDir();
+
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        frontendMode: "solid-dist",
+      },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      fixedWorkflowName: null,
+      readOnly: false,
+      noExec: false,
+      frontend: "solid-dist",
+    });
+  });
+
+  test("uses an explicit frontend override even when a legacy Svelte entrypoint is present", async () => {
+    const root = await makeTempDir();
+    const uiSourceRoot = path.join(root, "ui", "src");
+    await mkdir(uiSourceRoot, { recursive: true });
+    await writeFile(path.join(uiSourceRoot, "main.ts"), "export {};\n", "utf8");
+
+    const fakeModuleUrl = new URL(
+      `file://${path.join(root, "src", "server", "api.ts")}`,
+    ).href;
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        frontendMode: "solid-dist",
+        frontendModeModuleUrl: fakeModuleUrl,
+      },
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      frontend: "solid-dist",
     });
   });
 
   test("resolves default ui/dist relative to the package root instead of cwd", () => {
-    const fakeBuiltModuleUrl = new URL("file:///tmp/oyakata-installed/dist/server/api.js").href;
-    expect(resolveDefaultUiDistRoot(fakeBuiltModuleUrl)).toBe(path.join("/tmp/oyakata-installed", "ui", "dist"));
+    const fakeBuiltModuleUrl = new URL(
+      "file:///tmp/oyakata-installed/dist/server/api.js",
+    ).href;
+    expect(resolveDefaultUiDistRoot(fakeBuiltModuleUrl)).toBe(
+      path.join("/tmp/oyakata-installed", "ui", "dist"),
+    );
 
-    const fakeSourceModuleUrl = new URL("file:///tmp/oyakata-dev/src/server/api.ts").href;
-    expect(resolveDefaultUiDistRoot(fakeSourceModuleUrl)).toBe(path.join("/tmp/oyakata-dev", "ui", "dist"));
+    const fakeSourceModuleUrl = new URL(
+      "file:///tmp/oyakata-dev/src/server/api.ts",
+    ).href;
+    expect(resolveDefaultUiDistRoot(fakeSourceModuleUrl)).toBe(
+      path.join("/tmp/oyakata-dev", "ui", "dist"),
+    );
   });
 
   test("serves built UI assets when ui/dist output is available", async () => {
@@ -210,11 +401,19 @@ describe("handleApiRequest", () => {
     await mkdir(path.join(uiDistRoot, "assets"), { recursive: true });
     await writeFile(
       path.join(uiDistRoot, "index.html"),
-      "<!doctype html><html><body><div id=\"app\">svelte build</div><script src=\"/assets/app.js\"></script></body></html>",
+      '<!doctype html><html><body><div id="app">solid build</div><script src="/assets/app.js"></script></body></html>',
       "utf8",
     );
-    await writeFile(path.join(uiDistRoot, "assets", "app.js"), "console.log('svelte asset');", "utf8");
-    await writeFile(path.join(uiDistRoot, "favicon.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", "utf8");
+    await writeFile(
+      path.join(uiDistRoot, "assets", "app.js"),
+      "console.log('solid asset');",
+      "utf8",
+    );
+    await writeFile(
+      path.join(uiDistRoot, "favicon.svg"),
+      '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+      "utf8",
+    );
 
     const uiRes = await handleApiRequest(new Request("http://localhost/"), {
       workflowRoot: root,
@@ -224,36 +423,48 @@ describe("handleApiRequest", () => {
     });
     expect(uiRes.status).toBe(200);
     expect(uiRes.headers.get("content-type")).toContain("text/html");
-    await expect(uiRes.text()).resolves.toContain("svelte build");
+    await expect(uiRes.text()).resolves.toContain("solid build");
 
-    const assetRes = await handleApiRequest(new Request("http://localhost/assets/app.js"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      uiDistRoot,
-    });
+    const assetRes = await handleApiRequest(
+      new Request("http://localhost/assets/app.js"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
     expect(assetRes.status).toBe(200);
     expect(assetRes.headers.get("content-type")).toContain("text/javascript");
-    await expect(assetRes.text()).resolves.toContain("svelte asset");
+    await expect(assetRes.text()).resolves.toContain("solid asset");
 
-    const iconRes = await handleApiRequest(new Request("http://localhost/favicon.svg"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      uiDistRoot,
-    });
+    const iconRes = await handleApiRequest(
+      new Request("http://localhost/favicon.svg"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
     expect(iconRes.status).toBe(200);
     expect(iconRes.headers.get("content-type")).toContain("image/svg+xml");
     await expect(iconRes.text()).resolves.toContain("<svg");
 
-    const configRes = await handleApiRequest(new Request("http://localhost/api/ui-config"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      uiDistRoot,
-    });
+    const configRes = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
     await expect(configRes.json()).resolves.toMatchObject({
-      frontend: "svelte-dist",
+      fixedWorkflowName: null,
+      readOnly: false,
+      noExec: false,
+      frontend: "solid-dist",
     });
   });
 
@@ -261,48 +472,64 @@ describe("handleApiRequest", () => {
     const root = await makeTempDir();
     const uiDistRoot = path.join(root, "ui-dist");
     await mkdir(uiDistRoot, { recursive: true });
-    await writeFile(path.join(uiDistRoot, "index.html"), "<!doctype html><html><body>safe</body></html>", "utf8");
+    await writeFile(
+      path.join(uiDistRoot, "index.html"),
+      "<!doctype html><html><body>safe</body></html>",
+      "utf8",
+    );
     await writeFile(path.join(root, "secret.txt"), "do not expose", "utf8");
 
-    const res = await handleApiRequest(new Request("http://localhost/%2e%2e%2fsecret.txt"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      uiDistRoot,
-    });
+    const res = await handleApiRequest(
+      new Request("http://localhost/%2e%2e%2fsecret.txt"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
 
     expect(res.status).toBe(404);
   });
 
   test("lists and gets workflows", async () => {
     const root = await makeTempDir();
-    const created = await createWorkflowTemplate("demo", { workflowRoot: root });
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
     expect(created.ok).toBe(true);
 
-    const listRes = await handleApiRequest(new Request("http://localhost/api/workflows"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const listRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(listRes.status).toBe(200);
-    const listJson = (await listRes.json()) as { workflows: string[] };
+    const listJson = await readJson<WorkflowListResponse>(listRes);
     expect(listJson.workflows).toContain("demo");
 
-    const getRes = await handleApiRequest(new Request("http://localhost/api/workflows/demo"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const getRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(getRes.status).toBe(200);
-    const getJson = (await getRes.json()) as {
-      workflowName: string;
-      derivedVisualization: readonly { id: string; indent: number; color: string }[];
-    };
+    const getJson = await readJson<WorkflowResponse>(getRes);
     expect(getJson.workflowName).toBe("demo");
     expect(getJson.derivedVisualization.length).toBeGreaterThan(0);
     expect(getJson.derivedVisualization[0]?.id).toBe("oyakata-manager");
     expect(getJson.derivedVisualization[0]?.indent).toBe(0);
-    expect(getJson.derivedVisualization.find((entry) => entry.id === "workflow-input")?.color).toBe("group:main");
+    expect(
+      getJson.derivedVisualization.find(
+        (entry) => entry.id === "workflow-input",
+      )?.color,
+    ).toBe("group:main");
   });
 
   test("creates workflows from the API", async () => {
@@ -320,20 +547,21 @@ describe("handleApiRequest", () => {
       },
     );
     expect(createRes.status).toBe(201);
-    const createJson = (await createRes.json()) as {
-      workflowName: string;
-      revision: string | null;
-      bundle: {
-        workflow: { description: string };
-        nodePayloads: Record<string, { executionBackend?: string; model: string }>;
-      };
-    };
+    const createJson = await readJson<WorkflowResponse>(createRes);
     expect(createJson.workflowName).toBe("browser-demo");
     expect(createJson.bundle.workflow.description).toBe("New workflow");
-    expect(createJson.bundle.nodePayloads["oyakata-manager"]?.executionBackend).toBe("tacogips/codex-agent");
-    expect(createJson.bundle.nodePayloads["oyakata-manager"]?.model).toBe("gpt-5");
-    expect(createJson.bundle.nodePayloads["workflow-output"]?.executionBackend).toBe("tacogips/codex-agent");
-    expect(createJson.bundle.nodePayloads["workflow-output"]?.model).toBe("gpt-5");
+    expect(
+      createJson.bundle.nodePayloads["oyakata-manager"]?.executionBackend,
+    ).toBe("tacogips/codex-agent");
+    expect(createJson.bundle.nodePayloads["oyakata-manager"]?.model).toBe(
+      "gpt-5",
+    );
+    expect(
+      createJson.bundle.nodePayloads["workflow-output"]?.executionBackend,
+    ).toBe("tacogips/codex-agent");
+    expect(createJson.bundle.nodePayloads["workflow-output"]?.model).toBe(
+      "gpt-5",
+    );
     expect(createJson.revision).toEqual(expect.any(String));
 
     const duplicateRes = await handleApiRequest(
@@ -388,7 +616,9 @@ describe("handleApiRequest", () => {
       },
     );
     expect(readOnlyRes.status).toBe(403);
-    await expect(readOnlyRes.json()).resolves.toMatchObject({ error: "read-only mode enabled" });
+    await expect(readOnlyRes.json()).resolves.toMatchObject({
+      error: "read-only mode enabled",
+    });
 
     const fixedWorkflowRes = await handleApiRequest(
       new Request("http://localhost/api/workflows", {
@@ -413,7 +643,9 @@ describe("handleApiRequest", () => {
     await createWorkflowTemplate("demo", { workflowRoot: root });
 
     const validateRes = await handleApiRequest(
-      new Request("http://localhost/api/workflows/demo/validate", { method: "POST" }),
+      new Request("http://localhost/api/workflows/demo/validate", {
+        method: "POST",
+      }),
       {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -421,14 +653,17 @@ describe("handleApiRequest", () => {
       },
     );
     expect(validateRes.status).toBe(200);
-    const validateJson = (await validateRes.json()) as { valid: boolean };
+    const validateJson = await readJson<ValidationResponse>(validateRes);
     expect(validateJson.valid).toBe(true);
 
     const executeRes = await handleApiRequest(
       new Request("http://localhost/api/workflows/demo/execute", {
         method: "POST",
         body: JSON.stringify({
-          runtimeVariables: { topic: "x", humanInput: { request: "start demo workflow" } },
+          runtimeVariables: {
+            topic: "x",
+            humanInput: { request: "start demo workflow" },
+          },
           maxSteps: 1,
           mockScenario: makeDefaultTemplateScenario(),
         }),
@@ -440,17 +675,15 @@ describe("handleApiRequest", () => {
       },
     );
     expect(executeRes.status).toBe(200);
-    const executeJson = (await executeRes.json()) as {
-      workflowExecutionId: string;
-      sessionId: string;
-      status: string;
-    };
+    const executeJson = await readJson<ExecuteWorkflowResponse>(executeRes);
     expect(executeJson.workflowExecutionId).toBe(executeJson.sessionId);
     expect(executeJson.sessionId).toContain("sess-");
     expect(executeJson.status).toBe("paused");
 
     const statusRes = await handleApiRequest(
-      new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`),
+      new Request(
+        `http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`,
+      ),
       {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -458,12 +691,18 @@ describe("handleApiRequest", () => {
       },
     );
     expect(statusRes.status).toBe(200);
-    const statusJson = (await statusRes.json()) as { workflowExecutionId: string; sessionId: string };
-    expect(statusJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    const statusJson =
+      await readJson<WorkflowExecutionStateResponse>(statusRes);
+    expect(statusJson.workflowExecutionId).toBe(
+      executeJson.workflowExecutionId,
+    );
     expect(statusJson.sessionId).toBe(executeJson.sessionId);
 
     const cancelRes = await handleApiRequest(
-      new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}/cancel`, { method: "POST" }),
+      new Request(
+        `http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}/cancel`,
+        { method: "POST" },
+      ),
       {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -471,15 +710,13 @@ describe("handleApiRequest", () => {
       },
     );
     expect(cancelRes.status).toBe(200);
-    const cancelJson = (await cancelRes.json()) as {
-      accepted: boolean;
-      status: string;
-      workflowExecutionId: string;
-      sessionId: string;
-    };
+    const cancelJson =
+      await readJson<CancelWorkflowExecutionResponse>(cancelRes);
     expect(cancelJson.accepted).toBe(true);
     expect(cancelJson.status).toBe("cancelled");
-    expect(cancelJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    expect(cancelJson.workflowExecutionId).toBe(
+      executeJson.workflowExecutionId,
+    );
     expect(cancelJson.sessionId).toBe(executeJson.sessionId);
   });
 
@@ -497,7 +734,10 @@ describe("handleApiRequest", () => {
       new Request("http://localhost/api/workflows/demo/execute", {
         method: "POST",
         body: JSON.stringify({
-          runtimeVariables: { topic: "x", humanInput: { request: "start demo workflow" } },
+          runtimeVariables: {
+            topic: "x",
+            humanInput: { request: "start demo workflow" },
+          },
           maxSteps: 1,
           mockScenario: makeDefaultTemplateScenario(),
         }),
@@ -505,40 +745,36 @@ describe("handleApiRequest", () => {
       context,
     );
     expect(executeRes.status).toBe(200);
-    const executeJson = (await executeRes.json()) as {
-      workflowExecutionId: string;
-      sessionId: string;
-      status: string;
-    };
+    const executeJson = await readJson<ExecuteWorkflowResponse>(executeRes);
 
     const legacyStatusRes = await handleApiRequest(
       new Request(`http://localhost/api/sessions/${executeJson.sessionId}`),
       context,
     );
     expect(legacyStatusRes.status).toBe(200);
-    const legacyStatusJson = (await legacyStatusRes.json()) as {
-      workflowExecutionId: string;
-      sessionId: string;
-      status: string;
-    };
-    expect(legacyStatusJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    const legacyStatusJson =
+      await readJson<WorkflowExecutionStateResponse>(legacyStatusRes);
+    expect(legacyStatusJson.workflowExecutionId).toBe(
+      executeJson.workflowExecutionId,
+    );
     expect(legacyStatusJson.sessionId).toBe(executeJson.sessionId);
     expect(legacyStatusJson.status).toBe(executeJson.status);
 
     const legacyCancelRes = await handleApiRequest(
-      new Request(`http://localhost/api/sessions/${executeJson.sessionId}/cancel`, { method: "POST" }),
+      new Request(
+        `http://localhost/api/sessions/${executeJson.sessionId}/cancel`,
+        { method: "POST" },
+      ),
       context,
     );
     expect(legacyCancelRes.status).toBe(200);
-    const legacyCancelJson = (await legacyCancelRes.json()) as {
-      accepted: boolean;
-      status: string;
-      workflowExecutionId: string;
-      sessionId: string;
-    };
+    const legacyCancelJson =
+      await readJson<CancelWorkflowExecutionResponse>(legacyCancelRes);
     expect(legacyCancelJson.accepted).toBe(true);
     expect(legacyCancelJson.status).toBe("cancelled");
-    expect(legacyCancelJson.workflowExecutionId).toBe(executeJson.workflowExecutionId);
+    expect(legacyCancelJson.workflowExecutionId).toBe(
+      executeJson.workflowExecutionId,
+    );
     expect(legacyCancelJson.sessionId).toBe(executeJson.sessionId);
   });
 
@@ -546,19 +782,16 @@ describe("handleApiRequest", () => {
     const root = await makeTempDir();
     await createWorkflowTemplate("demo", { workflowRoot: root });
 
-    const getRes = await handleApiRequest(new Request("http://localhost/api/workflows/demo"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const getRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(getRes.status).toBe(200);
-    const getJson = (await getRes.json()) as {
-      bundle: {
-        workflow: Record<string, unknown>;
-        workflowVis: { nodes: Array<{ id: string; order: number }> };
-        nodePayloads: Record<string, unknown>;
-      };
-    };
+    const getJson = await readJson<WorkflowResponse>(getRes);
 
     const invalidBundle = {
       ...getJson.bundle,
@@ -580,27 +813,74 @@ describe("handleApiRequest", () => {
       },
     );
     expect(validateRes.status).toBe(200);
-    const validateJson = (await validateRes.json()) as {
-      valid: boolean;
-      issues: Array<{ path: string; message: string }>;
-    };
+    const validateJson = await readJson<ValidationResponse>(validateRes);
     expect(validateJson.valid).toBe(false);
-    expect(validateJson.issues.some((issue) => issue.path === "workflowVis.nodes")).toBe(true);
+    expect(
+      validateJson.issues?.some((issue) => issue.path === "workflowVis.nodes"),
+    ).toBe(true);
+  });
+
+  test("rejects malformed array-shaped workflow bundle sections at the route boundary", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+    const context: ApiContext = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const invalidSaveRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo", {
+        method: "PUT",
+        body: JSON.stringify({
+          bundle: {
+            workflow: [],
+            workflowVis: {},
+            nodePayloads: {},
+          },
+        }),
+      }),
+      context,
+    );
+    expect(invalidSaveRes.status).toBe(400);
+    await expect(invalidSaveRes.json()).resolves.toEqual({
+      error: "bundle.workflow is required",
+    });
+
+    const invalidValidateRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo/validate", {
+        method: "POST",
+        body: JSON.stringify({
+          bundle: {
+            workflow: {},
+            workflowVis: [],
+            nodePayloads: {},
+          },
+        }),
+      }),
+      context,
+    );
+    expect(invalidValidateRes.status).toBe(200);
+    await expect(invalidValidateRes.json()).resolves.toEqual({
+      valid: false,
+      error: "bundle.workflowVis is required",
+    });
   });
 
   test("validates a bundle loaded from the GET endpoint", async () => {
     const root = await makeTempDir();
     await createWorkflowTemplate("demo", { workflowRoot: root });
 
-    const getRes = await handleApiRequest(new Request("http://localhost/api/workflows/demo"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const getRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(getRes.status).toBe(200);
-    const getJson = (await getRes.json()) as {
-      bundle: Record<string, unknown>;
-    };
+    const getJson = await readJson<WorkflowResponse>(getRes);
 
     const validateRes = await handleApiRequest(
       new Request("http://localhost/api/workflows/demo/validate", {
@@ -614,12 +894,13 @@ describe("handleApiRequest", () => {
       },
     );
     expect(validateRes.status).toBe(200);
-    const validateJson = (await validateRes.json()) as {
-      valid: boolean;
-      issues: Array<{ severity: string; path: string; message: string }>;
-    };
+    const validateJson = await readJson<ValidationResponse>(validateRes);
     expect(validateJson.valid).toBe(true);
-    expect(validateJson.issues.some((issue) => issue.message === "node payload file is missing")).toBe(false);
+    expect(
+      validateJson.issues?.some(
+        (issue) => issue.message === "node payload file is missing",
+      ),
+    ).toBe(false);
   });
 
   test("returns warnings for valid in-memory bundle validation", async () => {
@@ -686,15 +967,19 @@ describe("handleApiRequest", () => {
       },
     );
     expect(validateRes.status).toBe(200);
-    const validateJson = (await validateRes.json()) as {
-      valid: boolean;
-      issues: Array<{ severity: string; path: string; message: string }>;
-      warnings: Array<{ severity: string; path: string; message: string }>;
-    };
+    const validateJson = await readJson<ValidationResponse>(validateRes);
     expect(validateJson.valid).toBe(true);
-    expect(validateJson.warnings.length).toBeGreaterThan(0);
-    expect(validateJson.issues.some((issue) => issue.path === "workflowVis.viewport")).toBe(true);
-    expect(validateJson.issues.some((issue) => issue.path === "workflow.defaults.maxLoopIterations")).toBe(true);
+    expect(validateJson.warnings?.length ?? 0).toBeGreaterThan(0);
+    expect(
+      validateJson.issues?.some(
+        (issue) => issue.path === "workflowVis.viewport",
+      ),
+    ).toBe(true);
+    expect(
+      validateJson.issues?.some(
+        (issue) => issue.path === "workflow.defaults.maxLoopIterations",
+      ),
+    ).toBe(true);
   });
 
   test("executes asynchronously and lists sessions", async () => {
@@ -714,18 +999,16 @@ describe("handleApiRequest", () => {
       context,
     );
     expect(executeRes.status).toBe(202);
-    const executeJson = (await executeRes.json()) as {
-      workflowExecutionId: string;
-      sessionId: string;
-      accepted: boolean;
-    };
+    const executeJson = await readJson<ExecuteWorkflowResponse>(executeRes);
     expect(executeJson.accepted).toBe(true);
     expect(executeJson.workflowExecutionId).toBe(executeJson.sessionId);
 
     let foundSession = false;
     for (let index = 0; index < 20; index += 1) {
       const statusRes = await handleApiRequest(
-        new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`),
+        new Request(
+          `http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`,
+        ),
         context,
       );
       if (statusRes.status === 200) {
@@ -736,28 +1019,33 @@ describe("handleApiRequest", () => {
     }
     expect(foundSession).toBe(true);
 
-    const listRes = await handleApiRequest(new Request("http://localhost/api/sessions"), context);
+    const listRes = await handleApiRequest(
+      new Request("http://localhost/api/sessions"),
+      context,
+    );
     expect(listRes.status).toBe(200);
-    const listJson = (await listRes.json()) as {
-      sessions: Array<{ workflowExecutionId: string; sessionId: string; workflowName: string; status: string }>;
-    };
+    const listJson = await readJson<SessionsResponse>(listRes);
     expect(
       listJson.sessions.some(
         (session) =>
-          session.workflowExecutionId === executeJson.workflowExecutionId && session.sessionId === executeJson.sessionId,
+          session.workflowExecutionId === executeJson.workflowExecutionId &&
+          session.sessionId === executeJson.sessionId,
       ),
     ).toBe(true);
 
     for (let index = 0; index < 40; index += 1) {
       const statusRes = await handleApiRequest(
-        new Request(`http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`),
+        new Request(
+          `http://localhost/api/workflow-executions/${executeJson.workflowExecutionId}`,
+        ),
         context,
       );
       if (statusRes.status !== 200) {
         await new Promise((resolve) => setTimeout(resolve, 25));
         continue;
       }
-      const sessionJson = (await statusRes.json()) as { status: string };
+      const sessionJson =
+        await readJson<WorkflowExecutionStateResponse>(statusRes);
       if (["completed", "failed", "cancelled"].includes(sessionJson.status)) {
         break;
       }
@@ -785,22 +1073,25 @@ describe("handleApiRequest", () => {
       },
     );
     expect(executeRes.status).toBe(200);
-    const executeJson = (await executeRes.json()) as { sessionId: string };
+    const executeJson = await readJson<ExecuteWorkflowResponse>(executeRes);
 
     const rerunRes = await handleApiRequest(
-      new Request(`http://localhost/api/sessions/${executeJson.sessionId}/rerun`, {
-        method: "POST",
-        body: JSON.stringify({
-          fromNodeId: "workflow-output",
-          mockScenario: {
-            "workflow-output": {
-              provider: "scenario-mock",
-              when: { always: true },
-              payload: { stage: "test-review" },
+      new Request(
+        `http://localhost/api/sessions/${executeJson.sessionId}/rerun`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            fromNodeId: "workflow-output",
+            mockScenario: {
+              "workflow-output": {
+                provider: "scenario-mock",
+                when: { always: true },
+                payload: { stage: "test-review" },
+              },
             },
-          },
-        }),
-      }),
+          }),
+        },
+      ),
       {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -808,12 +1099,15 @@ describe("handleApiRequest", () => {
       },
     );
     expect(rerunRes.status).toBe(200);
-    const rerunJson = (await rerunRes.json()) as {
-      sourceSessionId: string;
-      sessionId: string;
-      rerunFromNodeId: string;
-    };
+    const rerunJson = await readJson<RerunWorkflowResponse>(rerunRes);
+    expect(rerunJson.sourceWorkflowExecutionId).toBe(
+      executeJson.workflowExecutionId,
+    );
     expect(rerunJson.sourceSessionId).toBe(executeJson.sessionId);
+    expect(rerunJson.workflowExecutionId).toBe(rerunJson.sessionId);
+    expect(rerunJson.workflowExecutionId).not.toBe(
+      executeJson.workflowExecutionId,
+    );
     expect(rerunJson.sessionId).not.toBe(executeJson.sessionId);
     expect(rerunJson.rerunFromNodeId).toBe("workflow-output");
   });
@@ -823,7 +1117,9 @@ describe("handleApiRequest", () => {
     await createWorkflowTemplate("demo", { workflowRoot: root });
 
     const executeRes = await handleApiRequest(
-      new Request("http://localhost/api/workflows/demo/execute", { method: "POST" }),
+      new Request("http://localhost/api/workflows/demo/execute", {
+        method: "POST",
+      }),
       {
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -839,20 +1135,16 @@ describe("handleApiRequest", () => {
     const root = await makeTempDir();
     await createWorkflowTemplate("demo", { workflowRoot: root });
 
-    const getRes = await handleApiRequest(new Request("http://localhost/api/workflows/demo"), {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const getRes = await handleApiRequest(
+      new Request("http://localhost/api/workflows/demo"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+    );
     expect(getRes.status).toBe(200);
-    const getJson = (await getRes.json()) as {
-      revision: string;
-      bundle: {
-        workflow: Record<string, unknown>;
-        workflowVis: Record<string, unknown>;
-        nodePayloads: Record<string, unknown>;
-      };
-    };
+    const getJson = await readJson<WorkflowResponse>(getRes);
 
     const updatedWorkflow = {
       ...getJson.bundle.workflow,
@@ -878,7 +1170,7 @@ describe("handleApiRequest", () => {
       },
     );
     expect(putRes.status).toBe(200);
-    const putJson = (await putRes.json()) as { revision: string };
+    const putJson = await readJson<SaveWorkflowResponse>(putRes);
     expect(putJson.revision).not.toBe(getJson.revision);
 
     const stalePutRes = await handleApiRequest(

@@ -1,7 +1,17 @@
+const fs = require("node:fs");
 const { defineConfig, devices } = require("@playwright/test");
 
 const isCi = process.env["CI"] === "true";
 const baseURL = process.env["OYAKATA_E2E_BASE_URL"] ?? "http://127.0.0.1:5173";
+const chromiumExecutablePath = [
+  process.env["OYAKATA_CHROMIUM_EXECUTABLE"],
+  "/etc/profiles/per-user/taco/bin/chromium-browser",
+  "/run/current-system/sw/bin/chromium-browser",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/chromium",
+  "/usr/bin/google-chrome-stable",
+  "/usr/bin/google-chrome",
+].find((candidate) => typeof candidate === "string" && candidate.length > 0 && fs.existsSync(candidate));
 
 module.exports = defineConfig({
   testDir: "./e2e",
@@ -18,7 +28,16 @@ module.exports = defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        ...(chromiumExecutablePath === undefined
+          ? {}
+          : {
+              launchOptions: {
+                executablePath: chromiumExecutablePath,
+              },
+            }),
+      },
     },
   ],
 });

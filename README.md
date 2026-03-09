@@ -140,9 +140,13 @@ Runtime SQLite behavior:
   - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
 
 Frontend verification:
-- The Svelte frontend lives under `ui/` and is verified separately from the root TypeScript program.
-- Plain `tsc` is not sufficient to validate `.svelte` components; the verification contract is `svelte-check` plus the production bundle build.
-- Run `bun run typecheck:ui` for the Svelte-aware UI check and `bun run check:ui` for the UI check plus bundle verification.
+- The browser frontend lives under `ui/` and is verified separately from the root TypeScript program.
+- The current checked-in frontend is still Svelte, but the migration target is SolidJS.
+- `bun run ui:framework` reports the active checked-in frontend entrypoint and the concrete blockers that still prevent the SolidJS cutover in the current workspace.
+- `bun run typecheck:ui` detects the active frontend entrypoint and runs the matching framework-aware verification path.
+- `bun run test:ui` runs UI unit tests non-interactively through Vitest and does not rely on the interactive Vitest UI server.
+- `bun run test:ui:interactive` is the opt-in interactive Vitest UI path and uses the same repository-local Node/package guards as the other UI tooling commands.
+- Run `bun run check:ui` for the UI typecheck plus bundle verification.
 - Run `bun run typecheck` to verify both server and UI projects together.
 
 ## Library API

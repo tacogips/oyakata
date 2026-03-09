@@ -5,16 +5,18 @@ This document defines the browser editing and execution design for `oyakata`.
 ## Overview
 
 Add a local web interface so users can:
-- Edit workflow structure and node payloads with Svelte UI
+
+- Edit workflow structure and node payloads with the browser UI
 - Start local HTTP server via `oyakata serve`
 - Execute workflows from the UI and monitor session progress
 
 The server and UI are local-first and operate on the existing `.oyakata/<workflow-name>/` directory contract.
 
 Current-state note:
-- The documented target is Svelte, but the current implementation still ships a large inline HTML/JavaScript editor from the Bun server.
-- This is an implementation mismatch, not a design mismatch.
-- Migration must therefore preserve behavior while replacing the inline editor with a built Svelte frontend over multiple iterations.
+
+- The browser workflow editor is served as a built frontend from `ui/dist/`.
+- `oyakata serve` no longer embeds or maintains a second inline browser implementation inside the Bun server.
+- The checked-in UI implementation is still Svelte-based today, but the active migration target is SolidJS and the server/API boundary must stay framework-agnostic during the cutover.
 
 ## Goals
 
@@ -36,11 +38,14 @@ Current-state note:
 1. User starts server with `oyakata serve`.
 2. User chooses workflow from list or creates one from template.
 3. User edits:
+
 - Graph nodes/edges and conditions
 - Node payload (`executionBackend`, `model`, `promptTemplate`, `variables`, optional `timeoutMs`)
 - Vertical sequence metadata (`order`)
 - Structural sub-workflow metadata (`subWorkflows[].block.type`, and `block.loopId` for loop bodies)
+
 4. User saves; server writes:
+
 - `workflow.json`
 - `workflow-vis.json`
 - `node-{id}.json` files
@@ -56,13 +61,15 @@ Current-state note:
 ## Server Architecture
 
 Single-process local runtime:
-- Static asset serving for Svelte app from `ui/dist/`
+
+- Static asset serving for the built browser app from `ui/dist/`
 - JSON API for workflow and session operations
 - Shared workflow validation and execution services used by CLI commands
 - UI bootstrap/config endpoint (`GET /api/ui-config`) for fixed-workflow, read-only, and no-exec mode flags
-- Compatibility fallback to the legacy inline editor while `ui/dist/` is absent
+- Explicit unavailable response when `ui/dist/` is absent
 
 Data safety:
+
 - Atomic writes (`*.tmp` then rename)
 - Revision check on update (`revision` or equivalent hash/version)
 - Validation before save commit
@@ -94,29 +101,47 @@ Data safety:
   - `GET /api/sessions/:sessionId` (alias to `GET /api/workflow-executions/:workflowExecutionId`)
   - `POST /api/sessions/:sessionId/cancel` (alias to `POST /api/workflow-executions/:workflowExecutionId/cancel`)
 
-## Svelte UI Design
+## Browser UI Design
 
 ### Migration Strategy
 
 1. Introduce a frontend asset boundary in `oyakata serve`.
-2. Add a standalone Svelte app under `ui/` that consumes the existing JSON API.
+2. Keep the frontend under `ui/` as a standalone app that consumes the existing JSON API.
 3. Port browser editor capabilities in slices:
+
 - bootstrap/config + workflow list/loading
 - create/save/validate
 - structure and node payload editing
 - execution/session inspection
-4. Cut over the default `/` route to the built Svelte bundle once feature parity is acceptable.
-5. Remove the legacy inline editor after parity and browser verification are complete.
+
+4. Replace the current Svelte implementation with a SolidJS implementation once feature parity is acceptable.
+5. Keep browser/E2E verification for the built frontend flow as the remaining quality gate.
+6. Expose top-level app-shell loading through framework-neutral TypeScript helpers so inactive Solid scaffolding can consume live API-derived shell data before the final entrypoint cutover.
+7. Keep workflow-session command sequencing and selected-session polling semantics in framework-neutral helpers so the Svelte and Solid shells cannot drift during the migration.
+
+Supporting migration refactoring references:
+
+- `design-docs/specs/design-refactoring-editor-session-controller.md`
 
 ### Frontend Build Contract
 
-- Svelte source lives under `ui/src/`.
+- Frontend source lives under `ui/src/`.
 - The Vite project root is `ui/`, even when build commands are run from the repository root.
 - Production assets are emitted to `ui/dist/`.
 - The server serves `index.html` for `/` and `/ui` and serves any existing built file under `ui/dist/` by exact path for non-API requests.
 - The frontend must not require server mode flags at build time; it must fetch `/api/ui-config` on startup.
-- Repository-level verification must explicitly run Svelte-aware frontend checks in addition to the Bun server tests because the root TypeScript config does not include `ui/`, and plain `tsc` is not sufficient to validate `.svelte` components.
-- Repository automation therefore exposes distinct server and UI verification commands, and the UI path uses `svelte-check` plus a production bundle build so Svelte verification is not accidentally skipped during migration.
+- The `/api/ui-config` response must derive the active frontend identity from the checked-in UI entrypoint by default, with an explicit server-side override reserved for tests or forced deployments.
+- If frontend identity detection fails because the checked-in UI entrypoint is missing or ambiguous, `/api/ui-config` must fail explicitly instead of silently defaulting to a framework mode.
+- Repository-level verification must explicitly run frontend-aware checks in addition to the Bun server tests because the root TypeScript config does not include `ui/`.
+- During the current transitional state, the checked-in Svelte UI still uses `svelte-check` plus a production bundle build.
+- Repository automated UI unit-test commands must run non-interactively and must not require opening a local listening socket; any interactive Vitest UI is an opt-in developer workflow rather than the default verification contract.
+- Repository automation should call framework-detecting UI verification commands so the eventual SolidJS cutover can switch entrypoints and dependencies without another package-script rewrite.
+- Those framework-detecting commands must fail fast with a clear dependency-install error when the checked-in entrypoint selects a framework whose packages are not installed in the workspace.
+- Those framework-detecting commands must also fail when the required framework packages are not declared directly in the repository `package.json`, even if a developer's local `node_modules/` or a transitive dependency makes them temporarily resolvable.
+- The transitional frontend may keep framework-neutral bootstrap files, but exactly one framework-specific entrypoint may exist at a time: `ui/src/main.ts` for Svelte or `ui/src/main.tsx` for SolidJS, never both.
+- During migration, inactive SolidJS `.tsx` shell/component files may be checked in ahead of entrypoint cutover, but they must remain unreachable from the checked-in Svelte bootstrap until `ui/src/main.tsx` becomes the sole active framework entrypoint.
+- Transitional Solid scaffolding should consume the same framework-neutral editor-action/controller helpers as the checked-in Svelte runtime wherever possible, so the final cutover replaces only framework glue rather than redoing API/loading behavior.
+- The SolidJS cutover still requires installing SolidJS/Vite plugin dependencies and replacing the Svelte entry/components while preserving browser regression checks.
 
 ### Editor Surface
 
