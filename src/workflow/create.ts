@@ -81,6 +81,7 @@ export async function createWorkflowTemplate(
         outputNodeId: outputId,
         nodeIds: [mainManagerId, inputId, outputId],
         inputSources: [{ type: "human-input" }],
+        block: { type: "plain" },
       },
     ],
     nodes: [

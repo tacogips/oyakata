@@ -8,7 +8,7 @@ This document defines the architecture for cooperative multi-agent workflow exec
 - `tacogips/codex-agent`
 - `tacogips/claude-code-agent`
 
-The architecture focuses on deterministic orchestration, explicit completion conditions, and controlled branching/looping.
+The architecture focuses on deterministic orchestration, explicit completion conditions, and controlled branching/looping. Structural blocks such as grouped steps, branch bodies, and loop bodies are all modeled as sub-workflow scopes.
 
 ## System Context
 
@@ -50,6 +50,7 @@ Outputs:
 - Evaluates completion conditions
 - Applies branch rules (including branch-judge node results)
 - Enforces loop limits (including loop-judge node results)
+- Treats branch bodies and loop bodies as normal sub-workflow scopes when the workflow author declares those blocks with `subWorkflows[].block`
 - Applies fan-out transitions when multiple branch conditions match
 - Enforces node execution timeout (node override or workflow default)
 - Composes execution prompts from workflow-level manager/worker prompt policy, runtime context, and node-level prompt text
@@ -272,6 +273,8 @@ Branching uses evaluated conditions over:
 
 All matching branches should be selected (fan-out).
 
+When a branch path contains multiple internal nodes, the branch body should be entered through a `subWorkflow` boundary rather than by wiring the judge directly to individual leaf nodes. In that pattern, the judge routes to the branch sub-workflow manager node, validation should reject `branch-block` declarations that are not actually entered from a `branch-judge`, and generic root-manager eager-start planning should not auto-start that branch block based only on input-source readiness.
+
 ### Looping
 
 Looping is allowed via backward edges and must include safeguards:
@@ -281,6 +284,8 @@ Looping is allowed via backward edges and must include safeguards:
 - loop-judge node based continuation/termination
 
 If loop-local limits are omitted, workflow-level global defaults are applied.
+
+When a loop body contains multiple internal nodes, that body should be declared as a `subWorkflow` with `block.type = "loop-body"` and `block.loopId = loops[].id`. The loop judge remains the control-plane decision point, while the repeated body remains a normal sub-workflow scope. Validation should reject loop-body declarations whose linked loop does not continue back into that sub-workflow manager boundary, and generic root-manager eager-start planning should not auto-start that loop body outside the loop judge's continue path.
 
 ### Reference Pattern: Multi-Subgroup Hardening Loop
 

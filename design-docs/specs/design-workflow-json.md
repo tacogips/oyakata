@@ -6,6 +6,8 @@ This document defines the JSON model for workflow orchestration and the required
 
 Workflow orchestration is split into multiple files under `<workflow-root>/<workflow-name>/` with explicit completion, branching, and loop semantics.
 
+Branch bodies and loop bodies should be represented as ordinary `subWorkflows` whenever they contain more than a single leaf step. The separate branch/loop fields remain the control-plane policy, while `subWorkflows` are the structural block abstraction.
+
 ## Workflow Directory Structure
 
 Required files per workflow:
@@ -52,6 +54,7 @@ Path variable mapping:
 - completion conditions
 - branch definitions (including branch-judge node references)
 - loop definitions (including loop-judge node references)
+- sub-workflow block typing for ordinary groups, branch blocks, and loop bodies
 - global defaults (including loop limit and node timeout)
 - references to `node-{id}.json`
 
@@ -254,11 +257,16 @@ Input handoff rule:
 ## Sub-Workflow Semantics
 
 - Node sequences can be grouped and defined as `subWorkflows`.
+- Branch blocks and loop bodies should also be authored as `subWorkflows` rather than as anonymous visual-only groups.
 - Each `subWorkflow` must define:
   - `managerNodeId` (node kind `sub-manager`; the sub-workflow-local `sub oyakata`)
   - `inputNodeId` (node kind `input`)
   - `outputNodeId` (node kind `output`)
   - `nodeIds` (complete membership list of node ids owned by that sub-workflow; must include `managerNodeId`, `inputNodeId`, and `outputNodeId`)
+- `block` may classify the structural role:
+  - `plain`: ordinary grouped sub-workflow
+  - `branch-block`: a branch body entered from a branch decision
+  - `loop-body`: a loop body paired with a `loops[].id` via `block.loopId`
 - `inputSources` may reference:
   - human input (`type: "human-input"`)
   - another workflow output (`type: "workflow-output"`)
@@ -274,6 +282,11 @@ Input handoff rule:
 - each `subWorkflow.nodeIds` is required and must fully define membership for mailbox write-boundary validation.
 - Parent-workflow or peer-sub-workflow deliveries must target the recipient sub-workflow `managerNodeId`.
 - The recipient sub-workflow manager orchestrates sub-workflow execution, reads that delivery, and instructs child nodes inside the sub-workflow.
+- For branch-block sub-workflows, at least one incoming edge to `managerNodeId` must originate from a `branch-judge`.
+- For branch-block sub-workflows, generic root-manager auto-start planning must ignore input-source readiness; entry should come from branch routing (or explicit manager control), not eager startup.
+- For loop-body sub-workflows, `block.loopId` must reference exactly one `loops[].id`; visualization and validation use that to treat the sub-workflow as the canonical loop block.
+- For loop-body sub-workflows, the linked loop's `continueWhen` edge must re-enter the body through that sub-workflow `managerNodeId`.
+- For loop-body sub-workflows, generic root-manager auto-start planning must ignore input-source readiness; entry should come from the loop judge's continue edge (or explicit manager control), not eager startup.
 
 ## Inter-Sub-Workflow Conversation Semantics
 
@@ -435,6 +448,11 @@ Conceptual `workflow.json` fragment:
 }
 ```
 
+Canonical encoding note:
+- The fragment above is intentionally abbreviated around the repeated round body.
+- In a fully normalized `workflow.json`, the repeated body from `implementation-node` through `sg4-output` should also be represented as a `subWorkflow` with `block: { "type": "loop-body", "loopId": "implementation-hardening-loop" }`.
+- In that canonical form, `loop-judge-round` re-enters the loop by routing `continue_round` to the loop-body sub-workflow manager boundary, not directly to `implementation-node`.
+
 ## Canonical Case 2: Adversarial Debate and Improvement Loop
 
 This section defines an automated debate workflow where multiple role nodes repeatedly propose attacks/defenses and improve the implementation.
@@ -538,6 +556,11 @@ Conceptual `workflow.json` fragment:
   ]
 }
 ```
+
+Canonical encoding note:
+- The fragment above abbreviates the repeated debate body for readability.
+- In a fully normalized `workflow.json`, the repeated round from `blackhat-sw` through `mediation-sw` should be wrapped by a `subWorkflow` with `block: { "type": "loop-body", "loopId": "security-adversarial-loop" }`.
+- In that canonical form, `loop-judge-security` routes `continue_round` to that loop-body sub-workflow manager boundary instead of directly to `blackhat-sw`.
 
 Generalization rule:
 - The same debate-loop structure is reusable beyond security.

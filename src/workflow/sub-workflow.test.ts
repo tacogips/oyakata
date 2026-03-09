@@ -177,6 +177,56 @@ describe("planRootManagerSubWorkflowStarts", () => {
 
     expect(planned).toEqual([]);
   });
+
+  test("does not auto-start branch-block sub-workflows from generic root-manager planning", () => {
+    const workflow = {
+      ...makeWorkflow(),
+      subWorkflows: [
+        {
+          ...makeWorkflow().subWorkflows[0]!,
+          block: { type: "branch-block" as const },
+        },
+      ],
+    } satisfies WorkflowJson;
+    const session = makeSession({
+      runtimeVariables: { humanInput: { topic: "x" } },
+    });
+
+    const planned = planRootManagerSubWorkflowStarts({ workflow, session });
+
+    expect(planned).toEqual([]);
+  });
+
+  test("does not auto-start loop-body sub-workflows from generic root-manager planning", () => {
+    const workflow = {
+      ...makeWorkflow(),
+      subWorkflows: [
+        {
+          ...makeWorkflow().subWorkflows[0]!,
+          block: { type: "loop-body" as const, loopId: "main-loop" },
+        },
+      ],
+      loops: [
+        {
+          id: "main-loop",
+          judgeNodeId: "loop-judge",
+          continueWhen: "continue_round",
+          exitWhen: "loop_exit",
+        },
+      ],
+      nodes: [
+        ...makeWorkflow().nodes,
+        { id: "loop-judge", nodeFile: "node-loop-judge.json", kind: "loop-judge", completion: { type: "none" } },
+      ],
+    } satisfies WorkflowJson;
+    const session = makeSession({
+      runtimeVariables: { humanInput: { topic: "x" } },
+    });
+
+    const planned = planRootManagerSubWorkflowStarts({ workflow, session });
+
+    expect(planned).toEqual([]);
+  });
 });
 
 describe("planSubWorkflowChildInputs", () => {

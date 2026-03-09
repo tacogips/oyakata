@@ -26,6 +26,7 @@ impl-plans/
 | Plan | Status | Design Reference | Last Updated |
 |------|--------|------------------|--------------|
 | `workflow-web-editor-execution` | In Progress | `design-workflow-web-editor` | 2026-03-07 |
+| `workflow-web-editor-svelte-migration` | In Progress | `design-workflow-web-editor` | 2026-03-08 |
 
 ## Completed Plans
 
@@ -47,6 +48,13 @@ impl-plans/
 | `oyakata-manager-prompt-contract` | 2026-03-07 | `design-oyakata-manager-prompt-contract`, `architecture` |
 | `node-session-reuse` | 2026-03-07 | `design-node-session-reuse`, `architecture`, `design-data-model` |
 | `node-backend-model-separation` | 2026-03-07 | `design-node-backend-model-separation`, `design-data-model`, `design-workflow-json`, `architecture` |
+| `runtime-owned-external-output-publication` | 2026-03-08 | `design-runtime-owned-external-output-publication`, `architecture`, `design-node-output-contract` |
+| `mailbox-delivery-manager-ownership` | 2026-03-08 | `design-node-mailbox`, `architecture` |
+| `mailbox-output-snapshot-fidelity` | 2026-03-08 | `design-node-mailbox`, `architecture` |
+| `mailbox-cross-boundary-routing-scope` | 2026-03-09 | `design-node-mailbox`, `architecture` |
+| `mailbox-cross-boundary-edge-validation` | 2026-03-09 | `design-node-mailbox`, `design-workflow-json`, `architecture` |
+| `mailbox-artifact-atomic-writes` | 2026-03-09 | `design-node-mailbox`, `architecture` |
+| `branch-and-loop-block-subworkflows` | 2026-03-09 | `design-workflow-json`, `design-data-model`, `architecture`, `design-workflow-web-editor` |
 
 ## Phase Dependencies
 
@@ -69,6 +77,13 @@ impl-plans/
 | 15 | COMPLETED | Phase 14 |
 | 16 | COMPLETED | Phase 15 |
 | 17 | COMPLETED | Phase 16 |
+| 18 | IN_PROGRESS | Phase 17 |
+| 19 | COMPLETED | Phase 18 |
+| 20 | COMPLETED | Phase 19 |
+| 21 | COMPLETED | Phase 20 |
+| 22 | COMPLETED | Phase 21 |
+| 23 | COMPLETED | Phase 22 |
+| 24 | COMPLETED | Phase 23 |
 
 ### Phase to Plans Mapping
 
@@ -90,6 +105,16 @@ PHASE_TO_PLANS = {
   14: ["impl-plans/workflow-web-editor-execution.md"],
   15: ["impl-plans/oyakata-manager-prompt-contract.md"],
   16: ["impl-plans/node-session-reuse.md"],
-  17: ["impl-plans/node-backend-model-separation.md"]
+  17: ["impl-plans/node-backend-model-separation.md"],
+  18: [
+    "impl-plans/workflow-web-editor-svelte-migration.md",
+    "impl-plans/runtime-owned-external-output-publication.md"
+  ],
+  19: ["impl-plans/mailbox-delivery-manager-ownership.md"],
+  20: ["impl-plans/mailbox-output-snapshot-fidelity.md"],
+  21: ["impl-plans/mailbox-cross-boundary-routing-scope.md"],
+  22: ["impl-plans/mailbox-cross-boundary-edge-validation.md"],
+  23: ["impl-plans/mailbox-artifact-atomic-writes.md"],
+  24: ["impl-plans/branch-and-loop-block-subworkflows.md"]
 }
 ```

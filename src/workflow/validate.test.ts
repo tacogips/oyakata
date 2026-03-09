@@ -1054,6 +1054,7 @@ describe("validateWorkflowBundle", () => {
       },
       nodes: [
         { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "branch-judge", kind: "branch-judge", nodeFile: "node-branch-judge.json", completion: { type: "none" } },
         { id: "sw1-manager", kind: "sub-manager", nodeFile: "node-sw1-manager.json", completion: { type: "none" } },
         { id: "sw1-input", kind: "input", nodeFile: "node-sw1-input.json", completion: { type: "none" } },
         { id: "sw1-output", kind: "output", nodeFile: "node-sw1-output.json", completion: { type: "none" } },
@@ -1062,7 +1063,8 @@ describe("validateWorkflowBundle", () => {
         { id: "sw2-output", kind: "output", nodeFile: "node-sw2-output.json", completion: { type: "none" } },
       ],
       edges: [
-        { from: "oyakata-manager", to: "sw1-manager", when: "always" },
+        { from: "oyakata-manager", to: "branch-judge", when: "always" },
+        { from: "branch-judge", to: "sw1-manager", when: "take_sw1" },
         { from: "sw1-output", to: "sw2-manager", when: "always" },
       ],
       subWorkflows: [
@@ -1074,6 +1076,7 @@ describe("validateWorkflowBundle", () => {
           outputNodeId: "sw1-output",
           nodeIds: ["sw1-manager", "sw1-input", "sw1-output"],
           inputSources: [{ type: "human-input" }],
+          block: { type: "branch-block" },
         },
         {
           id: "sw2",
@@ -1097,12 +1100,13 @@ describe("validateWorkflowBundle", () => {
     raw.workflowVis = {
       nodes: [
         { id: "oyakata-manager", order: 0 },
-        { id: "sw1-manager", order: 1 },
-        { id: "sw1-input", order: 2 },
-        { id: "sw1-output", order: 3 },
-        { id: "sw2-manager", order: 4 },
-        { id: "sw2-input", order: 5 },
-        { id: "sw2-output", order: 6 },
+        { id: "branch-judge", order: 1 },
+        { id: "sw1-manager", order: 2 },
+        { id: "sw1-input", order: 3 },
+        { id: "sw1-output", order: 4 },
+        { id: "sw2-manager", order: 5 },
+        { id: "sw2-input", order: 6 },
+        { id: "sw2-output", order: 7 },
       ],
     };
     raw.nodePayloads = {
@@ -1116,6 +1120,12 @@ describe("validateWorkflowBundle", () => {
         id: "sw1-manager",
         model: "tacogips/codex-agent",
         promptTemplate: "m1",
+        variables: {},
+      },
+      "node-branch-judge.json": {
+        id: "branch-judge",
+        model: "tacogips/codex-agent",
+        promptTemplate: "judge",
         variables: {},
       },
       "node-sw1-input.json": {
@@ -1158,7 +1168,271 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.workflow.prompts?.oyakataPromptTemplate).toBe("Coordinate {{topic}}.");
     expect(result.value.workflow.prompts?.workerSystemPromptTemplate).toBe("Return the node payload for {{topic}}.");
     expect(result.value.workflow.subWorkflows).toHaveLength(2);
+    expect(result.value.workflow.subWorkflows[0]?.block?.type).toBe("branch-block");
     expect(result.value.workflow.subWorkflowConversations?.[0]?.id).toBe("conv-1");
+  });
+
+  test("rejects loop-body sub-workflow blocks that do not reference an existing loop", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "loop-manager", kind: "sub-manager", nodeFile: "node-loop-manager.json", completion: { type: "none" } },
+        { id: "loop-input", kind: "input", nodeFile: "node-loop-input.json", completion: { type: "none" } },
+        { id: "loop-output", kind: "output", nodeFile: "node-loop-output.json", completion: { type: "none" } },
+      ],
+      edges: [{ from: "oyakata-manager", to: "loop-manager", when: "always" }],
+      subWorkflows: [
+        {
+          id: "loop-body",
+          description: "loop body",
+          managerNodeId: "loop-manager",
+          inputNodeId: "loop-input",
+          outputNodeId: "loop-output",
+          nodeIds: ["loop-manager", "loop-input", "loop-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "loop-body", loopId: "missing-loop" },
+        },
+      ],
+      loops: [],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "loop-manager", order: 1 },
+        { id: "loop-input", order: 2 },
+        { id: "loop-output", order: 3 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-loop-manager.json": { id: "loop-manager", model: "tacogips/codex-agent", promptTemplate: "loop-manager", variables: {} },
+      "node-loop-input.json": { id: "loop-input", model: "tacogips/codex-agent", promptTemplate: "loop-input", variables: {} },
+      "node-loop-output.json": { id: "loop-output", model: "tacogips/codex-agent", promptTemplate: "loop-output", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[0].block.loopId")).toBe(true);
+  });
+
+  test("rejects duplicate loop-body sub-workflows for the same loop", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "loop-manager-a", kind: "sub-manager", nodeFile: "node-loop-manager-a.json", completion: { type: "none" } },
+        { id: "loop-input-a", kind: "input", nodeFile: "node-loop-input-a.json", completion: { type: "none" } },
+        { id: "loop-output-a", kind: "output", nodeFile: "node-loop-output-a.json", completion: { type: "none" } },
+        { id: "loop-manager-b", kind: "sub-manager", nodeFile: "node-loop-manager-b.json", completion: { type: "none" } },
+        { id: "loop-input-b", kind: "input", nodeFile: "node-loop-input-b.json", completion: { type: "none" } },
+        { id: "loop-output-b", kind: "output", nodeFile: "node-loop-output-b.json", completion: { type: "none" } },
+        { id: "loop-judge", kind: "loop-judge", nodeFile: "node-loop-judge.json", completion: { type: "none" } },
+      ],
+      edges: [
+        { from: "oyakata-manager", to: "loop-manager-a", when: "always" },
+        { from: "loop-judge", to: "loop-manager-a", when: "continue_round" },
+        { from: "loop-judge", to: "oyakata-manager", when: "loop_exit" },
+      ],
+      subWorkflows: [
+        {
+          id: "loop-body-a",
+          description: "loop body a",
+          managerNodeId: "loop-manager-a",
+          inputNodeId: "loop-input-a",
+          outputNodeId: "loop-output-a",
+          nodeIds: ["loop-manager-a", "loop-input-a", "loop-output-a"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "loop-body", loopId: "main-loop" },
+        },
+        {
+          id: "loop-body-b",
+          description: "loop body b",
+          managerNodeId: "loop-manager-b",
+          inputNodeId: "loop-input-b",
+          outputNodeId: "loop-output-b",
+          nodeIds: ["loop-manager-b", "loop-input-b", "loop-output-b"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "loop-body", loopId: "main-loop" },
+        },
+      ],
+      loops: [
+        {
+          id: "main-loop",
+          judgeNodeId: "loop-judge",
+          continueWhen: "continue_round",
+          exitWhen: "loop_exit",
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "loop-manager-a", order: 1 },
+        { id: "loop-input-a", order: 2 },
+        { id: "loop-output-a", order: 3 },
+        { id: "loop-manager-b", order: 4 },
+        { id: "loop-input-b", order: 5 },
+        { id: "loop-output-b", order: 6 },
+        { id: "loop-judge", order: 7 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-loop-manager-a.json": { id: "loop-manager-a", model: "tacogips/codex-agent", promptTemplate: "loop-manager-a", variables: {} },
+      "node-loop-input-a.json": { id: "loop-input-a", model: "tacogips/codex-agent", promptTemplate: "loop-input-a", variables: {} },
+      "node-loop-output-a.json": { id: "loop-output-a", model: "tacogips/codex-agent", promptTemplate: "loop-output-a", variables: {} },
+      "node-loop-manager-b.json": { id: "loop-manager-b", model: "tacogips/codex-agent", promptTemplate: "loop-manager-b", variables: {} },
+      "node-loop-input-b.json": { id: "loop-input-b", model: "tacogips/codex-agent", promptTemplate: "loop-input-b", variables: {} },
+      "node-loop-output-b.json": { id: "loop-output-b", model: "tacogips/codex-agent", promptTemplate: "loop-output-b", variables: {} },
+      "node-loop-judge.json": { id: "loop-judge", model: "tacogips/codex-agent", promptTemplate: "loop-judge", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflows[1].block.loopId" &&
+          issue.message.includes("already assigned to loop-body subWorkflow"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects branch-block sub-workflows that are not entered from a branch-judge", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "prepare", kind: "task", nodeFile: "node-prepare.json", completion: { type: "none" } },
+        { id: "branch-manager", kind: "sub-manager", nodeFile: "node-branch-manager.json", completion: { type: "none" } },
+        { id: "branch-input", kind: "input", nodeFile: "node-branch-input.json", completion: { type: "none" } },
+        { id: "branch-output", kind: "output", nodeFile: "node-branch-output.json", completion: { type: "none" } },
+      ],
+      edges: [
+        { from: "oyakata-manager", to: "prepare", when: "always" },
+        { from: "prepare", to: "branch-manager", when: "always" },
+      ],
+      subWorkflows: [
+        {
+          id: "branch-body",
+          description: "branch body",
+          managerNodeId: "branch-manager",
+          inputNodeId: "branch-input",
+          outputNodeId: "branch-output",
+          nodeIds: ["branch-manager", "branch-input", "branch-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "branch-block" },
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "prepare", order: 1 },
+        { id: "branch-manager", order: 2 },
+        { id: "branch-input", order: 3 },
+        { id: "branch-output", order: 4 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-prepare.json": { id: "prepare", model: "tacogips/codex-agent", promptTemplate: "prepare", variables: {} },
+      "node-branch-manager.json": { id: "branch-manager", model: "tacogips/codex-agent", promptTemplate: "branch-manager", variables: {} },
+      "node-branch-input.json": { id: "branch-input", model: "tacogips/codex-agent", promptTemplate: "branch-input", variables: {} },
+      "node-branch-output.json": { id: "branch-output", model: "tacogips/codex-agent", promptTemplate: "branch-output", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.some((issue) => issue.path === "workflow.subWorkflows[0].block.type")).toBe(true);
+  });
+
+  test("rejects loop-body sub-workflows whose linked loop does not continue into the sub-workflow manager", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        { id: "loop-manager", kind: "sub-manager", nodeFile: "node-loop-manager.json", completion: { type: "none" } },
+        { id: "loop-input", kind: "input", nodeFile: "node-loop-input.json", completion: { type: "none" } },
+        { id: "loop-output", kind: "output", nodeFile: "node-loop-output.json", completion: { type: "none" } },
+        { id: "loop-worker", kind: "task", nodeFile: "node-loop-worker.json", completion: { type: "none" } },
+        { id: "loop-judge", kind: "loop-judge", nodeFile: "node-loop-judge.json", completion: { type: "none" } },
+      ],
+      edges: [
+        { from: "oyakata-manager", to: "loop-manager", when: "always" },
+        { from: "loop-judge", to: "loop-worker", when: "continue_round" },
+        { from: "loop-judge", to: "oyakata-manager", when: "loop_exit" },
+      ],
+      subWorkflows: [
+        {
+          id: "loop-body",
+          description: "loop body",
+          managerNodeId: "loop-manager",
+          inputNodeId: "loop-input",
+          outputNodeId: "loop-output",
+          nodeIds: ["loop-manager", "loop-input", "loop-worker", "loop-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "loop-body", loopId: "main-loop" },
+        },
+      ],
+      loops: [
+        {
+          id: "main-loop",
+          judgeNodeId: "loop-judge",
+          continueWhen: "continue_round",
+          exitWhen: "loop_exit",
+        },
+      ],
+    };
+    raw.workflowVis = {
+      nodes: [
+        { id: "oyakata-manager", order: 0 },
+        { id: "loop-manager", order: 1 },
+        { id: "loop-input", order: 2 },
+        { id: "loop-worker", order: 3 },
+        { id: "loop-output", order: 4 },
+        { id: "loop-judge", order: 5 },
+      ],
+    };
+    raw.nodePayloads = {
+      "node-oyakata-manager.json": { id: "oyakata-manager", model: "tacogips/codex-agent", promptTemplate: "manager", variables: {} },
+      "node-loop-manager.json": { id: "loop-manager", model: "tacogips/codex-agent", promptTemplate: "loop-manager", variables: {} },
+      "node-loop-input.json": { id: "loop-input", model: "tacogips/codex-agent", promptTemplate: "loop-input", variables: {} },
+      "node-loop-output.json": { id: "loop-output", model: "tacogips/codex-agent", promptTemplate: "loop-output", variables: {} },
+      "node-loop-worker.json": { id: "loop-worker", model: "tacogips/codex-agent", promptTemplate: "loop-worker", variables: {} },
+      "node-loop-judge.json": { id: "loop-judge", model: "tacogips/codex-agent", promptTemplate: "loop-judge", variables: {} },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflows[0].block.loopId" &&
+          issue.message.includes("continue edge to manager 'loop-manager'"),
+      ),
+    ).toBe(true);
   });
 
   test("allows nested sub-workflow vertical groups", () => {

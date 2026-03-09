@@ -57,6 +57,9 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("Cancel Selected Session");
     expect(uiText).toContain("root-manager");
     expect(uiText).toContain("Member Nodes");
+    expect(uiText).toContain("Block Type");
+    expect(uiText).toContain("loop-body");
+    expect(uiText).toContain("branch-block");
     expect(uiText).toContain("Nodes already owned by another group stay unavailable here");
     expect(uiText).toContain("function availableSubWorkflowManagerNodes(currentSubWorkflowId)");
     expect(uiText).toContain("subWorkflowManagerNodeOptions(subWorkflow.id)");
@@ -67,6 +70,11 @@ describe("handleApiRequest", () => {
     expect(uiText).toContain("function normalizeSubWorkflowInputSourceFields(source)");
     expect(uiText).toContain("function workflowReferenceOptions()");
     expect(uiText).toContain("function subWorkflowReferenceOptions(currentSubWorkflowId)");
+    expect(uiText).toContain("function colorForSubWorkflow(subWorkflow)");
+    expect(uiText).toContain('if (color.startsWith("branch:")) return "branch";');
+    expect(uiText).toContain('if (kind === "branch") return "var(--branch-scope)";');
+    expect(uiText).toContain('subWorkflow.block = { type: nextValue };');
+    expect(uiText).toContain('subWorkflow.block = existingLoopId ? { type: "loop-body", loopId: existingLoopId } : { type: "loop-body" };');
     expect(uiText).toContain("nodeKindOptionsForNode(node)");
     expect(uiText).toContain("function syncNodeKindsFromStructure()");
     expect(uiText).toContain("function nextSubWorkflowId()");

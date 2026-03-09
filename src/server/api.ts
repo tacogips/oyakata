@@ -248,6 +248,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       --fail: #992b2b;
       --default-scope: #cfdacb;
       --group-scope: #c7dfcf;
+      --branch-scope: #d9d3ee;
       --loop-scope: #f0d4b6;
     }
     body {
@@ -360,6 +361,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
     }
     .scope-pill.default { background: rgba(23,50,34,0.08); }
     .scope-pill.group { background: var(--group-scope); }
+    .scope-pill.branch { background: var(--branch-scope); }
     .scope-pill.loop { background: var(--loop-scope); }
     .node-desc { margin-top: 10px; color: var(--muted); font-size: 13px; }
     .editor-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
@@ -746,6 +748,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
     function scopeType(color) {
       if (typeof color !== "string") return "default";
       if (color.startsWith("loop:")) return "loop";
+      if (color.startsWith("branch:")) return "branch";
       if (color.startsWith("group:")) return "group";
       return "default";
     }
@@ -753,14 +756,44 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
     function scopeLabel(color) {
       const kind = scopeType(color);
       if (kind === "loop") return "loop " + color.slice("loop:".length);
+      if (kind === "branch") return "branch " + color.slice("branch:".length);
       if (kind === "group") return "group " + color.slice("group:".length);
       return "top-level";
     }
 
     function scopeColor(kind) {
       if (kind === "loop") return "var(--loop-scope)";
+      if (kind === "branch") return "var(--branch-scope)";
       if (kind === "group") return "var(--group-scope)";
       return "var(--default-scope)";
+    }
+
+    function colorForSubWorkflow(subWorkflow) {
+      if (subWorkflow && subWorkflow.block && subWorkflow.block.type === "loop-body") {
+        return "loop:" + (subWorkflow.block.loopId || subWorkflow.id);
+      }
+      if (subWorkflow && subWorkflow.block && subWorkflow.block.type === "branch-block") {
+        return "branch:" + subWorkflow.id;
+      }
+      return "group:" + (subWorkflow ? subWorkflow.id : "");
+    }
+
+    function preferredGroupScopeColor(groupScopes, colorByGroupScopeId) {
+      const loopColor = groupScopes
+        .map((scope) => colorByGroupScopeId.get(scope.id))
+        .find((color) => typeof color === "string" && color.startsWith("loop:"));
+      if (loopColor) {
+        return loopColor;
+      }
+
+      const branchColor = groupScopes
+        .map((scope) => colorByGroupScopeId.get(scope.id))
+        .find((color) => typeof color === "string" && color.startsWith("branch:"));
+      if (branchColor) {
+        return branchColor;
+      }
+
+      return colorByGroupScopeId.get(groupScopes[0].id) || "default";
     }
 
     function deriveVisualization(bundle) {
@@ -804,8 +837,25 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
             .sort(compareIntervals)
         : [];
 
+      const colorByGroupScopeId = new Map();
+      if (Array.isArray(bundle.workflow.subWorkflows)) {
+        bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+          colorByGroupScopeId.set(subWorkflow.id, colorForSubWorkflow(subWorkflow));
+        });
+      }
+
+      const loopIdsRepresentedBySubWorkflow = new Set(
+        Array.isArray(bundle.workflow.subWorkflows)
+          ? bundle.workflow.subWorkflows
+              .filter((subWorkflow) => subWorkflow && subWorkflow.block && subWorkflow.block.type === "loop-body")
+              .map((subWorkflow) => subWorkflow.block && subWorkflow.block.loopId)
+              .filter((loopId) => typeof loopId === "string" && loopId.length > 0)
+          : [],
+      );
+
       const loopIntervals = Array.isArray(bundle.workflow.loops)
         ? bundle.workflow.loops
+            .filter((loop) => !loopIdsRepresentedBySubWorkflow.has(loop.id))
             .map((loop) => {
               const judgeOrder = orderByNodeId.get(loop.judgeNodeId);
               if (typeof judgeOrder !== "number") {
@@ -839,7 +889,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
             loopScopes.length > 0
               ? "loop:" + loopScopes[0].id
               : groupScopes.length > 0
-                ? "group:" + groupScopes[0].id
+                ? preferredGroupScopeColor(groupScopes, colorByGroupScopeId)
                 : "default",
         };
       });
@@ -1880,6 +1930,40 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
 
         const row = document.createElement("div");
         row.className = "row";
+        row.appendChild(createLabeledField("Block Type", createSelectInput([
+          { value: "plain", label: "plain" },
+          { value: "branch-block", label: "branch-block" },
+          { value: "loop-body", label: "loop-body" },
+        ], subWorkflow.block && subWorkflow.block.type ? subWorkflow.block.type : "plain", (nextValue) => {
+          if (nextValue === "loop-body") {
+            const existingLoopId = subWorkflow.block && typeof subWorkflow.block.loopId === "string"
+              ? subWorkflow.block.loopId
+              : undefined;
+            subWorkflow.block = existingLoopId ? { type: "loop-body", loopId: existingLoopId } : { type: "loop-body" };
+          } else {
+            subWorkflow.block = { type: nextValue };
+          }
+          setEditorStatus("Group block metadata changed locally", "warn");
+          renderStructureEditors();
+          renderWorkflowBoard();
+        })));
+        if (subWorkflow.block && subWorkflow.block.type === "loop-body") {
+          row.appendChild(createLabeledField("Loop", createSelectInput(
+            [{ value: "", label: "Select a loop" }].concat(
+              Array.isArray(state.bundle.workflow.loops)
+                ? state.bundle.workflow.loops.map((loop) => ({ value: loop.id, label: loop.id }))
+                : [],
+            ),
+            subWorkflow.block.loopId || "",
+            (nextValue) => {
+              subWorkflow.block = nextValue
+                ? { type: "loop-body", loopId: nextValue }
+                : { type: "loop-body" };
+              setEditorStatus("Group block metadata changed locally", "warn");
+              renderWorkflowBoard();
+            },
+          )));
+        }
         row.appendChild(createLabeledField("Manager Node", createSelectInput(
           subWorkflowManagerNodeOptions(subWorkflow.id),
           subWorkflow.managerNodeId,
@@ -2139,7 +2223,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
       const outputNode = firstWorkflowNodeOptionByKind("output");
       const managerNode = firstUnusedSubWorkflowManagerNodeOption();
       if (!managerNode) {
-        setEditorStatus("Add a dedicated sub-manager node before creating another group.", "fail");
+        setEditorStatus("Add a dedicated sub-manager node before creating another sub-workflow.", "fail");
         return;
       }
       state.bundle.workflow.subWorkflows.push({
@@ -2154,6 +2238,7 @@ function renderWebUi(input: { readonly fixedWorkflowName?: string | undefined; r
           outputNode ? outputNode.id : "",
         ]),
         inputSources: [{ type: "human-input" }],
+        block: { type: "plain" },
       });
       renderStructureEditors();
       renderWorkflowBoard();

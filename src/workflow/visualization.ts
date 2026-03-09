@@ -4,7 +4,7 @@ export interface DerivedVisNode {
   readonly id: string;
   readonly order: number;
   readonly indent: number;
-  readonly color: "default" | `loop:${string}` | `group:${string}`;
+  readonly color: "default" | `loop:${string}` | `group:${string}` | `branch:${string}`;
 }
 
 interface ScopeInterval {
@@ -16,6 +16,7 @@ interface ScopeInterval {
 interface ScopeMetadata {
   readonly groupIntervals: readonly ScopeInterval[];
   readonly loopIntervals: readonly ScopeInterval[];
+  readonly colorByGroupScopeId: ReadonlyMap<string, DerivedVisNode["color"]>;
 }
 
 function compareIntervals(a: ScopeInterval, b: ScopeInterval): number {
@@ -41,6 +42,37 @@ function resolveSubWorkflowInterval(
   };
 }
 
+function colorForSubWorkflow(subWorkflow: SubWorkflowRef): DerivedVisNode["color"] {
+  if (subWorkflow.block?.type === "loop-body") {
+    return `loop:${subWorkflow.block.loopId ?? subWorkflow.id}`;
+  }
+  if (subWorkflow.block?.type === "branch-block") {
+    return `branch:${subWorkflow.id}`;
+  }
+  return `group:${subWorkflow.id}`;
+}
+
+function groupScopeColor(
+  groupScopes: readonly ScopeInterval[],
+  colorByGroupScopeId: ReadonlyMap<string, DerivedVisNode["color"]>,
+): DerivedVisNode["color"] {
+  const loopColor = groupScopes
+    .map((scope) => colorByGroupScopeId.get(scope.id))
+    .find((color): color is `loop:${string}` => typeof color === "string" && color.startsWith("loop:"));
+  if (loopColor !== undefined) {
+    return loopColor;
+  }
+
+  const branchColor = groupScopes
+    .map((scope) => colorByGroupScopeId.get(scope.id))
+    .find((color): color is `branch:${string}` => typeof color === "string" && color.startsWith("branch:"));
+  if (branchColor !== undefined) {
+    return branchColor;
+  }
+
+  return colorByGroupScopeId.get(groupScopes[0]?.id ?? "") ?? "default";
+}
+
 function buildScopeMetadata(
   workflow: WorkflowJson,
   orderByNodeId: ReadonlyMap<string, number>,
@@ -50,7 +82,20 @@ function buildScopeMetadata(
     .filter((entry): entry is ScopeInterval => entry !== null)
     .sort(compareIntervals);
 
+  const colorByGroupScopeId = new Map<string, DerivedVisNode["color"]>();
+  workflow.subWorkflows.forEach((entry) => {
+    colorByGroupScopeId.set(entry.id, colorForSubWorkflow(entry));
+  });
+
+  const loopIdsRepresentedBySubWorkflow = new Set(
+    workflow.subWorkflows
+      .filter((entry) => entry.block?.type === "loop-body")
+      .map((entry) => entry.block?.loopId)
+      .filter((entry): entry is string => entry !== undefined),
+  );
+
   const loopIntervals = (workflow.loops ?? [])
+    .filter((loop) => !loopIdsRepresentedBySubWorkflow.has(loop.id))
     .map((loop) => {
       const judgeOrder = orderByNodeId.get(loop.judgeNodeId);
       if (judgeOrder === undefined) {
@@ -76,6 +121,7 @@ function buildScopeMetadata(
   return {
     groupIntervals,
     loopIntervals,
+    colorByGroupScopeId,
   };
 }
 
@@ -107,7 +153,7 @@ export function deriveWorkflowVisualization(args: {
       }
       const groupScopes = collectScopesForOrder(node.order, scopeMetadata.groupIntervals);
       if (groupScopes.length > 0) {
-        return `group:${groupScopes[0]?.id ?? ""}` as `group:${string}`;
+        return groupScopeColor(groupScopes, scopeMetadata.colorByGroupScopeId);
       }
       return "default";
     })(),

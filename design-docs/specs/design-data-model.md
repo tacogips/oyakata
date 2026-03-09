@@ -57,6 +57,12 @@ Scope:
 - `outputNodeId: string` (must reference a node with `kind: "output"`)
 - `nodeIds: string[]` (all node ids owned by this sub-workflow, including `managerNodeId`, `inputNodeId`, `outputNodeId`)
 - `inputSources: SubWorkflowInputSource[]`
+- `block?: { type: "plain" | "branch-block" | "loop-body"; loopId?: string }`
+
+Block semantics:
+- `branch-block` means the sub-workflow is a branch body and must be entered by at least one edge from a `branch-judge` to `managerNodeId`
+- `loop-body` means the sub-workflow is a canonical loop body and `block.loopId` must reference `loops[].id`
+- for `loop-body`, the linked loop's `continueWhen` edge must target `managerNodeId`
 
 `SubWorkflowInputSource`:
 - `type: "human-input" | "workflow-output" | "node-output" | "sub-workflow-output"`

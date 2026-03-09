@@ -81,12 +81,19 @@ function subWorkflowReady(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, s
   return subWorkflow.inputSources.every((source) => sourceSatisfied(source, workflow, session));
 }
 
+function autoStartEligible(subWorkflow: SubWorkflowRef): boolean {
+  return subWorkflow.block === undefined || subWorkflow.block.type === "plain";
+}
+
 export function planRootManagerSubWorkflowStarts(args: {
   readonly workflow: WorkflowJson;
   readonly session: WorkflowSessionState;
 }): readonly SubWorkflowRef[] {
   const planned: SubWorkflowRef[] = [];
   for (const subWorkflow of args.workflow.subWorkflows) {
+    if (!autoStartEligible(subWorkflow)) {
+      continue;
+    }
     if (subWorkflowAlreadyStarted(subWorkflow, args.workflow, args.session)) {
       continue;
     }

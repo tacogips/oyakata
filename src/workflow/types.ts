@@ -85,6 +85,13 @@ export interface SubWorkflowInputSource {
   readonly selectionPolicy?: OutputSelectionPolicy;
 }
 
+export type SubWorkflowBlockType = "plain" | "branch-block" | "loop-body";
+
+export interface SubWorkflowBlock {
+  readonly type: SubWorkflowBlockType;
+  readonly loopId?: string;
+}
+
 export interface SubWorkflowRef {
   readonly id: string;
   readonly description: string;
@@ -93,6 +100,7 @@ export interface SubWorkflowRef {
   readonly outputNodeId: string;
   readonly nodeIds: readonly string[];
   readonly inputSources: readonly SubWorkflowInputSource[];
+  readonly block?: SubWorkflowBlock;
 }
 
 export interface SubWorkflowConversation {

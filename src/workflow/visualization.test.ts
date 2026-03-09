@@ -134,6 +134,51 @@ describe("deriveWorkflowVisualization", () => {
     ]);
   });
 
+  test("colors branch-block sub-workflow scopes as branch blocks", () => {
+    const workflow = {
+      ...makeBaseWorkflow(
+        ["oyakata-manager", "branch-manager", "branch-input", "branch-output", "done"],
+        [
+          { from: "oyakata-manager", to: "branch-manager", when: "needs_review" },
+          { from: "branch-input", to: "branch-output", when: "always" },
+          { from: "branch-output", to: "done", when: "always" },
+        ],
+      ),
+      nodes: [
+        { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
+        { id: "branch-manager", nodeFile: "node-branch-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        { id: "branch-input", nodeFile: "node-branch-input.json", kind: "input", completion: { type: "none" } },
+        { id: "branch-output", nodeFile: "node-branch-output.json", kind: "output", completion: { type: "none" } },
+        { id: "done", nodeFile: "node-done.json", kind: "output", completion: { type: "none" } },
+      ],
+      subWorkflows: [
+        {
+          id: "review-branch",
+          description: "review branch",
+          managerNodeId: "branch-manager",
+          inputNodeId: "branch-input",
+          outputNodeId: "branch-output",
+          nodeIds: ["branch-manager", "branch-input", "branch-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "branch-block" },
+        },
+      ],
+    } satisfies WorkflowJson;
+
+    const derived = deriveWorkflowVisualization({
+      workflow,
+      workflowVis: makeVis(["oyakata-manager", "branch-manager", "branch-input", "branch-output", "done"]),
+    });
+
+    expect(derived).toEqual([
+      { id: "oyakata-manager", order: 0, indent: 0, color: "default" },
+      { id: "branch-manager", order: 1, indent: 0, color: "default" },
+      { id: "branch-input", order: 2, indent: 1, color: "branch:review-branch" },
+      { id: "branch-output", order: 3, indent: 1, color: "branch:review-branch" },
+      { id: "done", order: 4, indent: 0, color: "default" },
+    ]);
+  });
+
   test("nests loop scope inside a sub-workflow group", () => {
     const workflow = {
       ...makeBaseWorkflow(
@@ -198,6 +243,260 @@ describe("deriveWorkflowVisualization", () => {
       { id: "test-review", order: 4, indent: 2, color: "loop:main-loop" },
       { id: "group-output", order: 5, indent: 1, color: "group:main-group" },
       { id: "done", order: 6, indent: 0, color: "default" },
+    ]);
+  });
+
+  test("prefers loop-body sub-workflow scopes over inferred loop intervals", () => {
+    const workflow = {
+      ...makeBaseWorkflow(
+        ["oyakata-manager", "loop-manager", "loop-input", "implement", "loop-output", "loop-judge", "done"],
+        [
+          { from: "oyakata-manager", to: "loop-manager", when: "always" },
+          { from: "loop-input", to: "implement", when: "always" },
+          { from: "implement", to: "loop-output", when: "always" },
+          { from: "loop-output", to: "loop-judge", when: "always" },
+          { from: "loop-judge", to: "loop-manager", when: "continue_round" },
+          { from: "loop-judge", to: "done", when: "loop_exit" },
+        ],
+      ),
+      nodes: [
+        { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
+        { id: "loop-manager", nodeFile: "node-loop-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        { id: "loop-input", nodeFile: "node-loop-input.json", kind: "input", completion: { type: "none" } },
+        { id: "implement", nodeFile: "node-implement.json", kind: "task", completion: { type: "none" } },
+        { id: "loop-output", nodeFile: "node-loop-output.json", kind: "output", completion: { type: "none" } },
+        { id: "loop-judge", nodeFile: "node-loop-judge.json", kind: "loop-judge", completion: { type: "none" } },
+        { id: "done", nodeFile: "node-done.json", kind: "output", completion: { type: "none" } },
+      ],
+      subWorkflows: [
+        {
+          id: "implementation-loop",
+          description: "implementation loop body",
+          managerNodeId: "loop-manager",
+          inputNodeId: "loop-input",
+          outputNodeId: "loop-output",
+          nodeIds: ["loop-manager", "loop-input", "implement", "loop-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "loop-body", loopId: "main-loop" },
+        },
+      ],
+      loops: [
+        {
+          id: "main-loop",
+          judgeNodeId: "loop-judge",
+          continueWhen: "continue_round",
+          exitWhen: "loop_exit",
+        },
+      ],
+    } satisfies WorkflowJson;
+
+    const derived = deriveWorkflowVisualization({
+      workflow,
+      workflowVis: makeVis([
+        "oyakata-manager",
+        "loop-manager",
+        "loop-input",
+        "implement",
+        "loop-output",
+        "loop-judge",
+        "done",
+      ]),
+    });
+
+    expect(derived).toEqual([
+      { id: "oyakata-manager", order: 0, indent: 0, color: "default" },
+      { id: "loop-manager", order: 1, indent: 0, color: "default" },
+      { id: "loop-input", order: 2, indent: 1, color: "loop:main-loop" },
+      { id: "implement", order: 3, indent: 1, color: "loop:main-loop" },
+      { id: "loop-output", order: 4, indent: 1, color: "loop:main-loop" },
+      { id: "loop-judge", order: 5, indent: 0, color: "default" },
+      { id: "done", order: 6, indent: 0, color: "default" },
+    ]);
+  });
+
+  test("keeps loop-body color precedence inside nested plain groups", () => {
+    const workflow = {
+      ...makeBaseWorkflow(
+        [
+          "oyakata-manager",
+          "loop-manager",
+          "loop-input",
+          "inner-manager",
+          "inner-input",
+          "implement",
+          "inner-output",
+          "loop-output",
+          "loop-judge",
+          "done",
+        ],
+        [
+          { from: "oyakata-manager", to: "loop-manager", when: "always" },
+          { from: "loop-input", to: "inner-manager", when: "always" },
+          { from: "inner-input", to: "implement", when: "always" },
+          { from: "implement", to: "inner-output", when: "always" },
+          { from: "inner-output", to: "loop-output", when: "always" },
+          { from: "loop-output", to: "loop-judge", when: "always" },
+          { from: "loop-judge", to: "loop-manager", when: "continue_round" },
+          { from: "loop-judge", to: "done", when: "loop_exit" },
+        ],
+      ),
+      nodes: [
+        { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
+        { id: "loop-manager", nodeFile: "node-loop-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        { id: "loop-input", nodeFile: "node-loop-input.json", kind: "input", completion: { type: "none" } },
+        { id: "inner-manager", nodeFile: "node-inner-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        { id: "inner-input", nodeFile: "node-inner-input.json", kind: "input", completion: { type: "none" } },
+        { id: "implement", nodeFile: "node-implement.json", kind: "task", completion: { type: "none" } },
+        { id: "inner-output", nodeFile: "node-inner-output.json", kind: "output", completion: { type: "none" } },
+        { id: "loop-output", nodeFile: "node-loop-output.json", kind: "output", completion: { type: "none" } },
+        { id: "loop-judge", nodeFile: "node-loop-judge.json", kind: "loop-judge", completion: { type: "none" } },
+        { id: "done", nodeFile: "node-done.json", kind: "output", completion: { type: "none" } },
+      ],
+      subWorkflows: [
+        {
+          id: "implementation-loop",
+          description: "implementation loop body",
+          managerNodeId: "loop-manager",
+          inputNodeId: "loop-input",
+          outputNodeId: "loop-output",
+          nodeIds: ["loop-manager", "loop-input", "inner-manager", "inner-input", "implement", "inner-output", "loop-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "loop-body", loopId: "main-loop" },
+        },
+        {
+          id: "inner-group",
+          description: "inner plain group",
+          managerNodeId: "inner-manager",
+          inputNodeId: "inner-input",
+          outputNodeId: "inner-output",
+          nodeIds: ["inner-manager", "inner-input", "implement", "inner-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "plain" },
+        },
+      ],
+      loops: [
+        {
+          id: "main-loop",
+          judgeNodeId: "loop-judge",
+          continueWhen: "continue_round",
+          exitWhen: "loop_exit",
+        },
+      ],
+    } satisfies WorkflowJson;
+
+    const derived = deriveWorkflowVisualization({
+      workflow,
+      workflowVis: makeVis([
+        "oyakata-manager",
+        "loop-manager",
+        "loop-input",
+        "inner-manager",
+        "inner-input",
+        "implement",
+        "inner-output",
+        "loop-output",
+        "loop-judge",
+        "done",
+      ]),
+    });
+
+    expect(derived).toEqual([
+      { id: "oyakata-manager", order: 0, indent: 0, color: "default" },
+      { id: "loop-manager", order: 1, indent: 0, color: "default" },
+      { id: "loop-input", order: 2, indent: 1, color: "loop:main-loop" },
+      { id: "inner-manager", order: 3, indent: 1, color: "loop:main-loop" },
+      { id: "inner-input", order: 4, indent: 2, color: "loop:main-loop" },
+      { id: "implement", order: 5, indent: 2, color: "loop:main-loop" },
+      { id: "inner-output", order: 6, indent: 2, color: "loop:main-loop" },
+      { id: "loop-output", order: 7, indent: 1, color: "loop:main-loop" },
+      { id: "loop-judge", order: 8, indent: 0, color: "default" },
+      { id: "done", order: 9, indent: 0, color: "default" },
+    ]);
+  });
+
+  test("keeps branch-block color precedence inside nested plain groups", () => {
+    const workflow = {
+      ...makeBaseWorkflow(
+        [
+          "oyakata-manager",
+          "branch-manager",
+          "branch-input",
+          "inner-manager",
+          "inner-input",
+          "review",
+          "inner-output",
+          "branch-output",
+          "done",
+        ],
+        [
+          { from: "oyakata-manager", to: "branch-manager", when: "needs_review" },
+          { from: "branch-input", to: "inner-manager", when: "always" },
+          { from: "inner-input", to: "review", when: "always" },
+          { from: "review", to: "inner-output", when: "always" },
+          { from: "inner-output", to: "branch-output", when: "always" },
+          { from: "branch-output", to: "done", when: "always" },
+        ],
+      ),
+      nodes: [
+        { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
+        { id: "branch-manager", nodeFile: "node-branch-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        { id: "branch-input", nodeFile: "node-branch-input.json", kind: "input", completion: { type: "none" } },
+        { id: "inner-manager", nodeFile: "node-inner-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        { id: "inner-input", nodeFile: "node-inner-input.json", kind: "input", completion: { type: "none" } },
+        { id: "review", nodeFile: "node-review.json", kind: "task", completion: { type: "none" } },
+        { id: "inner-output", nodeFile: "node-inner-output.json", kind: "output", completion: { type: "none" } },
+        { id: "branch-output", nodeFile: "node-branch-output.json", kind: "output", completion: { type: "none" } },
+        { id: "done", nodeFile: "node-done.json", kind: "output", completion: { type: "none" } },
+      ],
+      subWorkflows: [
+        {
+          id: "review-branch",
+          description: "review branch",
+          managerNodeId: "branch-manager",
+          inputNodeId: "branch-input",
+          outputNodeId: "branch-output",
+          nodeIds: ["branch-manager", "branch-input", "inner-manager", "inner-input", "review", "inner-output", "branch-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "branch-block" },
+        },
+        {
+          id: "inner-group",
+          description: "inner plain group",
+          managerNodeId: "inner-manager",
+          inputNodeId: "inner-input",
+          outputNodeId: "inner-output",
+          nodeIds: ["inner-manager", "inner-input", "review", "inner-output"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "plain" },
+        },
+      ],
+    } satisfies WorkflowJson;
+
+    const derived = deriveWorkflowVisualization({
+      workflow,
+      workflowVis: makeVis([
+        "oyakata-manager",
+        "branch-manager",
+        "branch-input",
+        "inner-manager",
+        "inner-input",
+        "review",
+        "inner-output",
+        "branch-output",
+        "done",
+      ]),
+    });
+
+    expect(derived).toEqual([
+      { id: "oyakata-manager", order: 0, indent: 0, color: "default" },
+      { id: "branch-manager", order: 1, indent: 0, color: "default" },
+      { id: "branch-input", order: 2, indent: 1, color: "branch:review-branch" },
+      { id: "inner-manager", order: 3, indent: 1, color: "branch:review-branch" },
+      { id: "inner-input", order: 4, indent: 2, color: "branch:review-branch" },
+      { id: "review", order: 5, indent: 2, color: "branch:review-branch" },
+      { id: "inner-output", order: 6, indent: 2, color: "branch:review-branch" },
+      { id: "branch-output", order: 7, indent: 1, color: "branch:review-branch" },
+      { id: "done", order: 8, indent: 0, color: "default" },
     ]);
   });
 });

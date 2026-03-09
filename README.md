@@ -16,6 +16,7 @@ A workflow is the execution contract for session management. It must represent:
 - composition of multiple nodes
 - branch conditions and branch-judge nodes
 - loop conditions and loop-judge nodes
+- branch bodies and loop bodies modeled as sub-workflow scopes when they span multiple nodes
 - per-node completion conditions
 - graph connectivity between nodes
 - execution timeout policy (global default and per-node override)
@@ -178,14 +179,17 @@ console.log(runtime.session.status, runtime.nodeExecutions.length, runtime.nodeL
 - graph connectivity between nodes
 - completion criteria
 - branch/loop expressions and routing
+- structural block typing for canonical branch-block and loop-body sub-workflows
 - workflow defaults (global loop limit and default node timeout)
 - references to each `node-{id}.json`
 
 Branch behavior:
 - when multiple branch conditions match, all matched branches execute (fan-out)
+- when a branch body spans multiple nodes, the canonical pattern is a `subWorkflow` with `block.type = "branch-block"` entered from a `branch-judge` edge to that sub-workflow manager
 
 Loop behavior:
 - loop-local limits may be omitted and then use workflow-level global default
+- when a loop body spans multiple nodes, the canonical pattern is a `subWorkflow` with `block.type = "loop-body"` and a matching `loops[].id`; the loop `continueWhen` edge should re-enter the loop-body manager
 
 Completion behavior:
 - completion can be optional for some nodes (auto-complete / no-success-judgment nodes)

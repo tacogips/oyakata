@@ -39,6 +39,7 @@ Current-state note:
 - Graph nodes/edges and conditions
 - Node payload (`executionBackend`, `model`, `promptTemplate`, `variables`, optional `timeoutMs`)
 - Vertical sequence metadata (`order`)
+- Structural sub-workflow metadata (`subWorkflows[].block.type`, and `block.loopId` for loop bodies)
 4. User saves; server writes:
 - `workflow.json`
 - `workflow-vis.json`
@@ -129,7 +130,15 @@ Data safety:
 - Nodes remain cards, rendered in strict vertical order from `workflow-vis.json.nodes[].order`.
 - Reordering uses row drag-handle and/or move-up/move-down controls.
 - Nesting for loop/group semantics uses derived `indent` level from graph structure.
-- Loop/group visual distinction uses derived semantic `color` tokens from loop/group scope.
+- Loop/group visual distinction uses derived semantic `color` tokens from scope metadata.
+- Sub-workflow authoring includes explicit block typing:
+  - `plain` for ordinary grouped sub-workflows
+  - `branch-block` for branch bodies
+  - `loop-body` for loop bodies, with a selectable `loops[].id`
+- Local editor visualization must match backend derivation rules:
+  - `branch-block` colors as a branch scope
+  - `loop-body` sub-workflows take precedence over inferred loop intervals
+  - typed structural scopes (`loop-body`, then `branch-block`) keep their color precedence even when they contain nested plain groups
 - Reserved structure roles (`root-manager`, `sub-manager`, `input`, `output`) are derived from workflow manager and sub-workflow boundary configuration, not assigned manually through generic node-kind editing.
 - Edge creation/editing is form-driven (source/target/when), not canvas drawing.
 - Validation blocks invalid links (self-loop rules, missing node, duplicate edge policy).

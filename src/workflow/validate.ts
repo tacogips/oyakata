@@ -14,6 +14,7 @@ import {
   type NodePayload,
   type NodeSessionPolicy,
   type NormalizedWorkflowBundle,
+  type SubWorkflowBlock,
   type SubWorkflowConversation,
   type SubWorkflowInputSource,
   type SubWorkflowRef,
@@ -371,6 +372,28 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
         .filter((entry): entry is SubWorkflowInputSource => entry !== null)
     : [];
 
+  let block: SubWorkflowBlock | undefined;
+  const blockRaw = value["block"];
+  if (blockRaw !== undefined) {
+    if (!isRecord(blockRaw)) {
+      issues.push(makeIssue("error", `${path}.block`, "must be an object when provided"));
+    } else {
+      const typeRaw = blockRaw["type"];
+      const loopIdRaw = blockRaw["loopId"];
+      if (typeRaw !== "plain" && typeRaw !== "branch-block" && typeRaw !== "loop-body") {
+        issues.push(makeIssue("error", `${path}.block.type`, "must be 'plain', 'branch-block', or 'loop-body'"));
+      } else {
+        if (loopIdRaw !== undefined && (typeof loopIdRaw !== "string" || loopIdRaw.length === 0)) {
+          issues.push(makeIssue("error", `${path}.block.loopId`, "must be a non-empty string when provided"));
+        }
+        block = {
+          type: typeRaw,
+          ...(typeof loopIdRaw === "string" && loopIdRaw.length > 0 ? { loopId: loopIdRaw } : {}),
+        };
+      }
+    }
+  }
+
   if (
     id === null ||
     description === null ||
@@ -390,6 +413,7 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
     outputNodeId,
     nodeIds,
     inputSources,
+    ...(block === undefined ? {} : { block }),
   };
 }
 
@@ -1152,7 +1176,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   });
 
   const declaredSubWorkflowIds = new Set(bundle.workflow.subWorkflows.map((entry) => entry.id));
+  const declaredLoopIds = new Set((bundle.workflow.loops ?? []).map((entry) => entry.id));
   const subWorkflowIdSet = new Set<string>();
+  const loopBodyOwnerByLoopId = new Map<string, string>();
   const subWorkflowNodeOwnership = new Map<string, string>();
   const subWorkflowBoundaryOwnership = new Map<string, string>();
   bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
@@ -1358,6 +1384,67 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         issues.push(makeIssue("error", `${sourcePath}.subWorkflowId`, "must reference an existing subWorkflow id"));
       }
     });
+
+    const blockPath = `workflow.subWorkflows[${index}].block`;
+    if (subWorkflow.block?.type === "branch-block") {
+      const incomingBranchEdges = bundle.workflow.edges.filter(
+        (edge) =>
+          edge.to === subWorkflow.managerNodeId &&
+          bundle.workflow.nodes.find((node) => node.id === edge.from)?.kind === "branch-judge",
+      );
+      if (incomingBranchEdges.length === 0) {
+        issues.push(
+          makeIssue(
+            "error",
+            `${blockPath}.type`,
+            "branch-block subWorkflow must be entered by at least one edge from a branch-judge to its managerNodeId",
+          ),
+        );
+      }
+    }
+    if (subWorkflow.block?.type === "loop-body") {
+      if (subWorkflow.block.loopId === undefined) {
+        issues.push(makeIssue("error", `${blockPath}.loopId`, "is required when block.type is 'loop-body'"));
+      } else if (!declaredLoopIds.has(subWorkflow.block.loopId)) {
+        issues.push(makeIssue("error", `${blockPath}.loopId`, "must reference an existing workflow loop id"));
+      } else {
+        const existingOwner = loopBodyOwnerByLoopId.get(subWorkflow.block.loopId);
+        if (existingOwner !== undefined && existingOwner !== subWorkflow.id) {
+          issues.push(
+            makeIssue(
+              "error",
+              `${blockPath}.loopId`,
+              `loop '${subWorkflow.block.loopId}' is already assigned to loop-body subWorkflow '${existingOwner}'`,
+            ),
+          );
+        } else {
+          loopBodyOwnerByLoopId.set(subWorkflow.block.loopId, subWorkflow.id);
+        }
+
+        const loopRule = bundle.workflow.loops?.find((entry) => entry.id === subWorkflow.block?.loopId);
+        const continueEdgeToManager =
+          loopRule === undefined
+            ? undefined
+            : bundle.workflow.edges.find(
+                (edge) =>
+                  edge.from === loopRule.judgeNodeId &&
+                  edge.when === loopRule.continueWhen &&
+                  edge.to === subWorkflow.managerNodeId,
+              );
+        if (loopRule !== undefined && continueEdgeToManager === undefined) {
+          issues.push(
+            makeIssue(
+              "error",
+              `${blockPath}.loopId`,
+              `loop-body subWorkflow must be re-entered by loop '${subWorkflow.block.loopId}' via a continue edge to manager '${subWorkflow.managerNodeId}'`,
+            ),
+          );
+        }
+      }
+    }
+    if (subWorkflow.block?.type !== "loop-body" && subWorkflow.block?.loopId !== undefined) {
+      issues.push(makeIssue("error", `${blockPath}.loopId`, "is only allowed when block.type is 'loop-body'"));
+    }
   });
 
   bundle.workflow.edges.forEach((edge, index) => {
@@ -1526,7 +1613,37 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   }
 
   const loopIntervals: Array<{ readonly id: string; readonly startOrder: number; readonly endOrder: number }> = [];
+  const loopIdsRepresentedBySubWorkflow = new Set<string>();
+  bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
+    if (subWorkflow.block?.type !== "loop-body" || subWorkflow.block.loopId === undefined) {
+      return;
+    }
+    const inputOrder = visOrderByNodeId.get(subWorkflow.inputNodeId);
+    const outputOrder = visOrderByNodeId.get(subWorkflow.outputNodeId);
+    if (inputOrder === undefined || outputOrder === undefined) {
+      return;
+    }
+    if (inputOrder > outputOrder) {
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].block.loopId`,
+          "loop-body subWorkflow must place inputNodeId before outputNodeId in vertical order",
+        ),
+      );
+      return;
+    }
+    loopIntervals.push({
+      id: subWorkflow.block.loopId,
+      startOrder: inputOrder,
+      endOrder: outputOrder,
+    });
+    loopIdsRepresentedBySubWorkflow.add(subWorkflow.block.loopId);
+  });
   bundle.workflow.loops?.forEach((loop, index) => {
+    if (loopIdsRepresentedBySubWorkflow.has(loop.id)) {
+      return;
+    }
     const judgeOrder = visOrderByNodeId.get(loop.judgeNodeId);
     if (judgeOrder === undefined) {
       return;

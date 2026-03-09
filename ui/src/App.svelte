@@ -64,6 +64,13 @@
     selectionPolicy?: OutputSelectionPolicy;
   }
 
+  type SubWorkflowBlockType = "plain" | "branch-block" | "loop-body";
+
+  interface SubWorkflowBlock {
+    type: SubWorkflowBlockType;
+    loopId?: string;
+  }
+
   interface SubWorkflowRef {
     id: string;
     description: string;
@@ -72,6 +79,7 @@
     outputNodeId: string;
     nodeIds: string[];
     inputSources: SubWorkflowInputSource[];
+    block?: SubWorkflowBlock;
   }
 
   interface WorkflowDefaults {
@@ -396,6 +404,37 @@
     return leftSpan - rightSpan || left.startOrder - right.startOrder || left.id.localeCompare(right.id);
   }
 
+  function colorForSubWorkflow(subWorkflow: SubWorkflowRef): string {
+    if (subWorkflow.block?.type === "loop-body") {
+      return `loop:${subWorkflow.block.loopId ?? subWorkflow.id}`;
+    }
+    if (subWorkflow.block?.type === "branch-block") {
+      return `branch:${subWorkflow.id}`;
+    }
+    return `group:${subWorkflow.id}`;
+  }
+
+  function preferredGroupScopeColor(
+    groupScopes: readonly ScopeInterval[],
+    colorByGroupScopeId: ReadonlyMap<string, string>,
+  ): string {
+    const loopColor = groupScopes
+      .map((scope) => colorByGroupScopeId.get(scope.id))
+      .find((color): color is string => typeof color === "string" && color.startsWith("loop:"));
+    if (loopColor !== undefined) {
+      return loopColor;
+    }
+
+    const branchColor = groupScopes
+      .map((scope) => colorByGroupScopeId.get(scope.id))
+      .find((color): color is string => typeof color === "string" && color.startsWith("branch:"));
+    if (branchColor !== undefined) {
+      return branchColor;
+    }
+
+    return colorByGroupScopeId.get(groupScopes[0]?.id ?? "") ?? "default";
+  }
+
   function deriveVisualizationEntries(bundle: WorkflowBundle): VisualizationEntry[] {
     const orderedVisNodes = [...bundle.workflowVis.nodes].sort((left, right) => {
       return left.order - right.order || left.id.localeCompare(right.id);
@@ -427,7 +466,20 @@
       .filter((entry): entry is ScopeInterval => entry !== null)
       .sort(compareScopeIntervals);
 
+    const colorByGroupScopeId = new Map<string, string>();
+    bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+      colorByGroupScopeId.set(subWorkflow.id, colorForSubWorkflow(subWorkflow));
+    });
+
+    const loopIdsRepresentedBySubWorkflow = new Set(
+      bundle.workflow.subWorkflows
+        .filter((subWorkflow) => subWorkflow.block?.type === "loop-body")
+        .map((subWorkflow) => subWorkflow.block?.loopId)
+        .filter((loopId): loopId is string => loopId !== undefined),
+    );
+
     const loopIntervals = (bundle.workflow.loops ?? [])
+      .filter((loop) => !loopIdsRepresentedBySubWorkflow.has(loop.id))
       .map((loop) => {
         const judgeOrder = orderByNodeId.get(loop.judgeNodeId);
         if (judgeOrder === undefined) {
@@ -460,7 +512,7 @@
           loopScopes.length > 0
             ? `loop:${loopScopes[0]?.id ?? ""}`
             : groupScopes.length > 0
-              ? `group:${groupScopes[0]?.id ?? ""}`
+              ? preferredGroupScopeColor(groupScopes, colorByGroupScopeId)
               : "default",
       };
     });
@@ -806,8 +858,7 @@
     }
 
     const id = nextSubWorkflowId();
-    const managerNode = availableSubWorkflowBoundaryNodes("managerNodeId", id).find((node) => node.kind === "sub-manager")
-      ?? availableSubWorkflowBoundaryNodes("managerNodeId", id)[0];
+    const managerNode = availableSubWorkflowBoundaryNodes("managerNodeId", id).find((node) => node.kind === "sub-manager");
     const inputNode = availableSubWorkflowBoundaryNodes("inputNodeId", id).find((node) => node.id !== managerNode?.id && node.kind === "input")
       ?? availableSubWorkflowBoundaryNodes("inputNodeId", id).find((node) => node.id !== managerNode?.id);
     const outputNode = availableSubWorkflowBoundaryNodes("outputNodeId", id).find((node) => {
@@ -816,7 +867,12 @@
       return node.id !== managerNode?.id && node.id !== inputNode?.id;
     });
 
-    if (!managerNode || !inputNode || !outputNode) {
+    if (!managerNode) {
+      errorMessage = "Add a dedicated sub-manager node before creating another sub-workflow.";
+      return;
+    }
+
+    if (!inputNode || !outputNode) {
       errorMessage = "Add at least three non-root nodes before creating another sub-workflow.";
       return;
     }
@@ -831,6 +887,7 @@
         outputNodeId: outputNode.id,
         nodeIds: [managerNode.id, inputNode.id, outputNode.id],
         inputSources: [{ type: "human-input" }],
+        block: { type: "plain" },
       },
     ];
     syncSubWorkflowNodeKinds();
@@ -863,6 +920,37 @@
     } else {
       subWorkflow[field] = nextValue;
     }
+    markWorkflowEdited();
+  }
+
+  function updateSubWorkflowBlockType(index: number, event: Event): void {
+    const subWorkflow = editableBundle?.workflow.subWorkflows[index];
+    if (!subWorkflow) {
+      return;
+    }
+
+    const type = (event.currentTarget as HTMLSelectElement).value as SubWorkflowBlockType;
+    if (type === "loop-body") {
+      subWorkflow.block = {
+        type,
+        ...(subWorkflow.block?.loopId !== undefined ? { loopId: subWorkflow.block.loopId } : {}),
+      };
+    } else {
+      subWorkflow.block = { type };
+    }
+    markWorkflowEdited();
+  }
+
+  function updateSubWorkflowBlockLoopId(index: number, event: Event): void {
+    const subWorkflow = editableBundle?.workflow.subWorkflows[index];
+    if (!subWorkflow || subWorkflow.block?.type !== "loop-body") {
+      return;
+    }
+
+    const loopId = (event.currentTarget as HTMLSelectElement).value.trim();
+    subWorkflow.block = loopId.length === 0
+      ? { type: "loop-body" }
+      : { type: "loop-body", loopId };
     markWorkflowEdited();
   }
 
@@ -2189,6 +2277,35 @@
                             disabled={config?.readOnly || busy}
                           />
                         </div>
+                        <div>
+                          <label for={`sub-workflow-block-type-${index}`}>Block Type</label>
+                          <select
+                            id={`sub-workflow-block-type-${index}`}
+                            value={subWorkflow.block?.type ?? "plain"}
+                            on:change={(event) => updateSubWorkflowBlockType(index, event)}
+                            disabled={config?.readOnly || busy}
+                          >
+                            <option value="plain">plain</option>
+                            <option value="branch-block">branch-block</option>
+                            <option value="loop-body">loop-body</option>
+                          </select>
+                        </div>
+                        {#if subWorkflow.block?.type === "loop-body"}
+                          <div>
+                            <label for={`sub-workflow-loop-id-${index}`}>Loop</label>
+                            <select
+                              id={`sub-workflow-loop-id-${index}`}
+                              value={subWorkflow.block.loopId ?? ""}
+                              on:change={(event) => updateSubWorkflowBlockLoopId(index, event)}
+                              disabled={config?.readOnly || busy}
+                            >
+                              <option value="">Select a loop</option>
+                              {#each editableBundle.workflow.loops ?? [] as loop}
+                                <option value={loop.id}>{loop.id}</option>
+                              {/each}
+                            </select>
+                          </div>
+                        {/if}
                         <div>
                           <label for={`sub-workflow-manager-${index}`}>Manager Node</label>
                           <select
