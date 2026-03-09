@@ -5,8 +5,11 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 import {
   assertWorkspacePackage,
+  resolvePackageOptionsFromModuleUrl,
   resolvePackageBinary,
 } from "./ui-framework.mjs";
+
+const packageOptions = resolvePackageOptionsFromModuleUrl(import.meta.url);
 
 function resolveChromiumExecutablePath() {
   const candidates = [
@@ -37,7 +40,7 @@ function isSkippableBrowserLaunchFailure(error) {
 }
 
 async function verifyBrowserLaunchPrerequisite() {
-  assertWorkspacePackage("@playwright/test", "run UI E2E");
+  assertWorkspacePackage("@playwright/test", "run UI E2E", packageOptions);
   const { chromium } = await import("@playwright/test");
   const executablePath = resolveChromiumExecutablePath();
   const browser = await chromium.launch({
@@ -62,9 +65,10 @@ try {
 }
 
 const result = spawnSync(
-  resolvePackageBinary("@playwright/test", "playwright"),
+  resolvePackageBinary("@playwright/test", "playwright", packageOptions),
   ["test", "-c", "playwright.config.cjs"],
   {
+    cwd: packageOptions.packageRoot,
     stdio: "inherit",
   },
 );

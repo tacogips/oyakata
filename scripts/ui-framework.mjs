@@ -1,10 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 function resolveUiRoot(options = {}) {
   const baseDir = options.baseDir ?? process.cwd();
   return options.uiRoot ?? path.join(baseDir, "ui");
+}
+
+export function resolvePackageOptionsFromModuleUrl(moduleUrl) {
+  const packageRoot = path.resolve(path.dirname(fileURLToPath(moduleUrl)), "..");
+  return {
+    baseDir: packageRoot,
+    packageRoot,
+    uiRoot: path.join(packageRoot, "ui"),
+  };
 }
 
 function solidEntrypointPath(options = {}) {

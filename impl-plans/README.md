@@ -26,7 +26,6 @@ impl-plans/
 | Plan | Status | Design Reference | Last Updated |
 |------|--------|------------------|--------------|
 | `workflow-web-editor-execution` | In Progress | `design-workflow-web-editor` | 2026-03-07 |
-| `refactoring-frontend-solidjs-migration` | In Progress | `design-workflow-web-editor`, `design-refactoring-investigation-plan` | 2026-03-09 |
 
 ## Completed Plans
 
@@ -72,7 +71,11 @@ impl-plans/
 | `refactoring-editor-component-boundaries` | 2026-03-09 | `design-refactoring-editor-component-boundaries` |
 | `refactoring-server-workflow-bundle-parsing` | 2026-03-09 | `design-refactoring-server-workflow-bundle-parsing` |
 | `refactoring-editor-main-panel-component` | 2026-03-09 | `design-refactoring-editor-main-panel-component` |
+| `refactoring-frontend-solidjs-migration` | 2026-03-09 | `design-workflow-web-editor`, `design-refactoring-investigation-plan` |
 | `refactoring-editor-session-controller` | 2026-03-09 | `design-refactoring-editor-session-controller`, `design-workflow-web-editor` |
+| `frontend-mode-built-asset-contract` | 2026-03-09 | `design-workflow-web-editor`, `architecture` |
+| `frontend-mode-package-root-alignment` | 2026-03-09 | `design-workflow-web-editor`, `architecture` |
+| `frontend-tooling-package-root-alignment` | 2026-03-09 | `design-workflow-web-editor`, `architecture` |
 
 ## Phase Dependencies
 
@@ -119,7 +122,10 @@ impl-plans/
 | 39 | COMPLETED | Phase 38 |
 | 40 | COMPLETED | Phase 39 |
 | 41 | COMPLETED | Phase 40 |
-| 42 | IN_PROGRESS | Phase 41 |
+| 42 | COMPLETED | Phase 41 |
+| 43 | COMPLETED | Phase 42 |
+| 44 | COMPLETED | Phase 43 |
+| 45 | COMPLETED | Phase 44 |
 
 ### Phase to Plans Mapping
 
@@ -166,6 +172,9 @@ PHASE_TO_PLANS = {
   39: ["impl-plans/refactoring-editor-component-boundaries.md"],
   40: ["impl-plans/refactoring-server-workflow-bundle-parsing.md"],
   41: ["impl-plans/refactoring-editor-main-panel-component.md"],
-  42: ["impl-plans/refactoring-frontend-solidjs-migration.md", "impl-plans/refactoring-editor-session-controller.md"]
+  42: ["impl-plans/refactoring-frontend-solidjs-migration.md", "impl-plans/refactoring-editor-session-controller.md"],
+  43: ["impl-plans/frontend-mode-built-asset-contract.md"],
+  44: ["impl-plans/frontend-mode-package-root-alignment.md"],
+  45: ["impl-plans/frontend-tooling-package-root-alignment.md"]
 }
 ```

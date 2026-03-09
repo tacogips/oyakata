@@ -1,20 +1,20 @@
 # Editor Session Controller Refactoring
 
-This document defines the next refactoring slice for browser-editor session orchestration during the Svelte-to-Solid migration.
+This document records the session-orchestration refactoring slice introduced during the Svelte-to-Solid migration and retained in the checked-in SolidJS editor.
 
 ## Overview
 
-The overall local-server plus replaceable-frontend architecture still matches the intended purpose, but the migration has drifted at the top-level session orchestration layer:
+The overall local-server plus replaceable-frontend architecture still matches the intended purpose. During the migration, the top-level session orchestration layer drifted because two app shells owned the same behavior:
 
-- `ui/src/App.svelte` and `ui/src/App.tsx` both own workflow-session refresh/select/execute/cancel flows
+- `ui/src/App.svelte` and `ui/src/App.tsx` both owned workflow-session refresh/select/execute/cancel flows
 - selected-session polling behavior has already diverged between the two app shells
 - timer ownership is correctly kept in the component layer, but the command sequencing and retry policy are duplicated
 
-That duplication is a migration risk because the final SolidJS cutover is supposed to replace framework glue, not re-implement session behavior separately.
+That duplication was a migration risk because the final SolidJS cutover was supposed to replace framework glue, not re-implement session behavior separately.
 
 ## Intended Boundary
 
-Introduce a framework-neutral session-controller helper under `ui/src/lib/` that centralizes session-panel command flows for both the checked-in Svelte runtime and the staged Solid shell.
+Introduce a framework-neutral session-controller helper under `ui/src/lib/` that centralizes session-panel command flows. That helper was adopted by both migration-era app shells and remains part of the checked-in Solid runtime.
 
 Responsibilities of the new helper:
 
@@ -23,7 +23,7 @@ Responsibilities of the new helper:
 - make selected-session polling retry semantics explicit and testable
 - keep execution/cancel/session-refresh result handling aligned across frameworks
 
-Responsibilities that remain in `App.svelte` / `App.tsx`:
+Responsibilities that remain in the app shell:
 
 - timer allocation and cleanup
 - busy/loading flag ownership
@@ -37,7 +37,7 @@ The existing `editor-actions` module already centralizes transport-level orchest
 
 By extracting a shared session controller:
 
-- both frontends consume the same selected-session polling policy
+- both migration-era frontends consume the same selected-session polling policy
 - transient polling failures keep retry behavior consistent during the migration
 - execution/session behavior can be verified once with focused unit tests
 - the eventual SolidJS cutover removes more framework-specific glue instead of copying it
@@ -65,5 +65,4 @@ Expected capabilities:
 
 - `design-docs/specs/design-workflow-web-editor.md`
 - `design-docs/specs/design-refactoring-editor-action-helpers.md`
-- `ui/src/App.svelte`
 - `ui/src/App.tsx`

@@ -16,7 +16,7 @@ Current-state note:
 
 - The browser workflow editor is served as a built frontend from `ui/dist/`.
 - `oyakata serve` no longer embeds or maintains a second inline browser implementation inside the Bun server.
-- The checked-in UI implementation is still Svelte-based today, but the active migration target is SolidJS and the server/API boundary must stay framework-agnostic during the cutover.
+- The checked-in UI implementation is SolidJS-based today, and the server/API boundary remains framework-agnostic at the `ui/dist/` asset contract.
 
 ## Goals
 
@@ -114,10 +114,8 @@ Data safety:
 - structure and node payload editing
 - execution/session inspection
 
-4. Replace the current Svelte implementation with a SolidJS implementation once feature parity is acceptable.
-5. Keep browser/E2E verification for the built frontend flow as the remaining quality gate.
-6. Expose top-level app-shell loading through framework-neutral TypeScript helpers so inactive Solid scaffolding can consume live API-derived shell data before the final entrypoint cutover.
-7. Keep workflow-session command sequencing and selected-session polling semantics in framework-neutral helpers so the Svelte and Solid shells cannot drift during the migration.
+4. Keep browser/E2E verification for the built frontend flow as the remaining quality gate.
+5. Keep top-level app-shell loading and workflow/session sequencing in framework-neutral TypeScript helpers so future frontend refactors cannot drift from the server/API contract.
 
 Supporting migration refactoring references:
 
@@ -130,18 +128,20 @@ Supporting migration refactoring references:
 - Production assets are emitted to `ui/dist/`.
 - The server serves `index.html` for `/` and `/ui` and serves any existing built file under `ui/dist/` by exact path for non-API requests.
 - The frontend must not require server mode flags at build time; it must fetch `/api/ui-config` on startup.
-- The `/api/ui-config` response must derive the active frontend identity from the checked-in UI entrypoint by default, with an explicit server-side override reserved for tests or forced deployments.
-- If frontend identity detection fails because the checked-in UI entrypoint is missing or ambiguous, `/api/ui-config` must fail explicitly instead of silently defaulting to a framework mode.
+- The build output must publish explicit frontend identity metadata under `ui/dist/frontend-mode.json`.
+- The `/api/ui-config` response must derive the active frontend identity from that built metadata when available, with an explicit server-side override reserved for tests or forced deployments.
+- Default built-metadata lookup must resolve from the same package root as source-entrypoint detection and built asset serving, so alternative package-root overrides cannot accidentally pair one repository's `ui/dist` bundle with another repository's source tree.
+- If built frontend metadata is absent, `/api/ui-config` may fall back to checked-in entrypoint detection so unrebuild local states remain diagnosable.
+- If built frontend metadata is invalid, or if fallback checked-in entrypoint detection is missing or ambiguous, `/api/ui-config` must fail explicitly instead of silently defaulting to a framework mode.
 - Repository-level verification must explicitly run frontend-aware checks in addition to the Bun server tests because the root TypeScript config does not include `ui/`.
-- During the current transitional state, the checked-in Svelte UI still uses `svelte-check` plus a production bundle build.
+- The checked-in SolidJS UI uses the Solid/Vite toolchain plus a production bundle build.
 - Repository automated UI unit-test commands must run non-interactively and must not require opening a local listening socket; any interactive Vitest UI is an opt-in developer workflow rather than the default verification contract.
-- Repository automation should call framework-detecting UI verification commands so the eventual SolidJS cutover can switch entrypoints and dependencies without another package-script rewrite.
+- Repository automation should call framework-detecting UI verification commands so future frontend refactors can change implementation details without another package-script rewrite.
+- Those repository-level UI verification commands must resolve `ui/`, `package.json`, and `node_modules/` from the checked-in script/package root rather than the caller's current working directory, so wrappers and non-root invocation paths still verify the intended frontend package.
 - Those framework-detecting commands must fail fast with a clear dependency-install error when the checked-in entrypoint selects a framework whose packages are not installed in the workspace.
 - Those framework-detecting commands must also fail when the required framework packages are not declared directly in the repository `package.json`, even if a developer's local `node_modules/` or a transitive dependency makes them temporarily resolvable.
-- The transitional frontend may keep framework-neutral bootstrap files, but exactly one framework-specific entrypoint may exist at a time: `ui/src/main.ts` for Svelte or `ui/src/main.tsx` for SolidJS, never both.
-- During migration, inactive SolidJS `.tsx` shell/component files may be checked in ahead of entrypoint cutover, but they must remain unreachable from the checked-in Svelte bootstrap until `ui/src/main.tsx` becomes the sole active framework entrypoint.
-- Transitional Solid scaffolding should consume the same framework-neutral editor-action/controller helpers as the checked-in Svelte runtime wherever possible, so the final cutover replaces only framework glue rather than redoing API/loading behavior.
-- The SolidJS cutover still requires installing SolidJS/Vite plugin dependencies and replacing the Svelte entry/components while preserving browser regression checks.
+- Exactly one checked-in framework-specific entrypoint may exist at a time, and the current frontend entrypoint is `ui/src/main.tsx`.
+- Frontend shells and panels should continue consuming the same framework-neutral editor-action/controller helpers wherever possible, so future UI refactors replace only framework glue rather than redoing API/loading behavior.
 
 ### Editor Surface
 

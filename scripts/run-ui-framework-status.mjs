@@ -4,6 +4,11 @@ import process from "node:process";
 import {
   collectUiFrameworkStatus,
   formatUiFrameworkStatus,
+  resolvePackageOptionsFromModuleUrl,
 } from "./ui-framework.mjs";
 
-process.stdout.write(formatUiFrameworkStatus(collectUiFrameworkStatus()));
+const packageOptions = resolvePackageOptionsFromModuleUrl(import.meta.url);
+
+process.stdout.write(
+  formatUiFrameworkStatus(collectUiFrameworkStatus(packageOptions)),
+);

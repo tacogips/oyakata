@@ -5,21 +5,24 @@ import process from "node:process";
 import {
   assertUiFrameworkPackages,
   detectUiFramework,
+  resolvePackageOptionsFromModuleUrl,
   resolvePackageBinary,
   uiTsconfigPath,
 } from "./ui-framework.mjs";
 
-const framework = detectUiFramework();
-assertUiFrameworkPackages(framework, "typecheck");
+const packageOptions = resolvePackageOptionsFromModuleUrl(import.meta.url);
+const framework = detectUiFramework(packageOptions);
+assertUiFrameworkPackages(framework, "typecheck", packageOptions);
 const command = [
-  resolvePackageBinary("typescript", "tsc"),
+  resolvePackageBinary("typescript", "tsc", packageOptions),
   "--noEmit",
   "-p",
-  uiTsconfigPath(framework),
+  uiTsconfigPath(framework, packageOptions),
 ];
 
 const [executable, ...args] = command;
 const result = spawnSync(executable, args, {
+  cwd: packageOptions.packageRoot,
   stdio: "inherit",
 });
 

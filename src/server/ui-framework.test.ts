@@ -11,6 +11,7 @@ import {
   frontendModeFromUiFramework,
   missingUiFrameworkPackageDeclarations,
   missingUiFrameworkPackages,
+  resolvePackageOptionsFromModuleUrl,
   resolvePackageBinary,
   uiFrameworkPackages,
 } from "../../scripts/ui-framework.mjs";
@@ -61,6 +62,18 @@ describe("ui-framework tooling guards", () => {
 
   test("maps detected frameworks to shared frontend modes", () => {
     expect(frontendModeFromUiFramework("solid")).toBe("solid-dist");
+  });
+
+  test("resolves package options from the script module location instead of cwd", () => {
+    const options = resolvePackageOptionsFromModuleUrl(
+      "file:///tmp/oyakata/scripts/run-ui-typecheck.mjs",
+    );
+
+    expect(options).toEqual({
+      baseDir: "/tmp/oyakata",
+      packageRoot: "/tmp/oyakata",
+      uiRoot: "/tmp/oyakata/ui",
+    });
   });
 
   test("reports missing packages relative to the package root", async () => {

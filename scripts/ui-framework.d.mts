@@ -11,6 +11,13 @@ export interface UiFrameworkPackageOptions extends UiFrameworkOptions {
   readonly packageRoot?: string;
 }
 
+export interface ResolvedUiFrameworkPackageOptions
+  extends UiFrameworkPackageOptions {
+  readonly baseDir: string;
+  readonly packageRoot: string;
+  readonly uiRoot: string;
+}
+
 export interface UiFrameworkReadiness {
   readonly framework: UiFramework | null;
   readonly frontendMode: FrontendMode | null;
@@ -42,6 +49,9 @@ export interface UiFrameworkStatus {
 }
 
 export function detectUiFramework(options?: UiFrameworkOptions): UiFramework;
+export function resolvePackageOptionsFromModuleUrl(
+  moduleUrl: string,
+): ResolvedUiFrameworkPackageOptions;
 export function frontendModeFromUiFramework(
   framework: UiFramework,
 ): FrontendMode;

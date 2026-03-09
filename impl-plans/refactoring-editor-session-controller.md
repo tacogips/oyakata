@@ -7,7 +7,7 @@
 
 ## Summary
 
-Extract the duplicated top-level workflow-session orchestration from `ui/src/App.svelte` and `ui/src/App.tsx` into a shared frontend helper so the in-progress Solid migration keeps one selected-session polling and session-command behavior.
+Extract the duplicated top-level workflow-session orchestration that existed in `ui/src/App.svelte` and `ui/src/App.tsx` into a shared frontend helper so the migration could keep one selected-session polling and session-command behavior. The helper remains part of the checked-in Solid runtime after cutover.
 
 ## Scope
 
@@ -21,7 +21,7 @@ Included:
 
 Not included:
 
-- final SolidJS entrypoint cutover
+- final SolidJS entrypoint cutover mechanics beyond this shared helper
 - moving polling timers out of the app components
 - broader workflow-editing state extraction
 - backend API or execution-contract changes
@@ -40,7 +40,7 @@ Not included:
 
 ### 2. Shared Session Controller Extraction
 
-#### `ui/src/lib/editor-session-controller.ts`, `ui/src/App.svelte`, `ui/src/App.tsx`
+#### `ui/src/lib/editor-session-controller.ts`, `ui/src/App.tsx`
 
 **Status**: COMPLETED
 
@@ -65,7 +65,7 @@ export type PollSelectedSessionResult =
 
 ### 3. Verification
 
-#### `ui/src/lib/editor-session-controller.test.ts`, `ui/src/App.svelte`, `ui/src/App.tsx`
+#### `ui/src/lib/editor-session-controller.test.ts`, `ui/src/App.tsx`
 
 **Status**: COMPLETED
 

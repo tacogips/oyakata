@@ -1,3 +1,15 @@
+import path from "node:path";
+import process from "node:process";
+
+export const BUILT_FRONTEND_MODE_METADATA_FILE = "frontend-mode.json";
+
+export function resolveBuiltFrontendModeMetadataPath(options = {}) {
+  const uiDistRoot =
+    options.uiDistRoot ??
+    path.join(options.packageRoot ?? process.cwd(), "ui", "dist");
+  return path.join(uiDistRoot, BUILT_FRONTEND_MODE_METADATA_FILE);
+}
+
 function parseHtmlAttributes(source) {
   const attributes = {};
   const attributePattern =
@@ -50,4 +62,37 @@ export function parseBuiltIndexAssets(
     stylesheetUrls,
     moduleScriptUrl: createAssetUrl(moduleScript.src),
   };
+}
+
+export function parseBuiltFrontendModeMetadata(metadataJson) {
+  let parsed;
+  try {
+    parsed = JSON.parse(metadataJson);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`built frontend metadata is not valid JSON: ${message}`);
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      "built frontend metadata must be a JSON object with a 'frontend' string",
+    );
+  }
+
+  const frontend = parsed.frontend;
+  if (frontend !== "solid-dist") {
+    throw new Error(
+      `built frontend metadata contains unsupported frontend mode '${String(frontend)}'`,
+    );
+  }
+
+  return frontend;
+}
+
+export function serializeBuiltFrontendModeMetadata(frontendMode) {
+  if (frontendMode !== "solid-dist") {
+    throw new Error(`unsupported frontend mode '${String(frontendMode)}'`);
+  }
+
+  return `${JSON.stringify({ frontend: frontendMode }, null, 2)}\n`;
 }

@@ -1,5 +1,11 @@
+import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { parseBuiltIndexAssets } from "../../scripts/ui-built-assets.mjs";
+import {
+  parseBuiltFrontendModeMetadata,
+  parseBuiltIndexAssets,
+  resolveBuiltFrontendModeMetadataPath,
+  serializeBuiltFrontendModeMetadata,
+} from "../../scripts/ui-built-assets.mjs";
 
 describe("parseBuiltIndexAssets", () => {
   test("accepts stylesheet and module tags regardless of attribute order", () => {
@@ -36,5 +42,34 @@ describe("parseBuiltIndexAssets", () => {
         `<!doctype html><html><head><link rel="stylesheet" href="/assets/main.css"></head></html>`,
       ),
     ).toThrow(/missing a module script entry/i);
+  });
+
+  test("parses serialized built frontend metadata", () => {
+    expect(
+      parseBuiltFrontendModeMetadata(
+        serializeBuiltFrontendModeMetadata("solid-dist"),
+      ),
+    ).toBe("solid-dist");
+  });
+
+  test("rejects unsupported built frontend metadata", () => {
+    expect(() =>
+      parseBuiltFrontendModeMetadata(`{"frontend":"legacy-dist"}`),
+    ).toThrow(/unsupported frontend mode/i);
+  });
+
+  test("resolves built frontend metadata path from an explicit package root", () => {
+    expect(
+      resolveBuiltFrontendModeMetadataPath({ packageRoot: "/virtual/repo" }),
+    ).toBe(path.join("/virtual/repo", "ui", "dist", "frontend-mode.json"));
+  });
+
+  test("prefers an explicit ui dist root over the package root", () => {
+    expect(
+      resolveBuiltFrontendModeMetadataPath({
+        packageRoot: "/virtual/repo",
+        uiDistRoot: "/virtual/custom-ui-dist",
+      }),
+    ).toBe(path.join("/virtual/custom-ui-dist", "frontend-mode.json"));
   });
 });

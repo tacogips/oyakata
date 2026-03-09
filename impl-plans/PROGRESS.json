@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-03-09T23:58:00Z",
+  "lastUpdated": "2026-03-09T13:31:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -42,7 +42,10 @@
     "39": { "status": "COMPLETED" },
     "40": { "status": "COMPLETED" },
     "41": { "status": "COMPLETED" },
-    "42": { "status": "IN_PROGRESS" }
+    "42": { "status": "COMPLETED" },
+    "43": { "status": "COMPLETED" },
+    "44": { "status": "COMPLETED" },
+    "45": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -465,20 +468,20 @@
     },
     "refactoring-frontend-solidjs-migration": {
       "phase": 42,
-      "status": "In Progress",
+      "status": "Completed",
       "tasks": {
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
           "deps": ["refactoring-editor-main-panel-component:TASK-003"]
         },
-        "TASK-002": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-001"] },
+        "TASK-002": { "status": "Completed", "parallelizable": false, "deps": ["TASK-001"] },
         "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] },
         "TASK-004": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
         "TASK-005": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
         "TASK-006": { "status": "Completed", "parallelizable": true, "deps": ["TASK-002"] },
-        "TASK-007": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-003", "TASK-004", "TASK-005", "TASK-006"] },
-        "TASK-008": { "status": "In Progress", "parallelizable": false, "deps": ["TASK-007"] }
+        "TASK-007": { "status": "Completed", "parallelizable": false, "deps": ["TASK-003", "TASK-004", "TASK-005", "TASK-006"] },
+        "TASK-008": { "status": "Completed", "parallelizable": false, "deps": ["TASK-007"] }
       }
     },
     "refactoring-editor-session-controller": {
@@ -492,6 +495,54 @@
           "deps": ["TASK-001", "refactoring-frontend-solidjs-migration:TASK-007"]
         },
         "TASK-003": { "status": "Completed", "parallelizable": false, "deps": ["TASK-002"] }
+      }
+    },
+    "frontend-mode-built-asset-contract": {
+      "phase": 43,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["refactoring-server-ui-asset-serving:TASK-003"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "refactoring-frontend-solidjs-migration:TASK-008"]
+        }
+      }
+    },
+    "frontend-mode-package-root-alignment": {
+      "phase": 44,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["frontend-mode-built-asset-contract:TASK-002"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        }
+      }
+    },
+    "frontend-tooling-package-root-alignment": {
+      "phase": 45,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["frontend-mode-package-root-alignment:TASK-002"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        }
       }
     }
   }

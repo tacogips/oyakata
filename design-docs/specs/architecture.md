@@ -66,8 +66,10 @@ Outputs:
 - Serves the built frontend bundle from `ui/dist/`
 - Returns an explicit setup error page when the built frontend bundle is unavailable instead of embedding a second browser implementation in the server
 - Exposes a small UI bootstrap/config endpoint so frontend assets do not need server mode baked in at build time
-- Derives the reported frontend mode for that bootstrap/config endpoint from the checked-in UI entrypoint by default, while still allowing an explicit override for tests or forced deployments
-- Fails the UI bootstrap/config request explicitly when the checked-in frontend entrypoint is missing or ambiguous, rather than silently defaulting to a stale framework mode
+- Derives the reported frontend mode for that bootstrap/config endpoint from explicit metadata published under `ui/dist/` when available, while still allowing an explicit override for tests or forced deployments
+- Resolves that default `ui/dist/` metadata path from the same package root used for frontend entrypoint detection and built-asset serving, so overrides cannot mix one package's source tree with another package's built bundle
+- Falls back to checked-in frontend entrypoint detection only when built frontend metadata is absent, so local development and pre-rebuild states still remain diagnosable
+- Fails the UI bootstrap/config request explicitly when built frontend metadata is invalid, or when fallback source-entrypoint detection is missing or ambiguous, rather than silently defaulting to a stale framework mode
 - Owns the canonical JSON transport contract consumed by the browser UI through shared TypeScript definitions under `src/shared/`, rather than duplicating response shapes inside frontend components
 - Keeps repeated request-body normalization and workflow-run option parsing in server-owned helpers under `src/server/` so route handlers stay focused on routing, mode checks, orchestration, and responses
 - Keeps browser workflow bundle save/validate request parsing and validation-time node-payload remapping in dedicated server-owned helpers under `src/server/`, so the main API route module does not own ad hoc bundle shape checks
@@ -85,7 +87,7 @@ Outputs:
 - Uses the existing local JSON API; frontend build output is treated as replaceable static assets rather than inline server-rendered HTML
 - Consumes shared transport contracts from `src/shared/` for API/bootstrap/session payloads; mutable editor-local state remains frontend-owned
 - Reuses shared workflow domain types from `src/workflow/types.ts` for persisted workflow structures; any editor-only fields must be modeled as explicit additive extensions
-- The current checked-in implementation is still Svelte-based, but the active migration target is SolidJS and the server/browser contract must remain framework-agnostic during the transition
+- The current checked-in browser implementation is SolidJS-based and is served from the built `ui/dist/` bundle
 - Keeps pure editor workflow-structure operations in frontend-owned helper modules under `ui/src/lib/`; the top-level app component is the orchestration layer for UI state, requests, and user-facing messages
 - Keeps pure editor support helpers such as parsing, validation merging, status presentation, and error-message normalization in frontend-owned helper modules under `ui/src/lib/`; the top-level app component should not be the canonical home for those pure utilities
 - Keeps pure workflow/session state-transition helpers such as reset-state factories, loaded-workflow adaptation, selected-node reconciliation, and workflow-scoped session filtering in frontend-owned helper modules under `ui/src/lib/`
@@ -96,7 +98,8 @@ Outputs:
 - Keeps the workflow editor center-panel markup in dedicated frontend components under `ui/src/lib/components/`; the top-level app component should own orchestration and state, not the full editor surface markup
 - The legacy inline browser editor has been removed; `oyakata serve` now expects the built frontend assets
 - The frontend build is a separate project rooted at `ui/`; repository automation must invoke explicit UI verification because the root Bun/TypeScript pipeline does not discover frontend framework sources automatically
-- UI verification is framework-specific and now routes through a framework-detecting repository command: the current checked-in Svelte path still resolves to `svelte-check`, while the future SolidJS cutover should switch the detected entrypoint/dependencies and continue using the same repository-level typecheck/build commands plus browser checks
+- UI verification is framework-specific and routes through framework-detecting repository commands; the current checked-in SolidJS path resolves to the Solid/Vite toolchain while preserving the same repository-level typecheck/build commands plus browser checks
+- Those repository-level UI tooling commands must resolve `ui/`, `package.json`, and `node_modules/` from the checked-in script/package root rather than the caller's current working directory, so wrapper scripts and non-root invocation paths cannot silently change the active frontend context
 - Repository Bun unit-test commands must scope discovery to source roots (`src/`, `ui/src/`) rather than repository-wide default discovery, so generated `dist/` artifacts cannot re-run stale compiled tests during migration work
 - Framework-detecting UI verification must fail with an explicit dependency-install message when the detected frontend framework is not actually installed, so migration-time failures stay actionable instead of surfacing as opaque plugin/import errors
 - Repository development environments such as `flake.nix` must provide a real `node` binary in addition to Bun, because Vite, Vitest, and Playwright remain Node-owned tooling in this architecture

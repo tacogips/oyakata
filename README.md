@@ -141,13 +141,15 @@ Runtime SQLite behavior:
 
 Frontend verification:
 - The browser frontend lives under `ui/` and is verified separately from the root TypeScript program.
-- The current checked-in frontend is still Svelte, but the migration target is SolidJS.
-- `bun run ui:framework` reports the active checked-in frontend entrypoint and the concrete blockers that still prevent the SolidJS cutover in the current workspace.
+- The current checked-in frontend is SolidJS.
+- `bun run ui:framework` reports the active checked-in frontend entrypoint and any local workspace blockers for the verified UI toolchain.
 - `bun run typecheck:ui` detects the active frontend entrypoint and runs the matching framework-aware verification path.
 - `bun run test:ui` runs UI unit tests non-interactively through Vitest and does not rely on the interactive Vitest UI server.
 - `bun run test:ui:interactive` is the opt-in interactive Vitest UI path and uses the same repository-local Node/package guards as the other UI tooling commands.
 - Run `bun run check:ui` for the UI typecheck plus bundle verification.
 - Run `bun run typecheck` to verify both server and UI projects together.
+- `bun run build:ui` now emits `ui/dist/frontend-mode.json` so `/api/ui-config` reports the frontend contract of the actually served assets instead of inferring it only from source entrypoints.
+- Repository UI tooling commands resolve the package root from their checked-in script location rather than the caller's current working directory, so framework detection, `package.json`, and `node_modules` stay aligned.
 
 ## Library API
 

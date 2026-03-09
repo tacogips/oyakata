@@ -258,6 +258,83 @@ describe("handleApiRequest", () => {
     expect(detectFrontendMode()).toBe("solid-dist");
   });
 
+  test("prefers built frontend metadata over source-entrypoint detection", async () => {
+    const root = await makeTempDir();
+    const uiDistRoot = path.join(root, "ui-dist");
+    const uiSourceRoot = path.join(root, "ui", "src");
+    await mkdir(uiDistRoot, { recursive: true });
+    await mkdir(uiSourceRoot, { recursive: true });
+    await writeFile(
+      path.join(uiDistRoot, "frontend-mode.json"),
+      JSON.stringify({ frontend: "solid-dist" }),
+      "utf8",
+    );
+    await writeFile(path.join(uiSourceRoot, "main.ts"), "export {};\n", "utf8");
+
+    const fakeModuleUrl = new URL(
+      `file://${path.join(root, "src", "server", "api.ts")}`,
+    ).href;
+    expect(
+      detectFrontendMode({
+        uiDistRoot,
+        frontendModeModuleUrl: fakeModuleUrl,
+      }),
+    ).toBe("solid-dist");
+  });
+
+  test("scopes built frontend metadata lookup to the overridden package root", async () => {
+    const root = await makeTempDir();
+    const uiDistRoot = path.join(root, "ui", "dist");
+    const uiSourceRoot = path.join(root, "ui", "src");
+    await mkdir(uiDistRoot, { recursive: true });
+    await mkdir(uiSourceRoot, { recursive: true });
+    await writeFile(
+      path.join(uiDistRoot, "frontend-mode.json"),
+      JSON.stringify({ frontend: "solid-dist" }),
+      "utf8",
+    );
+    await writeFile(path.join(uiSourceRoot, "main.ts"), "export {};\n", "utf8");
+
+    const fakeModuleUrl = new URL(
+      `file://${path.join(root, "src", "server", "api.ts")}`,
+    ).href;
+    expect(
+      detectFrontendMode({
+        frontendModeModuleUrl: fakeModuleUrl,
+      }),
+    ).toBe("solid-dist");
+  });
+
+  test("rejects invalid built frontend metadata explicitly", async () => {
+    const root = await makeTempDir();
+    const uiDistRoot = path.join(root, "ui-dist");
+    await mkdir(uiDistRoot, { recursive: true });
+    await writeFile(
+      path.join(uiDistRoot, "frontend-mode.json"),
+      JSON.stringify({ frontend: "unsupported-dist" }),
+      "utf8",
+    );
+
+    expect(() => detectFrontendMode({ uiDistRoot })).toThrow(
+      /unsupported frontend mode/i,
+    );
+
+    const res = await handleApiRequest(
+      new Request("http://localhost/api/ui-config"),
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        uiDistRoot,
+      },
+    );
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringMatching(/unsupported frontend mode/i),
+    });
+  });
+
   test("detects a Solid frontend entrypoint from a package-relative ui/src/main.tsx", async () => {
     const root = await makeTempDir();
     const uiSourceRoot = path.join(root, "ui", "src");

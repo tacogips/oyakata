@@ -1,6 +1,11 @@
+import { existsSync, readFileSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  parseBuiltFrontendModeMetadata,
+  resolveBuiltFrontendModeMetadataPath,
+} from "../../scripts/ui-built-assets.mjs";
 import {
   detectUiFramework,
   frontendModeFromUiFramework,
@@ -23,10 +28,30 @@ export function resolveDefaultUiDistRoot(
   return path.join(resolvePackageRoot(moduleUrl), "ui", "dist");
 }
 
-const DEFAULT_UI_DIST_ROOT = resolveDefaultUiDistRoot();
+function resolveUiDistRoot(
+  context: UiAssetContext,
+  moduleUrl: string = import.meta.url,
+): string {
+  if (context.uiDistRoot !== undefined) {
+    return context.uiDistRoot;
+  }
 
-function resolveUiDistRoot(context: UiAssetContext): string {
-  return context.uiDistRoot ?? DEFAULT_UI_DIST_ROOT;
+  const resolvedModuleUrl = context.frontendModeModuleUrl ?? moduleUrl;
+  return resolveDefaultUiDistRoot(resolvedModuleUrl);
+}
+
+function tryReadBuiltFrontendMode(
+  context: UiAssetContext,
+  moduleUrl: string = import.meta.url,
+): FrontendMode | null {
+  const metadataPath = resolveBuiltFrontendModeMetadataPath({
+    uiDistRoot: resolveUiDistRoot(context, moduleUrl),
+  });
+  if (!existsSync(metadataPath)) {
+    return null;
+  }
+
+  return parseBuiltFrontendModeMetadata(readFileSync(metadataPath, "utf8"));
 }
 
 export function detectFrontendMode(
@@ -35,6 +60,11 @@ export function detectFrontendMode(
 ): FrontendMode {
   if (context.frontendMode !== undefined) {
     return context.frontendMode;
+  }
+
+  const builtFrontendMode = tryReadBuiltFrontendMode(context, moduleUrl);
+  if (builtFrontendMode !== null) {
+    return builtFrontendMode;
   }
 
   const resolvedModuleUrl = context.frontendModeModuleUrl ?? moduleUrl;

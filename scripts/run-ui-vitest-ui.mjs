@@ -4,16 +4,28 @@ import { spawnSync } from "node:child_process";
 import process from "node:process";
 import {
   assertWorkspacePackage,
+  resolvePackageOptionsFromModuleUrl,
   resolvePackageBinary,
 } from "./ui-framework.mjs";
 
-assertWorkspacePackage("vitest", "run the interactive UI test server");
-assertWorkspacePackage("@vitest/ui", "run the interactive UI test server");
+const packageOptions = resolvePackageOptionsFromModuleUrl(import.meta.url);
+
+assertWorkspacePackage(
+  "vitest",
+  "run the interactive UI test server",
+  packageOptions,
+);
+assertWorkspacePackage(
+  "@vitest/ui",
+  "run the interactive UI test server",
+  packageOptions,
+);
 
 const result = spawnSync(
-  resolvePackageBinary("vitest", "vitest"),
+  resolvePackageBinary("vitest", "vitest", packageOptions),
   ["--ui", ...process.argv.slice(2)],
   {
+    cwd: packageOptions.packageRoot,
     stdio: "inherit",
   },
 );
