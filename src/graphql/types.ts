@@ -59,6 +59,13 @@ export interface WorkflowExecutionLookupInput {
   readonly workflowExecutionId: string;
 }
 
+export interface WorkflowExecutionOverviewLookupInput {
+  readonly workflowExecutionId: string;
+  readonly recentLogLimit?: number;
+  readonly firstCommunications?: number;
+  readonly afterCommunicationId?: string;
+}
+
 export type WorkflowDefinitionsView = WorkflowListResponse["workflows"];
 
 export interface WorkflowExecutionsQueryInput {
@@ -98,6 +105,17 @@ export interface WorkflowExecutionView {
   readonly workflowExecutionId: string;
   readonly session: WorkflowSessionState;
   readonly nodeExecutions: readonly RuntimeNodeExecutionSummary[];
+  readonly nodeLogs: readonly RuntimeNodeLogEntry[];
+}
+
+export interface WorkflowExecutionOverviewView {
+  readonly workflowExecutionId: string;
+  readonly workflowId: string;
+  readonly workflowName: string;
+  readonly status: WorkflowSessionState["status"];
+  readonly session: WorkflowSessionState;
+  readonly nodes: readonly NodeExecutionView[];
+  readonly communications: CommunicationConnection;
   readonly nodeLogs: readonly RuntimeNodeLogEntry[];
 }
 
@@ -292,6 +310,10 @@ export interface GraphqlQueryRoot {
     input: WorkflowExecutionLookupInput,
     context?: GraphqlRequestContext,
   ): Promise<WorkflowExecutionView | null>;
+  workflowExecutionOverview(
+    input: WorkflowExecutionOverviewLookupInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowExecutionOverviewView | null>;
   workflowExecutions(
     input: WorkflowExecutionsQueryInput,
     context?: GraphqlRequestContext,

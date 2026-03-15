@@ -35,6 +35,8 @@ import { type CommunicationRecord } from "../workflow/session";
 import {
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
+  type RuntimeNodeExecutionSummary,
+  type RuntimeNodeLogEntry,
 } from "../workflow/runtime-db";
 import { loadSession, saveSession } from "../workflow/session-store";
 import { listSessions } from "../workflow/session-store";
@@ -65,6 +67,8 @@ import type {
   WorkflowDefinitionView,
   WorkflowDefinitionsView,
   WorkflowExecutionConnection,
+  WorkflowExecutionOverviewLookupInput,
+  WorkflowExecutionOverviewView,
   ReplayCommunicationInput,
   ReplayCommunicationPayload,
   RetryCommunicationDeliveryInput,
@@ -435,6 +439,60 @@ function findTerminalMessage(
   return session.lastError ?? null;
 }
 
+async function buildNodeExecutionViewFromState(
+  session: WorkflowSessionState,
+  sessionRecord: WorkflowSessionState["nodeExecutions"][number],
+  runtimeExecutions: readonly RuntimeNodeExecutionSummary[],
+  runtimeLogs: readonly RuntimeNodeLogEntry[],
+  recentLogLimit: number | undefined,
+): Promise<NodeExecutionView> {
+  const runtimeExecution = runtimeExecutions.find(
+    (execution) =>
+      execution.nodeId === sessionRecord.nodeId &&
+      execution.nodeExecId === sessionRecord.nodeExecId,
+  );
+  const matchingLogs = runtimeLogs.filter(
+    (entry) => entry.nodeExecId === sessionRecord.nodeExecId,
+  );
+  const logLimit = recentLogLimit ?? 20;
+  const recentLogs =
+    logLimit <= 0 ? [] : matchingLogs.slice(Math.max(matchingLogs.length - logLimit, 0));
+  const artifactDir = runtimeExecution?.artifactDir ?? sessionRecord.artifactDir;
+
+  return {
+    workflowId: session.workflowId,
+    workflowExecutionId: session.sessionId,
+    nodeId: sessionRecord.nodeId,
+    nodeExecId: sessionRecord.nodeExecId,
+    status: sessionRecord.status,
+    startedAt: sessionRecord.startedAt,
+    endedAt: sessionRecord.endedAt,
+    ...(sessionRecord.attempt === undefined ? {} : { attempt: sessionRecord.attempt }),
+    ...(sessionRecord.outputAttemptCount === undefined
+      ? {}
+      : { outputAttemptCount: sessionRecord.outputAttemptCount }),
+    ...(sessionRecord.outputValidationErrors === undefined
+      ? {}
+      : { outputValidationErrors: sessionRecord.outputValidationErrors }),
+    ...(sessionRecord.backendSessionId === undefined
+      ? {}
+      : { backendSessionId: sessionRecord.backendSessionId }),
+    ...(sessionRecord.backendSessionMode === undefined
+      ? {}
+      : { backendSessionMode: sessionRecord.backendSessionMode }),
+    ...(sessionRecord.restartedFromNodeExecId === undefined
+      ? {}
+      : { restartedFromNodeExecId: sessionRecord.restartedFromNodeExecId }),
+    artifactDir,
+    output:
+      runtimeExecution?.outputJson ??
+      (await readOptionalText(path.join(artifactDir, "output.json"))),
+    meta: await readOptionalText(path.join(artifactDir, "meta.json")),
+    terminalMessage: findTerminalMessage(session, sessionRecord.nodeExecId, matchingLogs),
+    recentLogs,
+  };
+}
+
 async function buildNodeExecutionView(
   input: NodeExecutionLookupInput,
   context: GraphqlRequestContext,
@@ -462,44 +520,14 @@ async function buildNodeExecutionView(
       execution.nodeId === input.nodeId && execution.nodeExecId === input.nodeExecId,
   );
   const runtimeLogs = await listRuntimeNodeLogs(input.workflowExecutionId, context);
-  const matchingLogs = runtimeLogs.filter(
-    (entry) => entry.nodeExecId === input.nodeExecId,
-  );
-  const logLimit = input.recentLogLimit ?? 20;
-  const recentLogs =
-    logLimit <= 0 ? [] : matchingLogs.slice(Math.max(matchingLogs.length - logLimit, 0));
-  const artifactDir = runtimeExecution?.artifactDir ?? sessionRecord.artifactDir;
 
-  return {
-    workflowId: input.workflowId,
-    workflowExecutionId: input.workflowExecutionId,
-    nodeId: sessionRecord.nodeId,
-    nodeExecId: sessionRecord.nodeExecId,
-    status: sessionRecord.status,
-    startedAt: sessionRecord.startedAt,
-    endedAt: sessionRecord.endedAt,
-    ...(sessionRecord.attempt === undefined ? {} : { attempt: sessionRecord.attempt }),
-    ...(sessionRecord.outputAttemptCount === undefined
-      ? {}
-      : { outputAttemptCount: sessionRecord.outputAttemptCount }),
-    ...(sessionRecord.outputValidationErrors === undefined
-      ? {}
-      : { outputValidationErrors: sessionRecord.outputValidationErrors }),
-    ...(sessionRecord.backendSessionId === undefined
-      ? {}
-      : { backendSessionId: sessionRecord.backendSessionId }),
-    ...(sessionRecord.backendSessionMode === undefined
-      ? {}
-      : { backendSessionMode: sessionRecord.backendSessionMode }),
-    ...(sessionRecord.restartedFromNodeExecId === undefined
-      ? {}
-      : { restartedFromNodeExecId: sessionRecord.restartedFromNodeExecId }),
-    artifactDir,
-    output: runtimeExecution?.outputJson ?? (await readOptionalText(path.join(artifactDir, "output.json"))),
-    meta: await readOptionalText(path.join(artifactDir, "meta.json")),
-    terminalMessage: findTerminalMessage(session, input.nodeExecId, matchingLogs),
-    recentLogs,
-  };
+  return buildNodeExecutionViewFromState(
+    session,
+    sessionRecord,
+    runtimeExecution === undefined ? [] : [runtimeExecution],
+    runtimeLogs,
+    input.recentLogLimit,
+  );
 }
 
 function toWorkflowExecutionSummary(
@@ -593,6 +621,60 @@ async function buildWorkflowExecutionView(
     session: loaded.value,
     nodeExecutions,
     nodeLogs,
+  };
+}
+
+async function buildWorkflowExecutionOverviewView(
+  input: WorkflowExecutionOverviewLookupInput,
+  context: GraphqlRequestContext,
+  deps: GraphqlSchemaDependencies,
+): Promise<WorkflowExecutionOverviewView | null> {
+  const loaded = await loadSession(input.workflowExecutionId, context);
+  if (!loaded.ok) {
+    return null;
+  }
+
+  const session = loaded.value;
+  const [runtimeExecutions, runtimeLogs] = await Promise.all([
+    listRuntimeNodeExecutions(input.workflowExecutionId, context),
+    listRuntimeNodeLogs(input.workflowExecutionId, context),
+  ]);
+  const nodes = await Promise.all(
+    session.nodeExecutions.map((execution) =>
+      buildNodeExecutionViewFromState(
+        session,
+        execution,
+        runtimeExecutions,
+        runtimeLogs,
+        input.recentLogLimit,
+      ),
+    ),
+  );
+
+  const communications = await buildCommunicationConnection(
+    {
+      workflowId: session.workflowId,
+      workflowExecutionId: input.workflowExecutionId,
+      ...(input.firstCommunications === undefined
+        ? {}
+        : { first: input.firstCommunications }),
+      ...(input.afterCommunicationId === undefined
+        ? {}
+        : { afterCommunicationId: input.afterCommunicationId }),
+    },
+    context,
+    deps,
+  );
+
+  return {
+    workflowExecutionId: input.workflowExecutionId,
+    workflowId: session.workflowId,
+    workflowName: session.workflowName,
+    status: session.status,
+    session,
+    nodes,
+    communications,
+    nodeLogs: runtimeLogs,
   };
 }
 
@@ -906,6 +988,13 @@ export function createGraphqlSchema(
         context: GraphqlRequestContext = {},
       ): Promise<WorkflowExecutionView | null> {
         return buildWorkflowExecutionView(input, context);
+      },
+
+      async workflowExecutionOverview(
+        input: WorkflowExecutionOverviewLookupInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowExecutionOverviewView | null> {
+        return buildWorkflowExecutionOverviewView(input, context, deps);
       },
 
       async workflowExecutions(

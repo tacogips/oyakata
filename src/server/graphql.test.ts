@@ -247,6 +247,113 @@ describe("GraphQL HTTP transport", () => {
     });
   });
 
+  test("exposes workflow execution overview over /graphql", async () => {
+    const root = await makeTempDir();
+    const { options, session } = await createCompletedWorkflowFixture(root);
+
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query WorkflowExecutionOverview($workflowExecutionId: String!) {
+              workflowExecutionOverview(workflowExecutionId: $workflowExecutionId) {
+                workflowExecutionId
+                workflowId
+                workflowName
+                status
+                nodes {
+                  nodeId
+                  nodeExecId
+                  backendSessionId
+                  backendSessionMode
+                  output
+                  recentLogs {
+                    message
+                  }
+                }
+                communications {
+                  totalCount
+                  items {
+                    record {
+                      communicationId
+                      fromNodeId
+                      toNodeId
+                      status
+                    }
+                    artifactSnapshot {
+                      outboxMessageJson
+                      outboxOutputRaw
+                      inboxMessageJson
+                    }
+                  }
+                }
+              }
+            }
+          `,
+          variables: {
+            workflowExecutionId: session.sessionId,
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      readonly data?: {
+        readonly workflowExecutionOverview?: {
+          readonly workflowExecutionId: string;
+          readonly workflowId: string;
+          readonly workflowName: string;
+          readonly status: string;
+          readonly nodes: readonly {
+            readonly output: string | null;
+            readonly recentLogs: readonly { readonly message: string }[];
+          }[];
+          readonly communications: {
+            readonly totalCount: number;
+            readonly items: readonly {
+              readonly artifactSnapshot: {
+                readonly outboxMessageJson: string | null;
+                readonly outboxOutputRaw: string | null;
+                readonly inboxMessageJson: string | null;
+              };
+            }[];
+          };
+        };
+      };
+    };
+
+    expect(payload.data?.workflowExecutionOverview?.workflowExecutionId).toBe(
+      session.sessionId,
+    );
+    expect(payload.data?.workflowExecutionOverview?.workflowId).toBe("demo");
+    expect(payload.data?.workflowExecutionOverview?.workflowName).toBe("demo");
+    expect(payload.data?.workflowExecutionOverview?.status).toBe(session.status);
+    expect(
+      payload.data?.workflowExecutionOverview?.communications.totalCount,
+    ).toBeGreaterThan(0);
+    expect(
+      payload.data?.workflowExecutionOverview?.nodes.some(
+        (node) =>
+          node.output !== null &&
+          node.output.includes("stage") &&
+          node.recentLogs.length > 0,
+      ),
+    ).toBe(true);
+    expect(
+      payload.data?.workflowExecutionOverview?.communications.items.some(
+        (item) =>
+          item.artifactSnapshot.outboxOutputRaw !== null &&
+          item.artifactSnapshot.inboxMessageJson !== null,
+      ),
+    ).toBe(true);
+  });
+
   test("exposes workflow-definition list/load/create/save/validate over /graphql", async () => {
     const root = await makeTempDir();
     const options = {

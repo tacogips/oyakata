@@ -157,6 +157,15 @@ bun run src/main.ts gql \
   --output json
 ```
 
+Workflow execution overview by run ID:
+
+```bash
+bun run src/main.ts gql \
+  'query ($workflowExecutionId: String!) { workflowExecutionOverview(workflowExecutionId: $workflowExecutionId, firstCommunications: 50, recentLogLimit: 10) { workflowExecutionId workflowId workflowName status nodes { nodeId nodeExecId backendSessionId backendSessionMode output } communications { totalCount items { record { communicationId fromNodeId toNodeId status } artifactSnapshot { outboxOutputRaw inboxMessageJson } } } } }' \
+  --variables '{"workflowExecutionId":"sess-20260315T000000Z-example"}' \
+  --output json
+```
+
 Frontend verification:
 - The browser frontend lives under `ui/` and is verified separately from the root TypeScript program.
 - The current checked-in frontend is SolidJS.

@@ -204,6 +204,45 @@ describe("createGraphqlSchema", () => {
     );
   });
 
+  test("aggregates node detail and communication snapshots by workflow execution id", async () => {
+    const root = await makeTempDir();
+    const { options, session } = await createCompletedWorkflowFixture(root);
+    const schema = createGraphqlSchema();
+
+    const overview = await schema.query.workflowExecutionOverview(
+      {
+        workflowExecutionId: session.sessionId,
+        recentLogLimit: 5,
+        firstCommunications: 20,
+      },
+      options,
+    );
+
+    expect(overview?.workflowExecutionId).toBe(session.sessionId);
+    expect(overview?.workflowId).toBe("demo");
+    expect(overview?.workflowName).toBe("demo");
+    expect(overview?.status).toBe(session.status);
+    expect(overview?.nodes.length).toBe(session.nodeExecutions.length);
+    expect(overview?.communications.totalCount).toBeGreaterThan(0);
+    expect(overview?.nodeLogs.length).toBeGreaterThan(0);
+
+    const nodeWithOutput = overview?.nodes.find((node) => node.output !== null);
+    expect(nodeWithOutput?.output).toContain("stage");
+
+    const communicationWithSnapshot = overview?.communications.items.find(
+      (item) =>
+        item.artifactSnapshot.outboxOutputRaw !== null &&
+        item.artifactSnapshot.inboxMessageJson !== null,
+    );
+    expect(communicationWithSnapshot).toBeDefined();
+    expect(communicationWithSnapshot?.artifactSnapshot.outboxOutputRaw).toContain(
+      "\"payload\"",
+    );
+    expect(communicationWithSnapshot?.artifactSnapshot.inboxMessageJson).toContain(
+      "\"communicationId\"",
+    );
+  });
+
   test("supports async browser execution inputs over GraphQL", async () => {
     const root = await makeTempDir();
     const created = await createWorkflowTemplate("demo", {

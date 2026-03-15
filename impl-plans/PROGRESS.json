@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-03-15T08:20:00Z",
+  "lastUpdated": "2026-03-15T13:38:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -63,7 +63,8 @@
     "60": { "status": "COMPLETED" },
     "61": { "status": "COMPLETED" },
     "62": { "status": "COMPLETED" },
-    "63": { "status": "COMPLETED" }
+    "63": { "status": "COMPLETED" },
+    "64": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -1470,6 +1471,27 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": ["TASK-002"]
+        }
+      }
+    },
+    "graphql-workflow-execution-overview": {
+      "phase": 64,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["graphql-browser-execution-session-migration:TASK-003"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     }
