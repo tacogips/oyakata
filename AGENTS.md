@@ -217,7 +217,7 @@ Browser Verify (agent-browser: open, snapshot, screenshot)
 
 **Browser verification commands**:
 ```bash
-agent-browser open http://127.0.0.1:5173
+agent-browser open http://127.0.0.1:43173
 agent-browser snapshot -i
 agent-browser screenshot --full
 agent-browser close

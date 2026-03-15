@@ -4,7 +4,11 @@ export interface DerivedVisNode {
   readonly id: string;
   readonly order: number;
   readonly indent: number;
-  readonly color: "default" | `loop:${string}` | `group:${string}` | `branch:${string}`;
+  readonly color:
+    | "default"
+    | `loop:${string}`
+    | `group:${string}`
+    | `branch:${string}`;
 }
 
 interface ScopeInterval {
@@ -22,7 +26,9 @@ interface ScopeMetadata {
 function compareIntervals(a: ScopeInterval, b: ScopeInterval): number {
   const spanA = a.endOrder - a.startOrder;
   const spanB = b.endOrder - b.startOrder;
-  return spanA - spanB || a.startOrder - b.startOrder || a.id.localeCompare(b.id);
+  return (
+    spanA - spanB || a.startOrder - b.startOrder || a.id.localeCompare(b.id)
+  );
 }
 
 function resolveSubWorkflowInterval(
@@ -31,7 +37,11 @@ function resolveSubWorkflowInterval(
 ): ScopeInterval | null {
   const inputOrder = orderByNodeId.get(subWorkflow.inputNodeId);
   const outputOrder = orderByNodeId.get(subWorkflow.outputNodeId);
-  if (inputOrder === undefined || outputOrder === undefined || inputOrder > outputOrder) {
+  if (
+    inputOrder === undefined ||
+    outputOrder === undefined ||
+    inputOrder > outputOrder
+  ) {
     return null;
   }
 
@@ -42,7 +52,9 @@ function resolveSubWorkflowInterval(
   };
 }
 
-function colorForSubWorkflow(subWorkflow: SubWorkflowRef): DerivedVisNode["color"] {
+function colorForSubWorkflow(
+  subWorkflow: SubWorkflowRef,
+): DerivedVisNode["color"] {
   if (subWorkflow.block?.type === "loop-body") {
     return `loop:${subWorkflow.block.loopId ?? subWorkflow.id}`;
   }
@@ -58,14 +70,20 @@ function groupScopeColor(
 ): DerivedVisNode["color"] {
   const loopColor = groupScopes
     .map((scope) => colorByGroupScopeId.get(scope.id))
-    .find((color): color is `loop:${string}` => typeof color === "string" && color.startsWith("loop:"));
+    .find(
+      (color): color is `loop:${string}` =>
+        typeof color === "string" && color.startsWith("loop:"),
+    );
   if (loopColor !== undefined) {
     return loopColor;
   }
 
   const branchColor = groupScopes
     .map((scope) => colorByGroupScopeId.get(scope.id))
-    .find((color): color is `branch:${string}` => typeof color === "string" && color.startsWith("branch:"));
+    .find(
+      (color): color is `branch:${string}` =>
+        typeof color === "string" && color.startsWith("branch:"),
+    );
   if (branchColor !== undefined) {
     return branchColor;
   }
@@ -102,7 +120,10 @@ function buildScopeMetadata(
         return null;
       }
       const continueTargetOrders = workflow.edges
-        .filter((edge) => edge.from === loop.judgeNodeId && edge.when === loop.continueWhen)
+        .filter(
+          (edge) =>
+            edge.from === loop.judgeNodeId && edge.when === loop.continueWhen,
+        )
         .map((edge) => orderByNodeId.get(edge.to))
         .filter((value): value is number => value !== undefined)
         .filter((value) => value <= judgeOrder);
@@ -125,15 +146,22 @@ function buildScopeMetadata(
   };
 }
 
-function collectScopesForOrder(order: number, intervals: readonly ScopeInterval[]): readonly ScopeInterval[] {
-  return intervals.filter((entry) => entry.startOrder <= order && order <= entry.endOrder).sort(compareIntervals);
+function collectScopesForOrder(
+  order: number,
+  intervals: readonly ScopeInterval[],
+): readonly ScopeInterval[] {
+  return intervals
+    .filter((entry) => entry.startOrder <= order && order <= entry.endOrder)
+    .sort(compareIntervals);
 }
 
 export function deriveWorkflowVisualization(args: {
   readonly workflow: WorkflowJson;
   readonly workflowVis: WorkflowVisJson;
 }): readonly DerivedVisNode[] {
-  const orderedVisNodes = [...args.workflowVis.nodes].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  const orderedVisNodes = [...args.workflowVis.nodes].sort(
+    (a, b) => a.order - b.order || a.id.localeCompare(b.id),
+  );
   const orderByNodeId = new Map<string, number>();
   orderedVisNodes.forEach((node) => {
     orderByNodeId.set(node.id, node.order);
@@ -147,11 +175,17 @@ export function deriveWorkflowVisualization(args: {
       collectScopesForOrder(node.order, scopeMetadata.groupIntervals).length +
       collectScopesForOrder(node.order, scopeMetadata.loopIntervals).length,
     color: (() => {
-      const loopScopes = collectScopesForOrder(node.order, scopeMetadata.loopIntervals);
+      const loopScopes = collectScopesForOrder(
+        node.order,
+        scopeMetadata.loopIntervals,
+      );
       if (loopScopes.length > 0) {
         return `loop:${loopScopes[0]?.id ?? ""}` as `loop:${string}`;
       }
-      const groupScopes = collectScopesForOrder(node.order, scopeMetadata.groupIntervals);
+      const groupScopes = collectScopesForOrder(
+        node.order,
+        scopeMetadata.groupIntervals,
+      );
       if (groupScopes.length > 0) {
         return groupScopeColor(groupScopes, scopeMetadata.colorByGroupScopeId);
       }

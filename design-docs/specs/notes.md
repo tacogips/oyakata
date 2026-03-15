@@ -11,18 +11,21 @@ The project uses workflow-driven coordination where agent behavior is explicit a
 ### Primary Agent Providers
 
 Initial design scope includes exactly two tacogips execution backends:
+
 - `tacogips/codex-agent`
 - `tacogips/claude-code-agent`
 
 ### Prompt Decomposition
 
 Prompt payloads are separated into:
+
 - `promptTemplate`: reusable template
 - `variables`: runtime-resolved data
 
 This enables deterministic replay and easier session debugging.
 
 Additional input assembly policy:
+
 - Keep prompt rendering simple (`mustache`-style substitution).
 - Build complex runtime payloads as structured `arguments` via explicit bindings.
 - Avoid logic-heavy template engines (for example full Handlebars helper flow) in core runtime paths.
@@ -30,6 +33,7 @@ Additional input assembly policy:
 ### Workflow File Split
 
 Workflow data is intentionally split:
+
 - `workflow.json`: structure/control and workflow `description`
 - `node-{id}.json`: runtime payload (`executionBackend`, `model`, `promptTemplate`, `variables`)
 - `workflow-vis.json`: browser visualization state (`order`, etc.; `indent`/`color` are derived)
@@ -39,6 +43,7 @@ This avoids coupling runtime semantics with browser UI state.
 ### Deterministic Control Flow
 
 Workflow JSON must make control flow explicit:
+
 - graph edges for transitions
 - branch conditions
 - loop policies and loop-judge nodes
@@ -55,10 +60,17 @@ Implicit transitions are avoided.
 - Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. The parent workflow manager writes only to the recipient sub-workflow manager inbox, and the recipient sub-workflow manager writes only to nodes inside that sub-workflow (validated via `subWorkflows[].nodeIds`). A re-executed/resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
 - GraphQL migration direction: GraphQL is the canonical control-plane schema during migration for execution, communication inspection/replay, and manager send operations. CLI may remain as a thin client surface over GraphQL, while existing REST editor endpoints remain active until migrated. See `design-docs/specs/design-graphql-manager-control-plane.md`.
 - Manager control-plane separation: a manager-issued GraphQL manager-message mutation invoked through `oyakata gql` is not itself a mailbox communication. It is a scoped control-plane request that may cause new mailbox communications, retries, planner-state changes, or node execution requests.
+- Manager-message provenance: manager-authored mailbox sends now use discriminated `payloadRef` provenance so node-output-backed and manager-message-backed communications stay replay/retry compatible under one durable artifact model.
 - File/image reference portability: GraphQL must use data-root-relative file references resolved under `OYAKATA_ROOT_DATA_DIR`, never host absolute paths. This is required for future Podman/container node execution with bind-mounted or synchronized data volumes.
+- Manager attachment scope: manager-scoped GraphQL attachments are not just root-data-relative; they must stay inside the authenticated execution's `files/{workflowId}/{workflowExecutionId}/...` namespace so manager messages cannot read unrelated workflow artifacts or session files.
+- Root-data migration note: `OYAKATA_ROOT_DATA_DIR` is the canonical setting for derived artifact/session/file paths, while `OYAKATA_RUNTIME_ROOT` remains an implementation compatibility alias until older flows are migrated.
 - `oyakata gql` variables contract: GraphQL variables are passed through `--variables`, which accepts inline JSON or `@path/to/variables.json`. First-iteration attachment handling assumes files are pre-placed under the Oyakata root data directory; no upload mutation is introduced yet.
+- GraphQL transport contract: `/graphql` accepts standard JSON request envelopes with `query` and optional `variables`, and `oyakata gql` defaults to the local serve endpoint at `http://127.0.0.1:43173/graphql` unless `--endpoint` or `OYAKATA_GRAPHQL_ENDPOINT` overrides it.
 - Manager action contract: execution-affecting manager requests must use typed GraphQL actions. Freeform text may be retained for audit notes, but must not be the only source of truth for privileged control decisions.
 - Manager auth/idempotency contract: GraphQL manager mutations use a runtime-issued bearer token scoped to one manager session and enforce persisted idempotency by `(mutationName, managerSessionId, idempotencyKey)`.
+- Manager message identity contract: `managerMessageId` must be allocated with collision-safe opaque ids so concurrent `sendManagerMessage` requests cannot reuse the same append-only message record.
+- Manager runtime session lifecycle: manager-node executions mint a scoped GraphQL manager session at runtime, pass the ambient control-plane environment only to manager-capable adapters, and expire the token when the step ends. See `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`.
+- Manager control-mode exclusivity: each manager execution persists one authoritative control source, so `sendManagerMessage` and payload `managerControl` cannot both drive the same manager step; the control-mode claim itself must be atomic at the storage boundary.
 - Node output ingestion contract: ordinary node completion is runtime-captured in the execution path itself, not discovered by periodic scanning for `output.json` files. File watching is only an adapter-local fallback for special external backends and must still feed results back into the runtime-owned completion path.
 - Timeout inspection fallback: if the normal transition/notification path fails, Oyakata still needs a deterministic inspection path for node `status`, published `output.json`, `meta.json`, and timeout/failure messages via GraphQL `nodeExecution(...)` or internal runtime-db/session helpers.
 

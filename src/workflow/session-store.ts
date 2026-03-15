@@ -1,9 +1,14 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
-import { isSafeSessionId, normalizeSessionState, type WorkflowSessionState } from "./session";
+import {
+  isSafeSessionId,
+  normalizeSessionState,
+  type WorkflowSessionState,
+} from "./session";
+import { resolveRootDataDir } from "./paths";
 import { saveSessionSnapshotToRuntimeDb } from "./runtime-db";
-import { DEFAULT_RUNTIME_ROOT, type LoadOptions } from "./types";
+import { type LoadOptions } from "./types";
 
 export interface SessionStoreOptions extends LoadOptions {
   readonly sessionStoreRoot?: string;
@@ -29,15 +34,7 @@ function resolveSessionStoreRoot(options: SessionStoreOptions = {}): string {
       : path.resolve(options.cwd ?? process.cwd(), envRoot);
   }
 
-  const runtimeRootEnv = env["OYAKATA_RUNTIME_ROOT"];
-  const runtimeRoot =
-    typeof runtimeRootEnv === "string" && runtimeRootEnv.length > 0
-      ? runtimeRootEnv
-      : DEFAULT_RUNTIME_ROOT;
-  const normalizedRuntimeRoot = path.isAbsolute(runtimeRoot)
-    ? runtimeRoot
-    : path.resolve(options.cwd ?? process.cwd(), runtimeRoot);
-  return path.join(normalizedRuntimeRoot, "sessions");
+  return path.join(resolveRootDataDir(options), "sessions");
 }
 
 function sessionFilePath(sessionStoreRoot: string, sessionId: string): string {
@@ -49,7 +46,10 @@ export async function saveSession(
   options: SessionStoreOptions = {},
 ): Promise<Result<string, SessionStoreFailure>> {
   if (!isSafeSessionId(session.sessionId)) {
-    return err({ code: "INVALID_SESSION_ID", message: `invalid session id '${session.sessionId}'` });
+    return err({
+      code: "INVALID_SESSION_ID",
+      message: `invalid session id '${session.sessionId}'`,
+    });
   }
 
   const root = resolveSessionStoreRoot(options);
@@ -66,7 +66,10 @@ export async function saveSession(
     return ok(target);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
-    return err({ code: "IO", message: `failed writing session file: ${message}` });
+    return err({
+      code: "IO",
+      message: `failed writing session file: ${message}`,
+    });
   }
 }
 
@@ -75,7 +78,10 @@ export async function loadSession(
   options: SessionStoreOptions = {},
 ): Promise<Result<WorkflowSessionState, SessionStoreFailure>> {
   if (!isSafeSessionId(sessionId)) {
-    return err({ code: "INVALID_SESSION_ID", message: `invalid session id '${sessionId}'` });
+    return err({
+      code: "INVALID_SESSION_ID",
+      message: `invalid session id '${sessionId}'`,
+    });
   }
 
   const root = resolveSessionStoreRoot(options);
@@ -85,15 +91,24 @@ export async function loadSession(
     const content = await readFile(target, "utf8");
     const parsed = JSON.parse(content) as unknown;
     if (typeof parsed !== "object" || parsed === null) {
-      return err({ code: "INVALID_DATA", message: "session file content must be an object" });
+      return err({
+        code: "INVALID_DATA",
+        message: "session file content must be an object",
+      });
     }
     return ok(normalizeSessionState(parsed as WorkflowSessionState));
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     if (message.includes("ENOENT")) {
-      return err({ code: "NOT_FOUND", message: `session not found: ${sessionId}` });
+      return err({
+        code: "NOT_FOUND",
+        message: `session not found: ${sessionId}`,
+      });
     }
-    return err({ code: "IO", message: `failed reading session file: ${message}` });
+    return err({
+      code: "IO",
+      message: `failed reading session file: ${message}`,
+    });
   }
 }
 

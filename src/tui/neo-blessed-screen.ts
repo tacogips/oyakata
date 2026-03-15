@@ -32,9 +32,10 @@ export interface NeoBlessedWorkflowSelection {
 }
 
 async function loadBlessedFactory(): Promise<BlessedFactory> {
-  const dynamicImport = new Function("moduleName", "return import(moduleName);") as (
-    moduleName: string,
-  ) => Promise<unknown>;
+  const dynamicImport = new Function(
+    "moduleName",
+    "return import(moduleName);",
+  ) as (moduleName: string) => Promise<unknown>;
   const module = (await dynamicImport("neo-blessed")) as BlessedFactory;
   return module;
 }
@@ -131,7 +132,9 @@ export async function renderNeoBlessedWorkflowSelector(options: {
   updateWorkflows(workflowNames);
   list.focus();
 
-  const complete = (result: NeoBlessedWorkflowSelection): NeoBlessedWorkflowSelection => {
+  const complete = (
+    result: NeoBlessedWorkflowSelection,
+  ): NeoBlessedWorkflowSelection => {
     screen.destroy();
     return result;
   };
@@ -156,18 +159,24 @@ export async function renderNeoBlessedWorkflowSelector(options: {
         workflowNames = [...(await options.refreshWorkflowNames())];
         updateWorkflows(workflowNames);
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown error";
+        const message =
+          error instanceof Error ? error.message : "unknown error";
         options.io.stderr(`tui refresh failed: ${message}`);
       }
     });
 
     screen.key(["enter"], () => {
       const selectedIndex = list.getItemIndex(list.selected ?? null);
-      const selectedWorkflowName = resolveSelectedWorkflowName(selectedIndex, workflowNames);
+      const selectedWorkflowName = resolveSelectedWorkflowName(
+        selectedIndex,
+        workflowNames,
+      );
       if (selectedWorkflowName === undefined) {
         return;
       }
-      resolve(complete({ type: "selected", workflowName: selectedWorkflowName }));
+      resolve(
+        complete({ type: "selected", workflowName: selectedWorkflowName }),
+      );
     });
 
     screen.render();

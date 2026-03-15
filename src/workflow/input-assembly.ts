@@ -13,7 +13,9 @@ export interface AssembledNodeInput {
   readonly arguments: Readonly<Record<string, unknown>> | null;
 }
 
-function deepCloneRecord(value: Readonly<Record<string, unknown>>): Record<string, unknown> {
+function deepCloneRecord(
+  value: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
@@ -39,7 +41,11 @@ function getAtPath(value: unknown, pathValue: string | undefined): unknown {
   return current;
 }
 
-function setAtPath(target: Record<string, unknown>, pathValue: string, value: unknown): void {
+function setAtPath(
+  target: Record<string, unknown>,
+  pathValue: string,
+  value: unknown,
+): void {
   const segments = parsePath(pathValue);
   if (segments.length === 0) {
     throw new Error("binding targetPath must be non-empty");
@@ -81,13 +87,17 @@ function pickUpstreamEntry(
   }
 
   if (typeof sourceRef === "string") {
-    const byNodeId = [...upstream].reverse().find((entry) => entry["fromNodeId"] === sourceRef);
+    const byNodeId = [...upstream]
+      .reverse()
+      .find((entry) => entry["fromNodeId"] === sourceRef);
     return byNodeId ?? null;
   }
 
   const nodeId = sourceRef["nodeId"];
   if (typeof nodeId === "string" && nodeId.length > 0) {
-    const byNodeId = [...upstream].reverse().find((entry) => entry["fromNodeId"] === nodeId);
+    const byNodeId = [...upstream]
+      .reverse()
+      .find((entry) => entry["fromNodeId"] === nodeId);
     return byNodeId ?? null;
   }
 
@@ -108,25 +118,44 @@ function resolveBindingSource(
   if (source === "human-input") {
     return ctx.runtimeVariables["humanInput"];
   }
-  if (source === "node-output" || source === "sub-workflow-output" || source === "workflow-output") {
+  if (
+    source === "node-output" ||
+    source === "sub-workflow-output" ||
+    source === "workflow-output"
+  ) {
     return pickUpstreamEntry(ctx.upstream, sourceRef);
   }
   return undefined;
 }
 
-export function assembleNodeInput(ctx: InputAssemblyContext): AssembledNodeInput {
+export function assembleNodeInput(
+  ctx: InputAssemblyContext,
+): AssembledNodeInput {
   const mergedVariables = { ...ctx.node.variables, ...ctx.runtimeVariables };
-  const promptText = renderPromptTemplate(ctx.node.promptTemplate, mergedVariables);
+  const promptText = renderPromptTemplate(
+    ctx.node.promptTemplate,
+    mergedVariables,
+  );
 
-  if (ctx.node.argumentsTemplate === undefined && ctx.node.argumentBindings === undefined) {
+  if (
+    ctx.node.argumentsTemplate === undefined &&
+    ctx.node.argumentBindings === undefined
+  ) {
     return { promptText, arguments: null };
   }
 
-  const base: Record<string, unknown> = ctx.node.argumentsTemplate === undefined ? {} : deepCloneRecord(ctx.node.argumentsTemplate);
+  const base: Record<string, unknown> =
+    ctx.node.argumentsTemplate === undefined
+      ? {}
+      : deepCloneRecord(ctx.node.argumentsTemplate);
   const bindings = ctx.node.argumentBindings ?? [];
 
   for (const binding of bindings) {
-    const sourceRoot = resolveBindingSource(binding.source, ctx, binding.sourceRef);
+    const sourceRoot = resolveBindingSource(
+      binding.source,
+      ctx,
+      binding.sourceRef,
+    );
     const value = getAtPath(sourceRoot, binding.sourcePath);
     if (value === undefined) {
       if (binding.required === true) {

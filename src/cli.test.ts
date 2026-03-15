@@ -13,15 +13,35 @@ async function makeTempDir(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 function makeDefaultTemplateScenario(): Readonly<Record<string, unknown>> {
   return {
-    "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
-    "main-oyakata": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
-    "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
-    "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+    "oyakata-manager": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "design" },
+    },
+    "main-oyakata": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "dispatch" },
+    },
+    "workflow-input": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "implement" },
+    },
+    "workflow-output": {
+      provider: "scenario-mock",
+      when: { always: true },
+      payload: { stage: "review" },
+    },
   };
 }
 
@@ -46,6 +66,15 @@ function createIoCapture(): {
   };
 }
 
+function createJsonResponse(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
+
 async function writeRuntimeVariablesFile(
   root: string,
   fileName: string,
@@ -68,23 +97,40 @@ describe("runCli", () => {
     const root = await makeTempDir();
 
     const createCapture = createIoCapture();
-    const createCode = await runCli(["workflow", "create", "demo", "--workflow-root", root], createCapture.io);
+    const createCode = await runCli(
+      ["workflow", "create", "demo", "--workflow-root", root],
+      createCapture.io,
+    );
     expect(createCode).toBe(0);
 
     const validateCapture = createIoCapture();
-    const validateCode = await runCli(["workflow", "validate", "demo", "--workflow-root", root], validateCapture.io);
+    const validateCode = await runCli(
+      ["workflow", "validate", "demo", "--workflow-root", root],
+      validateCapture.io,
+    );
     expect(validateCode).toBe(0);
     expect(validateCapture.stdout.join("\n")).toContain("is valid");
 
     const inspectCapture = createIoCapture();
     const inspectCode = await runCli(
-      ["workflow", "inspect", "demo", "--workflow-root", root, "--output", "json"],
+      [
+        "workflow",
+        "inspect",
+        "demo",
+        "--workflow-root",
+        root,
+        "--output",
+        "json",
+      ],
       inspectCapture.io,
     );
     expect(inspectCode).toBe(0);
 
     const outputJson = inspectCapture.stdout.join("\n");
-    const parsed = JSON.parse(outputJson) as { workflowName: string; counts: { nodes: number } };
+    const parsed = JSON.parse(outputJson) as {
+      workflowName: string;
+      counts: { nodes: number };
+    };
     expect(parsed.workflowName).toBe("demo");
     expect(parsed.counts.nodes).toBe(4);
   });
@@ -94,9 +140,13 @@ describe("runCli", () => {
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(root, "runtime-variables.json", {
-      humanInput: { request: "start demo workflow" },
-    });
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
     await writeFile(
       scenarioPath,
       JSON.stringify(makeDefaultTemplateScenario(), null, 2),
@@ -104,7 +154,10 @@ describe("runCli", () => {
     );
 
     const createCapture = createIoCapture();
-    const createCode = await runCli(["workflow", "create", "demo", "--workflow-root", root], createCapture.io);
+    const createCode = await runCli(
+      ["workflow", "create", "demo", "--workflow-root", root],
+      createCapture.io,
+    );
     expect(createCode).toBe(0);
 
     const runCapture = createIoCapture();
@@ -132,7 +185,10 @@ describe("runCli", () => {
     );
     expect(runCode).toBe(4);
 
-    const runPayload = JSON.parse(runCapture.stdout.join("\n")) as { sessionId: string; status: string };
+    const runPayload = JSON.parse(runCapture.stdout.join("\n")) as {
+      sessionId: string;
+      status: string;
+    };
     expect(runPayload.status).toBe("paused");
 
     const statusCapture = createIoCapture();
@@ -153,7 +209,9 @@ describe("runCli", () => {
       statusCapture.io,
     );
     expect(statusCode).toBe(0);
-    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as { status: string };
+    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
+      status: string;
+    };
     expect(statusPayload.status).toBe("paused");
 
     const resumeCapture = createIoCapture();
@@ -182,9 +240,13 @@ describe("runCli", () => {
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(root, "runtime-variables.json", {
-      humanInput: { request: "start demo workflow" },
-    });
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
     await writeFile(
       scenarioPath,
       JSON.stringify(makeDefaultTemplateScenario(), null, 2),
@@ -192,7 +254,12 @@ describe("runCli", () => {
     );
 
     const createCapture = createIoCapture();
-    expect(await runCli(["workflow", "create", "demo", "--workflow-root", root], createCapture.io)).toBe(0);
+    expect(
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createCapture.io,
+      ),
+    ).toBe(0);
 
     const runCapture = createIoCapture();
     const runCode = await runCli(
@@ -218,7 +285,10 @@ describe("runCli", () => {
       runCapture.io,
     );
     expect(runCode).toBe(4);
-    const runPayload = JSON.parse(runCapture.stdout.join("\n")) as { sessionId: string; status: string };
+    const runPayload = JSON.parse(runCapture.stdout.join("\n")) as {
+      sessionId: string;
+      status: string;
+    };
     expect(runPayload.status).toBe("paused");
 
     const progressCapture = createIoCapture();
@@ -246,7 +316,11 @@ describe("runCli", () => {
       nodeSummaries: Array<{ nodeId: string; executions: number }>;
     };
     expect(progressPayload.status).toBe("paused");
-    expect(progressPayload.nodeSummaries.some((entry) => entry.nodeId === "oyakata-manager")).toBe(true);
+    expect(
+      progressPayload.nodeSummaries.some(
+        (entry) => entry.nodeId === "oyakata-manager",
+      ),
+    ).toBe(true);
 
     const rerunCapture = createIoCapture();
     const rerunCode = await runCli(
@@ -279,12 +353,360 @@ describe("runCli", () => {
     expect(rerunPayload.rerunFromNodeId).toBe("workflow-output");
   });
 
-  test("serve command uses injected starter", async () => {
+  test("gql sends the document, variables, and ambient auth token", async () => {
     const capture = createIoCapture();
-    const started: Array<{ host?: string; port?: number; fixedWorkflowName?: string; readOnly?: boolean; noExec?: boolean }> = [];
+    let requestedUrl = "";
+    let requestedAuthorization = "";
+    let requestedManagerSessionId = "";
+    let requestedBody = "";
 
     const code = await runCli(
-      ["serve", "demo", "--host", "127.0.0.1", "--port", "7777", "--read-only", "--no-exec", "--output", "json"],
+      [
+        "gql",
+        "query ($workflowName: String!) { workflow(workflowName: $workflowName) { workflowId } }",
+        "--variables",
+        '{"workflowName":"demo"}',
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (input, init) => {
+          requestedUrl = String(input);
+          requestedAuthorization = new Headers(init?.headers).get("authorization") ?? "";
+          requestedManagerSessionId =
+            new Headers(init?.headers).get("x-oyakata-manager-session-id") ?? "";
+          requestedBody = typeof init?.body === "string" ? init.body : "";
+          return createJsonResponse({
+            data: {
+              workflow: {
+                workflowId: "demo",
+              },
+            },
+          });
+        },
+        env: {
+          OYAKATA_MANAGER_AUTH_TOKEN: "secret",
+          OYAKATA_MANAGER_SESSION_ID: "mgrsess-000001",
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requestedUrl).toBe("http://127.0.0.1:43173/graphql");
+    expect(requestedAuthorization).toBe("Bearer secret");
+    expect(requestedManagerSessionId).toBe("mgrsess-000001");
+    expect(JSON.parse(requestedBody)).toMatchObject({
+      query:
+        "query ($workflowName: String!) { workflow(workflowName: $workflowName) { workflowId } }",
+      variables: {
+        workflowName: "demo",
+      },
+    });
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      data: {
+        workflow: {
+          workflowId: "demo",
+        },
+      },
+    });
+  });
+
+  test("workflow run uses GraphQL transport when --endpoint is provided", async () => {
+    const root = await makeTempDir();
+    const capture = createIoCapture();
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: {
+          request: "start demo workflow",
+        },
+      },
+    );
+    const requests: Array<{
+      url: string;
+      body: Readonly<Record<string, unknown>>;
+    }> = [];
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--variables",
+        variablesPath,
+        "--max-steps",
+        "3",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (input, init) => {
+          const body = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          requests.push({
+            url: String(input),
+            body,
+          });
+          const query = typeof body["query"] === "string" ? body["query"] : "";
+          if (query.includes("mutation ExecuteWorkflow")) {
+            return createJsonResponse({
+              data: {
+                executeWorkflow: {
+                  workflowExecutionId: "sess-remote-001",
+                  sessionId: "sess-remote-001",
+                  status: "paused",
+                  exitCode: 4,
+                },
+              },
+            });
+          }
+          return createJsonResponse({
+            data: {
+              workflowExecution: {
+                session: {
+                  sessionId: "sess-remote-001",
+                  workflowName: "demo",
+                  workflowId: "demo",
+                  transitions: [{ at: "2026-03-15T00:00:00.000Z" }],
+                },
+                nodeExecutions: [{ nodeExecId: "exec-1" }, { nodeExecId: "exec-2" }],
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(4);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.url).toBe("http://example.test/graphql");
+    expect(requests[0]?.body).toMatchObject({
+      variables: {
+        input: {
+          workflowName: "demo",
+          runtimeVariables: {
+            humanInput: {
+              request: "start demo workflow",
+            },
+          },
+          maxSteps: 3,
+        },
+      },
+    });
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sessionId: "sess-remote-001",
+      status: "paused",
+      workflowName: "demo",
+      workflowId: "demo",
+      nodeExecutions: 2,
+      transitions: 1,
+      exitCode: 4,
+    });
+  });
+
+  test("session resume uses GraphQL transport when --endpoint is provided", async () => {
+    const capture = createIoCapture();
+    let requestedBody: Readonly<Record<string, unknown>> | undefined;
+
+    const code = await runCli(
+      [
+        "session",
+        "resume",
+        "sess-remote-001",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          requestedBody = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          return createJsonResponse({
+            data: {
+              resumeWorkflowExecution: {
+                workflowExecutionId: "sess-remote-001",
+                sessionId: "sess-remote-001",
+                status: "completed",
+                exitCode: 0,
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requestedBody).toMatchObject({
+      variables: {
+        input: {
+          workflowExecutionId: "sess-remote-001",
+        },
+      },
+    });
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sessionId: "sess-remote-001",
+      status: "completed",
+      exitCode: 0,
+    });
+  });
+
+  test("session rerun uses GraphQL transport when --endpoint is provided", async () => {
+    const capture = createIoCapture();
+    let requestedBody: Readonly<Record<string, unknown>> | undefined;
+
+    const code = await runCli(
+      [
+        "session",
+        "rerun",
+        "sess-remote-001",
+        "workflow-output",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          requestedBody = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          return createJsonResponse({
+            data: {
+              rerunWorkflowExecution: {
+                workflowExecutionId: "sess-remote-002",
+                sessionId: "sess-remote-002",
+                status: "running",
+                exitCode: 0,
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requestedBody).toMatchObject({
+      variables: {
+        input: {
+          workflowExecutionId: "sess-remote-001",
+          nodeId: "workflow-output",
+        },
+      },
+    });
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sourceSessionId: "sess-remote-001",
+      sessionId: "sess-remote-002",
+      status: "running",
+      rerunFromNodeId: "workflow-output",
+      exitCode: 0,
+    });
+  });
+
+  test("workflow run rejects --mock-scenario when using remote GraphQL transport", async () => {
+    const root = await makeTempDir();
+    const capture = createIoCapture();
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
+      "utf8",
+    );
+    let fetchCalled = false;
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--mock-scenario",
+        scenarioPath,
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        fetchImpl: async () => {
+          fetchCalled = true;
+          return createJsonResponse({ data: {} });
+        },
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(fetchCalled).toBe(false);
+    expect(capture.stderr.join("\n")).toContain(
+      "--mock-scenario is only supported for local execution",
+    );
+  });
+
+  test("serve command uses injected starter", async () => {
+    const capture = createIoCapture();
+    const started: Array<{
+      host?: string;
+      port?: number;
+      fixedWorkflowName?: string;
+      readOnly?: boolean;
+      noExec?: boolean;
+    }> = [];
+
+    const code = await runCli(
+      [
+        "serve",
+        "demo",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "7777",
+        "--read-only",
+        "--no-exec",
+        "--output",
+        "json",
+      ],
       capture.io,
       {
         startServe: async (options) => {
@@ -363,7 +785,16 @@ describe("runCli", () => {
     const capture = createIoCapture();
 
     const code = await runCli(
-      ["serve", "demo", "--host", "127.0.0.1", "--port", "0", "--output", "json"],
+      [
+        "serve",
+        "demo",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--output",
+        "json",
+      ],
       capture.io,
       {
         startServe: async (options) => ({
@@ -386,7 +817,10 @@ describe("runCli", () => {
 
   test("validate returns code 2 for invalid workflow name", async () => {
     const capture = createIoCapture();
-    const code = await runCli(["workflow", "validate", "../bad-name"], capture.io);
+    const code = await runCli(
+      ["workflow", "validate", "../bad-name"],
+      capture.io,
+    );
     expect(code).toBe(2);
   });
 
@@ -394,17 +828,26 @@ describe("runCli", () => {
     const root = await makeTempDir();
     const capture = createIoCapture();
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const code = await runCli(["tui", "--workflow-root", root], capture.io, {
-      startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+      startServe: async () => ({
+        host: "127.0.0.1",
+        port: 7777,
+        stop: () => {},
+      }),
       openBrowserUrl: async () => {},
       isInteractiveTerminal: () => false,
     });
 
     expect(code).toBe(2);
-    expect(capture.stderr.join("\n")).toContain("workflow name is required in non-interactive terminal");
+    expect(capture.stderr.join("\n")).toContain(
+      "workflow name is required in non-interactive terminal",
+    );
   });
 
   test("tui supports non-interactive fallback and resume-session", async () => {
@@ -412,9 +855,13 @@ describe("runCli", () => {
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(root, "runtime-variables.json", {
-      humanInput: { request: "start demo workflow" },
-    });
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
     await writeFile(
       scenarioPath,
       JSON.stringify(makeDefaultTemplateScenario(), null, 2),
@@ -422,7 +869,10 @@ describe("runCli", () => {
     );
 
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const firstRunCapture = createIoCapture();
@@ -445,15 +895,23 @@ describe("runCli", () => {
       ],
       firstRunCapture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
     expect(firstRunCode).toBe(4);
-    expect(firstRunCapture.stdout.join("\n")).toContain("promptless fallback mode");
+    expect(firstRunCapture.stdout.join("\n")).toContain(
+      "promptless fallback mode",
+    );
 
-    const sessionIdLine = firstRunCapture.stdout.find((line) => line.startsWith("sessionId: "));
+    const sessionIdLine = firstRunCapture.stdout.find((line) =>
+      line.startsWith("sessionId: "),
+    );
     expect(sessionIdLine).toBeDefined();
     const sessionId = sessionIdLine?.replace("sessionId: ", "");
     expect(sessionId).toBeDefined();
@@ -475,7 +933,11 @@ describe("runCli", () => {
       ],
       resumeCapture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
@@ -490,9 +952,13 @@ describe("runCli", () => {
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(root, "runtime-variables.json", {
-      humanInput: { request: "start demo workflow" },
-    });
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
     await writeFile(
       scenarioPath,
       JSON.stringify(makeDefaultTemplateScenario(), null, 2),
@@ -500,7 +966,10 @@ describe("runCli", () => {
     );
 
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const firstRunCapture = createIoCapture();
@@ -524,7 +993,11 @@ describe("runCli", () => {
         ],
         firstRunCapture.io,
         {
-          startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+          startServe: async () => ({
+            host: "127.0.0.1",
+            port: 7777,
+            stop: () => {},
+          }),
           openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
@@ -555,7 +1028,11 @@ describe("runCli", () => {
       ],
       resumeCapture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
@@ -569,16 +1046,23 @@ describe("runCli", () => {
   test("tui supports --workflow option in non-interactive mode", async () => {
     const root = await makeTempDir();
     const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(root, "runtime-variables.json", {
-      humanInput: { request: "start demo workflow" },
-    });
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
     await writeFile(
       scenarioPath,
       JSON.stringify(makeDefaultTemplateScenario(), null, 2),
       "utf8",
     );
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const capture = createIoCapture();
@@ -598,23 +1082,35 @@ describe("runCli", () => {
       ],
       capture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
 
     expect(code).toBe(4);
-    expect(capture.stdout.join("\n")).toContain("using promptless fallback mode");
+    expect(capture.stdout.join("\n")).toContain(
+      "using promptless fallback mode",
+    );
   });
 
   test("tui rejects conflicting positional and --workflow values", async () => {
     const root = await makeTempDir();
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
     expect(
-      await runCli(["workflow", "create", "other", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "other", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const capture = createIoCapture();
@@ -622,7 +1118,11 @@ describe("runCli", () => {
       ["tui", "demo", "--workflow", "other", "--workflow-root", root],
       capture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
@@ -645,12 +1145,19 @@ describe("runCli", () => {
     );
     await writeFile(
       variablesPath,
-      JSON.stringify({ topic: "tui-fallback", humanInput: { request: "alpha" } }, null, 2),
+      JSON.stringify(
+        { topic: "tui-fallback", humanInput: { request: "alpha" } },
+        null,
+        2,
+      ),
       "utf8",
     );
 
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const runCapture = createIoCapture();
@@ -673,14 +1180,20 @@ describe("runCli", () => {
       ],
       runCapture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
 
     expect(runCode).toBe(4);
-    const sessionId = runCapture.stdout.find((line) => line.startsWith("sessionId: "))?.replace("sessionId: ", "");
+    const sessionId = runCapture.stdout
+      .find((line) => line.startsWith("sessionId: "))
+      ?.replace("sessionId: ", "");
     expect(sessionId).toBeDefined();
 
     const statusCapture = createIoCapture();
@@ -714,19 +1227,30 @@ describe("runCli", () => {
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
-    const initialVariablesPath = await writeRuntimeVariablesFile(root, "runtime-variables.json", {
-      humanInput: { request: "start demo workflow" },
-    });
+    const initialVariablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
     const resumeVariablesPath = path.join(root, "resume-variables.json");
     await writeFile(
       scenarioPath,
       JSON.stringify(makeDefaultTemplateScenario(), null, 2),
       "utf8",
     );
-    await writeFile(resumeVariablesPath, JSON.stringify({ resumeNote: "from-file" }, null, 2), "utf8");
+    await writeFile(
+      resumeVariablesPath,
+      JSON.stringify({ resumeNote: "from-file" }, null, 2),
+      "utf8",
+    );
 
     expect(
-      await runCli(["workflow", "create", "demo", "--workflow-root", root], createIoCapture().io),
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
     ).toBe(0);
 
     const firstRunCapture = createIoCapture();
@@ -750,7 +1274,11 @@ describe("runCli", () => {
         ],
         firstRunCapture.io,
         {
-          startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+          startServe: async () => ({
+            host: "127.0.0.1",
+            port: 7777,
+            stop: () => {},
+          }),
           openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
@@ -781,7 +1309,11 @@ describe("runCli", () => {
       ],
       resumeCapture.io,
       {
-        startServe: async () => ({ host: "127.0.0.1", port: 7777, stop: () => {} }),
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
@@ -808,10 +1340,16 @@ describe("runCli", () => {
       ),
     ).toBe(0);
     const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
-      runtimeVariables: { resumeNote?: string; resumedFromSessionId?: string };
+      runtimeVariables: {
+        humanInput?: { request?: string };
+        resumeNote?: string;
+        resumedFromSessionId?: string;
+      };
     };
+    expect(statusPayload.runtimeVariables.humanInput?.request).toBe(
+      "start demo workflow",
+    );
     expect(statusPayload.runtimeVariables.resumeNote).toBe("from-file");
     expect(statusPayload.runtimeVariables.resumedFromSessionId).toBe(sessionId);
   });
-
 });

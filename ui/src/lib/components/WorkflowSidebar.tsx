@@ -67,10 +67,17 @@ export default function WorkflowSidebar(
           void onSelectWorkflow()(workflowName);
         }}
       >
-        <option value="">Select a workflow</option>
+        <option value="" selected={props.selectedWorkflowName.length === 0}>
+          Select a workflow
+        </option>
         <For each={props.workflows}>
           {(workflowName) => (
-            <option value={workflowName}>{workflowName}</option>
+            <option
+              value={workflowName}
+              selected={workflowName === props.selectedWorkflowName}
+            >
+              {workflowName}
+            </option>
           )}
         </For>
       </select>

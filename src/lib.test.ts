@@ -22,22 +22,44 @@ async function makeTempDir(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("library api", () => {
   function makeDefaultTemplateScenario(): MockNodeScenario {
     return {
-      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
-      "main-oyakata": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
-      "workflow-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
-      "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review" } },
+      "oyakata-manager": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "design" },
+      },
+      "main-oyakata": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "dispatch" },
+      },
+      "workflow-input": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "implement" },
+      },
+      "workflow-output": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "review" },
+      },
     };
   }
 
   test("inspects workflow and executes/resumes via library functions", async () => {
     const root = await makeTempDir();
-    const created = await createWorkflowTemplate("demo", { workflowRoot: root });
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
@@ -75,7 +97,9 @@ describe("library api", () => {
     expect(resumed.exitCode).toBe(0);
 
     const sessions = await listSessions(options);
-    expect(sessions.some((entry) => entry.sessionId === paused.sessionId)).toBe(true);
+    expect(sessions.some((entry) => entry.sessionId === paused.sessionId)).toBe(
+      true,
+    );
 
     const runtimeView = await getRuntimeSessionView(paused.sessionId, options);
     expect(runtimeView.nodeExecutions.length).toBeGreaterThan(0);

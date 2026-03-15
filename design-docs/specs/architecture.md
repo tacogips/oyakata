@@ -5,6 +5,7 @@ This document defines the architecture for cooperative multi-agent workflow exec
 ## Overview
 
 `oyakata` manages writing sessions by executing JSON-defined workflows across multiple execution backends, primarily:
+
 - `tacogips/codex-agent`
 - `tacogips/claude-code-agent`
 
@@ -13,11 +14,13 @@ The architecture focuses on deterministic orchestration, explicit completion con
 ## System Context
 
 Inputs:
+
 - Workflow directory under `<workflow-root>/<workflow-name>/` (default `./.oyakata`)
 - Session metadata
 - Runtime variables for prompt rendering
 
 Outputs:
+
 - Session artifacts (drafts, reviews, decisions)
 - Node execution logs and completion status
 - Branch/loop trace for reproducibility
@@ -25,26 +28,31 @@ Outputs:
 ## Core Components
 
 1. Workflow Loader
+
 - Loads `workflow.json`
 - Resolves referenced `node-{id}.json`
 - Validates schema and node file integrity
 
 2. Workflow Visualization State Manager
+
 - Loads/saves `workflow-vis.json`
 - Preserves browser-edited vertical node sequence (`order`)
 - Computes grouping presentation (`indent`, `color`) from graph + loop semantics
 - Keeps visualization state separate from runtime control logic
 
 3. Prompt Renderer
+
 - Resolves `promptTemplate` with `variables`
 - Produces provider-ready prompt payloads
 
 4. Agent Adapter Layer
+
 - Maps `executionBackend` in node to backend implementation
 - Sends node `model` through that backend as the provider/backend-specific model name
 - Initial targets: `tacogips/codex-agent`, `tacogips/claude-code-agent`
 
 5. Execution Engine
+
 - Traverses workflow graph
 - Expands and executes node sequences defined as sub-workflows
 - Evaluates completion conditions
@@ -56,6 +64,7 @@ Outputs:
 - Composes execution prompts from workflow-level manager/worker prompt policy, runtime context, and node-level prompt text
 
 6. Session State Store
+
 - Persists per-node input/output
 - Tracks completion evidence
 - Stores transition history
@@ -63,9 +72,16 @@ Outputs:
 - Persists routed communications and, in the GraphQL redesign direction, manager-session control-plane state used by GraphQL manager-message mutations invoked through `oyakata gql`
 
 7. Local HTTP Server (`oyakata serve`)
+
 - Hosts the built browser UI and local API on one process
 - Serves the built frontend bundle from `ui/dist/`
 - Exposes the canonical GraphQL control-plane endpoint at `/graphql`
+- Accepts forwarded ambient manager-session context for GraphQL manager calls via `Authorization` plus `X-Oyakata-Manager-Session-Id`, so `oyakata gql` can stay transport-thin while the server still resolves the correct manager scope
+- Treats server-local ambient manager execution variables as non-authoritative on the HTTP boundary; `/graphql` must derive manager auth/scope from request transport metadata rather than inheriting `OYAKATA_MANAGER_*` or `OYAKATA_WORKFLOW_*` from the server process environment
+- Treats caller-provided in-process auth/session fallbacks as non-authoritative on the HTTP boundary as well; `handleGraphqlRequest(...)` must not authenticate manager scope from local `context.authToken` or `context.managerSessionId`
+- Mints runtime-scoped manager sessions for real manager-node executions and passes ambient GraphQL manager context only to manager-capable adapter backends; see `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`
+- Persists the authoritative manager control source on each manager session so one manager execution cannot mix GraphQL manager messages with payload `managerControl`
+- Enforces manager communication replay/retry scope so root managers stay at root scope and sub-managers stay within their owned sub-workflow, with node-ownership fallback for legacy records missing boundary ids
 - Returns an explicit setup error page when the built frontend bundle is unavailable instead of embedding a second browser implementation in the server
 - Exposes a small UI bootstrap/config endpoint so frontend assets do not need server mode baked in at build time
 - Derives the reported frontend mode for that bootstrap/config endpoint from explicit metadata published under `ui/dist/` when available, while still allowing an explicit override for tests or forced deployments
@@ -81,12 +97,14 @@ Outputs:
 - Restricts by default to local interface (`127.0.0.1`)
 
 GraphQL-first redesign direction:
+
 - GraphQL becomes the canonical domain API for execution, communication inspection/replay, and manager control-plane messaging
 - CLI commands become thin clients over the same application services/GraphQL contract for domain operations
 - GraphQL file/image parameters use data-root-relative file references resolved under the configured Oyakata root data directory instead of host absolute paths
 - existing REST editor/workflow-definition endpoints remain supported during migration until GraphQL replacements are implemented
 
 8. Browser Workflow Editor
+
 - Vertical workflow editing for nodes, edges, branch/loop rules, and defaults
 - Ordered list interaction for reorder, indent, and color-based group/loop expression
 - Node payload editing (`executionBackend`, `model`, `promptTemplate`, `variables`, `timeoutMs`)
@@ -114,6 +132,7 @@ GraphQL-first redesign direction:
 - Reserved structure node roles (`root-manager`, `sub-manager`, `input`, `output`) are assigned from workflow structure metadata and sub-workflow boundaries, not treated as freeform node-kind values
 
 9. TUI Runtime (Bun + `neo-blessed`)
+
 - Full-screen terminal workflow selector and execution console
 - Supports node-by-node execution visibility and log streaming
 - Supports interactive user input collection for human-input nodes
@@ -132,6 +151,7 @@ Each workflow exists in its own directory under `<workflow-root>`:
 `workflow.json` must contain `description` to state the workflow objective.
 
 Workflow root resolution:
+
 1. CLI `--workflow-root`
 2. `OYAKATA_WORKFLOW_ROOT`
 3. `./.oyakata` (default)
@@ -139,9 +159,11 @@ Workflow root resolution:
 ### Node Execution Artifact Contract
 
 Each node execution must persist artifacts under:
+
 - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
 
 Where:
+
 - `{artifact-root}` resolution order:
   1. CLI `--artifact-root`
   2. `OYAKATA_ARTIFACT_ROOT`
@@ -152,11 +174,13 @@ Where:
 - `{node-exec-id}` is a unique execution id for that node run.
 
 Required artifact files per execution:
+
 - `input.json`: fully resolved runtime input passed to the node
 - `output.json`: node execution output payload
 - `meta.json`: execution metadata (timestamps, status, model, timeout result)
 
 Node output acceptance contract:
+
 - the Oyakata runtime must capture node completion in the same execution path that launched or awaited that node
 - node output becomes accepted only when the runtime marks the node execution complete and publishes runtime-owned artifacts
 - after acceptance, the runtime immediately persists `output.json` / `meta.json`, updates session state, and decides the next orchestration step
@@ -165,6 +189,7 @@ Node output acceptance contract:
 - file watching may exist only inside a backend-specific adapter when an external system can publish results solely through a shared file drop, and even then the adapter must hand the accepted result back into the normal runtime-owned completion path
 
 Timeout/missed-notification inspection contract:
+
 - if the expected manager wake-up or downstream transition does not occur and the workflow times out or appears stuck, operators must be able to inspect the last known node execution state without depending on the original notification path
 - the runtime must preserve enough information in session state, runtime DB rows, logs, and node execution artifacts to recover:
   - node execution `status`
@@ -176,11 +201,13 @@ Timeout/missed-notification inspection contract:
 - internal/library inspection should expose the same information through session/runtime-db helpers
 
 `oyakata` manager node responsibilities for chaining:
+
 - read `output.json` from prior node execution artifacts
 - resolve and compose next-node input payload
 - persist composed input to next node `input.json` before execution
 
 When a downstream input source is `human-input`, the manager requests input through the active UI channel:
+
 - TUI mode: modal/input pane in terminal UI
 - non-TUI mode: CLI prompt or API-provided input payload
 
@@ -189,6 +216,7 @@ When a downstream input source is `human-input`, the manager requests input thro
 Node sequences may be represented as reusable `sub-workflow` units.
 
 Rules:
+
 - A sub-workflow must include exactly one `input` node, one `output` node, and one `sub-manager` node (`sub oyakata`).
 - A sub-workflow must declare explicit `nodeIds` membership; mailbox writes from that sub-workflow manager are restricted to those `nodeIds`.
 - Sub-workflow `input` may receive data from:
@@ -216,6 +244,7 @@ Rules:
 Two or more sub-workflows may exchange messages as a managed conversation.
 
 Rules:
+
 - Sub-workflows do not communicate directly; all messages are routed by the `oyakata` manager node.
 - Cross-sub-workflow transport terminates at the recipient sub-workflow manager node, never at a leaf task node inside that sub-workflow.
 - After receipt, the recipient sub-workflow manager node is solely responsible for routing the message to child nodes inside that sub-workflow.
@@ -235,12 +264,14 @@ Rules:
   - token/cost budget caps
 
 Deterministic handoff contract:
+
 - `oyakata` routes messages using explicit `OutputRef` metadata.
 - `OutputRef` must include at least: `workflowExecutionId`, `workflowId`, `outputNodeId`, `nodeExecId`, and `artifactDir` (`subWorkflowId` is required when the source output belongs to a sub-workflow).
 - Downstream consumers resolve input from `OutputRef` instead of implicit "latest output" behavior.
 - If an explicit `nodeExecId` is not provided in config, selection policy must be declared (`latest-succeeded`, `latest-any`, or `by-loop-iteration`).
 
 VCS checkpoint contract:
+
 - Each node execution artifact directory additionally writes `handoff.json` and `commit-message.txt`.
 - `handoff.json` includes stable `outputRef` and `sha256` hashes for input/output payloads.
 - `input.json` includes `upstreamOutputRefs` so downstream input provenance is explicit.
@@ -248,6 +279,7 @@ VCS checkpoint contract:
 - Detailed format is defined in `design-docs/specs/design-vcs-handoff-checkpoints.md`.
 
 Mailbox transport contract:
+
 - routed node-to-node delivery uses a file-based mailbox artifact under `{artifact-root}/{workflowId}/executions/{workflowExecutionId}/communications/{communicationId}/`
 - each communication has manager-written `inbox/` and `outbox/` directories
 - only the manager that owns the recipient scope writes recipient inbox files
@@ -267,11 +299,13 @@ Mailbox transport contract:
 - external workflow result publication is runtime-owned and must resolve from the latest accepted root-scope `output` node artifact, never from an arbitrary last session response; see `design-docs/specs/design-runtime-owned-external-output-publication.md`
 
 Root data directory contract:
+
 - Oyakata must have one canonical root data directory resolved from env/config
 - artifact storage, session storage, attachment storage, and future container-mounted work paths may be derived from that root when more specific overrides are absent
 - GraphQL file references must be relative to that root, not host absolute paths
 - recommended attachment path layout is `files/{workflowId}/{workflowExecutionId}/attachments/{fileName}`
 - this is required so future Podman/container execution can bind-mount the same logical data root without changing GraphQL-visible paths
+- `OYAKATA_RUNTIME_ROOT` remains a compatibility alias while `OYAKATA_ROOT_DATA_DIR` becomes the canonical setting
 - precedence for each derived path is:
   1. explicit CLI flag
   2. explicit surface-specific environment variable
@@ -279,15 +313,18 @@ Root data directory contract:
   4. built-in default
 
 Manager control-plane contract:
+
 - manager-to-runtime control messages are distinct from mailbox communications
 - mailbox artifacts remain the durable node-to-node transport record
 - manager control-plane messages are append-only commands scoped to one manager session and may result in mailbox writes, node starts, retries, or replay requests
 - the long-term primary manager interaction path for CLI-backed managers is GraphQL manager-message mutation execution through `oyakata gql`, with payload-embedded `managerControl.actions` retained as compatibility mode
+- manager-authored mailbox sends now use discriminated communication payload provenance so manager-message artifacts and node-output artifacts remain replay-compatible under one durable model
 - detailed design is defined in `design-docs/specs/design-graphql-manager-control-plane.md`
 
 ### Node Model
 
 Execution node payload is externalized in `node-{id}.json`:
+
 - `executionBackend`: adapter/interface identifier
 - `model`: provider or backend-specific model name
 - `promptTemplate`: template text
@@ -298,11 +335,13 @@ Execution node payload is externalized in `node-{id}.json`:
 - optional `templateEngine`: rendering engine for prompt text (default: `mustache`)
 
 Node input injection policy:
+
 - For skill/tool adapters that accept `ARGUMENTS` only, `oyakata` must pass assembled `arguments` object.
 - Complex data composition must be done via `argumentBindings` and source references, not logic-heavy template syntax.
 - Keep template engine intentionally simple for prompt text rendering; avoid full Handlebars-style execution semantics in core runtime.
 
 Node backend session reuse:
+
 - Workflow session persistence and backend session persistence are separate concerns.
 - By default, each node execution starts a fresh backend session.
 - When `node.sessionPolicy.mode = "reuse"`, the engine may resume an opaque backend-managed session for later executions of the same node within one workflow run.
@@ -311,6 +350,7 @@ Node backend session reuse:
 - Canonical backend/model separation is defined in [design-node-backend-model-separation.md](/g/gits/tacogips/oyakata/design-docs/specs/design-node-backend-model-separation.md).
 
 `workflow.json` contains structural information:
+
 - node set and connectivity
 - completion criteria
 - branch/loop conditions
@@ -320,6 +360,7 @@ Node backend session reuse:
 ### Connectivity
 
 Edges define control flow:
+
 - unconditional transitions
 - conditional branching (`when` expression)
 - loop-back edges for retries/iterations
@@ -327,6 +368,7 @@ Edges define control flow:
 ### Completion Conditions
 
 A node may define explicit completion criteria, such as:
+
 - checklist satisfaction
 - score threshold
 - validator pass/fail
@@ -339,6 +381,7 @@ Sub-workflow execution is complete when its `output` node completes and returns 
 ### Branching
 
 Branching uses evaluated conditions over:
+
 - node output
 - branch-judge node output
 - session state
@@ -350,6 +393,7 @@ When a branch path contains multiple internal nodes, the branch body should be e
 ### Looping
 
 Looping is allowed via backward edges and must include safeguards:
+
 - max iteration count per loop
 - loop timeout or retry budget
 - fallback branch on exhaustion
@@ -362,6 +406,7 @@ When a loop body contains multiple internal nodes, that body should be declared 
 ### Reference Pattern: Multi-Subgroup Hardening Loop
 
 A representative execution pattern is:
+
 - `oyakata` manager receives user implementation instruction.
 - Implementation node produces initial change set.
 - `subgroup1` executes anti-pattern review -> counter-opinion -> mediation -> implementation fix -> commit.
@@ -377,6 +422,7 @@ Recommended bound for this pattern is `maxIterations = 3`.
 ### Reference Pattern: Adversarial Debate Loop
 
 A second representative execution pattern is:
+
 - `oyakata` manager starts with user instruction.
 - `blackhat` node attempts penetration and records findings.
 - commit checkpoint is executed.
@@ -393,6 +439,7 @@ This architecture pattern also applies to non-security domains by replacing role
 ### Timeout
 
 Node execution supports timeout configuration:
+
 - node-level timeout via `node-{id}.json.timeoutMs`
 - fallback to `workflow.json.defaults.nodeTimeoutMs`
 
@@ -403,17 +450,20 @@ Timeout events are treated as explicit execution results for downstream routing.
 `oyakata serve` runs a local web application and GraphQL endpoint for editing/execution.
 
 Primary GraphQL groups:
+
 - workflow definition queries and mutations
 - workflow execution queries and mutations
 - communication inspection, replay, and retry mutations
 - manager-session queries and `sendManagerMessage` mutation
 
 Migration note:
+
 - existing REST endpoints under `/api/*` remain active for browser/editor flows until the corresponding GraphQL workflow-definition/editor surfaces are implemented
 - GraphQL is canonical first for execution, communication inspection/replay, and manager control-plane messaging
 
 Design constraints:
-- File writes must be atomic (temp file + rename) to avoid JSON corruption.
+
+- File writes must be atomic (same-directory unique temp file + rename) to avoid JSON corruption and temp-path collisions between concurrent writers.
 - Concurrent edits are conflict-protected via revision token or last-write detection.
 - GraphQL execution services reuse the same engine as CLI run path.
 
@@ -422,12 +472,14 @@ Design constraints:
 `oyakata tui` runs a local terminal UI application (Bun runtime) for selection and execution.
 
 Core screens:
+
 - Workflow selector: list workflows discovered under `<workflow-root>`
 - Execution view: current node, status, loop counters, branch decisions, recent logs
 - Input prompt: capture user responses for `human-input` nodes
 - Artifact trace: quick view of current execution artifact paths
 
 Design constraints:
+
 - TUI must be non-destructive and keyboard-first.
 - TUI must handle terminal resize without losing execution context.
 - TUI must degrade to plain prompt mode when interactive terminal capabilities are unavailable.
@@ -435,6 +487,7 @@ Design constraints:
 ## UI/Execution Separation
 
 The browser editor is a control surface only:
+
 - UI state and vertical ordering metadata are saved in `workflow-vis.json`.
 - Runtime control data remains in `workflow.json` and `node-{id}.json`.
 - Execution records remain session artifacts; no runtime state is persisted in visualization file.

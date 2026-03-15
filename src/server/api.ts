@@ -46,6 +46,7 @@ import {
   missingUiResponse,
   tryServeBuiltUiAsset,
 } from "./ui-assets";
+import { handleGraphqlRequest } from "./graphql";
 
 export { resolveDefaultUiDistRoot } from "./ui-assets";
 
@@ -201,6 +202,10 @@ export async function handleApiRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
   const parts = routeParts(url.pathname);
+
+  if (url.pathname === "/graphql") {
+    return handleGraphqlRequest(request, context);
+  }
 
   if (url.pathname === "/api/ui-config" && request.method === "GET") {
     try {

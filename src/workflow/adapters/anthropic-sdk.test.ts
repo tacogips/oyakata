@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import type { AdapterExecutionContext, AdapterExecutionInput } from "../adapter";
+import type {
+  AdapterExecutionContext,
+  AdapterExecutionInput,
+} from "../adapter";
 import { AnthropicSdkAdapter } from "./anthropic-sdk";
 
 const baseInput: AdapterExecutionInput = {
@@ -58,7 +61,9 @@ describe("AnthropicSdkAdapter", () => {
         messages: {
           async create() {
             return {
-              content: [{ type: "text", text: "{\"summary\":\"hello from anthropic\"}" }],
+              content: [
+                { type: "text", text: '{"summary":"hello from anthropic"}' },
+              ],
             };
           },
         },

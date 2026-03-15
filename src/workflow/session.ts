@@ -1,4 +1,9 @@
-export type SessionStatus = "running" | "paused" | "completed" | "failed" | "cancelled";
+export type SessionStatus =
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface SessionTransition {
   readonly from: string;
@@ -44,7 +49,8 @@ export interface ConversationTurnRecord {
   readonly sentAt: string;
 }
 
-export interface OutputRef {
+export interface NodeOutputRef {
+  readonly kind?: "node-output";
   readonly workflowExecutionId: string;
   readonly workflowId: string;
   readonly subWorkflowId?: string;
@@ -52,6 +58,24 @@ export interface OutputRef {
   readonly nodeExecId: string;
   readonly artifactDir: string;
 }
+
+export type OutputRef = NodeOutputRef;
+
+export interface ManagerMessagePayloadRef {
+  readonly kind: "manager-message";
+  readonly workflowExecutionId: string;
+  readonly workflowId: string;
+  readonly subWorkflowId?: string;
+  readonly outputNodeId: string;
+  readonly nodeExecId: string;
+  readonly artifactDir: string;
+  readonly managerSessionId: string;
+  readonly managerMessageId: string;
+  readonly managerNodeId: string;
+  readonly managerNodeExecId: string;
+}
+
+export type CommunicationPayloadRef = OutputRef | ManagerMessagePayloadRef;
 
 export interface CommunicationRecord {
   readonly workflowId: string;
@@ -61,9 +85,13 @@ export interface CommunicationRecord {
   readonly toNodeId: string;
   readonly fromSubWorkflowId?: string;
   readonly toSubWorkflowId?: string;
-  readonly routingScope: "parent-to-sub-workflow" | "cross-sub-workflow" | "intra-sub-workflow" | "external-mailbox";
+  readonly routingScope:
+    | "parent-to-sub-workflow"
+    | "cross-sub-workflow"
+    | "intra-sub-workflow"
+    | "external-mailbox";
   readonly sourceNodeExecId: string;
-  readonly payloadRef: OutputRef;
+  readonly payloadRef: CommunicationPayloadRef;
   readonly deliveryKind:
     | "edge-transition"
     | "loop-back"
@@ -72,7 +100,12 @@ export interface CommunicationRecord {
     | "external-input"
     | "external-output";
   readonly transitionWhen: string;
-  readonly status: "created" | "delivered" | "consumed" | "delivery_failed" | "superseded";
+  readonly status:
+    | "created"
+    | "delivered"
+    | "consumed"
+    | "delivery_failed"
+    | "superseded";
   readonly deliveryAttemptIds: readonly string[];
   readonly activeDeliveryAttemptId?: string;
   readonly createdAt: string;
@@ -80,6 +113,10 @@ export interface CommunicationRecord {
   readonly consumedByNodeExecId?: string;
   readonly consumedAt?: string;
   readonly failureReason?: string;
+  readonly supersededByCommunicationId?: string;
+  readonly supersededAt?: string;
+  readonly replayedFromCommunicationId?: string;
+  readonly managerMessageId?: string;
   readonly artifactDir: string;
 }
 
@@ -112,7 +149,9 @@ export interface WorkflowSessionState {
   readonly communicationCounter: number;
   readonly communications: readonly CommunicationRecord[];
   readonly conversationTurns?: readonly ConversationTurnRecord[];
-  readonly nodeBackendSessions?: Readonly<Record<string, NodeBackendSessionRecord>>;
+  readonly nodeBackendSessions?: Readonly<
+    Record<string, NodeBackendSessionRecord>
+  >;
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly lastError?: string;
 }
@@ -125,7 +164,9 @@ export interface CreateSessionInput {
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
 }
 
-export function createSessionState(input: CreateSessionInput): WorkflowSessionState {
+export function createSessionState(
+  input: CreateSessionInput,
+): WorkflowSessionState {
   return {
     sessionId: input.sessionId,
     workflowName: input.workflowName,
@@ -148,10 +189,15 @@ export function createSessionState(input: CreateSessionInput): WorkflowSessionSt
   };
 }
 
-export function normalizeSessionState(session: WorkflowSessionState): WorkflowSessionState {
-  const communications = Array.isArray(session.communications) ? session.communications : [];
+export function normalizeSessionState(
+  session: WorkflowSessionState,
+): WorkflowSessionState {
+  const communications = Array.isArray(session.communications)
+    ? session.communications
+    : [];
   const communicationCounter =
-    Number.isInteger(session.communicationCounter) && session.communicationCounter >= 0
+    Number.isInteger(session.communicationCounter) &&
+    session.communicationCounter >= 0
       ? session.communicationCounter
       : communications.length;
 
@@ -172,7 +218,10 @@ export function isSafeSessionId(sessionId: string): boolean {
 }
 
 export function createSessionId(now: Date = new Date()): string {
-  const timestamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const timestamp = now
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
   const random = Math.random().toString(36).slice(2, 10);
   return `sess-${timestamp}-${random}`;
 }

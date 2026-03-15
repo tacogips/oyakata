@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { renderPromptTemplate } from "./render";
-import type { NodeKind, NodePayload, WorkflowJson, WorkflowNodeRef } from "./types";
+import type {
+  NodeKind,
+  NodePayload,
+  WorkflowJson,
+  WorkflowNodeRef,
+} from "./types";
 
 export interface PromptCompositionUpstreamInput {
   readonly fromNodeId: string;
@@ -28,17 +33,27 @@ const DEFAULT_OYAKATA_SYSTEM_PROMPT = readFileSync(
 ).trim();
 
 function isManagerNodeKind(kind: NodeKind | undefined): boolean {
-  return kind === "manager" || kind === "root-manager" || kind === "sub-manager";
+  return (
+    kind === "manager" || kind === "root-manager" || kind === "sub-manager"
+  );
 }
 
-function getSubWorkflowOwnedNodeIds(subWorkflow: WorkflowJson["subWorkflows"][number]): readonly string[] {
-  return [...new Set([subWorkflow.managerNodeId, subWorkflow.inputNodeId, subWorkflow.outputNodeId, ...subWorkflow.nodeIds])];
+function getSubWorkflowOwnedNodeIds(
+  subWorkflow: WorkflowJson["subWorkflows"][number],
+): readonly string[] {
+  return [
+    ...new Set([
+      subWorkflow.managerNodeId,
+      subWorkflow.inputNodeId,
+      subWorkflow.outputNodeId,
+      ...subWorkflow.nodeIds,
+    ]),
+  ];
 }
 
 function findOwnedSubWorkflow(workflow: WorkflowJson, nodeId: string) {
-  return workflow.subWorkflows.find(
-    (entry) =>
-      getSubWorkflowOwnedNodeIds(entry).includes(nodeId),
+  return workflow.subWorkflows.find((entry) =>
+    getSubWorkflowOwnedNodeIds(entry).includes(nodeId),
   );
 }
 
@@ -53,7 +68,10 @@ function summarizeJson(value: unknown, maxLength = 260): string {
   return `${serialized.slice(0, maxLength - 3)}...`;
 }
 
-function summarizePromptTemplate(promptTemplate: string, maxLength = 220): string {
+function summarizePromptTemplate(
+  promptTemplate: string,
+  maxLength = 220,
+): string {
   const compact = promptTemplate.replace(/\s+/g, " ").trim();
   if (compact.length <= maxLength) {
     return compact;
@@ -61,7 +79,11 @@ function summarizePromptTemplate(promptTemplate: string, maxLength = 220): strin
   return `${compact.slice(0, maxLength - 3)}...`;
 }
 
-function buildNodeReason(nodeKind: NodeKind | undefined, workflow: WorkflowJson, nodeId: string): string {
+function buildNodeReason(
+  nodeKind: NodeKind | undefined,
+  workflow: WorkflowJson,
+  nodeId: string,
+): string {
   const ownedSubWorkflow = findOwnedSubWorkflow(workflow, nodeId);
 
   switch (nodeKind) {
@@ -87,8 +109,14 @@ function buildNodeReason(nodeKind: NodeKind | undefined, workflow: WorkflowJson,
   }
 }
 
-function buildExpectedReturn(nodeRef: WorkflowNodeRef, node: NodePayload): string {
-  if (node.output?.description !== undefined && node.output.description.length > 0) {
+function buildExpectedReturn(
+  nodeRef: WorkflowNodeRef,
+  node: NodePayload,
+): string {
+  if (
+    node.output?.description !== undefined &&
+    node.output.description.length > 0
+  ) {
     return node.output.description;
   }
 
@@ -111,13 +139,21 @@ function buildExpectedReturn(nodeRef: WorkflowNodeRef, node: NodePayload): strin
   }
 }
 
-function buildSubWorkflowExpectedReturn(workflow: WorkflowJson, subWorkflowId: string, nodePayloads: Readonly<Record<string, NodePayload>>): string {
-  const subWorkflow = workflow.subWorkflows.find((entry) => entry.id === subWorkflowId);
+function buildSubWorkflowExpectedReturn(
+  workflow: WorkflowJson,
+  subWorkflowId: string,
+  nodePayloads: Readonly<Record<string, NodePayload>>,
+): string {
+  const subWorkflow = workflow.subWorkflows.find(
+    (entry) => entry.id === subWorkflowId,
+  );
   if (subWorkflow === undefined) {
     return "Return the finalized sub-workflow output JSON to the parent workflow mailbox boundary.";
   }
 
-  const outputNode = workflow.nodes.find((entry) => entry.id === subWorkflow.outputNodeId);
+  const outputNode = workflow.nodes.find(
+    (entry) => entry.id === subWorkflow.outputNodeId,
+  );
   const outputPayload = nodePayloads[subWorkflow.outputNodeId];
   if (outputNode !== undefined && outputPayload !== undefined) {
     return buildExpectedReturn(outputNode, outputPayload);
@@ -138,16 +174,26 @@ function buildManagerChildCatalog(input: {
       for (const subWorkflow of workflow.subWorkflows) {
         lines.push(`- Child sub-workflow: ${subWorkflow.id}`);
         lines.push(`  description=${subWorkflow.description}`);
-        lines.push(`  reason=Invoke this sub-workflow as one child unit that advances the workflow goal.`);
+        lines.push(
+          `  reason=Invoke this sub-workflow as one child unit that advances the workflow goal.`,
+        );
         lines.push(
           `  handoff=Parent manager output is delivered by mailbox to manager '${subWorkflow.managerNodeId}', then translated within the child scope.`,
         );
-        lines.push(`  expectedReturn=${buildSubWorkflowExpectedReturn(workflow, subWorkflow.id, nodePayloads)}`);
+        lines.push(
+          `  expectedReturn=${buildSubWorkflowExpectedReturn(workflow, subWorkflow.id, nodePayloads)}`,
+        );
       }
     }
 
-    const ownedNodeIds = new Set(workflow.subWorkflows.flatMap((subWorkflow) => getSubWorkflowOwnedNodeIds(subWorkflow)));
-    const directChildren = workflow.nodes.filter((entry) => entry.id !== nodeRef.id && !ownedNodeIds.has(entry.id));
+    const ownedNodeIds = new Set(
+      workflow.subWorkflows.flatMap((subWorkflow) =>
+        getSubWorkflowOwnedNodeIds(subWorkflow),
+      ),
+    );
+    const directChildren = workflow.nodes.filter(
+      (entry) => entry.id !== nodeRef.id && !ownedNodeIds.has(entry.id),
+    );
     for (const child of directChildren) {
       const payload = nodePayloads[child.id];
       if (payload === undefined) {
@@ -156,7 +202,9 @@ function buildManagerChildCatalog(input: {
       lines.push(`- Child node: ${child.id} (${child.kind ?? "task"})`);
       lines.push(`  reason=${buildNodeReason(child.kind, workflow, child.id)}`);
       lines.push(`  expectedReturn=${buildExpectedReturn(child, payload)}`);
-      lines.push(`  promptSeed=${summarizePromptTemplate(payload.promptTemplate)}`);
+      lines.push(
+        `  promptSeed=${summarizePromptTemplate(payload.promptTemplate)}`,
+      );
     }
   } else {
     const ownedSubWorkflow = findOwnedSubWorkflow(workflow, nodeRef.id);
@@ -164,7 +212,9 @@ function buildManagerChildCatalog(input: {
       return "";
     }
 
-    const childNodeIds = getSubWorkflowOwnedNodeIds(ownedSubWorkflow).filter((childNodeId) => childNodeId !== nodeRef.id);
+    const childNodeIds = getSubWorkflowOwnedNodeIds(ownedSubWorkflow).filter(
+      (childNodeId) => childNodeId !== nodeRef.id,
+    );
     for (const childNodeId of childNodeIds) {
       const child = workflow.nodes.find((entry) => entry.id === childNodeId);
       const payload = nodePayloads[childNodeId];
@@ -174,7 +224,9 @@ function buildManagerChildCatalog(input: {
       lines.push(`- Child node: ${child.id} (${child.kind ?? "task"})`);
       lines.push(`  reason=${buildNodeReason(child.kind, workflow, child.id)}`);
       lines.push(`  expectedReturn=${buildExpectedReturn(child, payload)}`);
-      lines.push(`  promptSeed=${summarizePromptTemplate(payload.promptTemplate)}`);
+      lines.push(
+        `  promptSeed=${summarizePromptTemplate(payload.promptTemplate)}`,
+      );
     }
   }
 
@@ -225,14 +277,20 @@ function buildWorkflowStructureSummary(input: {
   return "";
 }
 
-function buildUpstreamSummary(upstreamInputs: readonly PromptCompositionUpstreamInput[]): string {
+function buildUpstreamSummary(
+  upstreamInputs: readonly PromptCompositionUpstreamInput[],
+): string {
   if (upstreamInputs.length === 0) {
     return "Upstream data:\n- No mailbox or upstream node payloads were attached to this execution.";
   }
 
   const lines = ["Upstream data:"];
   for (const entry of upstreamInputs) {
-    const routeParts = [`from=${entry.fromNodeId}`, `when=${entry.transitionWhen}`, `communication=${entry.communicationId}`];
+    const routeParts = [
+      `from=${entry.fromNodeId}`,
+      `when=${entry.transitionWhen}`,
+      `communication=${entry.communicationId}`,
+    ];
     if (entry.fromSubWorkflowId !== undefined) {
       routeParts.push(`fromSubWorkflow=${entry.fromSubWorkflowId}`);
     }
@@ -250,7 +308,14 @@ function buildGivenDataSummary(input: {
   readonly assembledArguments: Readonly<Record<string, unknown>> | null;
 }): string {
   const lines = ["Given data:"];
-  const reservedContextKeys = new Set(["humanInput", "workflowOutput", "workflowId", "workflowDescription", "nodeId", "nodeKind"]);
+  const reservedContextKeys = new Set([
+    "humanInput",
+    "workflowOutput",
+    "workflowId",
+    "workflowDescription",
+    "nodeId",
+    "nodeKind",
+  ]);
   const runtimeVariableKeys = Object.keys(input.runtimeVariables);
 
   if (input.assembledArguments !== null) {
@@ -259,7 +324,9 @@ function buildGivenDataSummary(input: {
 
   if (runtimeVariableKeys.length === 0) {
     if (input.assembledArguments === null) {
-      lines.push("- No assembled argument payload or runtime variables were provided for this execution.");
+      lines.push(
+        "- No assembled argument payload or runtime variables were provided for this execution.",
+      );
     }
     return lines.join("\n");
   }
@@ -275,7 +342,9 @@ function buildGivenDataSummary(input: {
   }
 
   const contextualVariables = Object.fromEntries(
-    Object.entries(input.runtimeVariables).filter(([key]) => !reservedContextKeys.has(key)),
+    Object.entries(input.runtimeVariables).filter(
+      ([key]) => !reservedContextKeys.has(key),
+    ),
   );
   if (Object.keys(contextualVariables).length > 0) {
     lines.push(`- runtimeVariables=${summarizeJson(contextualVariables, 800)}`);
@@ -313,11 +382,17 @@ export function composeExecutionPrompt(input: PromptCompositionInput): string {
   const workflowPrompt =
     input.workflow.prompts?.oyakataPromptTemplate === undefined
       ? ""
-      : renderPromptTemplate(input.workflow.prompts.oyakataPromptTemplate, mergedVariables).trim();
+      : renderPromptTemplate(
+          input.workflow.prompts.oyakataPromptTemplate,
+          mergedVariables,
+        ).trim();
   const workerSystemPrompt =
     input.workflow.prompts?.workerSystemPromptTemplate === undefined
       ? ""
-      : renderPromptTemplate(input.workflow.prompts.workerSystemPromptTemplate, mergedVariables).trim();
+      : renderPromptTemplate(
+          input.workflow.prompts.workerSystemPromptTemplate,
+          mergedVariables,
+        ).trim();
 
   const contextLines = [
     "Execution context:",

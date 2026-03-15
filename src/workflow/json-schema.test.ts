@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { validateJsonSchemaDefinition, validateJsonValueAgainstSchema } from "./json-schema";
+import {
+  validateJsonSchemaDefinition,
+  validateJsonValueAgainstSchema,
+} from "./json-schema";
 import type { JsonObject } from "./types";
 
 describe("validateJsonSchemaDefinition", () => {
@@ -11,7 +14,8 @@ describe("validateJsonSchemaDefinition", () => {
     ).toEqual([
       {
         path: "$schema",
-        message: "must allow object because node output payloads are always top-level JSON objects",
+        message:
+          "must allow object because node output payloads are always top-level JSON objects",
       },
     ]);
   });
@@ -24,7 +28,8 @@ describe("validateJsonSchemaDefinition", () => {
     ).toEqual([
       {
         path: "$schema",
-        message: "must allow object because node output payloads are always top-level JSON objects",
+        message:
+          "must allow object because node output payloads are always top-level JSON objects",
       },
     ]);
   });

@@ -1,8 +1,17 @@
 import type { JsonObject, JsonValue } from "./types";
 
-type JsonSchemaPrimitiveType = "null" | "boolean" | "object" | "array" | "number" | "integer" | "string";
+type JsonSchemaPrimitiveType =
+  | "null"
+  | "boolean"
+  | "object"
+  | "array"
+  | "number"
+  | "integer"
+  | "string";
 
-type JsonSchemaType = JsonSchemaPrimitiveType | readonly JsonSchemaPrimitiveType[];
+type JsonSchemaType =
+  | JsonSchemaPrimitiveType
+  | readonly JsonSchemaPrimitiveType[];
 
 interface JsonSchemaNode extends JsonObject {
   readonly $schema?: string;
@@ -92,7 +101,11 @@ function sortJsonValue(value: unknown): unknown {
   return value;
 }
 
-function pushError(errors: JsonSchemaValidationError[], path: string, message: string): void {
+function pushError(
+  errors: JsonSchemaValidationError[],
+  path: string,
+  message: string,
+): void {
   errors.push({ path, message });
 }
 
@@ -109,7 +122,11 @@ function validateSchemaNode(
 
   for (const key of Object.keys(schema)) {
     if (!SUPPORTED_SCHEMA_KEYS.has(key)) {
-      pushError(errors, `${path}.${key}`, "uses an unsupported JSON Schema keyword");
+      pushError(
+        errors,
+        `${path}.${key}`,
+        "uses an unsupported JSON Schema keyword",
+      );
     }
   }
 
@@ -130,15 +147,26 @@ function validateSchemaNode(
   if (type !== undefined) {
     if (typeof type === "string") {
       if (!JSON_SCHEMA_PRIMITIVE_TYPES.has(type as JsonSchemaPrimitiveType)) {
-        pushError(errors, `${path}.type`, "must be a supported JSON Schema type");
+        pushError(
+          errors,
+          `${path}.type`,
+          "must be a supported JSON Schema type",
+        );
       }
     } else if (Array.isArray(type)) {
       if (type.length === 0) {
         pushError(errors, `${path}.type`, "must not be an empty array");
       }
       for (const [index, entry] of type.entries()) {
-        if (typeof entry !== "string" || !JSON_SCHEMA_PRIMITIVE_TYPES.has(entry as JsonSchemaPrimitiveType)) {
-          pushError(errors, `${path}.type[${index}]`, "must be a supported JSON Schema type");
+        if (
+          typeof entry !== "string" ||
+          !JSON_SCHEMA_PRIMITIVE_TYPES.has(entry as JsonSchemaPrimitiveType)
+        ) {
+          pushError(
+            errors,
+            `${path}.type[${index}]`,
+            "must be a supported JSON Schema type",
+          );
         }
       }
     } else {
@@ -149,7 +177,11 @@ function validateSchemaNode(
   const properties = schema["properties"];
   if (properties !== undefined) {
     if (!isJsonObject(properties)) {
-      pushError(errors, `${path}.properties`, "must be an object when provided");
+      pushError(
+        errors,
+        `${path}.properties`,
+        "must be an object when provided",
+      );
     } else {
       for (const [key, value] of Object.entries(properties)) {
         validateSchemaNode(value, `${path}.properties.${key}`, errors);
@@ -164,7 +196,11 @@ function validateSchemaNode(
     } else {
       for (const [index, entry] of required.entries()) {
         if (typeof entry !== "string" || entry.length === 0) {
-          pushError(errors, `${path}.required[${index}]`, "must be a non-empty string");
+          pushError(
+            errors,
+            `${path}.required[${index}]`,
+            "must be a non-empty string",
+          );
         }
       }
     }
@@ -175,7 +211,11 @@ function validateSchemaNode(
     if (typeof additionalProperties === "boolean") {
       // valid
     } else {
-      validateSchemaNode(additionalProperties, `${path}.additionalProperties`, errors);
+      validateSchemaNode(
+        additionalProperties,
+        `${path}.additionalProperties`,
+        errors,
+      );
     }
   }
 
@@ -187,19 +227,45 @@ function validateSchemaNode(
   const enumValue = schema["enum"];
   if (enumValue !== undefined) {
     if (!Array.isArray(enumValue) || enumValue.length === 0) {
-      pushError(errors, `${path}.enum`, "must be a non-empty array when provided");
+      pushError(
+        errors,
+        `${path}.enum`,
+        "must be a non-empty array when provided",
+      );
     }
   }
 
   const minLength = schema["minLength"];
-  if (minLength !== undefined && (typeof minLength !== "number" || !Number.isInteger(minLength) || minLength < 0)) {
-    pushError(errors, `${path}.minLength`, "must be an integer >= 0 when provided");
+  if (
+    minLength !== undefined &&
+    (typeof minLength !== "number" ||
+      !Number.isInteger(minLength) ||
+      minLength < 0)
+  ) {
+    pushError(
+      errors,
+      `${path}.minLength`,
+      "must be an integer >= 0 when provided",
+    );
   }
   const maxLength = schema["maxLength"];
-  if (maxLength !== undefined && (typeof maxLength !== "number" || !Number.isInteger(maxLength) || maxLength < 0)) {
-    pushError(errors, `${path}.maxLength`, "must be an integer >= 0 when provided");
+  if (
+    maxLength !== undefined &&
+    (typeof maxLength !== "number" ||
+      !Number.isInteger(maxLength) ||
+      maxLength < 0)
+  ) {
+    pushError(
+      errors,
+      `${path}.maxLength`,
+      "must be an integer >= 0 when provided",
+    );
   }
-  if (typeof minLength === "number" && typeof maxLength === "number" && minLength > maxLength) {
+  if (
+    typeof minLength === "number" &&
+    typeof maxLength === "number" &&
+    minLength > maxLength
+  ) {
     pushError(errors, `${path}.maxLength`, "must be >= minLength");
   }
 
@@ -211,32 +277,76 @@ function validateSchemaNode(
       try {
         new RegExp(pattern, "u");
       } catch {
-        pushError(errors, `${path}.pattern`, "must be a valid regular expression");
+        pushError(
+          errors,
+          `${path}.pattern`,
+          "must be a valid regular expression",
+        );
       }
     }
   }
 
   const minimum = schema["minimum"];
-  if (minimum !== undefined && (typeof minimum !== "number" || !Number.isFinite(minimum))) {
-    pushError(errors, `${path}.minimum`, "must be a finite number when provided");
+  if (
+    minimum !== undefined &&
+    (typeof minimum !== "number" || !Number.isFinite(minimum))
+  ) {
+    pushError(
+      errors,
+      `${path}.minimum`,
+      "must be a finite number when provided",
+    );
   }
   const maximum = schema["maximum"];
-  if (maximum !== undefined && (typeof maximum !== "number" || !Number.isFinite(maximum))) {
-    pushError(errors, `${path}.maximum`, "must be a finite number when provided");
+  if (
+    maximum !== undefined &&
+    (typeof maximum !== "number" || !Number.isFinite(maximum))
+  ) {
+    pushError(
+      errors,
+      `${path}.maximum`,
+      "must be a finite number when provided",
+    );
   }
-  if (typeof minimum === "number" && typeof maximum === "number" && minimum > maximum) {
+  if (
+    typeof minimum === "number" &&
+    typeof maximum === "number" &&
+    minimum > maximum
+  ) {
     pushError(errors, `${path}.maximum`, "must be >= minimum");
   }
 
   const minItems = schema["minItems"];
-  if (minItems !== undefined && (typeof minItems !== "number" || !Number.isInteger(minItems) || minItems < 0)) {
-    pushError(errors, `${path}.minItems`, "must be an integer >= 0 when provided");
+  if (
+    minItems !== undefined &&
+    (typeof minItems !== "number" ||
+      !Number.isInteger(minItems) ||
+      minItems < 0)
+  ) {
+    pushError(
+      errors,
+      `${path}.minItems`,
+      "must be an integer >= 0 when provided",
+    );
   }
   const maxItems = schema["maxItems"];
-  if (maxItems !== undefined && (typeof maxItems !== "number" || !Number.isInteger(maxItems) || maxItems < 0)) {
-    pushError(errors, `${path}.maxItems`, "must be an integer >= 0 when provided");
+  if (
+    maxItems !== undefined &&
+    (typeof maxItems !== "number" ||
+      !Number.isInteger(maxItems) ||
+      maxItems < 0)
+  ) {
+    pushError(
+      errors,
+      `${path}.maxItems`,
+      "must be an integer >= 0 when provided",
+    );
   }
-  if (typeof minItems === "number" && typeof maxItems === "number" && minItems > maxItems) {
+  if (
+    typeof minItems === "number" &&
+    typeof maxItems === "number" &&
+    minItems > maxItems
+  ) {
     pushError(errors, `${path}.maxItems`, "must be >= minItems");
   }
 
@@ -246,7 +356,11 @@ function validateSchemaNode(
       continue;
     }
     if (!Array.isArray(combinator) || combinator.length === 0) {
-      pushError(errors, `${path}.${key}`, "must be a non-empty array when provided");
+      pushError(
+        errors,
+        `${path}.${key}`,
+        "must be a non-empty array when provided",
+      );
       continue;
     }
     combinator.forEach((entry, index) => {
@@ -257,7 +371,9 @@ function validateSchemaNode(
   return errors.length === initialErrorCount;
 }
 
-function typeList(type: JsonSchemaType | undefined): readonly JsonSchemaPrimitiveType[] {
+function typeList(
+  type: JsonSchemaType | undefined,
+): readonly JsonSchemaPrimitiveType[] {
   if (type === undefined) {
     return [];
   }
@@ -326,17 +442,25 @@ function validateValue(
   errors: JsonSchemaValidationError[],
 ): void {
   const allowedTypes = typeList(schema.type);
-  if (allowedTypes.length > 0 && !allowedTypes.some((type) => matchesType(value, type))) {
+  if (
+    allowedTypes.length > 0 &&
+    !allowedTypes.some((type) => matchesType(value, type))
+  ) {
     pushError(errors, path, `must be of type ${allowedTypes.join(" | ")}`);
     return;
   }
 
-  if (schema.const !== undefined && stableJson(value) !== stableJson(schema.const)) {
+  if (
+    schema.const !== undefined &&
+    stableJson(value) !== stableJson(schema.const)
+  ) {
     pushError(errors, path, "must equal the declared const value");
   }
 
   if (schema.enum !== undefined) {
-    const matches = schema.enum.some((entry) => stableJson(entry) === stableJson(value));
+    const matches = schema.enum.some(
+      (entry) => stableJson(entry) === stableJson(value),
+    );
     if (!matches) {
       pushError(errors, path, "must equal one of the declared enum values");
     }
@@ -369,13 +493,22 @@ function validateValue(
   }
 
   if (typeof value === "string") {
-    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+    if (
+      typeof schema.minLength === "number" &&
+      value.length < schema.minLength
+    ) {
       pushError(errors, path, `must have length >= ${schema.minLength}`);
     }
-    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+    if (
+      typeof schema.maxLength === "number" &&
+      value.length > schema.maxLength
+    ) {
       pushError(errors, path, `must have length <= ${schema.maxLength}`);
     }
-    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) {
+    if (
+      typeof schema.pattern === "string" &&
+      !new RegExp(schema.pattern, "u").test(value)
+    ) {
       pushError(errors, path, "must match the declared pattern");
     }
   }
@@ -398,7 +531,12 @@ function validateValue(
     }
     if (schema.items !== undefined) {
       value.forEach((entry, index) => {
-        validateValue(schema.items as JsonSchemaNode, entry, joinPath(path, `[${index}]`), errors);
+        validateValue(
+          schema.items as JsonSchemaNode,
+          entry,
+          joinPath(path, `[${index}]`),
+          errors,
+        );
       });
     }
   }
@@ -420,18 +558,32 @@ function validateValue(
       }
 
       if (schema.additionalProperties === false) {
-        pushError(errors, joinPath(path, key), "additional property is not allowed");
+        pushError(
+          errors,
+          joinPath(path, key),
+          "additional property is not allowed",
+        );
       } else if (isJsonObject(schema.additionalProperties)) {
-        validateValue(schema.additionalProperties as JsonSchemaNode, entry, joinPath(path, key), errors);
+        validateValue(
+          schema.additionalProperties as JsonSchemaNode,
+          entry,
+          joinPath(path, key),
+          errors,
+        );
       }
     }
   }
 }
 
-export function validateJsonSchemaDefinition(schema: JsonObject): readonly JsonSchemaValidationError[] {
+export function validateJsonSchemaDefinition(
+  schema: JsonObject,
+): readonly JsonSchemaValidationError[] {
   const errors: JsonSchemaValidationError[] = [];
   validateSchemaNode(schema, "$schema", errors);
-  if (errors.length === 0 && !canPossiblyAcceptObject(schema as JsonSchemaNode)) {
+  if (
+    errors.length === 0 &&
+    !canPossiblyAcceptObject(schema as JsonSchemaNode)
+  ) {
     pushError(
       errors,
       "$schema",

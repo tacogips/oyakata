@@ -1,7 +1,6 @@
-const { mkdtemp, readFile, rm, writeFile } = require("node:fs/promises");
-const os = require("node:os");
+const { createServer } = require("node:http");
+const { readFile } = require("node:fs/promises");
 const path = require("node:path");
-const { pathToFileURL } = require("node:url");
 const { expect, test } = require("@playwright/test");
 
 const sampleBundle = {
@@ -173,13 +172,17 @@ function createSessionDetail(workflowName, workflowExecutionId) {
   };
 }
 
-function createAbsoluteBuiltAssetUrl(assetPath) {
-  const relativeAssetPath = assetPath.startsWith("/")
-    ? assetPath.slice(1)
-    : assetPath;
-  return pathToFileURL(
-    path.join(process.cwd(), "ui", "dist", relativeAssetPath),
-  ).href;
+function sessionSummaryFromDetail(detail) {
+  return {
+    workflowExecutionId: detail.workflowExecutionId,
+    sessionId: detail.sessionId,
+    workflowName: detail.workflowName,
+    status: detail.status,
+    currentNodeId: detail.currentNodeId ?? null,
+    nodeExecutionCounter: detail.nodeExecutionCounter,
+    startedAt: detail.startedAt,
+    endedAt: detail.endedAt ?? null,
+  };
 }
 
 async function detectFrontendModeFromEntrypoints() {
@@ -189,7 +192,7 @@ async function detectFrontendModeFromEntrypoints() {
   return frontendModeFromUiFramework(detectUiFramework());
 }
 
-function renderHarnessHtml(assetUrls, frontendMode) {
+function renderHarnessHtml(assetUrls) {
   const stylesheetTags = assetUrls.stylesheetUrls
     .map(
       (stylesheetUrl) =>
@@ -203,195 +206,6 @@ function renderHarnessHtml(assetUrls, frontendMode) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>oyakata UI harness</title>
 ${stylesheetTags}
-    <script>
-      (() => {
-        const nativeFetch = window.fetch.bind(window);
-        const state = {
-          config: {
-            fixedWorkflowName: null,
-            readOnly: false,
-            noExec: false,
-            frontend: "${frontendMode}",
-          },
-          workflows: [],
-          workflowResponses: {},
-          sessions: [],
-          sessionDetails: {},
-          nextSessionCounter: 1,
-        };
-
-        function jsonResponse(payload, status = 200) {
-          return new Response(JSON.stringify(payload, null, 2), {
-            status,
-            headers: {
-              "content-type": "application/json; charset=utf-8",
-            },
-          });
-        }
-
-        function clone(value) {
-          return structuredClone(value);
-        }
-
-        function createWorkflowResponse(workflowName) {
-          const response = ${JSON.stringify(createWorkflowResponse("browser-demo"))};
-          response.workflowName = workflowName;
-          response.workflowDirectory = "/virtual/workflows/" + workflowName;
-          response.revision = "sha256:" + workflowName + "-rev-1";
-          response.bundle.workflow.workflowId = workflowName;
-          response.bundle.workflow.description = "New workflow";
-          response.bundle.nodePayloads["oyakata-manager"].variables.workflowId = workflowName;
-          response.bundle.nodePayloads["main-oyakata"].variables.workflowId = workflowName;
-          return response;
-        }
-
-        function sessionSummaryFromDetail(detail) {
-          return {
-            workflowExecutionId: detail.workflowExecutionId,
-            sessionId: detail.sessionId,
-            workflowName: detail.workflowName,
-            status: detail.status,
-            currentNodeId: detail.currentNodeId ?? null,
-            nodeExecutionCounter: detail.nodeExecutionCounter,
-            startedAt: detail.startedAt,
-            endedAt: detail.endedAt ?? null,
-          };
-        }
-
-        function createSessionDetail(workflowName, workflowExecutionId) {
-          const detail = ${JSON.stringify(createSessionDetail("browser-demo", "sess-20260309T100000Z-demo01"))};
-          detail.workflowName = workflowName;
-          detail.workflowId = workflowName;
-          detail.workflowExecutionId = workflowExecutionId;
-          detail.sessionId = workflowExecutionId;
-          detail.runtimeVariables.workflowName = workflowName;
-          detail.nodeExecutions[0].nodeExecId = workflowExecutionId + "-node-1";
-          detail.nodeExecutions[0].artifactDir = "/virtual/artifacts/" + workflowExecutionId + "/oyakata-manager/1";
-          return detail;
-        }
-
-        window.fetch = async (input, init = {}) => {
-          const rawUrl =
-            typeof input === "string"
-              ? input
-              : input instanceof Request
-                ? input.url
-                : String(input);
-          const method =
-            init.method ??
-            (input instanceof Request ? input.method : "GET");
-          const url = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") || rawUrl.startsWith("file://")
-            ? new URL(rawUrl)
-            : new URL(rawUrl, "http://oyakata.local");
-          const pathname = url.pathname;
-
-          if (!pathname.startsWith("/api/")) {
-            return nativeFetch(input, init);
-          }
-
-          if (pathname === "/api/ui-config" && method === "GET") {
-            return jsonResponse(clone(state.config));
-          }
-
-          if (pathname === "/api/workflows" && method === "GET") {
-            return jsonResponse({ workflows: [...state.workflows] });
-          }
-
-          if (pathname === "/api/workflows" && method === "POST") {
-            const body = JSON.parse(init.body ?? "{}");
-            const workflowName = typeof body.workflowName === "string" ? body.workflowName.trim() : "";
-            const created = createWorkflowResponse(workflowName);
-            state.workflows = [...state.workflows, workflowName];
-            state.workflowResponses[workflowName] = created;
-            return jsonResponse(clone(created), 201);
-          }
-
-          if (pathname === "/api/sessions" && method === "GET") {
-            return jsonResponse({ sessions: clone(state.sessions) });
-          }
-
-          if (pathname.startsWith("/api/workflows/")) {
-            const suffix = pathname.slice("/api/workflows/".length);
-            const [encodedWorkflowName, tail = ""] = suffix.split("/", 2);
-            const workflowName = decodeURIComponent(encodedWorkflowName);
-            const current = state.workflowResponses[workflowName];
-
-            if (tail === "" && method === "GET") {
-              return jsonResponse(clone(current));
-            }
-
-            if (tail === "" && method === "PUT") {
-              const body = JSON.parse(init.body ?? "{}");
-              const nextBundle = clone(body.bundle);
-              const revisionNumber = Number(String(current.revision).split("-rev-")[1] ?? "1") + 1;
-              const updated = {
-                ...current,
-                revision: "sha256:" + workflowName + "-rev-" + String(revisionNumber),
-                bundle: nextBundle,
-              };
-              state.workflowResponses[workflowName] = updated;
-              return jsonResponse({
-                workflowName,
-                workflowDirectory: updated.workflowDirectory,
-                revision: updated.revision,
-              });
-            }
-
-            if (tail === "validate" && method === "POST") {
-              return jsonResponse({ valid: true, warnings: [] });
-            }
-
-            if (tail === "execute" && method === "POST") {
-              const workflowExecutionId =
-                "sess-20260309T100000Z-" + String(state.nextSessionCounter).padStart(2, "0");
-              state.nextSessionCounter += 1;
-              const detail = createSessionDetail(workflowName, workflowExecutionId);
-              state.sessionDetails[workflowExecutionId] = detail;
-              state.sessions = [sessionSummaryFromDetail(detail), ...state.sessions];
-              return jsonResponse({
-                accepted: true,
-                workflowExecutionId,
-                sessionId: workflowExecutionId,
-                status: "running",
-              });
-            }
-          }
-
-          if (pathname.startsWith("/api/workflow-executions/")) {
-            const suffix = pathname.slice("/api/workflow-executions/".length);
-            const [encodedWorkflowExecutionId, tail = ""] = suffix.split("/", 2);
-            const workflowExecutionId = decodeURIComponent(encodedWorkflowExecutionId);
-            const current = state.sessionDetails[workflowExecutionId];
-
-            if (tail === "" && method === "GET") {
-              return jsonResponse(clone(current));
-            }
-
-            if (tail === "cancel" && method === "POST") {
-              current.status = "cancelled";
-              current.endedAt = "2026-03-09T10:05:00.000Z";
-              state.sessions = state.sessions.map((session) =>
-                session.workflowExecutionId === workflowExecutionId
-                  ? {
-                      ...session,
-                      status: "cancelled",
-                      endedAt: current.endedAt,
-                    }
-                  : session,
-              );
-              return jsonResponse({
-                accepted: true,
-                workflowExecutionId,
-                sessionId: workflowExecutionId,
-                status: "cancelled",
-              });
-            }
-          }
-
-          throw new Error("Unhandled harness fetch: " + method + " " + rawUrl);
-        };
-      })();
-    </script>
     <script type="module" src="${assetUrls.moduleScriptUrl}"></script>
   </head>
   <body>
@@ -400,34 +214,296 @@ ${stylesheetTags}
 </html>`;
 }
 
+function contentTypeForAsset(assetPath) {
+  if (assetPath.endsWith(".css")) {
+    return "text/css; charset=utf-8";
+  }
+  if (assetPath.endsWith(".js")) {
+    return "text/javascript; charset=utf-8";
+  }
+  return "application/octet-stream";
+}
+
+async function readJsonRequest(request) {
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(chunk);
+  }
+  const rawBody = Buffer.concat(chunks).toString("utf8").trim();
+  if (rawBody.length === 0) {
+    return {};
+  }
+  return JSON.parse(rawBody);
+}
+
+async function startHarnessServer(assetUrls, frontendMode) {
+  const state = {
+    config: {
+      fixedWorkflowName: null,
+      readOnly: false,
+      noExec: false,
+      frontend: frontendMode,
+    },
+    workflows: [],
+    workflowResponses: {},
+    sessions: [],
+    sessionDetails: {},
+    nextSessionCounter: 1,
+  };
+
+  const server = createServer(async (request, response) => {
+    try {
+      const method = request.method ?? "GET";
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const pathname = url.pathname;
+
+      if (pathname === "/") {
+        response.writeHead(200, {
+          "content-type": "text/html; charset=utf-8",
+        });
+        response.end(renderHarnessHtml(assetUrls));
+        return;
+      }
+
+      if (
+        pathname === assetUrls.moduleScriptUrl ||
+        assetUrls.stylesheetUrls.includes(pathname)
+      ) {
+        const assetPath = path.join(
+          process.cwd(),
+          "ui",
+          "dist",
+          pathname.replace(/^\/+/u, ""),
+        );
+        const body = await readFile(assetPath);
+        response.writeHead(200, {
+          "content-type": contentTypeForAsset(pathname),
+        });
+        response.end(body);
+        return;
+      }
+
+      if (pathname === "/api/ui-config" && method === "GET") {
+        response.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(JSON.stringify(deepClone(state.config), null, 2));
+        return;
+      }
+
+      if (pathname === "/api/workflows" && method === "GET") {
+        response.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(JSON.stringify({ workflows: [...state.workflows] }, null, 2));
+        return;
+      }
+
+      if (pathname === "/api/workflows" && method === "POST") {
+        const body = await readJsonRequest(request);
+        const workflowName =
+          typeof body.workflowName === "string" ? body.workflowName.trim() : "";
+        const created = createWorkflowResponse(workflowName);
+        state.workflows = [...state.workflows, workflowName];
+        state.workflowResponses[workflowName] = created;
+        response.writeHead(201, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(JSON.stringify(deepClone(created), null, 2));
+        return;
+      }
+
+      if (pathname === "/api/sessions" && method === "GET") {
+        response.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(JSON.stringify({ sessions: deepClone(state.sessions) }, null, 2));
+        return;
+      }
+
+      if (pathname.startsWith("/api/workflows/")) {
+        const suffix = pathname.slice("/api/workflows/".length);
+        const [encodedWorkflowName, tail = ""] = suffix.split("/", 2);
+        const workflowName = decodeURIComponent(encodedWorkflowName);
+        const current = state.workflowResponses[workflowName];
+
+        if (tail === "" && method === "GET") {
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(JSON.stringify(deepClone(current), null, 2));
+          return;
+        }
+
+        if (tail === "" && method === "PUT") {
+          const body = await readJsonRequest(request);
+          const nextBundle = deepClone(body.bundle);
+          const revisionNumber =
+            Number(String(current.revision).split("-rev-")[1] ?? "1") + 1;
+          const updated = {
+            ...current,
+            revision: "sha256:" + workflowName + "-rev-" + String(revisionNumber),
+            bundle: nextBundle,
+          };
+          state.workflowResponses[workflowName] = updated;
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(
+            JSON.stringify(
+              {
+                workflowName,
+                workflowDirectory: updated.workflowDirectory,
+                revision: updated.revision,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+
+        if (tail === "validate" && method === "POST") {
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(JSON.stringify({ valid: true, warnings: [] }, null, 2));
+          return;
+        }
+
+        if (tail === "execute" && method === "POST") {
+          const workflowExecutionId =
+            "sess-20260309T100000Z-" +
+            String(state.nextSessionCounter).padStart(2, "0");
+          state.nextSessionCounter += 1;
+          const detail = createSessionDetail(workflowName, workflowExecutionId);
+          state.sessionDetails[workflowExecutionId] = detail;
+          state.sessions = [sessionSummaryFromDetail(detail), ...state.sessions];
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(
+            JSON.stringify(
+              {
+                accepted: true,
+                workflowExecutionId,
+                sessionId: workflowExecutionId,
+                status: "running",
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+      }
+
+      if (pathname.startsWith("/api/workflow-executions/")) {
+        const suffix = pathname.slice("/api/workflow-executions/".length);
+        const [encodedWorkflowExecutionId, tail = ""] = suffix.split("/", 2);
+        const workflowExecutionId = decodeURIComponent(encodedWorkflowExecutionId);
+        const current = state.sessionDetails[workflowExecutionId];
+
+        if (tail === "" && method === "GET") {
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(JSON.stringify(deepClone(current), null, 2));
+          return;
+        }
+
+        if (tail === "cancel" && method === "POST") {
+          current.status = "cancelled";
+          current.endedAt = "2026-03-09T10:05:00.000Z";
+          state.sessions = state.sessions.map((session) =>
+            session.workflowExecutionId === workflowExecutionId
+              ? {
+                  ...session,
+                  status: "cancelled",
+                  endedAt: current.endedAt,
+                }
+              : session,
+          );
+          response.writeHead(200, {
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(
+            JSON.stringify(
+              {
+                accepted: true,
+                workflowExecutionId,
+                sessionId: workflowExecutionId,
+                status: "cancelled",
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+      }
+
+      response.writeHead(404, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      response.end(
+        JSON.stringify(
+          {
+            error: `Unhandled harness request: ${method} ${pathname}`,
+          },
+          null,
+          2,
+        ),
+      );
+    } catch (error) {
+      response.writeHead(500, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      response.end(
+        JSON.stringify(
+          {
+            error: error instanceof Error ? error.message : String(error),
+          },
+          null,
+          2,
+        ),
+      );
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve(undefined);
+    });
+  });
+
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("mock harness server did not provide a numeric port");
+  }
+
+  return {
+    server,
+    baseUrl: `http://127.0.0.1:${String(address.port)}`,
+  };
+}
+
 test("runs browser workflow editor flow against the built UI with a file-backed mock API", async ({
   page,
 }) => {
-  const tempRoot = await mkdtemp(
-    path.join(os.tmpdir(), "oyakata-ui-file-harness-"),
+  const { parseBuiltIndexAssets } = await import("../scripts/ui-built-assets.mjs");
+  const builtIndexHtml = await readFile(
+    path.join(process.cwd(), "ui", "dist", "index.html"),
+    "utf8",
   );
+  const assetUrls = parseBuiltIndexAssets(builtIndexHtml, (assetPath) => assetPath);
+  const frontendMode = await detectFrontendModeFromEntrypoints();
+  const { server, baseUrl } = await startHarnessServer(assetUrls, frontendMode);
 
   try {
-    const { parseBuiltIndexAssets } = await import(
-      "../scripts/ui-built-assets.mjs"
-    );
-    const builtIndexHtml = await readFile(
-      path.join(process.cwd(), "ui", "dist", "index.html"),
-      "utf8",
-    );
-    const assetUrls = parseBuiltIndexAssets(
-      builtIndexHtml,
-      createAbsoluteBuiltAssetUrl,
-    );
-    const frontendMode = await detectFrontendModeFromEntrypoints();
-    const harnessPath = path.join(tempRoot, "index.html");
-    await writeFile(
-      harnessPath,
-      renderHarnessHtml(assetUrls, frontendMode),
-      "utf8",
-    );
-
-    await page.goto(pathToFileURL(harnessPath).href);
+    await page.goto(`${baseUrl}/`);
 
     await expect(
       page.getByRole("heading", { name: "oyakata Workflow Editor" }),
@@ -479,6 +555,8 @@ test("runs browser workflow editor flow against the built UI with a file-backed 
     );
     await expect(page.locator(".session-detail")).toContainText("cancelled");
   } finally {
-    await rm(tempRoot, { recursive: true, force: true });
+    await new Promise((resolve) => {
+      server.close(() => resolve(undefined));
+    });
   }
 });

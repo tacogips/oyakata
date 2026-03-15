@@ -1,10 +1,15 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import {
+  atomicWriteJsonFile as writeJsonFile,
+  atomicWriteTextFile as writeRawTextFile,
+} from "../shared/fs";
+import {
   AdapterExecutionError,
   ScenarioNodeAdapter,
+  type AdapterAmbientManagerContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
   type MockNodeScenario,
@@ -23,6 +28,12 @@ import { parseManagerControlPayload } from "./manager-control";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import { executeConversationRound } from "./conversation";
+import {
+  buildAmbientManagerControlPlaneEnvironment,
+  createManagerSessionStore,
+  hashManagerAuthToken,
+  mintManagerAuthToken,
+} from "./manager-session-store";
 import {
   evaluateBranch,
   evaluateCompletion,
@@ -107,6 +118,10 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function addMillisecondsToIso(timestamp: string, milliseconds: number): string {
+  return new Date(new Date(timestamp).getTime() + milliseconds).toISOString();
+}
+
 interface UpstreamOutputRef extends OutputRef {
   readonly fromNodeId: string;
   readonly fromSubWorkflowId?: string;
@@ -144,6 +159,10 @@ interface AdapterExecutionFailure {
 
 function nextNodeExecId(counter: number): string {
   return `exec-${String(counter).padStart(6, "0")}`;
+}
+
+function nextManagerSessionId(nodeExecId: string): string {
+  return `mgrsess-${nodeExecId}`;
 }
 
 function nextCommunicationId(counter: number): string {
@@ -225,26 +244,6 @@ async function executeAdapterWithTimeout(
       clearTimeout(timer);
     }
   }
-}
-
-async function writeJsonFile(
-  filePath: string,
-  payload: unknown,
-): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await rename(tempPath, filePath);
-}
-
-async function writeRawTextFile(
-  filePath: string,
-  content: string,
-): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-  await writeFile(tempPath, content, "utf8");
-  await rename(tempPath, filePath);
 }
 
 async function persistTerminalSessionState(
@@ -547,6 +546,7 @@ function outputRefForExecution(
     nodeId,
   );
   return {
+    kind: "node-output",
     workflowExecutionId: session.sessionId,
     workflowId: session.workflowId,
     ...(owningSubWorkflow === undefined
@@ -1026,6 +1026,7 @@ async function persistExternalMailboxInputCommunication(input: {
     transitionWhen: "external-mailbox:workflow-input",
     sourceNodeExecId,
     payloadRef: {
+      kind: "node-output",
       workflowExecutionId: input.workflowExecutionId,
       workflowId: input.workflowId,
       outputNodeId: WORKFLOW_EXTERNAL_INPUT_NODE_ID,
@@ -1288,6 +1289,7 @@ export async function runWorkflow(
         return current.ok && current.value.status === "cancelled";
       },
     } satisfies CancellationProbe);
+  const managerSessionStore = createManagerSessionStore(options);
 
   let session: WorkflowSessionState;
   if (options.rerunFromSessionId !== undefined) {
@@ -1619,7 +1621,10 @@ export async function runWorkflow(
         dryRun: options.dryRun ?? false,
       };
       const inputJson = stableJson(inputPayload);
-      await writeRawTextFile(path.join(artifactDir, "input.json"), `${inputJson}\n`);
+      await writeRawTextFile(
+        path.join(artifactDir, "input.json"),
+        `${inputJson}\n`,
+      );
 
       const startedAt = nowIso();
       const timeoutMs = resolveTimeoutMs(
@@ -1627,6 +1632,60 @@ export async function runWorkflow(
         workflow.defaults.nodeTimeoutMs,
         options.defaultTimeoutMs,
       );
+      let ambientManagerContext: AdapterAmbientManagerContext | undefined;
+      let managerSessionId: string | undefined;
+
+      if (isManagerNodeKind(nodeRef.kind) && options.dryRun !== true) {
+        managerSessionId = nextManagerSessionId(nodeExecId);
+        const managerAuthToken = mintManagerAuthToken();
+        const activeManagerSessionExpiresAt = addMillisecondsToIso(
+          startedAt,
+          timeoutMs + 5 * 60_000,
+        );
+        ambientManagerContext = {
+          environment: buildAmbientManagerControlPlaneEnvironment({
+            workflowId: workflow.workflowId,
+            workflowExecutionId: session.sessionId,
+            managerNodeId: nodeId,
+            managerNodeExecId: nodeExecId,
+            managerSessionId,
+            authToken: managerAuthToken,
+            ...(options.env === undefined ? {} : { env: options.env }),
+          }),
+        };
+        try {
+          await managerSessionStore.createOrResumeSession({
+            managerSessionId,
+            workflowId: workflow.workflowId,
+            workflowExecutionId: session.sessionId,
+            managerNodeId: nodeId,
+            managerNodeExecId: nodeExecId,
+            status: "active",
+            createdAt: startedAt,
+            updatedAt: startedAt,
+            authTokenHash: hashManagerAuthToken(managerAuthToken),
+            authTokenExpiresAt: activeManagerSessionExpiresAt,
+          });
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : "unknown manager session persistence failure";
+          const failed: WorkflowSessionState = {
+            ...session,
+            queue,
+            status: "failed",
+            currentNodeId: nodeId,
+            endedAt: startedAt,
+            lastError: `failed to start manager session at '${nodeId}': ${message}`,
+          };
+          await saveSession(failed, options);
+          return err({
+            exitCode: 1,
+            message: failed.lastError ?? "failed to start manager session",
+          });
+        }
+      }
 
       let outputPayload: Readonly<Record<string, unknown>>;
       let nodeStatus: NodeExecutionRecord["status"] = "succeeded";
@@ -1753,6 +1812,9 @@ export async function runWorkflow(
                 artifactDir,
                 upstreamCommunicationIds,
                 ...(backendSession === undefined ? {} : { backendSession }),
+                ...(ambientManagerContext === undefined
+                  ? {}
+                  : { ambientManagerContext }),
                 ...(adapterOutputContract === undefined
                   ? {}
                   : { output: adapterOutputContract }),
@@ -1972,10 +2034,12 @@ export async function runWorkflow(
           ? {}
           : { returnedSessionId: backendSessionId }),
       });
-      const nodeExecutionRecord: NodeExecutionRecord = {
+      const buildNodeExecutionRecord = (
+        status: NodeExecutionRecord["status"] = nodeStatus,
+      ): NodeExecutionRecord => ({
         nodeId,
         nodeExecId,
-        status: nodeStatus,
+        status,
         artifactDir,
         startedAt,
         endedAt,
@@ -1991,8 +2055,37 @@ export async function runWorkflow(
         ...(previousNodeExecId === undefined
           ? {}
           : { restartedFromNodeExecId: previousNodeExecId }),
+      });
+      const buildNodeExecutions = (
+        status: NodeExecutionRecord["status"] = nodeStatus,
+      ): readonly NodeExecutionRecord[] => [
+        ...session.nodeExecutions,
+        buildNodeExecutionRecord(status),
+      ];
+      const finalizeManagerSession = async (
+        finalStatus: "completed" | "failed" | "cancelled",
+      ): Promise<void> => {
+        if (
+          managerSessionId === undefined ||
+          ambientManagerContext === undefined
+        ) {
+          return;
+        }
+        await managerSessionStore.createOrResumeSession({
+          managerSessionId,
+          workflowId: workflow.workflowId,
+          workflowExecutionId: session.sessionId,
+          managerNodeId: nodeId,
+          managerNodeExecId: nodeExecId,
+          status: finalStatus,
+          createdAt: startedAt,
+          updatedAt: endedAt,
+          authTokenHash: hashManagerAuthToken(
+            ambientManagerContext.environment.OYAKATA_MANAGER_AUTH_TOKEN,
+          ),
+          authTokenExpiresAt: endedAt,
+        });
       };
-      const nodeExecutions = [...session.nodeExecutions, nodeExecutionRecord];
       let managerControl = null;
       if (isManagerNodeKind(nodeRef.kind)) {
         try {
@@ -2005,6 +2098,36 @@ export async function runWorkflow(
                   managerKind: nodeRef.kind,
                 });
         } catch (error: unknown) {
+          nodeStatus = "failed";
+          const nodeExecutions = buildNodeExecutions();
+          try {
+            await finalizeManagerSession("failed");
+          } catch (finalizationError: unknown) {
+            const message =
+              finalizationError instanceof Error
+                ? finalizationError.message
+                : "unknown manager session finalization failure";
+            const failed: WorkflowSessionState = {
+              ...session,
+              queue,
+              status: "failed",
+              currentNodeId: nodeId,
+              endedAt,
+              nodeExecutionCounter: nextExecutionCounter,
+              nodeExecutionCounts: updatedCounts,
+              nodeExecutions,
+              communicationCounter: session.communicationCounter,
+              communications: session.communications,
+              nodeBackendSessions: nextNodeBackendSessions,
+              lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+            };
+            await saveSession(failed, options);
+            return err({
+              exitCode: 1,
+              message:
+                failed.lastError ?? "failed to finalize manager session",
+            });
+          }
           const message =
             error instanceof Error
               ? error.message
@@ -2029,11 +2152,155 @@ export async function runWorkflow(
             message: failed.lastError ?? "invalid manager control",
           });
         }
+        if (managerControl !== null && managerSessionId !== undefined) {
+          try {
+            const claimedMode = await managerSessionStore.claimControlMode({
+              managerSessionId,
+              controlMode: "payload-manager-control",
+              updatedAt: endedAt,
+            });
+            if (claimedMode !== "payload-manager-control") {
+              nodeStatus = "failed";
+              const nodeExecutions = buildNodeExecutions();
+              try {
+                await finalizeManagerSession("failed");
+              } catch (finalizationError: unknown) {
+                const message =
+                  finalizationError instanceof Error
+                    ? finalizationError.message
+                    : "unknown manager session finalization failure";
+                const failed: WorkflowSessionState = {
+                  ...session,
+                  queue,
+                  status: "failed",
+                  currentNodeId: nodeId,
+                  endedAt,
+                  nodeExecutionCounter: nextExecutionCounter,
+                  nodeExecutionCounts: updatedCounts,
+                  nodeExecutions,
+                  communicationCounter: session.communicationCounter,
+                  communications: session.communications,
+                  nodeBackendSessions: nextNodeBackendSessions,
+                  lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+                };
+                await saveSession(failed, options);
+                return err({
+                  exitCode: 1,
+                  message:
+                    failed.lastError ?? "failed to finalize manager session",
+                });
+              }
+              const failed: WorkflowSessionState = {
+                ...session,
+                queue,
+                status: "failed",
+                currentNodeId: nodeId,
+                endedAt,
+                nodeExecutionCounter: nextExecutionCounter,
+                nodeExecutionCounts: updatedCounts,
+                nodeExecutions,
+                communicationCounter: session.communicationCounter,
+                communications: session.communications,
+                nodeBackendSessions: nextNodeBackendSessions,
+                lastError: `invalid manager control at '${nodeId}': manager execution cannot mix GraphQL manager messages with payload managerControl`,
+              };
+              await saveSession(failed, options);
+              return err({
+                exitCode: 5,
+                message: failed.lastError ?? "invalid manager control",
+              });
+            }
+          } catch (error: unknown) {
+            nodeStatus = "failed";
+            const nodeExecutions = buildNodeExecutions();
+            try {
+              await finalizeManagerSession("failed");
+            } catch (finalizationError: unknown) {
+              const message =
+                finalizationError instanceof Error
+                  ? finalizationError.message
+                  : "unknown manager session finalization failure";
+              const failed: WorkflowSessionState = {
+                ...session,
+                queue,
+                status: "failed",
+                currentNodeId: nodeId,
+                endedAt,
+                nodeExecutionCounter: nextExecutionCounter,
+                nodeExecutionCounts: updatedCounts,
+                nodeExecutions,
+                communicationCounter: session.communicationCounter,
+                communications: session.communications,
+                nodeBackendSessions: nextNodeBackendSessions,
+                lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+              };
+              await saveSession(failed, options);
+              return err({
+                exitCode: 1,
+                message:
+                  failed.lastError ?? "failed to finalize manager session",
+              });
+            }
+            const message =
+              error instanceof Error
+                ? error.message
+                : "unknown manager control mode claim failure";
+            const failed: WorkflowSessionState = {
+              ...session,
+              queue,
+              status: "failed",
+              currentNodeId: nodeId,
+              endedAt,
+              nodeExecutionCounter: nextExecutionCounter,
+              nodeExecutionCounts: updatedCounts,
+              nodeExecutions,
+              communicationCounter: session.communicationCounter,
+              communications: session.communications,
+              nodeBackendSessions: nextNodeBackendSessions,
+              lastError: `invalid manager control at '${nodeId}': ${message}`,
+            };
+            await saveSession(failed, options);
+            return err({
+              exitCode: 5,
+              message: failed.lastError ?? "invalid manager control",
+            });
+          }
+        }
 
         if (
           nodeId !== workflow.managerNodeId &&
           (managerControl?.startSubWorkflowIds.length ?? 0) > 0
         ) {
+          nodeStatus = "failed";
+          const nodeExecutions = buildNodeExecutions();
+          try {
+            await finalizeManagerSession("failed");
+          } catch (finalizationError: unknown) {
+            const message =
+              finalizationError instanceof Error
+                ? finalizationError.message
+                : "unknown manager session finalization failure";
+            const failed: WorkflowSessionState = {
+              ...session,
+              queue,
+              status: "failed",
+              currentNodeId: nodeId,
+              endedAt,
+              nodeExecutionCounter: nextExecutionCounter,
+              nodeExecutionCounts: updatedCounts,
+              nodeExecutions,
+              communicationCounter: session.communicationCounter,
+              communications: session.communications,
+              nodeBackendSessions: nextNodeBackendSessions,
+              lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+            };
+            await saveSession(failed, options);
+            return err({
+              exitCode: 1,
+              message:
+                failed.lastError ?? "failed to finalize manager session",
+            });
+          }
           const failed: WorkflowSessionState = {
             ...session,
             queue,
@@ -2059,6 +2326,36 @@ export async function runWorkflow(
           nodeRef.kind !== "sub-manager" &&
           (managerControl?.childInputNodeIds.length ?? 0) > 0
         ) {
+          nodeStatus = "failed";
+          const nodeExecutions = buildNodeExecutions();
+          try {
+            await finalizeManagerSession("failed");
+          } catch (finalizationError: unknown) {
+            const message =
+              finalizationError instanceof Error
+                ? finalizationError.message
+                : "unknown manager session finalization failure";
+            const failed: WorkflowSessionState = {
+              ...session,
+              queue,
+              status: "failed",
+              currentNodeId: nodeId,
+              endedAt,
+              nodeExecutionCounter: nextExecutionCounter,
+              nodeExecutionCounts: updatedCounts,
+              nodeExecutions,
+              communicationCounter: session.communicationCounter,
+              communications: session.communications,
+              nodeBackendSessions: nextNodeBackendSessions,
+              lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+            };
+            await saveSession(failed, options);
+            return err({
+              exitCode: 1,
+              message:
+                failed.lastError ?? "failed to finalize manager session",
+            });
+          }
           const failed: WorkflowSessionState = {
             ...session,
             queue,
@@ -2079,6 +2376,36 @@ export async function runWorkflow(
             message: failed.lastError ?? "invalid manager control",
           });
         }
+      }
+      const nodeExecutions = buildNodeExecutions();
+      try {
+        await finalizeManagerSession(
+          nodeStatus === "succeeded" ? "completed" : "failed",
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "unknown manager session finalization failure";
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt,
+          nodeExecutionCounter: nextExecutionCounter,
+          nodeExecutionCounts: updatedCounts,
+          nodeExecutions,
+          communicationCounter: session.communicationCounter,
+          communications: session.communications,
+          nodeBackendSessions: nextNodeBackendSessions,
+          lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+        };
+        await saveSession(failed, options);
+        return err({
+          exitCode: 1,
+          message: failed.lastError ?? "failed to finalize manager session",
+        });
       }
       const edges = outgoingEdges.get(nodeId) ?? [];
       const matched = edges.filter((edge) => evaluateEdge(edge, outputPayload));

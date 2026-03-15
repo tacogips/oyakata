@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { evaluateBranch, evaluateCompletion, resolveLoopTransition } from "./semantics";
+import {
+  evaluateBranch,
+  evaluateCompletion,
+  resolveLoopTransition,
+} from "./semantics";
 
 describe("evaluateBranch", () => {
   test("supports identifiers from top-level output and when map", () => {
@@ -28,13 +32,20 @@ describe("evaluateBranch", () => {
 
 describe("evaluateCompletion", () => {
   test("passes auto-completion for none and undefined", () => {
-    expect(evaluateCompletion({ rule: undefined, output: {} }).passed).toBe(true);
-    expect(evaluateCompletion({ rule: { type: "none" }, output: {} }).passed).toBe(true);
+    expect(evaluateCompletion({ rule: undefined, output: {} }).passed).toBe(
+      true,
+    );
+    expect(
+      evaluateCompletion({ rule: { type: "none" }, output: {} }).passed,
+    ).toBe(true);
   });
 
   test("evaluates checklist rule", () => {
     const pass = evaluateCompletion({
-      rule: { type: "checklist", config: { required: ["draft_created", "lint_clean"] } },
+      rule: {
+        type: "checklist",
+        config: { required: ["draft_created", "lint_clean"] },
+      },
       output: { checklist: { draft_created: true, lint_clean: true } },
     });
     expect(pass).toEqual({ passed: true, reason: null });

@@ -85,14 +85,32 @@ export async function createWorkflowTemplate(
       },
     ],
     nodes: [
-      { id: managerId, kind: "root-manager", nodeFile: `node-${managerId}.json`, completion: { type: "none" } },
-      { id: mainManagerId, kind: "sub-manager", nodeFile: `node-${mainManagerId}.json`, completion: { type: "none" } },
-      { id: inputId, kind: "input", nodeFile: `node-${inputId}.json`, completion: { type: "none" } },
-      { id: outputId, kind: "output", nodeFile: `node-${outputId}.json`, completion: { type: "none" } },
+      {
+        id: managerId,
+        kind: "root-manager",
+        nodeFile: `node-${managerId}.json`,
+        completion: { type: "none" },
+      },
+      {
+        id: mainManagerId,
+        kind: "sub-manager",
+        nodeFile: `node-${mainManagerId}.json`,
+        completion: { type: "none" },
+      },
+      {
+        id: inputId,
+        kind: "input",
+        nodeFile: `node-${inputId}.json`,
+        completion: { type: "none" },
+      },
+      {
+        id: outputId,
+        kind: "output",
+        nodeFile: `node-${outputId}.json`,
+        completion: { type: "none" },
+      },
     ],
-    edges: [
-      { from: inputId, to: outputId, when: "always" },
-    ],
+    edges: [{ from: inputId, to: outputId, when: "always" }],
     loops: [],
     branching: { mode: "fan-out" },
   };
@@ -124,7 +142,8 @@ export async function createWorkflowTemplate(
         id: mainManagerId,
         executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
-        promptTemplate: "Translate the parent oyakata instruction into this sub-workflow's child work for {{workflowId}}",
+        promptTemplate:
+          "Translate the parent oyakata instruction into this sub-workflow's child work for {{workflowId}}",
         variables: { workflowId },
       },
     },
@@ -134,7 +153,8 @@ export async function createWorkflowTemplate(
         id: inputId,
         executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
-        promptTemplate: "Normalize the received sub-workflow instruction into workflow input",
+        promptTemplate:
+          "Normalize the received sub-workflow instruction into workflow input",
         variables: {},
       },
     },
@@ -151,10 +171,19 @@ export async function createWorkflowTemplate(
   ];
 
   try {
-    await writeJson(path.join(workflowDirectory, "workflow.json"), workflowJson);
-    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), workflowVis);
+    await writeJson(
+      path.join(workflowDirectory, "workflow.json"),
+      workflowJson,
+    );
+    await writeJson(
+      path.join(workflowDirectory, "workflow-vis.json"),
+      workflowVis,
+    );
     for (const node of nodePayloads) {
-      await writeJson(path.join(workflowDirectory, node.fileName), node.payload);
+      await writeJson(
+        path.join(workflowDirectory, node.fileName),
+        node.payload,
+      );
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";

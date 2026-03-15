@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { AdapterExecutionError, normalizeAdapterOutput, parseJsonObjectCandidate } from "./adapter";
+import {
+  AdapterExecutionError,
+  normalizeAdapterOutput,
+  parseJsonObjectCandidate,
+} from "./adapter";
 
 describe("normalizeAdapterOutput", () => {
   test("normalizes valid adapter output", () => {
@@ -40,13 +44,15 @@ describe("parseJsonObjectCandidate", () => {
   test("accepts a fenced json object response", () => {
     expect(
       parseJsonObjectCandidate(
-        "```json\n{\n  \"summary\": \"ok\"\n}\n```",
+        '```json\n{\n  "summary": "ok"\n}\n```',
         "test source",
       ),
     ).toEqual({ summary: "ok" });
   });
 
   test("rejects non-object json responses", () => {
-    expect(() => parseJsonObjectCandidate("[1,2,3]", "test source")).toThrowError(AdapterExecutionError);
+    expect(() =>
+      parseJsonObjectCandidate("[1,2,3]", "test source"),
+    ).toThrowError(AdapterExecutionError);
   });
 });

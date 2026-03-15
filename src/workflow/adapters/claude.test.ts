@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { AdapterExecutionContext, AdapterExecutionInput } from "../adapter";
+import type {
+  AdapterExecutionContext,
+  AdapterExecutionInput,
+} from "../adapter";
 import { ClaudeCodeAgentAdapter } from "./claude";
 
 const originalFetch = globalThis.fetch;
@@ -50,15 +53,21 @@ describe("ClaudeCodeAgentAdapter", () => {
         );
       })
       .mockName("fetch-claude-ok");
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
-    const adapter = new ClaudeCodeAgentAdapter({ endpoint: "http://localhost/claude" });
+    const adapter = new ClaudeCodeAgentAdapter({
+      endpoint: "http://localhost/claude",
+    });
     const output = await adapter.execute(baseInput, baseContext);
     expect(output.provider).toBe("claude-provider");
     expect(output.model).toBe("claude-opus-4-1");
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
     expect(body["model"]).toBe("claude-opus-4-1");
     expect(body["workflowExecutionId"]).toBe("sess-1");
     expect(body["nodeExecId"]).toBe("exec-1");
@@ -80,9 +89,12 @@ describe("ClaudeCodeAgentAdapter", () => {
         );
       })
       .mockName("fetch-claude-backend-session");
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
-    const adapter = new ClaudeCodeAgentAdapter({ endpoint: "http://localhost/claude" });
+    const adapter = new ClaudeCodeAgentAdapter({
+      endpoint: "http://localhost/claude",
+    });
     const output = await adapter.execute(
       {
         ...baseInput,
@@ -96,20 +108,90 @@ describe("ClaudeCodeAgentAdapter", () => {
 
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
-    expect(body["backendSession"]).toEqual({ mode: "reuse", sessionId: "backend-claude-1" });
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    expect(body["backendSession"]).toEqual({
+      mode: "reuse",
+      sessionId: "backend-claude-1",
+    });
     expect(output.backendSession?.sessionId).toBe("backend-claude-1");
+  });
+
+  test("forwards ambient manager context when provided", async () => {
+    const fetchMock = vi
+      .fn(async () => {
+        return new Response(
+          JSON.stringify({
+            provider: "claude-provider",
+            promptText: "hello",
+            completionPassed: true,
+            when: { always: true },
+            payload: { ok: true },
+          }),
+          { status: 200 },
+        );
+      })
+      .mockName("fetch-claude-manager-context");
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    const adapter = new ClaudeCodeAgentAdapter({
+      endpoint: "http://localhost/claude",
+    });
+    await adapter.execute(
+      {
+        ...baseInput,
+        ambientManagerContext: {
+          environment: {
+            OYAKATA_GRAPHQL_ENDPOINT: "http://127.0.0.1:43173/graphql",
+            OYAKATA_MANAGER_AUTH_TOKEN: "secret",
+            OYAKATA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+            OYAKATA_WORKFLOW_ID: "wf",
+            OYAKATA_WORKFLOW_EXECUTION_ID: "sess-1",
+            OYAKATA_MANAGER_NODE_ID: "node-1",
+            OYAKATA_MANAGER_NODE_EXEC_ID: "exec-1",
+          },
+        },
+      },
+      baseContext,
+    );
+
+    const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
+    const request = calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    expect(body["ambientManagerContext"]).toEqual({
+      environment: {
+        OYAKATA_GRAPHQL_ENDPOINT: "http://127.0.0.1:43173/graphql",
+        OYAKATA_MANAGER_AUTH_TOKEN: "secret",
+        OYAKATA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+        OYAKATA_WORKFLOW_ID: "wf",
+        OYAKATA_WORKFLOW_EXECUTION_ID: "sess-1",
+        OYAKATA_MANAGER_NODE_ID: "node-1",
+        OYAKATA_MANAGER_NODE_EXEC_ID: "exec-1",
+      },
+    });
   });
 
   test("maps invalid response body to invalid_output", async () => {
     (globalThis as { fetch: typeof fetch }).fetch = vi
       .fn(async () => {
-        return new Response(JSON.stringify({ provider: "claude-provider" }), { status: 200 });
+        return new Response(JSON.stringify({ provider: "claude-provider" }), {
+          status: 200,
+        });
       })
       .mockName("fetch-claude-invalid") as unknown as typeof fetch;
 
-    const adapter = new ClaudeCodeAgentAdapter({ endpoint: "http://localhost/claude" });
-    await expect(adapter.execute(baseInput, baseContext)).rejects.toHaveProperty("code", "invalid_output");
+    const adapter = new ClaudeCodeAgentAdapter({
+      endpoint: "http://localhost/claude",
+    });
+    await expect(
+      adapter.execute(baseInput, baseContext),
+    ).rejects.toHaveProperty("code", "invalid_output");
   });
 
   test("omits artifactDir from contract-enabled requests", async () => {
@@ -127,9 +209,12 @@ describe("ClaudeCodeAgentAdapter", () => {
         );
       })
       .mockName("fetch-claude-contract");
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
-    const adapter = new ClaudeCodeAgentAdapter({ endpoint: "http://localhost/claude" });
+    const adapter = new ClaudeCodeAgentAdapter({
+      endpoint: "http://localhost/claude",
+    });
     await adapter.execute(
       {
         ...baseInput,
@@ -152,7 +237,10 @@ describe("ClaudeCodeAgentAdapter", () => {
 
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
     expect(body["artifactDir"]).toBeUndefined();
     expect(body["output"]).toBeDefined();
   });
@@ -160,7 +248,9 @@ describe("ClaudeCodeAgentAdapter", () => {
   test("retries transient provider failures with bounded attempts", async () => {
     const fetchMock = vi
       .fn()
-      .mockImplementationOnce(async () => new Response("temporary failure", { status: 500 }))
+      .mockImplementationOnce(
+        async () => new Response("temporary failure", { status: 500 }),
+      )
       .mockImplementationOnce(
         async () =>
           new Response(
@@ -174,7 +264,8 @@ describe("ClaudeCodeAgentAdapter", () => {
             { status: 200 },
           ),
       );
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
     const adapter = new ClaudeCodeAgentAdapter({
       endpoint: "http://localhost/claude",

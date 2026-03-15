@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { AdapterExecutionContext, AdapterExecutionInput } from "../adapter";
+import type {
+  AdapterExecutionContext,
+  AdapterExecutionInput,
+} from "../adapter";
 import { CodexAgentAdapter } from "./codex";
 
 const originalFetch = globalThis.fetch;
@@ -52,7 +55,8 @@ describe("CodexAgentAdapter", () => {
       );
     });
     // explicit reassignment keeps compatibility with this vitest version
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
     const adapter = new CodexAgentAdapter({
       endpoint: "http://localhost/codex",
@@ -66,7 +70,10 @@ describe("CodexAgentAdapter", () => {
     const request = calls[0]?.[1] as RequestInit | undefined;
     const headers = (request?.headers ?? {}) as Record<string, string>;
     expect(headers["authorization"]).toBe("Bearer secret");
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
     expect(body["model"]).toBe("gpt-5");
     expect(body["workflowExecutionId"]).toBe("sess-1");
     expect(body["nodeExecId"]).toBe("exec-1");
@@ -88,9 +95,12 @@ describe("CodexAgentAdapter", () => {
         { status: 200 },
       );
     });
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
-    const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
+    const adapter = new CodexAgentAdapter({
+      endpoint: "http://localhost/codex",
+    });
     const output = await adapter.execute(
       {
         ...baseInput,
@@ -104,9 +114,72 @@ describe("CodexAgentAdapter", () => {
 
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
-    expect(body["backendSession"]).toEqual({ mode: "reuse", sessionId: "backend-codex-1" });
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    expect(body["backendSession"]).toEqual({
+      mode: "reuse",
+      sessionId: "backend-codex-1",
+    });
     expect(output.backendSession?.sessionId).toBe("backend-codex-1");
+  });
+
+  test("forwards ambient manager context when provided", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          provider: "codex-provider",
+          model: "gpt-5",
+          promptText: "hello",
+          completionPassed: true,
+          when: { always: true },
+          payload: { ok: true },
+        }),
+        { status: 200 },
+      );
+    });
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+
+    const adapter = new CodexAgentAdapter({
+      endpoint: "http://localhost/codex",
+    });
+    await adapter.execute(
+      {
+        ...baseInput,
+        ambientManagerContext: {
+          environment: {
+            OYAKATA_GRAPHQL_ENDPOINT: "http://127.0.0.1:43173/graphql",
+            OYAKATA_MANAGER_AUTH_TOKEN: "secret",
+            OYAKATA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+            OYAKATA_WORKFLOW_ID: "wf",
+            OYAKATA_WORKFLOW_EXECUTION_ID: "sess-1",
+            OYAKATA_MANAGER_NODE_ID: "node-1",
+            OYAKATA_MANAGER_NODE_EXEC_ID: "exec-1",
+          },
+        },
+      },
+      baseContext,
+    );
+
+    const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
+    const request = calls[0]?.[1] as RequestInit | undefined;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
+    expect(body["ambientManagerContext"]).toEqual({
+      environment: {
+        OYAKATA_GRAPHQL_ENDPOINT: "http://127.0.0.1:43173/graphql",
+        OYAKATA_MANAGER_AUTH_TOKEN: "secret",
+        OYAKATA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+        OYAKATA_WORKFLOW_ID: "wf",
+        OYAKATA_WORKFLOW_EXECUTION_ID: "sess-1",
+        OYAKATA_MANAGER_NODE_ID: "node-1",
+        OYAKATA_MANAGER_NODE_EXEC_ID: "exec-1",
+      },
+    });
   });
 
   test("maps blocked responses to policy_blocked", async () => {
@@ -116,8 +189,12 @@ describe("CodexAgentAdapter", () => {
       })
       .mockName("fetch-blocked") as unknown as typeof fetch;
 
-    const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
-    await expect(adapter.execute(baseInput, baseContext)).rejects.toHaveProperty("code", "policy_blocked");
+    const adapter = new CodexAgentAdapter({
+      endpoint: "http://localhost/codex",
+    });
+    await expect(
+      adapter.execute(baseInput, baseContext),
+    ).rejects.toHaveProperty("code", "policy_blocked");
   });
 
   test("omits artifactDir from contract-enabled requests", async () => {
@@ -134,9 +211,12 @@ describe("CodexAgentAdapter", () => {
         { status: 200 },
       );
     });
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
-    const adapter = new CodexAgentAdapter({ endpoint: "http://localhost/codex" });
+    const adapter = new CodexAgentAdapter({
+      endpoint: "http://localhost/codex",
+    });
     await adapter.execute(
       {
         ...baseInput,
@@ -159,7 +239,10 @@ describe("CodexAgentAdapter", () => {
 
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
     expect(body["artifactDir"]).toBeUndefined();
     expect(body["output"]).toBeDefined();
   });
@@ -167,7 +250,9 @@ describe("CodexAgentAdapter", () => {
   test("retries transient provider failures with bounded attempts", async () => {
     const fetchMock = vi
       .fn()
-      .mockImplementationOnce(async () => new Response("temporary failure", { status: 500 }))
+      .mockImplementationOnce(
+        async () => new Response("temporary failure", { status: 500 }),
+      )
       .mockImplementationOnce(
         async () =>
           new Response(
@@ -182,7 +267,8 @@ describe("CodexAgentAdapter", () => {
             { status: 200 },
           ),
       );
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
     const adapter = new CodexAgentAdapter({
       endpoint: "http://localhost/codex",

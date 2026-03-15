@@ -1,11 +1,21 @@
-import type { CommunicationRecord, NodeExecutionRecord, WorkflowSessionState } from "./session";
-import type { SubWorkflowInputSource, SubWorkflowRef, WorkflowJson } from "./types";
+import type {
+  CommunicationRecord,
+  NodeExecutionRecord,
+  WorkflowSessionState,
+} from "./session";
+import type {
+  SubWorkflowInputSource,
+  SubWorkflowRef,
+  WorkflowJson,
+} from "./types";
 
 function findLatestSucceededExecution(
   session: WorkflowSessionState,
   nodeId: string,
 ): NodeExecutionRecord | undefined {
-  return [...session.nodeExecutions].reverse().find((entry) => entry.nodeId === nodeId && entry.status === "succeeded");
+  return [...session.nodeExecutions]
+    .reverse()
+    .find((entry) => entry.nodeId === nodeId && entry.status === "succeeded");
 }
 
 function sourceSatisfied(
@@ -29,11 +39,16 @@ function sourceSatisfied(
     if (source.subWorkflowId === undefined) {
       return false;
     }
-    const referenced = workflow.subWorkflows.find((entry) => entry.id === source.subWorkflowId);
+    const referenced = workflow.subWorkflows.find(
+      (entry) => entry.id === source.subWorkflowId,
+    );
     if (referenced === undefined) {
       return false;
     }
-    return findLatestSucceededExecution(session, referenced.outputNodeId) !== undefined;
+    return (
+      findLatestSucceededExecution(session, referenced.outputNodeId) !==
+      undefined
+    );
   }
   return false;
 }
@@ -43,14 +58,21 @@ function hasPendingDeliveryToTargets(
   targetNodeIds: ReadonlySet<string>,
 ): boolean {
   return communications.some((communication) => {
-    if (communication.status !== "created" && communication.status !== "delivered") {
+    if (
+      communication.status !== "created" &&
+      communication.status !== "delivered"
+    ) {
       return false;
     }
     return targetNodeIds.has(communication.toNodeId);
   });
 }
 
-function subWorkflowAlreadyStarted(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, session: WorkflowSessionState): boolean {
+function subWorkflowAlreadyStarted(
+  subWorkflow: SubWorkflowRef,
+  workflow: WorkflowJson,
+  session: WorkflowSessionState,
+): boolean {
   const targetNodeIds = new Set([subWorkflow.inputNodeId]);
   if (subWorkflow.managerNodeId !== workflow.managerNodeId) {
     targetNodeIds.add(subWorkflow.managerNodeId);
@@ -74,11 +96,17 @@ function hasQueuedOrPendingTarget(
   return hasPendingDeliveryToTargets(session.communications, targetNodeIds);
 }
 
-function subWorkflowReady(subWorkflow: SubWorkflowRef, workflow: WorkflowJson, session: WorkflowSessionState): boolean {
+function subWorkflowReady(
+  subWorkflow: SubWorkflowRef,
+  workflow: WorkflowJson,
+  session: WorkflowSessionState,
+): boolean {
   if (subWorkflow.inputSources.length === 0) {
     return true;
   }
-  return subWorkflow.inputSources.every((source) => sourceSatisfied(source, workflow, session));
+  return subWorkflow.inputSources.every((source) =>
+    sourceSatisfied(source, workflow, session),
+  );
 }
 
 function autoStartEligible(subWorkflow: SubWorkflowRef): boolean {
@@ -110,11 +138,15 @@ export function planSubWorkflowChildInputs(args: {
   readonly session: WorkflowSessionState;
   readonly managerNodeId: string;
 }): readonly string[] {
-  const subWorkflow = args.workflow.subWorkflows.find((entry) => entry.managerNodeId === args.managerNodeId);
+  const subWorkflow = args.workflow.subWorkflows.find(
+    (entry) => entry.managerNodeId === args.managerNodeId,
+  );
   if (subWorkflow === undefined) {
     return [];
   }
-  if (hasQueuedOrPendingTarget(args.session, new Set([subWorkflow.inputNodeId]))) {
+  if (
+    hasQueuedOrPendingTarget(args.session, new Set([subWorkflow.inputNodeId]))
+  ) {
     return [];
   }
   return [subWorkflow.inputNodeId];

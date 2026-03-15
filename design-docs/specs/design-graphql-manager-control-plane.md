@@ -53,7 +53,7 @@ The redesign does conflict with the current surface architecture in these areas:
 The redesign resolves the conflict by changing interface layering, not by replacing the runtime model:
 
 - GraphQL becomes the canonical control-plane API for domain operations.
-- CLI becomes a thin GraphQL client.
+- long-term, the CLI becomes a thin GraphQL client; during migration, `oyakata gql` is already transport-thin and legacy execution commands may opt into GraphQL transport incrementally.
 - manager-output `managerControl.actions` becomes a compatibility mode rather than the long-term primary manager control path.
 - mailbox/session artifacts remain durable runtime state and are not replaced by GraphQL.
 
@@ -84,6 +84,7 @@ Rule:
 - domain parameters move into GraphQL query/mutation inputs,
 - CLI flags are retained only for transport/bootstrap concerns such as endpoint selection, auth token, output format, and local debug overrides.
 - `oyakata gql` supports GraphQL variables through a single `--variables` option that accepts inline JSON or a file reference syntax such as `@path/to/variables.json`
+- legacy execution commands may gain GraphQL-backed transport one slice at a time; until that migration completes, some local debug-only flags remain local-only and are not forwarded through GraphQL
 - during migration, GraphQL is the canonical execution/communication/manager control surface, while existing REST editor endpoints remain supported until their GraphQL replacements land
 
 Examples:
@@ -129,6 +130,8 @@ Rules:
 - the GraphQL caller must not pass a host absolute path such as `/home/user/...`
 - the GraphQL caller must not pass `..` path traversal segments
 - the runtime must reject paths that escape the configured root data directory
+- `sendManagerMessage.attachments` must stay within `files/{workflowId}/{workflowExecutionId}/...` for the authenticated manager session's workflow execution
+- manager-scoped attachment references must not read workflow artifacts, session files, or other workflow executions' files elsewhere under the root data directory
 - attachment creation/upload is out of scope for the first iteration; files must already exist under the Oyakata root data directory before the GraphQL request is sent
 
 ### Configuration
@@ -138,6 +141,7 @@ The Oyakata root data directory is resolved from environment variable or config.
 Design direction:
 
 - introduce `OYAKATA_ROOT_DATA_DIR` as the canonical root-data setting for derived defaults
+- keep `OYAKATA_RUNTIME_ROOT` as a migration-period compatibility alias behind `OYAKATA_ROOT_DATA_DIR`
 - keep explicit per-surface overrides authoritative for migration compatibility
 - `artifactRoot`, session store paths, attachment paths, and future container-mounted work paths may all be derived from that root when more specific overrides are absent
 
@@ -238,6 +242,7 @@ Required ambient identity for LLM-triggered CLI use:
 
 - `OYAKATA_GRAPHQL_ENDPOINT`
 - `OYAKATA_MANAGER_AUTH_TOKEN`
+- `OYAKATA_MANAGER_SESSION_ID`
 - `OYAKATA_WORKFLOW_ID`
 - `OYAKATA_WORKFLOW_EXECUTION_ID`
 - `OYAKATA_MANAGER_NODE_ID`
@@ -253,6 +258,7 @@ Resolution rules:
 
 - workflow/domain identifiers are carried inside the GraphQL document variables/input
 - manager node identity and authorization are resolved from ambient manager-session environment and validated against the presented bearer token
+- for HTTP transport, `oyakata gql` forwards `OYAKATA_MANAGER_SESSION_ID` in `X-Oyakata-Manager-Session-Id` so the server can resolve the scoped manager session without embedding it in GraphQL variables
 - local operator/debug mode may allow explicit overrides, but those are not part of the normal LLM-facing contract
 
 ### Manager Token Contract
@@ -264,9 +270,12 @@ Resolution rules:
   - `managerNodeId`
   - `managerNodeExecId`
 - normal GraphQL HTTP transport uses `Authorization: Bearer <token>`
+- normal GraphQL HTTP transport forwards `managerSessionId` in `X-Oyakata-Manager-Session-Id`
 - `OYAKATA_MANAGER_AUTH_TOKEN` is the CLI/env injection path used inside manager tool environments, not a separate authentication mechanism
 - the token must expire or be revoked when the manager step completes, fails, or is cancelled
 - worker nodes must never inherit this token
+
+Runtime lifecycle details for token minting, adapter handoff, and immediate post-execution expiry are specified in `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`.
 
 ## GraphQL Domain Schema
 
@@ -449,6 +458,27 @@ Effect:
 
 This is aligned with the current mailbox rule that a re-executed/resubmitted send allocates a new `communicationId`.
 
+### Manager Scope Enforcement for Replay and Retry
+
+Communication replay and delivery retry are manager-scoped control-plane mutations, so they must obey the same ownership boundaries as other manager actions.
+
+Rules:
+
+- root-manager scope may target only root-scope communications
+  - effective root scope means both sender and recipient resolve outside any sub-workflow
+- sub-manager scope may target only communications that stay entirely within the sub-manager's owned sub-workflow
+  - effective sub-workflow scope means both sender and recipient resolve to that owned sub-workflow
+- root managers must not replay or retry communications that cross a sub-workflow boundary or operate entirely inside a child sub-workflow
+  - those cases must be handled by re-invoking the sub-workflow or by the owning sub-manager
+- sub-managers must not replay or retry parent-to-sub-workflow, cross-sub-workflow, or root-scope communications
+
+Compatibility rule for previously persisted artifacts:
+
+- scope enforcement should first use `fromSubWorkflowId` and `toSubWorkflowId`
+- if either side is absent on a legacy record, the runtime should derive the effective scope from workflow node ownership of `fromNodeId` and `toNodeId`
+
+This keeps current artifacts usable during migration while still enforcing the intended control boundary.
+
 ## Manager Send Semantics
 
 Manager control is submitted through GraphQL documents at the CLI surface, but the runtime must process the resulting mutation through structured rules.
@@ -472,6 +502,14 @@ managerNodeExecId?
 `message` is operator/audit text. Execution-affecting requests must use typed `actions`.
 
 Normal LLM/tool use omits the manager identity fields because they are resolved from ambient environment and auth context.
+
+For HTTP GraphQL calls, the ambient manager-session context is carried by transport metadata rather than by server-local process state:
+
+- bearer auth stays in `Authorization`
+- `managerSessionId` is forwarded in `X-Oyakata-Manager-Session-Id`
+- GraphQL variables keep workflow-domain inputs only
+- the `/graphql` HTTP handler must ignore any server-local `OYAKATA_MANAGER_*` or `OYAKATA_WORKFLOW_*` ambient execution variables for request authentication and scope resolution; only request transport metadata may supply manager scope on the HTTP boundary
+- the `/graphql` HTTP handler must also ignore caller-provided in-process auth/session fallback fields when authenticating an HTTP request; `Authorization` and `X-Oyakata-Manager-Session-Id` remain the only manager-scope carriers on that boundary
 
 ### Typed Action Envelope
 
@@ -547,6 +585,54 @@ When `sendManagerMessage` includes image or file attachments:
 - the resolved file must stay inside the configured data root
 - node execution backends must receive the logical attachment content through runtime-prepared inputs, not by being given host absolute paths directly
 
+### Manager-Originated Payload Provenance Gap
+
+The current mailbox persistence model assumes each durable communication references a published node-output artifact through `payloadRef`.
+
+That assumption is valid for:
+
+- ordinary node-to-node edge transitions,
+- conversation turns between sub-workflow managers,
+- replay/retry of an existing communication.
+
+It is not yet sufficient for a manager-authored `sendManagerMessage` request that originates during an active manager tool session before the manager node has published a final `output.json`.
+
+Implications:
+
+- `planner-note`, `retry-node`, and `replay-communication` can be implemented immediately on top of the current foundation
+- direct manager-authored mailbox sends such as `deliver-to-child-input` require a new durable payload provenance model
+- `start-sub-workflow` may be represented as a queue/planner action without mailbox materialization in the interim, but mailbox-backed child-start payloads also require the same provenance work
+
+Required follow-up design direction:
+
+- add a manager-message artifact record under the manager-session store or workflow artifact tree
+- widen communication provenance from node-output-only references to a discriminated source union
+- keep replay compatibility with existing node-output-backed communications
+
+Concrete direction for the next implementation slice:
+
+- store manager-message artifacts under the workflow execution artifact tree:
+  - `{artifactRoot}/{workflowId}/executions/{workflowExecutionId}/manager-sessions/{managerSessionId}/messages/{managerMessageId}/`
+- allocate `managerMessageId` as an opaque collision-safe id for each append-only manager command; do not derive it from the current message count
+- persist both:
+  - `message.json` for the audit envelope
+  - `output.json` for the normalized payload handed to downstream mailbox deliveries
+- normalize manager-message-backed payloads to the same runtime-owned output contract shape used by node executions:
+  - `provider: "manager-message"`
+  - `completionPassed: true`
+  - `payload.message`
+  - `payload.attachments`
+  - `payload.actions`
+- widen `payloadRef` to a discriminated union with a shared artifact locator:
+  - `NodeOutputRef { kind: "node-output", workflowId, workflowExecutionId, subWorkflowId?, outputNodeId, nodeExecId, artifactDir }`
+  - `ManagerMessagePayloadRef { kind: "manager-message", workflowId, workflowExecutionId, subWorkflowId?, outputNodeId, nodeExecId, artifactDir, managerSessionId, managerMessageId, managerNodeId, managerNodeExecId }`
+- preserve `sourceNodeExecId` on the communication record:
+  - for node-output-backed deliveries it remains the producing node execution id
+  - for manager-message-backed deliveries it is the active `managerNodeExecId`
+- keep replay/retry compatibility by reading the existing communication outbox payload first and falling back to `payloadRef.artifactDir/output.json`
+
+With that widened provenance model in place, `deliver-to-child-input` can be accepted for an owning sub-manager because the mailbox delivery now has durable source artifacts even before the manager node publishes its final node output.
+
 ### Output Shape
 
 The send mutation must return:
@@ -568,6 +654,7 @@ The send mutation must return:
 - retrying the same mutation with the same key and the same normalized payload must return the original response without re-executing side effects
 - retrying the same mutation with the same key but a different normalized payload must fail as a conflict
 - `sendManagerMessage`, `replayCommunication`, and `retryCommunicationDelivery` must all support this behavior when `idempotencyKey` is provided
+- for `sendManagerMessage`, the fingerprint must use the canonicalized request shape after message trimming, attachment path normalization, and action-shape normalization so semantically identical retries do not conflict
 
 ## Relationship to Existing `managerControl.actions`
 
@@ -585,6 +672,9 @@ For one manager execution, the runtime must treat the first used mode as authori
 - if a manager session emits control-plane GraphQL manager-message commands, those commands become the authoritative manager-control source for that execution
 - if no control-plane commands are emitted, runtime may continue using `payload.managerControl.actions`
 - if both modes are attempted in one manager execution, the runtime must fail that manager step rather than trying to merge them
+- the authoritative mode should be persisted on the manager-session record as `controlMode = "graphql-manager-message" | "payload-manager-control"` so retries, inspection, and finalization do not infer mode indirectly from partial artifacts
+- the persistence claim for `controlMode` must be atomic compare-and-set behavior at the storage layer so concurrent GraphQL/runtime claims cannot split authority during one manager step
+- manager-session finalization must preserve both `controlMode` and `lastMessageId`; if post-execution payload-manager-control parsing, validation, or mixed-mode enforcement fails, the manager session must be finalized as `failed`
 
 This avoids contradictory dual control channels in one manager step.
 
@@ -655,6 +745,9 @@ New persisted concept:
 - `createdAt`
 - `updatedAt`
 - `lastMessageId`
+- `controlMode`
+- `authTokenHash`
+- `authTokenExpiresAt`
 
 ### Manager Message Record
 
@@ -675,17 +768,20 @@ New persisted concept:
 - worker nodes must not inherit manager-session credentials
 - GraphQL mutations that can alter execution state must validate workflow ownership and manager scope
 - communication replay must be idempotent under a caller-supplied idempotency key when available
+- manager-message and communication artifact writes must use collision-safe same-directory temp files before rename so concurrent control-plane writes cannot clobber each other's staging paths
 - the local-first model remains the deployment assumption for this iteration
 
 ## Migration Plan Direction
 
 Recommended migration order:
 
-1. Add shared application services for communication inspection/retry/replay and manager messaging.
-2. Add GraphQL schema and server integration on top of those services.
-3. Add the generic `oyakata gql` CLI client.
-4. Inject manager-session environment into manager-node executions and update manager prompt guidance.
-5. Migrate browser UI execution/session APIs to GraphQL.
+1. Align root-data path resolution so artifact, session, and future attachment paths share one canonical base with migration-safe aliases.
+2. Add shared application services for communication inspection/retry/replay and manager messaging.
+3. Add manager-message provenance support for manager-authored mailbox sends.
+4. Add GraphQL schema and server integration on top of those services.
+5. Add the generic `oyakata gql` CLI client.
+6. Inject manager-session environment into manager-node executions and update manager prompt guidance.
+7. Migrate browser UI execution/session APIs to GraphQL.
 
 ## Decision
 

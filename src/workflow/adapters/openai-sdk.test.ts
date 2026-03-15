@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import type { AdapterExecutionContext, AdapterExecutionInput } from "../adapter";
+import type {
+  AdapterExecutionContext,
+  AdapterExecutionInput,
+} from "../adapter";
 import { OpenAiSdkAdapter } from "./openai-sdk";
 
 const baseInput: AdapterExecutionInput = {
@@ -58,7 +61,7 @@ describe("OpenAiSdkAdapter", () => {
         responses: {
           async create() {
             return {
-              output_text: "{\"summary\":\"hello from openai\"}",
+              output_text: '{"summary":"hello from openai"}',
             };
           },
         },

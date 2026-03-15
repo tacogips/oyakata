@@ -20,7 +20,9 @@ export interface WorkflowInspectionSummary {
   readonly artifactWorkflowRoot: string;
 }
 
-export function buildInspectionSummary(loaded: LoadedWorkflow): WorkflowInspectionSummary {
+export function buildInspectionSummary(
+  loaded: LoadedWorkflow,
+): WorkflowInspectionSummary {
   const workflow = loaded.bundle.workflow;
   return {
     workflowName: loaded.workflowName,

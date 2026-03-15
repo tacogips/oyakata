@@ -2,6 +2,29 @@ import { describe, expect, test } from "vitest";
 import { startServe } from "./serve";
 
 describe("startServe", () => {
+  test("uses 43173 as the default serve port", async () => {
+    let capturedPort = -1;
+
+    const started = await startServe(
+      {
+        host: "127.0.0.1",
+      },
+      {
+        serve: ({ port }) => {
+          capturedPort = port;
+          return {
+            port,
+            stop: () => {},
+          };
+        },
+      },
+    );
+
+    expect(started.host).toBe("127.0.0.1");
+    expect(capturedPort).toBe(43173);
+    expect(started.port).toBe(43173);
+  });
+
   test("allocates a concrete port when port 0 is requested", async () => {
     let capturedPort = -1;
 

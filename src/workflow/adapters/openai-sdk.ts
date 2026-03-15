@@ -13,12 +13,15 @@ const DEFAULT_OPENAI_MAX_ATTEMPTS = 2;
 const DEFAULT_OPENAI_RETRY_DELAY_MS = 50;
 
 interface OpenAiResponsesClient {
-  create(request: {
-    readonly model: string;
-    readonly input: string;
-  }, options?: {
-    readonly signal?: AbortSignal;
-  }): Promise<unknown>;
+  create(
+    request: {
+      readonly model: string;
+      readonly input: string;
+    },
+    options?: {
+      readonly signal?: AbortSignal;
+    },
+  ): Promise<unknown>;
 }
 
 interface OpenAiClientLike {
@@ -87,7 +90,10 @@ function extractOpenAiText(response: unknown): string {
   return segments.join("\n");
 }
 
-function defaultClientFactory(args: { readonly apiKey: string; readonly baseURL?: string }): OpenAiClientLike {
+function defaultClientFactory(args: {
+  readonly apiKey: string;
+  readonly baseURL?: string;
+}): OpenAiClientLike {
   return new OpenAI({
     apiKey: args.apiKey,
     ...(args.baseURL === undefined ? {} : { baseURL: args.baseURL }),
@@ -101,28 +107,45 @@ export class OpenAiSdkAdapter implements NodeAdapter {
     this.#config = config;
   }
 
-  async execute(input: AdapterExecutionInput, context: AdapterExecutionContext): Promise<AdapterExecutionOutput> {
+  async execute(
+    input: AdapterExecutionInput,
+    context: AdapterExecutionContext,
+  ): Promise<AdapterExecutionOutput> {
     const apiKey = resolveApiKey(this.#config);
     if (apiKey === undefined) {
-      throw new AdapterExecutionError("policy_blocked", "missing OpenAI API key");
+      throw new AdapterExecutionError(
+        "policy_blocked",
+        "missing OpenAI API key",
+      );
     }
 
     const clientFactory = this.#config.clientFactory ?? defaultClientFactory;
     const client = clientFactory({
       apiKey,
-      ...(this.#config.baseUrl === undefined ? {} : { baseURL: this.#config.baseUrl }),
+      ...(this.#config.baseUrl === undefined
+        ? {}
+        : { baseURL: this.#config.baseUrl }),
     });
-    const maxAttempts = Math.max(1, this.#config.maxAttempts ?? DEFAULT_OPENAI_MAX_ATTEMPTS);
-    const retryDelayMs = Math.max(0, this.#config.retryDelayMs ?? DEFAULT_OPENAI_RETRY_DELAY_MS);
+    const maxAttempts = Math.max(
+      1,
+      this.#config.maxAttempts ?? DEFAULT_OPENAI_MAX_ATTEMPTS,
+    );
+    const retryDelayMs = Math.max(
+      0,
+      this.#config.retryDelayMs ?? DEFAULT_OPENAI_RETRY_DELAY_MS,
+    );
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        const response = await client.responses.create({
-          model: input.node.model,
-          input: input.promptText,
-        }, {
-          signal: context.signal,
-        });
+        const response = await client.responses.create(
+          {
+            model: input.node.model,
+            input: input.promptText,
+          },
+          {
+            signal: context.signal,
+          },
+        );
 
         const text = extractOpenAiText(response);
         const payload =
@@ -142,10 +165,16 @@ export class OpenAiSdkAdapter implements NodeAdapter {
         };
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") {
-          throw new AdapterExecutionError("timeout", "official OpenAI SDK request aborted");
+          throw new AdapterExecutionError(
+            "timeout",
+            "official OpenAI SDK request aborted",
+          );
         }
         if (context.signal.aborted) {
-          throw new AdapterExecutionError("timeout", "official OpenAI SDK request aborted");
+          throw new AdapterExecutionError(
+            "timeout",
+            "official OpenAI SDK request aborted",
+          );
         }
 
         const normalized =
@@ -153,13 +182,18 @@ export class OpenAiSdkAdapter implements NodeAdapter {
             ? error
             : new AdapterExecutionError(
                 "provider_error",
-                error instanceof Error ? error.message : "unknown OpenAI SDK failure",
+                error instanceof Error
+                  ? error.message
+                  : "unknown OpenAI SDK failure",
               );
 
-        const retryable = normalized.code === "provider_error" || normalized.code === "timeout";
+        const retryable =
+          normalized.code === "provider_error" || normalized.code === "timeout";
         if (attempt < maxAttempts && retryable && !context.signal.aborted) {
           if (retryDelayMs > 0) {
-            await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, retryDelayMs),
+            );
           }
           continue;
         }
@@ -167,6 +201,9 @@ export class OpenAiSdkAdapter implements NodeAdapter {
       }
     }
 
-    throw new AdapterExecutionError("provider_error", "official OpenAI SDK adapter exhausted retries");
+    throw new AdapterExecutionError(
+      "provider_error",
+      "official OpenAI SDK adapter exhausted retries",
+    );
   }
 }

@@ -1,3 +1,4 @@
+import type { AmbientManagerControlPlaneEnvironment } from "./manager-session-store";
 import type { JsonObject, NodePayload } from "./types";
 
 export type AdapterFailureCode =
@@ -33,7 +34,12 @@ export interface AdapterExecutionInput {
   readonly artifactDir: string;
   readonly upstreamCommunicationIds: readonly string[];
   readonly backendSession?: AdapterBackendSessionInput;
+  readonly ambientManagerContext?: AdapterAmbientManagerContext;
   readonly output?: AdapterOutputContractInput;
+}
+
+export interface AdapterAmbientManagerContext {
+  readonly environment: AmbientManagerControlPlaneEnvironment;
 }
 
 export interface AdapterOutputContractInput {
@@ -79,7 +85,9 @@ export class AdapterExecutionError extends Error {
   }
 }
 
-function isBooleanMap(value: unknown): value is Readonly<Record<string, boolean>> {
+function isBooleanMap(
+  value: unknown,
+): value is Readonly<Record<string, boolean>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
@@ -108,17 +116,27 @@ function extractJsonObjectCandidateText(text: string): string {
   return trimmed;
 }
 
-export function parseJsonObjectCandidate(text: string, source: string): Readonly<Record<string, unknown>> {
+export function parseJsonObjectCandidate(
+  text: string,
+  source: string,
+): Readonly<Record<string, unknown>> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(extractJsonObjectCandidateText(text)) as unknown;
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown JSON parse error";
-    throw new AdapterExecutionError("invalid_output", `${source} must return a JSON object: ${message}`);
+    const message =
+      error instanceof Error ? error.message : "unknown JSON parse error";
+    throw new AdapterExecutionError(
+      "invalid_output",
+      `${source} must return a JSON object: ${message}`,
+    );
   }
 
   if (!isRecord(parsed)) {
-    throw new AdapterExecutionError("invalid_output", `${source} must return a top-level JSON object`);
+    throw new AdapterExecutionError(
+      "invalid_output",
+      `${source} must return a top-level JSON object`,
+    );
   }
 
   return parsed;
@@ -129,7 +147,10 @@ export function normalizeAdapterOutput(
   fallbackModel: string,
 ): AdapterExecutionOutput {
   if (!isRecord(value)) {
-    throw new AdapterExecutionError("invalid_output", "adapter output must be an object");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output must be an object",
+    );
   }
 
   const provider = value["provider"];
@@ -142,19 +163,37 @@ export function normalizeAdapterOutput(
   const backendSession = value["backendSession"];
 
   if (typeof provider !== "string" || provider.length === 0) {
-    throw new AdapterExecutionError("invalid_output", "adapter output.provider must be a non-empty string");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.provider must be a non-empty string",
+    );
   }
   if (typeof promptText !== "string") {
-    throw new AdapterExecutionError("invalid_output", "adapter output.promptText must be a string");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.promptText must be a string",
+    );
   }
   if (typeof completionPassed !== "boolean") {
-    throw new AdapterExecutionError("invalid_output", "adapter output.completionPassed must be a boolean");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.completionPassed must be a boolean",
+    );
   }
   if (!isBooleanMap(when)) {
-    throw new AdapterExecutionError("invalid_output", "adapter output.when must be an object<boolean>");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.when must be an object<boolean>",
+    );
   }
-  if (candidateFilePath !== undefined && (typeof candidateFilePath !== "string" || candidateFilePath.length === 0)) {
-    throw new AdapterExecutionError("invalid_output", "adapter output.candidateFilePath must be a non-empty string");
+  if (
+    candidateFilePath !== undefined &&
+    (typeof candidateFilePath !== "string" || candidateFilePath.length === 0)
+  ) {
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.candidateFilePath must be a non-empty string",
+    );
   }
   if (
     backendSession !== undefined &&
@@ -168,23 +207,32 @@ export function normalizeAdapterOutput(
     );
   }
   if (!isRecord(payload) && typeof candidateFilePath !== "string") {
-    throw new AdapterExecutionError("invalid_output", "adapter output.payload must be an object");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter output.payload must be an object",
+    );
   }
 
   return {
     provider,
-    model: typeof model === "string" && model.length > 0 ? model : fallbackModel,
+    model:
+      typeof model === "string" && model.length > 0 ? model : fallbackModel,
     promptText,
     completionPassed,
     when,
     payload: isRecord(payload) ? payload : {},
-    ...(isRecord(backendSession) ? { backendSession: { sessionId: String(backendSession["sessionId"]) } } : {}),
+    ...(isRecord(backendSession)
+      ? { backendSession: { sessionId: String(backendSession["sessionId"]) } }
+      : {}),
     ...(typeof candidateFilePath === "string" ? { candidateFilePath } : {}),
   };
 }
 
 export interface NodeAdapter {
-  execute(input: AdapterExecutionInput, context: AdapterExecutionContext): Promise<AdapterExecutionOutput>;
+  execute(
+    input: AdapterExecutionInput,
+    context: AdapterExecutionContext,
+  ): Promise<AdapterExecutionOutput>;
 }
 
 export interface MockNodeResponse {
@@ -197,10 +245,15 @@ export interface MockNodeResponse {
   readonly fail?: boolean;
 }
 
-export type MockNodeScenarioEntry = MockNodeResponse | readonly MockNodeResponse[];
+export type MockNodeScenarioEntry =
+  | MockNodeResponse
+  | readonly MockNodeResponse[];
 export type MockNodeScenario = Readonly<Record<string, MockNodeScenarioEntry>>;
 
-function resolveScenarioEntry(entry: MockNodeScenarioEntry, attemptIndex: number): MockNodeResponse {
+function resolveScenarioEntry(
+  entry: MockNodeScenarioEntry,
+  attemptIndex: number,
+): MockNodeResponse {
   if (Array.isArray(entry)) {
     if (entry.length === 0) {
       return {};
@@ -212,7 +265,10 @@ function resolveScenarioEntry(entry: MockNodeScenarioEntry, attemptIndex: number
 }
 
 export class DeterministicNodeAdapter implements NodeAdapter {
-  async execute(input: AdapterExecutionInput, _context: AdapterExecutionContext): Promise<AdapterExecutionOutput> {
+  async execute(
+    input: AdapterExecutionInput,
+    _context: AdapterExecutionContext,
+  ): Promise<AdapterExecutionOutput> {
     return {
       provider: "deterministic-local",
       model: input.node.model,
@@ -234,12 +290,18 @@ export class ScenarioNodeAdapter implements NodeAdapter {
   readonly #fallback: NodeAdapter;
   readonly #scenario: MockNodeScenario;
 
-  constructor(scenario: MockNodeScenario, fallback: NodeAdapter = new DeterministicNodeAdapter()) {
+  constructor(
+    scenario: MockNodeScenario,
+    fallback: NodeAdapter = new DeterministicNodeAdapter(),
+  ) {
     this.#scenario = scenario;
     this.#fallback = fallback;
   }
 
-  async execute(input: AdapterExecutionInput, context: AdapterExecutionContext): Promise<AdapterExecutionOutput> {
+  async execute(
+    input: AdapterExecutionInput,
+    context: AdapterExecutionContext,
+  ): Promise<AdapterExecutionOutput> {
     const scenarioEntry = this.#scenario[input.nodeId];
     if (scenarioEntry === undefined) {
       return this.#fallback.execute(input, context);

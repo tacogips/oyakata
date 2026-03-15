@@ -1,7 +1,8 @@
 import path from "node:path";
 import {
-  DEFAULT_ARTIFACT_ROOT,
+  DEFAULT_ATTACHMENT_ROOT,
   DEFAULT_WORKFLOW_ROOT,
+  DEFAULT_ROOT_DATA_DIR,
   type EffectiveRoots,
   type LoadOptions,
 } from "./types";
@@ -10,18 +11,53 @@ function resolveRootPath(root: string, cwd: string): string {
   return path.isAbsolute(root) ? root : path.resolve(cwd, root);
 }
 
-export function resolveEffectiveRoots(options: LoadOptions = {}): EffectiveRoots {
+export function resolveRootDataDir(options: LoadOptions = {}): string {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
+  const rootDataDir =
+    options.rootDataDir ??
+    env["OYAKATA_ROOT_DATA_DIR"] ??
+    env["OYAKATA_RUNTIME_ROOT"] ??
+    DEFAULT_ROOT_DATA_DIR;
+  return resolveRootPath(rootDataDir, cwd);
+}
+
+export function resolveAttachmentRoot(options: LoadOptions = {}): string {
+  const env = options.env ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  const attachmentRoot =
+    env["OYAKATA_ATTACHMENT_ROOT"] ??
+    path.join(resolveRootDataDir(options), "files");
+  return resolveRootPath(attachmentRoot, cwd);
+}
+
+export function resolveEffectiveRoots(
+  options: LoadOptions = {},
+): EffectiveRoots {
+  const env = options.env ?? process.env;
+  const cwd = options.cwd ?? process.cwd();
+  const rootDataDir = resolveRootDataDir(options);
 
   const workflowRoot =
-    options.workflowRoot ?? env["OYAKATA_WORKFLOW_ROOT"] ?? DEFAULT_WORKFLOW_ROOT;
+    options.workflowRoot ??
+    env["OYAKATA_WORKFLOW_ROOT"] ??
+    DEFAULT_WORKFLOW_ROOT;
   const artifactRoot =
-    options.artifactRoot ?? env["OYAKATA_ARTIFACT_ROOT"] ?? DEFAULT_ARTIFACT_ROOT;
+    options.artifactRoot ??
+    env["OYAKATA_ARTIFACT_ROOT"] ??
+    path.join(rootDataDir, "workflow");
+  const attachmentRoot =
+    env["OYAKATA_ATTACHMENT_ROOT"] ??
+    path.join(rootDataDir, "files");
 
   return {
     workflowRoot: resolveRootPath(workflowRoot, cwd),
     artifactRoot: resolveRootPath(artifactRoot, cwd),
+    rootDataDir,
+    attachmentRoot:
+      attachmentRoot === DEFAULT_ATTACHMENT_ROOT
+        ? path.join(rootDataDir, "files")
+        : resolveRootPath(attachmentRoot, cwd),
   };
 }
 

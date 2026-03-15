@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { parseManagerControlPayload } from "./manager-control";
+import {
+  assertCommunicationInManagerScope,
+  parseManagerControlActions,
+  parseManagerControlPayload,
+} from "./manager-control";
 import type { WorkflowJson } from "./types";
 
 function makeWorkflow(): WorkflowJson {
@@ -20,11 +24,36 @@ function makeWorkflow(): WorkflowJson {
       },
     ],
     nodes: [
-      { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "root-manager", completion: { type: "none" } },
-      { id: "a-manager", nodeFile: "node-a-manager.json", kind: "sub-manager", completion: { type: "none" } },
-      { id: "a-input", nodeFile: "node-a-input.json", kind: "input", completion: { type: "none" } },
-      { id: "a-output", nodeFile: "node-a-output.json", kind: "output", completion: { type: "none" } },
-      { id: "step-1", nodeFile: "node-step-1.json", kind: "task", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        nodeFile: "node-oyakata-manager.json",
+        kind: "root-manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-manager",
+        nodeFile: "node-a-manager.json",
+        kind: "sub-manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-input",
+        nodeFile: "node-a-input.json",
+        kind: "input",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-output",
+        nodeFile: "node-a-output.json",
+        kind: "output",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-1",
+        nodeFile: "node-step-1.json",
+        kind: "task",
+        completion: { type: "none" },
+      },
     ],
     edges: [],
     loops: [],
@@ -46,9 +75,7 @@ describe("parseManagerControlPayload", () => {
     const parsed = parseManagerControlPayload(
       {
         managerControl: {
-          actions: [
-            { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-          ],
+          actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
         },
       },
       makeWorkflow(),
@@ -62,6 +89,7 @@ describe("parseManagerControlPayload", () => {
     expect(parsed?.startSubWorkflowIds).toEqual(["sw-a"]);
     expect(parsed?.childInputNodeIds).toEqual([]);
     expect(parsed?.retryNodeIds).toEqual([]);
+    expect(parsed?.replayCommunicationIds).toEqual([]);
     expect(parsed?.overridesRootSubWorkflowPlanning).toBe(true);
     expect(parsed?.overridesChildInputPlanning).toBe(true);
   });
@@ -87,8 +115,31 @@ describe("parseManagerControlPayload", () => {
     expect(parsed?.startSubWorkflowIds).toEqual([]);
     expect(parsed?.childInputNodeIds).toEqual(["a-input"]);
     expect(parsed?.retryNodeIds).toEqual(["a-input"]);
+    expect(parsed?.replayCommunicationIds).toEqual([]);
     expect(parsed?.overridesRootSubWorkflowPlanning).toBe(true);
     expect(parsed?.overridesChildInputPlanning).toBe(true);
+  });
+
+  test("parses planner-note and replay-communication action variants", () => {
+    const parsed = parseManagerControlActions(
+      [
+        { type: "planner-note" },
+        {
+          type: "replay-communication",
+          communicationId: "comm-000123",
+          reason: "rerun after inspection",
+        },
+      ],
+      makeWorkflow(),
+      {
+        managerNodeId: "oyakata-manager",
+        managerKind: "root-manager",
+      },
+    );
+
+    expect(parsed.actions).toHaveLength(2);
+    expect(parsed.retryNodeIds).toEqual([]);
+    expect(parsed.replayCommunicationIds).toEqual(["comm-000123"]);
   });
 
   test("rejects start-sub-workflow outside the root-manager scope", () => {
@@ -125,12 +176,33 @@ describe("parseManagerControlPayload", () => {
     ).toThrow("does not exist");
   });
 
+  test("rejects replay-communication with a non-string reason", () => {
+    expect(() =>
+      parseManagerControlActions(
+        [
+          {
+            type: "replay-communication",
+            communicationId: "comm-000001",
+            reason: 123,
+          },
+        ],
+        makeWorkflow(),
+        {
+          managerNodeId: "oyakata-manager",
+          managerKind: "root-manager",
+        },
+      ),
+    ).toThrow("reason must be a string");
+  });
+
   test("rejects child-input dispatch outside the sub-manager owned scope", () => {
     expect(() =>
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "deliver-to-child-input", inputNodeId: "a-input" }],
+            actions: [
+              { type: "deliver-to-child-input", inputNodeId: "a-input" },
+            ],
           },
         },
         makeWorkflow(),
@@ -145,7 +217,12 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "deliver-to-child-input", inputNodeId: "oyakata-manager" }],
+            actions: [
+              {
+                type: "deliver-to-child-input",
+                inputNodeId: "oyakata-manager",
+              },
+            ],
           },
         },
         makeWorkflow(),
@@ -160,7 +237,9 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "deliver-to-child-input", inputNodeId: "a-output" }],
+            actions: [
+              { type: "deliver-to-child-input", inputNodeId: "a-output" },
+            ],
           },
         },
         makeWorkflow(),
@@ -203,7 +282,9 @@ describe("parseManagerControlPayload", () => {
           managerKind: "root-manager",
         },
       ),
-    ).toThrow("must re-invoke that sub-workflow with start-sub-workflow instead");
+    ).toThrow(
+      "must re-invoke that sub-workflow with start-sub-workflow instead",
+    );
   });
 
   test("rejects manager self-retry", () => {
@@ -221,5 +302,111 @@ describe("parseManagerControlPayload", () => {
         },
       ),
     ).toThrow("cannot target the manager node itself");
+  });
+
+  test("enforces communication replay scope with legacy boundary fallback", () => {
+    const workflow = makeWorkflow();
+
+    expect(() =>
+      assertCommunicationInManagerScope(
+        {
+          workflowId: "wf",
+          workflowExecutionId: "sess-1",
+          communicationId: "comm-legacy-sub",
+          fromNodeId: "a-manager",
+          toNodeId: "a-input",
+          routingScope: "intra-sub-workflow",
+          sourceNodeExecId: "exec-1",
+          payloadRef: {
+            workflowId: "wf",
+            workflowExecutionId: "sess-1",
+            outputNodeId: "a-manager",
+            nodeExecId: "exec-1",
+            artifactDir: "/tmp/out",
+          },
+          deliveryKind: "edge-transition",
+          transitionWhen: "legacy",
+          status: "delivered",
+          deliveryAttemptIds: ["attempt-000001"],
+          activeDeliveryAttemptId: "attempt-000001",
+          createdAt: "2026-03-15T00:00:00.000Z",
+          artifactDir: "/tmp/comm",
+        },
+        workflow,
+        {
+          managerNodeId: "a-manager",
+          managerKind: "sub-manager",
+        },
+        "test replay",
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertCommunicationInManagerScope(
+        {
+          workflowId: "wf",
+          workflowExecutionId: "sess-1",
+          communicationId: "comm-root",
+          fromNodeId: "oyakata-manager",
+          toNodeId: "step-1",
+          routingScope: "intra-sub-workflow",
+          sourceNodeExecId: "exec-2",
+          payloadRef: {
+            workflowId: "wf",
+            workflowExecutionId: "sess-1",
+            outputNodeId: "oyakata-manager",
+            nodeExecId: "exec-2",
+            artifactDir: "/tmp/out",
+          },
+          deliveryKind: "edge-transition",
+          transitionWhen: "root",
+          status: "delivered",
+          deliveryAttemptIds: ["attempt-000001"],
+          activeDeliveryAttemptId: "attempt-000001",
+          createdAt: "2026-03-15T00:01:00.000Z",
+          artifactDir: "/tmp/comm",
+        },
+        workflow,
+        {
+          managerNodeId: "a-manager",
+          managerKind: "sub-manager",
+        },
+        "test replay",
+      ),
+    ).toThrow("must stay within sub-workflow 'sw-a'");
+
+    expect(() =>
+      assertCommunicationInManagerScope(
+        {
+          workflowId: "wf",
+          workflowExecutionId: "sess-1",
+          communicationId: "comm-sub",
+          fromNodeId: "a-manager",
+          toNodeId: "a-input",
+          routingScope: "intra-sub-workflow",
+          sourceNodeExecId: "exec-3",
+          payloadRef: {
+            workflowId: "wf",
+            workflowExecutionId: "sess-1",
+            outputNodeId: "a-manager",
+            nodeExecId: "exec-3",
+            artifactDir: "/tmp/out",
+          },
+          deliveryKind: "edge-transition",
+          transitionWhen: "sub",
+          status: "delivered",
+          deliveryAttemptIds: ["attempt-000001"],
+          activeDeliveryAttemptId: "attempt-000001",
+          createdAt: "2026-03-15T00:02:00.000Z",
+          artifactDir: "/tmp/comm",
+        },
+        workflow,
+        {
+          managerNodeId: "oyakata-manager",
+          managerKind: "root-manager",
+        },
+        "test replay",
+      ),
+    ).toThrow("outside root-manager scope");
   });
 });

@@ -27,10 +27,14 @@ export interface TuiInteractiveScreenResult {
 }
 
 export interface TuiInteractiveScreenAdapter {
-  readonly run: (context: TuiInteractiveScreenContext) => Promise<TuiInteractiveScreenResult>;
+  readonly run: (
+    context: TuiInteractiveScreenContext,
+  ) => Promise<TuiInteractiveScreenResult>;
 }
 
-export function selectTuiRuntimeMode(input: TuiRuntimeSelectionInput): TuiRuntimeSelection {
+export function selectTuiRuntimeMode(
+  input: TuiRuntimeSelectionInput,
+): TuiRuntimeSelection {
   if (input.resumeSessionId !== undefined) {
     return {
       mode: "fallback",

@@ -1,9 +1,14 @@
-# GraphQL Manager Control Plane Implementation Plan
+# GraphQL Manager Control Plane Foundation Implementation Plan
 
-**Status**: Ready
+**Status**: Completed
 **Design Reference**: design-docs/specs/design-graphql-manager-control-plane.md
 **Created**: 2026-03-15
 **Last Updated**: 2026-03-15
+
+## Related Plans
+
+- **Current Plan**: `impl-plans/graphql-manager-control-plane.md`
+- **Next Plan**: `impl-plans/graphql-manager-control-plane-surface.md`
 
 ## Design Document Reference
 
@@ -11,31 +16,66 @@
 
 ### Summary
 
-Promote GraphQL to the canonical control-plane interface for workflow execution, communication inspection/replay, and manager-driven orchestration, while keeping mailbox/session artifacts and existing runtime execution semantics intact.
+This plan implements the additive foundation required before the GraphQL schema and CLI surface can land safely:
+
+- canonical root-data resolution with migration-safe compatibility aliases,
+- communication inspection/replay/retry services over the existing mailbox artifacts,
+- persisted manager-session, manager-message, and idempotency state.
 
 ### Scope
 
 **Included**:
-- GraphQL schema and local server integration
-- communication inspection and replay/retry services
-- manager-session and manager-message persistence
-- generic `oyakata gql` CLI GraphQL client
-- CLI layering over GraphQL execution flows
-- typed manager action inputs, scoped bearer-token auth, and persisted idempotency behavior
-- migration-safe documentation updates for root-path precedence and REST coexistence
+- root-data path resolution helpers used by artifact, session, and future attachment flows
+- communication lookup/replay/retry service on top of current session/mailbox artifacts
+- manager-session persistence and idempotency storage
+- library exports and targeted tests for the new foundation modules
 
 **Excluded**:
-- full browser UI migration in the same plan
-- distributed multi-host orchestration
-- replacement of workflow JSON with GraphQL-authored definitions
+- GraphQL SDL/schema construction
+- `/graphql` HTTP handler integration
+- `oyakata gql` CLI client and prompt/tool contract changes
+- browser UI GraphQL migration
 
 ## Modules
 
-### 1. GraphQL Domain Types and Schema
+### 1. Root Data Resolution
 
-#### src/graphql/types.ts
+#### `src/workflow/types.ts`, `src/workflow/paths.ts`, `src/workflow/session-store.ts`, `src/workflow/runtime-db.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
+
+```typescript
+export interface LoadOptions {
+  readonly workflowRoot?: string;
+  readonly artifactRoot?: string;
+  readonly rootDataDir?: string;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly cwd?: string;
+}
+
+export interface EffectiveRoots {
+  readonly workflowRoot: string;
+  readonly artifactRoot: string;
+  readonly rootDataDir: string;
+  readonly attachmentRoot: string;
+}
+
+export function resolveRootDataDir(options?: LoadOptions): string;
+export function resolveAttachmentRoot(options?: LoadOptions): string;
+export function resolveEffectiveRoots(options?: LoadOptions): EffectiveRoots;
+```
+
+**Checklist**:
+- [x] Introduce `rootDataDir` as an explicit load option
+- [x] Treat `OYAKATA_ROOT_DATA_DIR` as canonical and `OYAKATA_RUNTIME_ROOT` as compatibility alias
+- [x] Derive artifact/session/runtime defaults from the canonical root when surface-specific overrides are absent
+- [x] Cover precedence with tests
+
+### 2. Communication Service
+
+#### `src/workflow/communication-service.ts`
+
+**Status**: COMPLETED
 
 ```typescript
 export interface CommunicationLookupInput {
@@ -45,133 +85,18 @@ export interface CommunicationLookupInput {
 }
 
 export interface ReplayCommunicationInput extends CommunicationLookupInput {
+  readonly managerSessionId?: string;
   readonly idempotencyKey?: string;
   readonly reason?: string;
 }
 
 export interface RetryCommunicationDeliveryInput
   extends CommunicationLookupInput {
-  readonly idempotencyKey?: string;
-  readonly reason?: string;
-}
-
-export interface SendManagerMessageInput {
-  readonly workflowId: string;
-  readonly workflowExecutionId: string;
-  readonly message?: string;
-  readonly actions?: readonly ManagerControlActionInput[];
-  readonly attachments?: readonly DataDirFileRef[];
-  readonly idempotencyKey?: string;
   readonly managerSessionId?: string;
-  readonly managerNodeId?: string;
-  readonly managerNodeExecId?: string;
-}
-
-export type ManagerControlActionInput =
-  | { readonly kind: "planner-note" }
-  | {
-      readonly kind: "start-sub-workflow";
-      readonly subWorkflowId: string;
-    }
-  | {
-      readonly kind: "deliver-to-child-input";
-      readonly inputNodeId: string;
-    }
-  | { readonly kind: "retry-node"; readonly nodeId: string }
-  | {
-      readonly kind: "replay-communication";
-      readonly communicationId: string;
-      readonly reason?: string;
-    };
-
-export interface DataDirFileRef {
-  readonly path: string;
-  readonly mediaType?: string;
-}
-
-export interface SendManagerMessageResult {
-  readonly accepted: boolean;
-  readonly managerMessageId: string;
-  readonly parsedActions: readonly ManagerIntentSummary[];
-  readonly createdCommunicationIds: readonly string[];
-  readonly queuedNodeIds: readonly string[];
-  readonly rejectionReason?: string;
-}
-
-export interface ManagerIntentSummary {
-  readonly kind:
-    | "planner-note"
-    | "start-sub-workflow"
-    | "deliver-to-child-input"
-    | "retry-node"
-    | "replay-communication"
-    | "wait"
-    | "invalid";
-  readonly targetId?: string;
+  readonly idempotencyKey?: string;
   readonly reason?: string;
 }
-```
 
-**Checklist**:
-- [ ] Define GraphQL-facing input/output types
-- [ ] Define communication inspection payload shape
-- [ ] Define manager send payload/result shape with typed manager actions
-- [ ] Define data-root-relative file reference type for image/file attachments
-- [ ] Define replay/retry payload shapes
-- [ ] Define auth/idempotency support types for scoped manager mutations
-
-#### src/graphql/schema.ts
-
-**Status**: NOT_STARTED
-
-```typescript
-export interface GraphqlSchemaFactoryInput {
-  readonly services: GraphqlControlPlaneServices;
-}
-
-export interface GraphqlControlPlaneServices {
-  readonly getWorkflowExecution(
-    workflowExecutionId: string,
-  ): Promise<WorkflowExecutionGraphqlView | null>;
-  readonly getCommunication(
-    input: CommunicationLookupInput,
-  ): Promise<CommunicationGraphqlView | null>;
-  readonly sendManagerMessage(
-    input: SendManagerMessageInput,
-    context: GraphqlRequestContext,
-  ): Promise<SendManagerMessageResult>;
-  readonly replayCommunication(
-    input: ReplayCommunicationInput,
-    context: GraphqlRequestContext,
-  ): Promise<ReplayCommunicationResult>;
-  readonly retryCommunicationDelivery(
-    input: RetryCommunicationDeliveryInput,
-    context: GraphqlRequestContext,
-  ): Promise<RetryCommunicationDeliveryResult>;
-  readonly rememberIdempotentResult(
-    input: IdempotentMutationRecord,
-  ): Promise<void>;
-  readonly loadIdempotentResult(
-    input: IdempotentMutationLookup,
-  ): Promise<IdempotentMutationRecord | null>;
-}
-```
-
-**Checklist**:
-- [ ] Define schema factory boundary
-- [ ] Expose queries for workflow execution and communication inspection
-- [ ] Expose mutations for send, replay, retry, execute, rerun, resume, cancel
-- [ ] Keep schema names aligned with the design doc
-- [ ] Enforce typed manager actions rather than prose-only command parsing
-- [ ] Define conflict behavior for reused idempotency keys with changed payloads
-
-### 2. Communication Inspection and Replay Services
-
-#### src/workflow/communication-service.ts
-
-**Status**: NOT_STARTED
-
-```typescript
 export interface CommunicationArtifactSnapshot {
   readonly messageJson: string | null;
   readonly metaJson: string | null;
@@ -181,12 +106,6 @@ export interface CommunicationArtifactSnapshot {
   readonly attemptFiles: readonly CommunicationAttemptSnapshot[];
 }
 
-export interface CommunicationAttemptSnapshot {
-  readonly deliveryAttemptId: string;
-  readonly attemptJson: string | null;
-  readonly receiptJson: string | null;
-}
-
 export interface CommunicationGraphqlView {
   readonly record: CommunicationRecord;
   readonly sourceNodeExecution: NodeExecutionRecord | null;
@@ -194,36 +113,34 @@ export interface CommunicationGraphqlView {
   readonly artifactSnapshot: CommunicationArtifactSnapshot;
 }
 
-export interface ReplayCommunicationResult {
-  readonly sourceCommunicationId: string;
-  readonly workflowExecutionId: string;
-  readonly replayedCommunicationId: string;
-  readonly status: CommunicationRecord["status"];
+export interface CommunicationService {
+  getCommunication(
+    input: CommunicationLookupInput,
+    options?: CommunicationServiceOptions,
+  ): Promise<CommunicationGraphqlView | null>;
+  replayCommunication(
+    input: ReplayCommunicationInput,
+    options?: CommunicationServiceOptions,
+  ): Promise<ReplayCommunicationResult>;
+  retryCommunicationDelivery(
+    input: RetryCommunicationDeliveryInput,
+    options?: CommunicationServiceOptions,
+  ): Promise<RetryCommunicationDeliveryResult>;
 }
-
-export interface RetryCommunicationDeliveryResult {
-  readonly communicationId: string;
-  readonly activeDeliveryAttemptId: string;
-  readonly status: CommunicationRecord["status"];
-}
-
-export function createCommunicationService(
-  deps: CommunicationServiceDependencies,
-): CommunicationService;
 ```
 
 **Checklist**:
-- [ ] Load communication artifacts by `(workflowId, workflowExecutionId, communicationId)`
-- [ ] Return mailbox snapshots plus derived execution status
-- [ ] Implement replay as a new `communicationId` allocation
-- [ ] Implement delivery retry as same `communicationId` plus new `deliveryAttemptId`
-- [ ] Preserve mailbox invariants from `design-node-mailbox.md`
+- [x] Load communication records and mailbox artifact snapshots by canonical lookup shape
+- [x] Preserve retry-vs-replay semantics from the mailbox design
+- [x] Persist replay supersession metadata additively on communication records
+- [x] Honor stored idempotent responses when `(managerSessionId, idempotencyKey)` is provided
+- [x] Cover lookup, replay, retry, and idempotency with tests
 
-### 3. Manager Session and Message Persistence
+### 3. Manager Session Store
 
-#### src/workflow/manager-session-store.ts
+#### `src/workflow/manager-session-store.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 export interface ManagerSessionRecord {
@@ -254,21 +171,6 @@ export interface ManagerMessageRecord {
   readonly createdAt: string;
 }
 
-export interface IdempotentMutationRecord {
-  readonly mutationName: string;
-  readonly managerSessionId: string;
-  readonly idempotencyKey: string;
-  readonly normalizedRequestHash: string;
-  readonly responseJson: string;
-  readonly completedAt: string;
-}
-
-export interface IdempotentMutationLookup {
-  readonly mutationName: string;
-  readonly managerSessionId: string;
-  readonly idempotencyKey: string;
-}
-
 export interface ManagerSessionStore {
   createOrResumeSession(input: ManagerSessionRecord): Promise<ManagerSessionRecord>;
   appendMessage(input: ManagerMessageRecord): Promise<ManagerMessageRecord>;
@@ -281,128 +183,87 @@ export interface ManagerSessionStore {
     input: IdempotentMutationLookup,
   ): Promise<IdempotentMutationRecord | null>;
 }
-```
 
-**Checklist**:
-- [ ] Persist manager sessions separate from workflow session snapshots
-- [ ] Persist append-only manager messages
-- [ ] Support auth/context lookup by manager session and node execution
-- [ ] Expose retrieval for GraphQL queries and debugging
-- [ ] Persist scoped idempotent mutation records
-
-### 4. Server GraphQL Integration
-
-#### src/server/graphql.ts
-
-**Status**: NOT_STARTED
-
-```typescript
-export interface GraphqlRequestContext {
-  readonly workflowRoot?: string;
-  readonly artifactRoot?: string;
-  readonly sessionStoreRoot?: string;
-  readonly rootDataDir?: string;
-  readonly authToken?: string;
-  readonly authScheme?: "bearer";
+export interface AmbientManagerExecutionContext {
+  readonly workflowId: string;
+  readonly workflowExecutionId: string;
+  readonly managerNodeId: string;
+  readonly managerNodeExecId: string;
   readonly managerSessionId?: string;
-  readonly managerNodeId?: string;
-  readonly managerNodeExecId?: string;
-  readonly managerScope?: {
-    readonly workflowExecutionId: string;
-    readonly managerSessionId: string;
-    readonly managerNodeId: string;
-    readonly managerNodeExecId: string;
-  };
-}
-
-export interface GraphqlHttpHandlerOptions extends ApiContext {
-  readonly introspection?: boolean;
-}
-
-export async function handleGraphqlRequest(
-  request: Request,
-  options: GraphqlHttpHandlerOptions,
-): Promise<Response>;
-```
-
-**Checklist**:
-- [ ] Add `/graphql` server handler
-- [ ] Route GraphQL operations through shared application services
-- [ ] Support bearer-token auth/context extraction for manager tool calls
-- [ ] Resolve `DataDirFileRef` paths under the configured root data directory
-- [ ] Add server tests for queries and mutations
-- [ ] Enforce per-surface root-path precedence from the corrected design doc
-
-### 5. CLI GraphQL Client and Manager Tool Wrapper
-
-#### src/graphql/client.ts
-
-**Status**: NOT_STARTED
-
-```typescript
-export interface GraphqlClientOptions {
-  readonly endpoint: string;
   readonly authToken?: string;
 }
 
-export interface GraphqlCliClient {
-  executeDocument<TResult = unknown>(input: {
-    readonly document: string;
-    readonly variables?: Readonly<Record<string, unknown>>;
-  }): Promise<TResult>;
-}
+export function createManagerSessionStore(
+  options?: LoadOptions,
+): ManagerSessionStore;
+export function resolveAmbientManagerExecutionContext(
+  env?: Readonly<Record<string, string | undefined>>,
+): AmbientManagerExecutionContext | null;
 ```
 
 **Checklist**:
-- [ ] Add a minimal GraphQL client for CLI use
-- [ ] Implement `oyakata gql`
-- [ ] Support `--variables` for GraphQL variables using inline JSON or `@path/to/variables.json`
-- [ ] Resolve manager auth/env context from ambient environment for LLM tool use
-- [ ] Pass manager auth as bearer-token transport rather than ad hoc payload fields
+- [x] Persist manager sessions, messages, and idempotent mutation rows
+- [x] Keep the store independent from workflow session snapshot files
+- [x] Provide safe ambient manager-context resolution
+- [x] Cover token hashing/verification and idempotency lookups with tests
 
 ## Module Status
 
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
-| GraphQL domain types | `src/graphql/types.ts` | NOT_STARTED | - |
-| GraphQL schema | `src/graphql/schema.ts` | NOT_STARTED | - |
-| Communication service | `src/workflow/communication-service.ts` | NOT_STARTED | - |
-| Manager session store | `src/workflow/manager-session-store.ts` | NOT_STARTED | - |
-| GraphQL server handler | `src/server/graphql.ts` | NOT_STARTED | - |
-| CLI GraphQL client | `src/graphql/client.ts` | NOT_STARTED | - |
-| CLI integration | `src/cli.ts` | NOT_STARTED | - |
+| Root data resolution | `src/workflow/types.ts`, `src/workflow/paths.ts` | COMPLETED | Passing |
+| Communication service | `src/workflow/communication-service.ts` | COMPLETED | Passing |
+| Manager session store | `src/workflow/manager-session-store.ts` | COMPLETED | Passing |
+| Library exports | `src/lib.ts` | COMPLETED | Passing |
 
 ## Dependencies
 
 | Feature | Depends On | Status |
 |---------|------------|--------|
-| Communication service | Existing session/mailbox artifact model | READY |
-| Manager session store | Communication service type layer | READY |
-| GraphQL schema | Communication service, manager session store | BLOCKED |
-| Server GraphQL integration | GraphQL schema | BLOCKED |
-| Generic CLI GraphQL client | Server GraphQL integration, GraphQL client | BLOCKED |
+| Communication service | Root data resolution | READY |
+| Manager session store | Root data resolution | READY |
+| GraphQL surface follow-up | Communication service, manager session store | COMPLETED |
 
 ## Tasks
 
-### TASK-001: Communication Service Foundation
+### TASK-001: Root Data Contract Alignment
 
-**Status**: NOT_STARTED
+**Status**: Completed
+**Parallelizable**: Yes
+
+**Deliverables**:
+- `src/workflow/types.ts`
+- `src/workflow/paths.ts`
+- `src/workflow/session-store.ts`
+- `src/workflow/runtime-db.ts`
+- targeted root-resolution tests
+
+**Completion Criteria**:
+- [x] `rootDataDir` exists as an additive load option
+- [x] canonical root-data precedence is implemented
+- [x] compatibility alias handling is test-covered
+- [x] derived artifact/session/runtime paths use the shared helpers
+
+### TASK-002: Communication Service Foundation
+
+**Status**: Completed
 **Parallelizable**: Yes
 
 **Deliverables**:
 - `src/workflow/communication-service.ts`
 - `src/workflow/communication-service.test.ts`
+- `src/lib.ts`
 
 **Completion Criteria**:
-- [ ] Communication lookup loads record plus artifact snapshots
-- [ ] GraphQL-facing communication view type exists
-- [ ] Replay allocates a new `communicationId`
-- [ ] Delivery retry allocates a new `deliveryAttemptId`
-- [ ] Replay/retry honor persisted idempotent result lookups when keys are provided
+- [x] Communication lookup loads record plus artifact snapshots
+- [x] Replay allocates a new `communicationId`
+- [x] Delivery retry allocates a new `deliveryAttemptId`
+- [x] Replay/retry can reuse persisted idempotent responses
+- [x] Library exports expose the service foundation
 
-### TASK-002: Manager Session Persistence
+### TASK-003: Manager Session Persistence
 
-**Status**: NOT_STARTED
+**Status**: Completed
 **Parallelizable**: Yes
 
 **Deliverables**:
@@ -410,97 +271,24 @@ export interface GraphqlCliClient {
 - `src/workflow/manager-session-store.test.ts`
 
 **Completion Criteria**:
-- [ ] Manager session record storage exists
-- [ ] Manager message append log exists
-- [ ] Ambient manager execution context can be resolved safely
-- [ ] Persistence tests cover creation, append, and reload
-- [ ] Bearer token scope and expiry metadata are persisted
-- [ ] Duplicate idempotency-key lookups are persisted and test-covered
-
-### TASK-003: GraphQL Schema and Server Integration
-
-**Status**: NOT_STARTED
-**Parallelizable**: No
-
-**Deliverables**:
-- `src/graphql/types.ts`
-- `src/graphql/schema.ts`
-- `src/server/graphql.ts`
-- `src/server/graphql.test.ts`
-
-**Dependencies**:
-- `TASK-001`
-- `TASK-002`
-
-**Completion Criteria**:
-- [ ] `/graphql` query/mutation surface is available
-- [ ] Communication inspection query works
-- [ ] Send/replay/retry mutations work
-- [ ] Image/file attachment references are data-root-relative and reject host absolute paths
-- [ ] Existing serve-mode execution flows run through GraphQL services
-- [ ] Typed manager-action inputs are validated against existing ownership rules
-- [ ] REST editor endpoints remain untouched and documented as migration compatibility
-
-### TASK-004: Generic CLI GraphQL Client and Manager Tool Contract
-
-**Status**: NOT_STARTED
-**Parallelizable**: No
-
-**Deliverables**:
-- `src/graphql/client.ts`
-- `src/cli.ts`
-- `src/cli.test.ts`
-- `src/workflow/prompts/oyakata-system-prompt.md`
-
-**Dependencies**:
-- `TASK-003`
-
-**Completion Criteria**:
-- [ ] `oyakata gql` is implemented
-- [ ] GraphQL documents and variables can be sent from the CLI
-- [ ] `--variables` supports inline JSON and file-backed variable loading
-- [ ] Image/file attachment variables can be passed as `DataDirFileRef`
-- [ ] Manager prompt/tool guidance references the new control path
-- [ ] CLI sends auth through the standard bearer-token header
-
-### TASK-005: GraphQL Surface and Documentation Consolidation
-
-**Status**: NOT_STARTED
-**Parallelizable**: No
-
-**Deliverables**:
-- `src/lib.ts`
-- `README.md`
-- `design-docs/specs/command.md`
-- `design-docs/specs/architecture.md`
-- `design-docs/specs/notes.md`
-
-**Dependencies**:
-- `TASK-003`
-- `TASK-004`
-
-**Completion Criteria**:
-- [ ] Library API exposes GraphQL-compatible communication inspection/replay helpers
-- [ ] README documents GraphQL as canonical for manager/execution operations without claiming REST editor removal before migration
-- [ ] Serve-path documentation explains REST and GraphQL coexistence during migration
-- [ ] Root-data-dir precedence is documented consistently with current override behavior
+- [x] Manager session storage exists
+- [x] Manager message append log exists
+- [x] Ambient manager execution context resolves safely
+- [x] Idempotent mutation persistence exists
+- [x] Persistence and token verification tests pass
 
 ## Completion Criteria
 
-- [ ] GraphQL endpoint exists and is documented as canonical
-- [ ] Communication inspection is available by `workflowId + workflowExecutionId + communicationId`
-- [ ] Communication replay and delivery retry semantics are distinct and tested
-- [ ] `oyakata gql` works as the manager-tool client
-- [ ] Typed manager actions, scoped bearer-token auth, and idempotency behavior are specified and tested
-- [ ] First-iteration attachment handling assumes pre-placed files under the Oyakata root data directory; no upload mutation is required
-- [ ] GraphQL file/image references are portable across host and container path layouts
-- [ ] Existing runtime mailbox/session invariants remain intact
-- [ ] Typecheck and relevant test suites pass
+- [x] Root-data resolution is implemented and documented for the foundation slice
+- [x] Communication inspection/replay/retry services exist over current mailbox artifacts
+- [x] Manager-session persistence and idempotency storage exist
+- [x] Typecheck and targeted tests for the foundation slice pass
+- [x] Follow-up GraphQL surface plan is complete and ready for execution
 
 ## Progress Log
 
 ### Session: 2026-03-15
-**Tasks Completed**: Design investigation, redesign specification, implementation plan creation
+**Tasks Completed**: TASK-001, TASK-002, TASK-003
 **Tasks In Progress**: None
 **Blockers**: None
-**Notes**: The current runtime design is compatible with the requested direction at the execution/mailbox level, but the CLI/control-plane layering is not. This plan therefore introduces GraphQL and manager-session services as additive control-plane infrastructure rather than rewriting the engine first.
+**Notes**: The original GraphQL plan was too large for the repository plan constraints and mixed foundation work with schema/CLI work. This revision narrows the first executable slice to shared root-data, communication-service, and manager-session-store work so the later GraphQL surface can sit on stable primitives.

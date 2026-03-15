@@ -3,7 +3,11 @@ import path from "node:path";
 import { err, ok, type Result } from "./result";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "./paths";
 import { validateWorkflowBundle } from "./validate";
-import type { LoadOptions, NormalizedWorkflowBundle, ValidationIssue } from "./types";
+import type {
+  LoadOptions,
+  NormalizedWorkflowBundle,
+  ValidationIssue,
+} from "./types";
 
 export interface LoadedWorkflow {
   readonly workflowName: string;
@@ -18,7 +22,9 @@ export interface LoadFailure {
   readonly issues?: readonly ValidationIssue[];
 }
 
-async function readJsonFile(filePath: string): Promise<Result<unknown, LoadFailure>> {
+async function readJsonFile(
+  filePath: string,
+): Promise<Result<unknown, LoadFailure>> {
   try {
     const raw = await readFile(filePath, "utf8");
     return ok(JSON.parse(raw) as unknown);
@@ -37,7 +43,9 @@ async function readJsonFile(filePath: string): Promise<Result<unknown, LoadFailu
   }
 }
 
-function buildDefaultWorkflowVis(workflowRaw: unknown): Result<unknown, LoadFailure> {
+function buildDefaultWorkflowVis(
+  workflowRaw: unknown,
+): Result<unknown, LoadFailure> {
   if (
     typeof workflowRaw !== "object" ||
     workflowRaw === null ||
@@ -46,14 +54,23 @@ function buildDefaultWorkflowVis(workflowRaw: unknown): Result<unknown, LoadFail
     return err({
       code: "VALIDATION",
       message: "workflow.json is missing nodes[]",
-      issues: [{ severity: "error", path: "workflow.nodes", message: "must be an array" }],
+      issues: [
+        {
+          severity: "error",
+          path: "workflow.nodes",
+          message: "must be an array",
+        },
+      ],
     });
   }
 
   const nodesRaw = (workflowRaw as { nodes: Array<{ id?: unknown }> }).nodes;
   return ok({
     nodes: nodesRaw
-      .filter((node): node is { id: string } => typeof node.id === "string" && node.id.length > 0)
+      .filter(
+        (node): node is { id: string } =>
+          typeof node.id === "string" && node.id.length > 0,
+      )
       .map((node, order) => ({
         id: node.id,
         order,
@@ -106,11 +123,19 @@ export async function loadWorkflowFromDisk(
     return err({
       code: "VALIDATION",
       message: "workflow.json is missing nodes[]",
-      issues: [{ severity: "error", path: "workflow.nodes", message: "must be an array" }],
+      issues: [
+        {
+          severity: "error",
+          path: "workflow.nodes",
+          message: "must be an array",
+        },
+      ],
     });
   }
 
-  const workflowNodes = (workflowRaw.value as { nodes: Array<{ nodeFile?: unknown }> }).nodes;
+  const workflowNodes = (
+    workflowRaw.value as { nodes: Array<{ nodeFile?: unknown }> }
+  ).nodes;
   const nodePayloads: Record<string, unknown> = {};
 
   for (const node of workflowNodes) {
@@ -142,7 +167,10 @@ export async function loadWorkflowFromDisk(
   return ok({
     workflowName,
     workflowDirectory,
-    artifactWorkflowRoot: path.join(roots.artifactRoot, validation.value.workflow.workflowId),
+    artifactWorkflowRoot: path.join(
+      roots.artifactRoot,
+      validation.value.workflow.workflowId,
+    ),
     bundle: validation.value,
   });
 }

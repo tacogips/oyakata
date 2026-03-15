@@ -31,8 +31,14 @@ export async function computeWorkflowRevisionFromFiles(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     if (message.includes("ENOENT")) {
-      return err({ code: "NOT_FOUND", message: `workflow file is missing: ${message}` });
+      return err({
+        code: "NOT_FOUND",
+        message: `workflow file is missing: ${message}`,
+      });
     }
-    return err({ code: "IO", message: `failed computing workflow revision: ${message}` });
+    return err({
+      code: "IO",
+      message: `failed computing workflow revision: ${message}`,
+    });
   }
 }

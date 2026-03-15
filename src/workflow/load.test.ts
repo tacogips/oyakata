@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createWorkflowTemplate } from "./create";
 import { loadWorkflowFromDisk } from "./load";
-import { resolveEffectiveRoots } from "./paths";
+import { resolveAttachmentRoot, resolveEffectiveRoots } from "./paths";
 
 const tempDirs: string[] = [];
 
@@ -19,7 +19,11 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("resolveEffectiveRoots", () => {
@@ -33,6 +37,8 @@ describe("resolveEffectiveRoots", () => {
     });
     expect(fromEnv.workflowRoot).toBe("/tmp/project/env-workflows");
     expect(fromEnv.artifactRoot).toBe("/tmp/project/env-artifacts");
+    expect(fromEnv.rootDataDir).toBe("/tmp/project/.oyakata-datas");
+    expect(fromEnv.attachmentRoot).toBe("/tmp/project/.oyakata-datas/files");
 
     const fromOption = resolveEffectiveRoots({
       workflowRoot: "flag-workflows",
@@ -45,6 +51,40 @@ describe("resolveEffectiveRoots", () => {
     });
     expect(fromOption.workflowRoot).toBe("/tmp/project/flag-workflows");
     expect(fromOption.artifactRoot).toBe("/tmp/project/flag-artifacts");
+    expect(fromOption.rootDataDir).toBe("/tmp/project/.oyakata-datas");
+  });
+
+  test("derives artifact and attachment roots from OYAKATA_ROOT_DATA_DIR", () => {
+    const resolved = resolveEffectiveRoots({
+      env: {
+        OYAKATA_ROOT_DATA_DIR: "env-data",
+      },
+      cwd: "/tmp/project",
+    });
+
+    expect(resolved.rootDataDir).toBe("/tmp/project/env-data");
+    expect(resolved.artifactRoot).toBe("/tmp/project/env-data/workflow");
+    expect(resolved.attachmentRoot).toBe("/tmp/project/env-data/files");
+    expect(
+      resolveAttachmentRoot({
+        env: {
+          OYAKATA_ROOT_DATA_DIR: "env-data",
+        },
+        cwd: "/tmp/project",
+      }),
+    ).toBe("/tmp/project/env-data/files");
+  });
+
+  test("accepts OYAKATA_RUNTIME_ROOT as a compatibility alias", () => {
+    const resolved = resolveEffectiveRoots({
+      env: {
+        OYAKATA_RUNTIME_ROOT: "legacy-data",
+      },
+      cwd: "/tmp/project",
+    });
+
+    expect(resolved.rootDataDir).toBe("/tmp/project/legacy-data");
+    expect(resolved.artifactRoot).toBe("/tmp/project/legacy-data/workflow");
   });
 });
 
@@ -62,7 +102,12 @@ describe("loadWorkflowFromDisk", () => {
       managerNodeId: "oyakata-manager",
       subWorkflows: [],
       nodes: [
-        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
       ],
       edges: [],
       loops: [],
@@ -91,7 +136,9 @@ describe("loadWorkflowFromDisk", () => {
     }
 
     expect(result.value.bundle.workflow.workflowId).toBe("sample-workflow");
-    expect(result.value.artifactWorkflowRoot).toContain(path.join("artifacts", "sample-workflow"));
+    expect(result.value.artifactWorkflowRoot).toContain(
+      path.join("artifacts", "sample-workflow"),
+    );
   });
 
   test("returns validation error when files are invalid", async () => {
@@ -111,9 +158,13 @@ describe("loadWorkflowFromDisk", () => {
       branching: { mode: "fan-out" },
     });
 
-    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), { nodes: [] });
+    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+      nodes: [],
+    });
 
-    const result = await loadWorkflowFromDisk(workflowName, { workflowRoot: root });
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+    });
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
@@ -134,8 +185,18 @@ describe("loadWorkflowFromDisk", () => {
       managerNodeId: "oyakata-manager",
       subWorkflows: [],
       nodes: [
-        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-        { id: "worker-1", kind: "task", nodeFile: "node-worker-1.json", completion: { type: "none" } },
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
+        {
+          id: "worker-1",
+          kind: "task",
+          nodeFile: "node-worker-1.json",
+          completion: { type: "none" },
+        },
       ],
       edges: [],
       loops: [],
@@ -177,7 +238,9 @@ describe("loadWorkflowFromDisk", () => {
 
   test("loads newly created templates with root-manager kind", async () => {
     const root = await makeTempDir();
-    const created = await createWorkflowTemplate("template-root-manager", { workflowRoot: root });
+    const created = await createWorkflowTemplate("template-root-manager", {
+      workflowRoot: root,
+    });
     expect(created.ok).toBe(true);
     if (!created.ok) {
       return;
@@ -195,18 +258,34 @@ describe("loadWorkflowFromDisk", () => {
 
     expect(result.value.bundle.workflow.nodes[0]?.id).toBe("oyakata-manager");
     expect(result.value.bundle.workflow.nodes[0]?.kind).toBe("root-manager");
-    expect(result.value.bundle.workflow.prompts?.oyakataPromptTemplate).toContain("Coordinate");
-    expect(result.value.bundle.workflow.prompts?.workerSystemPromptTemplate).toContain("assigned node task");
-    expect(result.value.bundle.workflow.subWorkflows[0]?.managerNodeId).toBe("main-oyakata");
+    expect(
+      result.value.bundle.workflow.prompts?.oyakataPromptTemplate,
+    ).toContain("Coordinate");
+    expect(
+      result.value.bundle.workflow.prompts?.workerSystemPromptTemplate,
+    ).toContain("assigned node task");
+    expect(result.value.bundle.workflow.subWorkflows[0]?.managerNodeId).toBe(
+      "main-oyakata",
+    );
     expect(result.value.bundle.workflow.subWorkflows[0]?.nodeIds).toEqual([
       "main-oyakata",
       "workflow-input",
       "workflow-output",
     ]);
-    expect(result.value.bundle.workflow.subWorkflows[0]?.inputSources).toEqual([{ type: "human-input" }]);
-    expect(result.value.bundle.nodePayloads["oyakata-manager"]?.executionBackend).toBe("tacogips/codex-agent");
-    expect(result.value.bundle.nodePayloads["oyakata-manager"]?.model).toBe("gpt-5");
-    expect(result.value.bundle.nodePayloads["workflow-output"]?.executionBackend).toBe("tacogips/codex-agent");
-    expect(result.value.bundle.nodePayloads["workflow-output"]?.model).toBe("gpt-5");
+    expect(result.value.bundle.workflow.subWorkflows[0]?.inputSources).toEqual([
+      { type: "human-input" },
+    ]);
+    expect(
+      result.value.bundle.nodePayloads["oyakata-manager"]?.executionBackend,
+    ).toBe("tacogips/codex-agent");
+    expect(result.value.bundle.nodePayloads["oyakata-manager"]?.model).toBe(
+      "gpt-5",
+    );
+    expect(
+      result.value.bundle.nodePayloads["workflow-output"]?.executionBackend,
+    ).toBe("tacogips/codex-agent");
+    expect(result.value.bundle.nodePayloads["workflow-output"]?.model).toBe(
+      "gpt-5",
+    );
   });
 });

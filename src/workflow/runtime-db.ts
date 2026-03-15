@@ -1,9 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Database } from "bun:sqlite";
+import { resolveRootDataDir } from "./paths";
 import type { NodeExecutionRecord, WorkflowSessionState } from "./session";
 import type { LoadOptions } from "./types";
-import { DEFAULT_RUNTIME_ROOT } from "./types";
 
 interface RuntimeNodeExecutionRow {
   readonly sessionId: string;
@@ -48,7 +48,9 @@ export interface RuntimeNodeExecutionSummary {
   readonly endedAt: string;
   readonly attempt: number | null;
   readonly outputAttemptCount: number | null;
-  readonly outputValidationErrors: NodeExecutionRecord["outputValidationErrors"] | null;
+  readonly outputValidationErrors:
+    | NodeExecutionRecord["outputValidationErrors"]
+    | null;
   readonly backendSessionMode: NodeExecutionRecord["backendSessionMode"] | null;
   readonly backendSessionId: NodeExecutionRecord["backendSessionId"] | null;
   readonly restartedFromNodeExecId: string | null;
@@ -70,13 +72,6 @@ export interface RuntimeNodeLogEntry {
   readonly at: string;
 }
 
-function resolveRuntimeRoot(options: LoadOptions): string {
-  const env = options.env ?? process.env;
-  const cwd = options.cwd ?? process.cwd();
-  const root = env["OYAKATA_RUNTIME_ROOT"] ?? DEFAULT_RUNTIME_ROOT;
-  return path.isAbsolute(root) ? root : path.resolve(cwd, root);
-}
-
 export function resolveRuntimeDbPath(options: LoadOptions): string {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
@@ -84,10 +79,13 @@ export function resolveRuntimeDbPath(options: LoadOptions): string {
   if (typeof dbPath === "string" && dbPath.length > 0) {
     return path.isAbsolute(dbPath) ? dbPath : path.resolve(cwd, dbPath);
   }
-  return path.join(resolveRuntimeRoot(options), "oyakata.db");
+  return path.join(resolveRootDataDir(options), "oyakata.db");
 }
 
-async function withDatabase<T>(options: LoadOptions, action: (db: Database) => T): Promise<T> {
+async function withDatabase<T>(
+  options: LoadOptions,
+  action: (db: Database) => T,
+): Promise<T> {
   const dbPath = resolveRuntimeDbPath(options);
   await mkdir(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
@@ -156,10 +154,14 @@ function ensureSchema(db: Database): void {
     .all() as Array<{ name: string }>;
   const existingColumns = new Set(nodeExecutionColumns.map((row) => row.name));
   if (!existingColumns.has("output_attempt_count")) {
-    db.exec("ALTER TABLE node_executions ADD COLUMN output_attempt_count INTEGER");
+    db.exec(
+      "ALTER TABLE node_executions ADD COLUMN output_attempt_count INTEGER",
+    );
   }
   if (!existingColumns.has("output_validation_errors_json")) {
-    db.exec("ALTER TABLE node_executions ADD COLUMN output_validation_errors_json TEXT");
+    db.exec(
+      "ALTER TABLE node_executions ADD COLUMN output_validation_errors_json TEXT",
+    );
   }
   if (!existingColumns.has("backend_session_mode")) {
     db.exec("ALTER TABLE node_executions ADD COLUMN backend_session_mode TEXT");
@@ -232,7 +234,9 @@ export async function saveNodeExecutionToRuntimeDb(
       row.endedAt,
       row.attempt ?? null,
       row.outputAttemptCount ?? null,
-      row.outputValidationErrors === undefined ? null : JSON.stringify(row.outputValidationErrors),
+      row.outputValidationErrors === undefined
+        ? null
+        : JSON.stringify(row.outputValidationErrors),
       row.backendSessionMode ?? null,
       row.backendSessionId ?? null,
       row.restartedFromNodeExecId ?? null,
@@ -375,7 +379,9 @@ export async function listRuntimeNodeExecutions(
       outputValidationErrors:
         row.output_validation_errors_json === null
           ? null
-          : (JSON.parse(row.output_validation_errors_json) as NodeExecutionRecord["outputValidationErrors"]),
+          : (JSON.parse(
+              row.output_validation_errors_json,
+            ) as NodeExecutionRecord["outputValidationErrors"]),
       backendSessionMode: row.backend_session_mode,
       backendSessionId: row.backend_session_id,
       restartedFromNodeExecId: row.restarted_from_node_exec_id,

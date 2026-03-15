@@ -10,7 +10,9 @@ import { resolveRuntimeDbPath } from "./runtime-db";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "oyakata-runtime-db-test-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "oyakata-runtime-db-test-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -19,7 +21,10 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
-async function createWorkflowFixture(root: string, workflowName: string): Promise<void> {
+async function createWorkflowFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -30,8 +35,18 @@ async function createWorkflowFixture(root: string, workflowName: string): Promis
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "step-1", kind: "task", nodeFile: "node-step-1.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-1",
+        kind: "task",
+        nodeFile: "node-step-1.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [{ from: "oyakata-manager", to: "step-1", when: "always" }],
     loops: [],
@@ -59,7 +74,10 @@ async function createWorkflowFixture(root: string, workflowName: string): Promis
   });
 }
 
-async function createNodeSessionReuseFixture(root: string, workflowName: string): Promise<void> {
+async function createNodeSessionReuseFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -70,10 +88,30 @@ async function createNodeSessionReuseFixture(root: string, workflowName: string)
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "step-a", kind: "task", nodeFile: "node-step-a.json", completion: { type: "none" } },
-      { id: "step-b", kind: "task", nodeFile: "node-step-b.json", completion: { type: "none" } },
-      { id: "step-c", kind: "task", nodeFile: "node-step-c.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-a",
+        kind: "task",
+        nodeFile: "node-step-a.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-b",
+        kind: "task",
+        nodeFile: "node-step-b.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-c",
+        kind: "task",
+        nodeFile: "node-step-c.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "oyakata-manager", to: "step-a", when: "always" },
@@ -124,10 +162,14 @@ async function createNodeSessionReuseFixture(root: string, workflowName: string)
 }
 
 class ReusableSessionAdapter implements NodeAdapter {
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<Awaited<ReturnType<NodeAdapter["execute"]>>> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<Awaited<ReturnType<NodeAdapter["execute"]>>> {
     if (input.nodeId === "step-b") {
       const sessionId = input.backendSession?.sessionId ?? "backend-b-1";
-      const seen = input.backendSession?.mode === "reuse" && input.backendSession.sessionId === "backend-b-1";
+      const seen =
+        input.backendSession?.mode === "reuse" &&
+        input.backendSession.sessionId === "backend-b-1";
       return {
         provider: "test-adapter",
         model: input.node.model,
@@ -157,7 +199,11 @@ class ReusableSessionAdapter implements NodeAdapter {
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("runtime-db", () => {
@@ -172,10 +218,21 @@ describe("runtime-db", () => {
     };
 
     const mockScenario = {
-      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
-      "step-1": { provider: "scenario-mock", when: { always: true }, payload: { stage: "implement" } },
+      "oyakata-manager": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "design" },
+      },
+      "step-1": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "implement" },
+      },
     };
-    const result = await runWorkflow("sqlite-index", { ...options, mockScenario });
+    const result = await runWorkflow("sqlite-index", {
+      ...options,
+      mockScenario,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
@@ -184,9 +241,15 @@ describe("runtime-db", () => {
     const dbPath = resolveRuntimeDbPath(options);
     const db = new Database(dbPath, { readonly: true });
     try {
-      const sessionCount = db.query("SELECT count(*) as count FROM sessions").get() as { count: number };
-      const nodeCount = db.query("SELECT count(*) as count FROM node_executions").get() as { count: number };
-      const logCount = db.query("SELECT count(*) as count FROM node_logs").get() as { count: number };
+      const sessionCount = db
+        .query("SELECT count(*) as count FROM sessions")
+        .get() as { count: number };
+      const nodeCount = db
+        .query("SELECT count(*) as count FROM node_executions")
+        .get() as { count: number };
+      const logCount = db
+        .query("SELECT count(*) as count FROM node_logs")
+        .get() as { count: number };
       expect(sessionCount.count).toBeGreaterThanOrEqual(1);
       expect(nodeCount.count).toBeGreaterThanOrEqual(2);
       expect(logCount.count).toBeGreaterThanOrEqual(2);
@@ -199,23 +262,26 @@ describe("runtime-db", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "sqlite-output-contract");
 
-    await writeJson(path.join(root, "sqlite-output-contract", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "sqlite-output-contract", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const options = {
       workflowRoot: root,
@@ -225,13 +291,28 @@ describe("runtime-db", () => {
     };
 
     const mockScenario = {
-      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "oyakata-manager": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "design" },
+      },
       "step-1": [
-        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
-        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+        {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { wrong: true },
+        },
+        {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { wrong: true },
+        },
       ],
     };
-    const result = await runWorkflow("sqlite-output-contract", { ...options, mockScenario });
+    const result = await runWorkflow("sqlite-output-contract", {
+      ...options,
+      mockScenario,
+    });
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
@@ -240,9 +321,17 @@ describe("runtime-db", () => {
     const dbPath = resolveRuntimeDbPath(options);
     const db = new Database(dbPath, { readonly: true });
     try {
-      const columns = db.query("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>;
-      expect(columns.some((column) => column.name === "output_attempt_count")).toBe(true);
-      expect(columns.some((column) => column.name === "output_validation_errors_json")).toBe(true);
+      const columns = db
+        .query("PRAGMA table_info(node_executions)")
+        .all() as Array<{ name: string }>;
+      expect(
+        columns.some((column) => column.name === "output_attempt_count"),
+      ).toBe(true);
+      expect(
+        columns.some(
+          (column) => column.name === "output_validation_errors_json",
+        ),
+      ).toBe(true);
 
       const row = db
         .query(
@@ -259,7 +348,9 @@ describe("runtime-db", () => {
 
       expect(row.output_attempt_count).toBe(2);
       expect(row.output_validation_errors_json).not.toBeNull();
-      const errors = JSON.parse(String(row.output_validation_errors_json)) as Array<{ path: string }>;
+      const errors = JSON.parse(
+        String(row.output_validation_errors_json),
+      ) as Array<{ path: string }>;
       expect(errors[0]?.path).toBe("$.summary");
     } finally {
       db.close();
@@ -277,7 +368,11 @@ describe("runtime-db", () => {
       sessionId: "sess-sqlite-node-session-reuse",
     };
 
-    const result = await runWorkflow("sqlite-node-session-reuse", options, new ReusableSessionAdapter());
+    const result = await runWorkflow(
+      "sqlite-node-session-reuse",
+      options,
+      new ReusableSessionAdapter(),
+    );
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
@@ -286,9 +381,15 @@ describe("runtime-db", () => {
     const dbPath = resolveRuntimeDbPath(options);
     const db = new Database(dbPath, { readonly: true });
     try {
-      const columns = db.query("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>;
-      expect(columns.some((column) => column.name === "backend_session_mode")).toBe(true);
-      expect(columns.some((column) => column.name === "backend_session_id")).toBe(true);
+      const columns = db
+        .query("PRAGMA table_info(node_executions)")
+        .all() as Array<{ name: string }>;
+      expect(
+        columns.some((column) => column.name === "backend_session_mode"),
+      ).toBe(true);
+      expect(
+        columns.some((column) => column.name === "backend_session_id"),
+      ).toBe(true);
 
       const rows = db
         .query(
@@ -315,23 +416,26 @@ describe("runtime-db", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "sqlite-output-contract-migration");
 
-    await writeJson(path.join(root, "sqlite-output-contract-migration", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "sqlite-output-contract-migration", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const options = {
       workflowRoot: root,
@@ -391,13 +495,28 @@ describe("runtime-db", () => {
     }
 
     const mockScenario = {
-      "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "design" } },
+      "oyakata-manager": {
+        provider: "scenario-mock",
+        when: { always: true },
+        payload: { stage: "design" },
+      },
       "step-1": [
-        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
-        { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
+        {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { wrong: true },
+        },
+        {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { wrong: true },
+        },
       ],
     };
-    const result = await runWorkflow("sqlite-output-contract-migration", { ...options, mockScenario });
+    const result = await runWorkflow("sqlite-output-contract-migration", {
+      ...options,
+      mockScenario,
+    });
     expect(result.ok).toBe(false);
     if (result.ok) {
       return;
@@ -405,9 +524,15 @@ describe("runtime-db", () => {
 
     const db = new Database(dbPath, { readonly: true });
     try {
-      const columns = db.query("PRAGMA table_info(node_executions)").all() as Array<{ name: string }>;
-      expect(columns.some((column) => column.name === "backend_session_mode")).toBe(true);
-      expect(columns.some((column) => column.name === "backend_session_id")).toBe(true);
+      const columns = db
+        .query("PRAGMA table_info(node_executions)")
+        .all() as Array<{ name: string }>;
+      expect(
+        columns.some((column) => column.name === "backend_session_mode"),
+      ).toBe(true);
+      expect(
+        columns.some((column) => column.name === "backend_session_id"),
+      ).toBe(true);
 
       const row = db
         .query(
@@ -424,7 +549,9 @@ describe("runtime-db", () => {
 
       expect(row.output_attempt_count).toBe(2);
       expect(row.output_validation_errors_json).not.toBeNull();
-      const errors = JSON.parse(String(row.output_validation_errors_json)) as Array<{ path: string }>;
+      const errors = JSON.parse(
+        String(row.output_validation_errors_json),
+      ) as Array<{ path: string }>;
       expect(errors[0]?.path).toBe("$.summary");
     } finally {
       db.close();

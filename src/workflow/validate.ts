@@ -47,7 +47,10 @@ interface NormalizedVisNodeCandidate {
 }
 
 type UnknownRecord = Record<string, unknown>;
-type ValidationResult = Result<NormalizedWorkflowBundle, readonly ValidationIssue[]>;
+type ValidationResult = Result<
+  NormalizedWorkflowBundle,
+  readonly ValidationIssue[]
+>;
 
 interface ValidationSuccessDetails {
   readonly bundle: NormalizedWorkflowBundle;
@@ -59,7 +62,9 @@ function isRecord(value: unknown): value is UnknownRecord {
 }
 
 function isCliAgentBackend(value: unknown): value is CliAgentBackend {
-  return value === "tacogips/codex-agent" || value === "tacogips/claude-code-agent";
+  return (
+    value === "tacogips/codex-agent" || value === "tacogips/claude-code-agent"
+  );
 }
 
 function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
@@ -70,7 +75,9 @@ function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
   );
 }
 
-function requiresSeparatedModel(executionBackend: NodeExecutionBackend | undefined): executionBackend is NodeExecutionBackend {
+function requiresSeparatedModel(
+  executionBackend: NodeExecutionBackend | undefined,
+): executionBackend is NodeExecutionBackend {
   return executionBackend !== undefined;
 }
 
@@ -94,7 +101,9 @@ function readStringField(
 ): string | null {
   const value = record[key];
   if (typeof value !== "string" || value.length === 0) {
-    issues.push(makeIssue("error", `${path}.${key}`, "must be a non-empty string"));
+    issues.push(
+      makeIssue("error", `${path}.${key}`, "must be a non-empty string"),
+    );
     return null;
   }
   return value;
@@ -108,13 +117,19 @@ function readNumberField(
 ): number | null {
   const value = record[key];
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    issues.push(makeIssue("error", `${path}.${key}`, "must be a finite number"));
+    issues.push(
+      makeIssue("error", `${path}.${key}`, "must be a finite number"),
+    );
     return null;
   }
   return value;
 }
 
-function normalizeCompletion(value: unknown, path: string, issues: ValidationIssue[]): CompletionRule | undefined {
+function normalizeCompletion(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): CompletionRule | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -130,13 +145,17 @@ function normalizeCompletion(value: unknown, path: string, issues: ValidationIss
     typeValue !== "validator-result" &&
     typeValue !== "none"
   ) {
-    issues.push(makeIssue("error", `${path}.type`, "must be a valid completion type"));
+    issues.push(
+      makeIssue("error", `${path}.type`, "must be a valid completion type"),
+    );
     return undefined;
   }
 
   const configValue = value["config"];
   if (configValue !== undefined && !isRecord(configValue)) {
-    issues.push(makeIssue("error", `${path}.config`, "must be an object when provided"));
+    issues.push(
+      makeIssue("error", `${path}.config`, "must be an object when provided"),
+    );
     return { type: typeValue };
   }
 
@@ -146,7 +165,11 @@ function normalizeCompletion(value: unknown, path: string, issues: ValidationIss
   return { type: typeValue };
 }
 
-function normalizeNodeRef(value: unknown, index: number, issues: ValidationIssue[]): WorkflowNodeRef | null {
+function normalizeNodeRef(
+  value: unknown,
+  index: number,
+  issues: ValidationIssue[],
+): WorkflowNodeRef | null {
   const path = `workflow.nodes[${index}]`;
   if (!isRecord(value)) {
     issues.push(makeIssue("error", path, "must be an object"));
@@ -155,14 +178,29 @@ function normalizeNodeRef(value: unknown, index: number, issues: ValidationIssue
 
   const id = readStringField(value, "id", path, issues);
   const nodeFile = readStringField(value, "nodeFile", path, issues);
-  const completion = normalizeCompletion(value["completion"], `${path}.completion`, issues);
+  const completion = normalizeCompletion(
+    value["completion"],
+    `${path}.completion`,
+    issues,
+  );
 
   const kindRaw = value["kind"];
-  const allowedKinds = new Set(["task", "branch-judge", "loop-judge", "root-manager", "sub-manager", "manager", "input", "output"]);
+  const allowedKinds = new Set([
+    "task",
+    "branch-judge",
+    "loop-judge",
+    "root-manager",
+    "sub-manager",
+    "manager",
+    "input",
+    "output",
+  ]);
   let kind: WorkflowNodeRef["kind"];
   if (kindRaw !== undefined) {
     if (typeof kindRaw !== "string" || !allowedKinds.has(kindRaw)) {
-      issues.push(makeIssue("error", `${path}.kind`, "must be a valid node kind"));
+      issues.push(
+        makeIssue("error", `${path}.kind`, "must be a valid node kind"),
+      );
     } else {
       kind = kindRaw as WorkflowNodeRef["kind"];
     }
@@ -173,10 +211,14 @@ function normalizeNodeRef(value: unknown, index: number, issues: ValidationIssue
   }
 
   if (!NODE_ID_PATTERN.test(id)) {
-    issues.push(makeIssue("error", `${path}.id`, "must match ^[a-z0-9][a-z0-9-]{1,63}$"));
+    issues.push(
+      makeIssue("error", `${path}.id`, "must match ^[a-z0-9][a-z0-9-]{1,63}$"),
+    );
   }
   if (nodeFile !== `node-${id}.json`) {
-    issues.push(makeIssue("error", `${path}.nodeFile`, `must equal node-${id}.json`));
+    issues.push(
+      makeIssue("error", `${path}.nodeFile`, `must equal node-${id}.json`),
+    );
   }
 
   return {
@@ -187,7 +229,11 @@ function normalizeNodeRef(value: unknown, index: number, issues: ValidationIssue
   };
 }
 
-function normalizeEdge(value: unknown, index: number, issues: ValidationIssue[]): WorkflowEdge | null {
+function normalizeEdge(
+  value: unknown,
+  index: number,
+  issues: ValidationIssue[],
+): WorkflowEdge | null {
   const path = `workflow.edges[${index}]`;
   if (!isRecord(value)) {
     issues.push(makeIssue("error", path, "must be an object"));
@@ -219,7 +265,11 @@ function normalizeEdge(value: unknown, index: number, issues: ValidationIssue[])
   };
 }
 
-function normalizeLoop(value: unknown, index: number, issues: ValidationIssue[]): LoopRule | null {
+function normalizeLoop(
+  value: unknown,
+  index: number,
+  issues: ValidationIssue[],
+): LoopRule | null {
   const path = `workflow.loops[${index}]`;
   if (!isRecord(value)) {
     issues.push(makeIssue("error", path, "must be an object"));
@@ -253,7 +303,12 @@ function normalizeLoop(value: unknown, index: number, issues: ValidationIssue[])
     }
   }
 
-  if (id === null || judgeNodeId === null || continueWhen === null || exitWhen === null) {
+  if (
+    id === null ||
+    judgeNodeId === null ||
+    continueWhen === null ||
+    exitWhen === null
+  ) {
     return null;
   }
 
@@ -284,22 +339,60 @@ function normalizeSubWorkflowInputSource(
     typeRaw !== "node-output" &&
     typeRaw !== "sub-workflow-output"
   ) {
-    issues.push(makeIssue("error", `${path}.type`, "must be a valid sub-workflow input source type"));
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.type`,
+        "must be a valid sub-workflow input source type",
+      ),
+    );
     return null;
   }
 
-  const workflowId = typeof value["workflowId"] === "string" ? value["workflowId"] : undefined;
-  const nodeId = typeof value["nodeId"] === "string" ? value["nodeId"] : undefined;
-  const subWorkflowId = typeof value["subWorkflowId"] === "string" ? value["subWorkflowId"] : undefined;
+  const workflowId =
+    typeof value["workflowId"] === "string" ? value["workflowId"] : undefined;
+  const nodeId =
+    typeof value["nodeId"] === "string" ? value["nodeId"] : undefined;
+  const subWorkflowId =
+    typeof value["subWorkflowId"] === "string"
+      ? value["subWorkflowId"]
+      : undefined;
 
-  if (typeRaw === "workflow-output" && (workflowId === undefined || workflowId.length === 0)) {
-    issues.push(makeIssue("error", `${path}.workflowId`, "is required when type is workflow-output"));
+  if (
+    typeRaw === "workflow-output" &&
+    (workflowId === undefined || workflowId.length === 0)
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.workflowId`,
+        "is required when type is workflow-output",
+      ),
+    );
   }
-  if (typeRaw === "node-output" && (nodeId === undefined || nodeId.length === 0)) {
-    issues.push(makeIssue("error", `${path}.nodeId`, "is required when type is node-output"));
+  if (
+    typeRaw === "node-output" &&
+    (nodeId === undefined || nodeId.length === 0)
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.nodeId`,
+        "is required when type is node-output",
+      ),
+    );
   }
-  if (typeRaw === "sub-workflow-output" && (subWorkflowId === undefined || subWorkflowId.length === 0)) {
-    issues.push(makeIssue("error", `${path}.subWorkflowId`, "is required when type is sub-workflow-output"));
+  if (
+    typeRaw === "sub-workflow-output" &&
+    (subWorkflowId === undefined || subWorkflowId.length === 0)
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.subWorkflowId`,
+        "is required when type is sub-workflow-output",
+      ),
+    );
   }
 
   if (value["selectionPolicy"] !== undefined) {
@@ -327,7 +420,11 @@ function normalizeSubWorkflowInputSource(
   };
 }
 
-function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationIssue[]): SubWorkflowRef | null {
+function normalizeSubWorkflow(
+  value: unknown,
+  index: number,
+  issues: ValidationIssue[],
+): SubWorkflowRef | null {
   const path = `workflow.subWorkflows[${index}]`;
   if (!isRecord(value)) {
     issues.push(makeIssue("error", path, "must be an object"));
@@ -344,10 +441,23 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
     issues.push(makeIssue("error", `${path}.nodeIds`, "must be an array"));
   }
   const nodeIds = Array.isArray(nodeIdsRaw)
-    ? nodeIdsRaw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    ? nodeIdsRaw.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
     : undefined;
-  if (Array.isArray(nodeIdsRaw) && nodeIds !== undefined && nodeIds.length !== nodeIdsRaw.length) {
-    issues.push(makeIssue("error", `${path}.nodeIds`, "must contain only non-empty strings"));
+  if (
+    Array.isArray(nodeIdsRaw) &&
+    nodeIds !== undefined &&
+    nodeIds.length !== nodeIdsRaw.length
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.nodeIds`,
+        "must contain only non-empty strings",
+      ),
+    );
   }
 
   const inputSourcesAlias = value["inputs"];
@@ -367,7 +477,11 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
   const inputSources = Array.isArray(inputSourcesRaw)
     ? inputSourcesRaw
         .map((entry, sourceIndex) =>
-          normalizeSubWorkflowInputSource(entry, `${path}.inputSources[${sourceIndex}]`, issues),
+          normalizeSubWorkflowInputSource(
+            entry,
+            `${path}.inputSources[${sourceIndex}]`,
+            issues,
+          ),
         )
         .filter((entry): entry is SubWorkflowInputSource => entry !== null)
     : [];
@@ -376,19 +490,42 @@ function normalizeSubWorkflow(value: unknown, index: number, issues: ValidationI
   const blockRaw = value["block"];
   if (blockRaw !== undefined) {
     if (!isRecord(blockRaw)) {
-      issues.push(makeIssue("error", `${path}.block`, "must be an object when provided"));
+      issues.push(
+        makeIssue("error", `${path}.block`, "must be an object when provided"),
+      );
     } else {
       const typeRaw = blockRaw["type"];
       const loopIdRaw = blockRaw["loopId"];
-      if (typeRaw !== "plain" && typeRaw !== "branch-block" && typeRaw !== "loop-body") {
-        issues.push(makeIssue("error", `${path}.block.type`, "must be 'plain', 'branch-block', or 'loop-body'"));
+      if (
+        typeRaw !== "plain" &&
+        typeRaw !== "branch-block" &&
+        typeRaw !== "loop-body"
+      ) {
+        issues.push(
+          makeIssue(
+            "error",
+            `${path}.block.type`,
+            "must be 'plain', 'branch-block', or 'loop-body'",
+          ),
+        );
       } else {
-        if (loopIdRaw !== undefined && (typeof loopIdRaw !== "string" || loopIdRaw.length === 0)) {
-          issues.push(makeIssue("error", `${path}.block.loopId`, "must be a non-empty string when provided"));
+        if (
+          loopIdRaw !== undefined &&
+          (typeof loopIdRaw !== "string" || loopIdRaw.length === 0)
+        ) {
+          issues.push(
+            makeIssue(
+              "error",
+              `${path}.block.loopId`,
+              "must be a non-empty string when provided",
+            ),
+          );
         }
         block = {
           type: typeRaw,
-          ...(typeof loopIdRaw === "string" && loopIdRaw.length > 0 ? { loopId: loopIdRaw } : {}),
+          ...(typeof loopIdRaw === "string" && loopIdRaw.length > 0
+            ? { loopId: loopIdRaw }
+            : {}),
         };
       }
     }
@@ -446,18 +583,36 @@ function normalizeSubWorkflowConversation(
     issues.push(makeIssue("error", `${path}.participants`, "must be an array"));
   }
   const participants = Array.isArray(participantsRaw)
-    ? participantsRaw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    ? participantsRaw.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && entry.length > 0,
+      )
     : [];
-  if (Array.isArray(participantsRaw) && participants.length !== participantsRaw.length) {
-    issues.push(makeIssue("error", `${path}.participants`, "must contain only non-empty strings"));
+  if (
+    Array.isArray(participantsRaw) &&
+    participants.length !== participantsRaw.length
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.participants`,
+        "must contain only non-empty strings",
+      ),
+    );
   }
 
   const maxTurnsRaw = value["maxTurns"];
   let maxTurns: number | null = null;
-  if (typeof maxTurnsRaw === "number" && Number.isFinite(maxTurnsRaw) && maxTurnsRaw > 0) {
+  if (
+    typeof maxTurnsRaw === "number" &&
+    Number.isFinite(maxTurnsRaw) &&
+    maxTurnsRaw > 0
+  ) {
     maxTurns = maxTurnsRaw;
   } else {
-    issues.push(makeIssue("error", `${path}.maxTurns`, "must be a positive number"));
+    issues.push(
+      makeIssue("error", `${path}.maxTurns`, "must be a positive number"),
+    );
   }
 
   if (value["conversationPolicy"] !== undefined) {
@@ -489,15 +644,33 @@ function normalizeSubWorkflowConversation(
   };
 }
 
-function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): WorkflowJson | null {
+function normalizeWorkflow(
+  workflow: unknown,
+  issues: ValidationIssue[],
+): WorkflowJson | null {
   if (!isRecord(workflow)) {
     issues.push(makeIssue("error", "workflow", "must be an object"));
     return null;
   }
 
-  const workflowId = readStringField(workflow, "workflowId", "workflow", issues);
-  const description = readStringField(workflow, "description", "workflow", issues);
-  const managerNodeId = readStringField(workflow, "managerNodeId", "workflow", issues);
+  const workflowId = readStringField(
+    workflow,
+    "workflowId",
+    "workflow",
+    issues,
+  );
+  const description = readStringField(
+    workflow,
+    "description",
+    "workflow",
+    issues,
+  );
+  const managerNodeId = readStringField(
+    workflow,
+    "managerNodeId",
+    "workflow",
+    issues,
+  );
 
   const defaultsValue = workflow["defaults"];
   if (!isRecord(defaultsValue)) {
@@ -505,30 +678,67 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   }
 
   const maxLoopIterations =
-    isRecord(defaultsValue) && readNumberField(defaultsValue, "maxLoopIterations", "workflow.defaults", issues);
+    isRecord(defaultsValue) &&
+    readNumberField(
+      defaultsValue,
+      "maxLoopIterations",
+      "workflow.defaults",
+      issues,
+    );
   const nodeTimeoutMs =
-    isRecord(defaultsValue) && readNumberField(defaultsValue, "nodeTimeoutMs", "workflow.defaults", issues);
+    isRecord(defaultsValue) &&
+    readNumberField(
+      defaultsValue,
+      "nodeTimeoutMs",
+      "workflow.defaults",
+      issues,
+    );
 
   let prompts: WorkflowPrompts | undefined;
   const promptsRaw = workflow["prompts"];
   if (promptsRaw !== undefined) {
     if (!isRecord(promptsRaw)) {
-      issues.push(makeIssue("error", "workflow.prompts", "must be an object when provided"));
+      issues.push(
+        makeIssue(
+          "error",
+          "workflow.prompts",
+          "must be an object when provided",
+        ),
+      );
     } else {
       const oyakataPromptTemplateRaw = promptsRaw["oyakataPromptTemplate"];
-      const workerSystemPromptTemplateRaw = promptsRaw["workerSystemPromptTemplate"];
+      const workerSystemPromptTemplateRaw =
+        promptsRaw["workerSystemPromptTemplate"];
 
-      if (oyakataPromptTemplateRaw !== undefined && typeof oyakataPromptTemplateRaw !== "string") {
-        issues.push(makeIssue("error", "workflow.prompts.oyakataPromptTemplate", "must be a string when provided"));
-      }
-      if (workerSystemPromptTemplateRaw !== undefined && typeof workerSystemPromptTemplateRaw !== "string") {
+      if (
+        oyakataPromptTemplateRaw !== undefined &&
+        typeof oyakataPromptTemplateRaw !== "string"
+      ) {
         issues.push(
-          makeIssue("error", "workflow.prompts.workerSystemPromptTemplate", "must be a string when provided"),
+          makeIssue(
+            "error",
+            "workflow.prompts.oyakataPromptTemplate",
+            "must be a string when provided",
+          ),
+        );
+      }
+      if (
+        workerSystemPromptTemplateRaw !== undefined &&
+        typeof workerSystemPromptTemplateRaw !== "string"
+      ) {
+        issues.push(
+          makeIssue(
+            "error",
+            "workflow.prompts.workerSystemPromptTemplate",
+            "must be a string when provided",
+          ),
         );
       }
 
       prompts = {
-        ...(typeof oyakataPromptTemplateRaw === "string" ? { oyakataPromptTemplate: oyakataPromptTemplateRaw } : {}),
+        ...(typeof oyakataPromptTemplateRaw === "string"
+          ? { oyakataPromptTemplate: oyakataPromptTemplateRaw }
+          : {}),
         ...(typeof workerSystemPromptTemplateRaw === "string"
           ? { workerSystemPromptTemplate: workerSystemPromptTemplateRaw }
           : {}),
@@ -538,7 +748,9 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
 
   const subWorkflowsRaw = workflow["subWorkflows"];
   if (!Array.isArray(subWorkflowsRaw)) {
-    issues.push(makeIssue("error", "workflow.subWorkflows", "must be an array"));
+    issues.push(
+      makeIssue("error", "workflow.subWorkflows", "must be an array"),
+    );
   }
   const subWorkflows = Array.isArray(subWorkflowsRaw)
     ? subWorkflowsRaw
@@ -567,15 +779,16 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
     : [];
 
   const loopsRaw = workflow["loops"];
-  const loops =
-    Array.isArray(loopsRaw)
-      ? loopsRaw
-          .map((entry, index) => normalizeLoop(entry, index, issues))
-          .filter((entry): entry is LoopRule => entry !== null)
-      : undefined;
+  const loops = Array.isArray(loopsRaw)
+    ? loopsRaw
+        .map((entry, index) => normalizeLoop(entry, index, issues))
+        .filter((entry): entry is LoopRule => entry !== null)
+    : undefined;
 
   if (loopsRaw !== undefined && !Array.isArray(loopsRaw)) {
-    issues.push(makeIssue("error", "workflow.loops", "must be an array when provided"));
+    issues.push(
+      makeIssue("error", "workflow.loops", "must be an array when provided"),
+    );
   }
 
   const branching = workflow["branching"];
@@ -583,16 +796,29 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
     issues.push(makeIssue("error", "workflow.branching", "must be an object"));
   }
   if (!isRecord(branching) || branching["mode"] !== "fan-out") {
-    issues.push(makeIssue("error", "workflow.branching.mode", "must be 'fan-out'"));
+    issues.push(
+      makeIssue("error", "workflow.branching.mode", "must be 'fan-out'"),
+    );
   }
 
   const subWorkflowConversationsRaw = workflow["subWorkflowConversations"];
-  if (subWorkflowConversationsRaw !== undefined && !Array.isArray(subWorkflowConversationsRaw)) {
-    issues.push(makeIssue("error", "workflow.subWorkflowConversations", "must be an array when provided"));
+  if (
+    subWorkflowConversationsRaw !== undefined &&
+    !Array.isArray(subWorkflowConversationsRaw)
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        "workflow.subWorkflowConversations",
+        "must be an array when provided",
+      ),
+    );
   }
   const subWorkflowConversations = Array.isArray(subWorkflowConversationsRaw)
     ? subWorkflowConversationsRaw
-        .map((entry, index) => normalizeSubWorkflowConversation(entry, index, issues))
+        .map((entry, index) =>
+          normalizeSubWorkflowConversation(entry, index, issues),
+        )
         .filter((entry): entry is SubWorkflowConversation => entry !== null)
     : undefined;
 
@@ -608,10 +834,14 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   }
 
   if (maxLoopIterations <= 0) {
-    issues.push(makeIssue("error", "workflow.defaults.maxLoopIterations", "must be > 0"));
+    issues.push(
+      makeIssue("error", "workflow.defaults.maxLoopIterations", "must be > 0"),
+    );
   }
   if (nodeTimeoutMs <= 0) {
-    issues.push(makeIssue("error", "workflow.defaults.nodeTimeoutMs", "must be > 0"));
+    issues.push(
+      makeIssue("error", "workflow.defaults.nodeTimeoutMs", "must be > 0"),
+    );
   }
 
   return {
@@ -621,7 +851,9 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
     ...(prompts === undefined ? {} : { prompts }),
     managerNodeId,
     subWorkflows,
-    ...(subWorkflowConversations === undefined ? {} : { subWorkflowConversations }),
+    ...(subWorkflowConversations === undefined
+      ? {}
+      : { subWorkflowConversations }),
     nodes,
     edges,
     ...(loops === undefined ? {} : { loops }),
@@ -629,7 +861,11 @@ function normalizeWorkflow(workflow: unknown, issues: ValidationIssue[]): Workfl
   };
 }
 
-function normalizeVisNode(value: unknown, index: number, issues: ValidationIssue[]): NormalizedVisNodeCandidate | null {
+function normalizeVisNode(
+  value: unknown,
+  index: number,
+  issues: ValidationIssue[],
+): NormalizedVisNodeCandidate | null {
   const path = `workflowVis.nodes[${index}]`;
   if (!isRecord(value)) {
     issues.push(makeIssue("error", path, "must be an object"));
@@ -644,14 +880,23 @@ function normalizeVisNode(value: unknown, index: number, issues: ValidationIssue
   let order: number | undefined;
   const orderRaw = value["order"];
   if (orderRaw !== undefined) {
-    if (typeof orderRaw !== "number" || !Number.isInteger(orderRaw) || orderRaw < 0) {
-      issues.push(makeIssue("error", `${path}.order`, "must be a non-negative integer"));
+    if (
+      typeof orderRaw !== "number" ||
+      !Number.isInteger(orderRaw) ||
+      orderRaw < 0
+    ) {
+      issues.push(
+        makeIssue("error", `${path}.order`, "must be a non-negative integer"),
+      );
     } else {
       order = orderRaw;
     }
   } else {
     const hasLegacyLayoutFields =
-      value["x"] !== undefined || value["y"] !== undefined || value["width"] !== undefined || value["height"] !== undefined;
+      value["x"] !== undefined ||
+      value["y"] !== undefined ||
+      value["width"] !== undefined ||
+      value["height"] !== undefined;
     if (hasLegacyLayoutFields) {
       const x = readNumberField(value, "x", path, issues);
       const y = readNumberField(value, "y", path, issues);
@@ -664,7 +909,9 @@ function normalizeVisNode(value: unknown, index: number, issues: ValidationIssue
         };
       }
     } else {
-      issues.push(makeIssue("error", `${path}.order`, "must be a non-negative integer"));
+      issues.push(
+        makeIssue("error", `${path}.order`, "must be a non-negative integer"),
+      );
     }
   }
 
@@ -698,7 +945,10 @@ function normalizeVisNode(value: unknown, index: number, issues: ValidationIssue
   };
 }
 
-function normalizeWorkflowVis(workflowVis: unknown, issues: ValidationIssue[]): WorkflowVisJson | null {
+function normalizeWorkflowVis(
+  workflowVis: unknown,
+  issues: ValidationIssue[],
+): WorkflowVisJson | null {
   if (!isRecord(workflowVis)) {
     issues.push(makeIssue("error", "workflowVis", "must be an object"));
     return null;
@@ -715,11 +965,16 @@ function normalizeWorkflowVis(workflowVis: unknown, issues: ValidationIssue[]): 
     .filter((entry): entry is NormalizedVisNodeCandidate => entry !== null);
 
   const legacyCandidates = candidates.filter(
-    (entry): entry is NormalizedVisNodeCandidate & { readonly legacyLayout: LegacyLayout } => entry.legacyLayout !== undefined,
+    (
+      entry,
+    ): entry is NormalizedVisNodeCandidate & {
+      readonly legacyLayout: LegacyLayout;
+    } => entry.legacyLayout !== undefined,
   );
-  const explicitCandidates = candidates.filter((entry): entry is NormalizedVisNodeCandidate & { readonly order: number } => (
-    entry.order !== undefined
-  ));
+  const explicitCandidates = candidates.filter(
+    (entry): entry is NormalizedVisNodeCandidate & { readonly order: number } =>
+      entry.order !== undefined,
+  );
 
   if (legacyCandidates.length > 0 && explicitCandidates.length > 0) {
     issues.push(
@@ -769,7 +1024,13 @@ function normalizeWorkflowVis(workflowVis: unknown, issues: ValidationIssue[]): 
 
   const uiMetaRaw = workflowVis["uiMeta"];
   if (uiMetaRaw !== undefined && !isRecord(uiMetaRaw)) {
-    issues.push(makeIssue("error", "workflowVis.uiMeta", "must be an object when provided"));
+    issues.push(
+      makeIssue(
+        "error",
+        "workflowVis.uiMeta",
+        "must be an object when provided",
+      ),
+    );
   }
 
   return {
@@ -796,9 +1057,12 @@ function normalizeNodePayload(
   }
 
   const modelRaw = payload["model"];
-  const model = typeof modelRaw === "string" && modelRaw.length > 0 ? modelRaw : null;
+  const model =
+    typeof modelRaw === "string" && modelRaw.length > 0 ? modelRaw : null;
   if (model === null) {
-    issues.push(makeIssue("error", `${path}.model`, "must be a non-empty string"));
+    issues.push(
+      makeIssue("error", `${path}.model`, "must be a non-empty string"),
+    );
   }
 
   const executionBackendRaw = payload["executionBackend"];
@@ -823,7 +1087,11 @@ function normalizeNodePayload(
         "is required when model is not one of the tacogips CLI-wrapper backend identifiers",
       ),
     );
-  } else if (model !== null && executionBackend === undefined && isCliAgentBackend(model)) {
+  } else if (
+    model !== null &&
+    executionBackend === undefined &&
+    isCliAgentBackend(model)
+  ) {
     issues.push(
       makeIssue(
         "warning",
@@ -832,7 +1100,11 @@ function normalizeNodePayload(
       ),
     );
   }
-  if (model !== null && requiresSeparatedModel(executionBackend) && isCliAgentBackend(model)) {
+  if (
+    model !== null &&
+    requiresSeparatedModel(executionBackend) &&
+    isCliAgentBackend(model)
+  ) {
     issues.push(
       makeIssue(
         "error",
@@ -849,9 +1121,21 @@ function normalizeNodePayload(
     promptTemplate = promptTemplateRaw;
   } else if (typeof promptAlias === "string" && promptAlias.length > 0) {
     promptTemplate = promptAlias;
-    issues.push(makeIssue("warning", `${path}.prompt`, "legacy field 'prompt' normalized to 'promptTemplate'"));
+    issues.push(
+      makeIssue(
+        "warning",
+        `${path}.prompt`,
+        "legacy field 'prompt' normalized to 'promptTemplate'",
+      ),
+    );
   } else {
-    issues.push(makeIssue("error", `${path}.promptTemplate`, "must be a non-empty string"));
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.promptTemplate`,
+        "must be a non-empty string",
+      ),
+    );
   }
 
   const variablesRaw = payload["variables"];
@@ -861,7 +1145,13 @@ function normalizeNodePayload(
     variables = variablesRaw;
   } else if (isRecord(variablesAlias)) {
     variables = variablesAlias;
-    issues.push(makeIssue("warning", `${path}.variable`, "legacy field 'variable' normalized to 'variables'"));
+    issues.push(
+      makeIssue(
+        "warning",
+        `${path}.variable`,
+        "legacy field 'variable' normalized to 'variables'",
+      ),
+    );
   } else {
     issues.push(makeIssue("error", `${path}.variables`, "must be an object"));
   }
@@ -872,7 +1162,9 @@ function normalizeNodePayload(
     if (typeof timeoutRaw === "number" && timeoutRaw > 0) {
       timeoutMs = timeoutRaw;
     } else {
-      issues.push(makeIssue("error", `${path}.timeoutMs`, "must be > 0 when provided"));
+      issues.push(
+        makeIssue("error", `${path}.timeoutMs`, "must be > 0 when provided"),
+      );
     }
   }
 
@@ -880,9 +1172,21 @@ function normalizeNodePayload(
   let sessionPolicy: NodeSessionPolicy | undefined;
   if (sessionPolicyRaw !== undefined) {
     if (!isRecord(sessionPolicyRaw)) {
-      issues.push(makeIssue("error", `${path}.sessionPolicy`, "must be an object when provided"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.sessionPolicy`,
+          "must be an object when provided",
+        ),
+      );
     } else if (!isNodeSessionMode(sessionPolicyRaw["mode"])) {
-      issues.push(makeIssue("error", `${path}.sessionPolicy.mode`, "must be 'new' or 'reuse'"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.sessionPolicy.mode`,
+          "must be 'new' or 'reuse'",
+        ),
+      );
     } else {
       sessionPolicy = { mode: sessionPolicyRaw["mode"] };
     }
@@ -894,7 +1198,13 @@ function normalizeNodePayload(
     if (isRecord(argumentsTemplateRaw)) {
       argumentsTemplate = argumentsTemplateRaw;
     } else {
-      issues.push(makeIssue("error", `${path}.argumentsTemplate`, "must be an object when provided"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.argumentsTemplate`,
+          "must be an object when provided",
+        ),
+      );
     }
   }
 
@@ -902,7 +1212,13 @@ function normalizeNodePayload(
   let argumentBindings: readonly ArgumentBinding[] | undefined;
   if (argumentBindingsRaw !== undefined) {
     if (!Array.isArray(argumentBindingsRaw)) {
-      issues.push(makeIssue("error", `${path}.argumentBindings`, "must be an array when provided"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.argumentBindings`,
+          "must be an array when provided",
+        ),
+      );
     } else {
       const parsed: ArgumentBinding[] = [];
       argumentBindingsRaw.forEach((entry, index) => {
@@ -912,7 +1228,12 @@ function normalizeNodePayload(
           return;
         }
 
-        const targetPath = readStringField(entry, "targetPath", entryPath, issues);
+        const targetPath = readStringField(
+          entry,
+          "targetPath",
+          entryPath,
+          issues,
+        );
         const sourceRaw = entry["source"];
         if (
           sourceRaw !== "variables" &&
@@ -922,7 +1243,13 @@ function normalizeNodePayload(
           sourceRaw !== "human-input" &&
           sourceRaw !== "conversation-transcript"
         ) {
-          issues.push(makeIssue("error", `${entryPath}.source`, "must be a valid binding source"));
+          issues.push(
+            makeIssue(
+              "error",
+              `${entryPath}.source`,
+              "must be a valid binding source",
+            ),
+          );
           return;
         }
 
@@ -937,7 +1264,9 @@ function normalizeNodePayload(
         parsed.push({
           targetPath,
           source: sourceRaw,
-          ...(typeof sourceRef === "string" || isRecord(sourceRef) ? { sourceRef } : {}),
+          ...(typeof sourceRef === "string" || isRecord(sourceRef)
+            ? { sourceRef }
+            : {}),
           ...(typeof sourcePath === "string" ? { sourcePath } : {}),
           ...(typeof required === "boolean" ? { required } : {}),
         });
@@ -947,11 +1276,21 @@ function normalizeNodePayload(
   }
 
   const templateEngineRaw = payload["templateEngine"];
-  const templateEngine = typeof templateEngineRaw === "string" ? templateEngineRaw : undefined;
+  const templateEngine =
+    typeof templateEngineRaw === "string" ? templateEngineRaw : undefined;
 
-  const outputContract = normalizeNodeOutputContract(payload["output"], `${path}.output`, issues);
+  const outputContract = normalizeNodeOutputContract(
+    payload["output"],
+    `${path}.output`,
+    issues,
+  );
 
-  if (id === null || model === null || promptTemplate === null || variables === null) {
+  if (
+    id === null ||
+    model === null ||
+    promptTemplate === null ||
+    variables === null
+  ) {
     return null;
   }
 
@@ -983,10 +1322,20 @@ function normalizeNodeOutputContract(
     return undefined;
   }
 
-  const allowedKeys = new Set(["description", "jsonSchema", "maxValidationAttempts"]);
+  const allowedKeys = new Set([
+    "description",
+    "jsonSchema",
+    "maxValidationAttempts",
+  ]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
-      issues.push(makeIssue("error", `${path}.${key}`, "uses an unsupported output contract field"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.${key}`,
+          "uses an unsupported output contract field",
+        ),
+      );
     }
   }
   const hasDescriptionKey = Object.hasOwn(value, "description");
@@ -994,22 +1343,50 @@ function normalizeNodeOutputContract(
 
   const descriptionRaw = value["description"];
   const description =
-    typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0 ? descriptionRaw : undefined;
+    typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0
+      ? descriptionRaw
+      : undefined;
   if (descriptionRaw !== undefined && typeof descriptionRaw !== "string") {
-    issues.push(makeIssue("error", `${path}.description`, "must be a string when provided"));
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.description`,
+        "must be a string when provided",
+      ),
+    );
   } else if (typeof descriptionRaw === "string" && description === undefined) {
-    issues.push(makeIssue("error", `${path}.description`, "must be a non-empty string when provided"));
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.description`,
+        "must be a non-empty string when provided",
+      ),
+    );
   }
 
   const jsonSchemaRaw = value["jsonSchema"];
   let jsonSchema: JsonObject | undefined;
   if (jsonSchemaRaw !== undefined) {
     if (!isRecord(jsonSchemaRaw)) {
-      issues.push(makeIssue("error", `${path}.jsonSchema`, "must be an object when provided"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.jsonSchema`,
+          "must be an object when provided",
+        ),
+      );
     } else {
-      const schemaIssues = validateJsonSchemaDefinition(jsonSchemaRaw as JsonObject);
+      const schemaIssues = validateJsonSchemaDefinition(
+        jsonSchemaRaw as JsonObject,
+      );
       schemaIssues.forEach((entry) => {
-        issues.push(makeIssue("error", `${path}.jsonSchema${entry.path === "$schema" ? "" : entry.path.slice("$schema".length)}`, entry.message));
+        issues.push(
+          makeIssue(
+            "error",
+            `${path}.jsonSchema${entry.path === "$schema" ? "" : entry.path.slice("$schema".length)}`,
+            entry.message,
+          ),
+        );
       });
       if (schemaIssues.length === 0) {
         jsonSchema = jsonSchemaRaw as JsonObject;
@@ -1020,10 +1397,20 @@ function normalizeNodeOutputContract(
   const maxValidationAttemptsRaw = value["maxValidationAttempts"];
   let maxValidationAttempts: number | undefined;
   if (maxValidationAttemptsRaw !== undefined) {
-    if (typeof maxValidationAttemptsRaw === "number" && Number.isInteger(maxValidationAttemptsRaw) && maxValidationAttemptsRaw > 0) {
+    if (
+      typeof maxValidationAttemptsRaw === "number" &&
+      Number.isInteger(maxValidationAttemptsRaw) &&
+      maxValidationAttemptsRaw > 0
+    ) {
       maxValidationAttempts = maxValidationAttemptsRaw;
     } else {
-      issues.push(makeIssue("error", `${path}.maxValidationAttempts`, "must be an integer > 0 when provided"));
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.maxValidationAttempts`,
+          "must be an integer > 0 when provided",
+        ),
+      );
     }
   }
 
@@ -1059,8 +1446,14 @@ function intervalsPartiallyOverlap(
   return leftStartsInsideRight || rightStartsInsideLeft;
 }
 
-function findNodeIdByOrder(bundle: NormalizedWorkflowBundle, order: number): string {
-  return bundle.workflowVis.nodes.find((entry) => entry.order === order)?.id ?? "unknown";
+function findNodeIdByOrder(
+  bundle: NormalizedWorkflowBundle,
+  order: number,
+): string {
+  return (
+    bundle.workflowVis.nodes.find((entry) => entry.order === order)?.id ??
+    "unknown"
+  );
 }
 
 function pushCrossingIntervalIssue(
@@ -1075,11 +1468,14 @@ function pushCrossingIntervalIssue(
     readonly messagePrefix: string;
   },
 ): void {
-  const earlierId = args.leftStartOrder <= args.rightStartOrder ? args.leftId : args.rightId;
+  const earlierId =
+    args.leftStartOrder <= args.rightStartOrder ? args.leftId : args.rightId;
   const laterId = earlierId === args.leftId ? args.rightId : args.leftId;
   const crossingNodeId = findNodeIdByOrder(
     bundle,
-    args.leftStartOrder <= args.rightStartOrder ? args.rightStartOrder : args.leftStartOrder,
+    args.leftStartOrder <= args.rightStartOrder
+      ? args.rightStartOrder
+      : args.leftStartOrder,
   );
   issues.push(
     makeIssue(
@@ -1090,9 +1486,14 @@ function pushCrossingIntervalIssue(
   );
 }
 
-function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: ValidationIssue[]): void {
+function runSemanticValidation(
+  bundle: NormalizedWorkflowBundle,
+  issues: ValidationIssue[],
+): void {
   const nodeIdSet = new Set(bundle.workflow.nodes.map((node) => node.id));
-  const visOrderByNodeId = new Map(bundle.workflowVis.nodes.map((entry) => [entry.id, entry.order]));
+  const visOrderByNodeId = new Map(
+    bundle.workflowVis.nodes.map((entry) => [entry.id, entry.order]),
+  );
   const rootManagerNodeIds = bundle.workflow.nodes
     .filter((node) => node.kind === "root-manager")
     .map((node) => node.id);
@@ -1107,7 +1508,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     );
   }
 
-  const managerNode = bundle.workflow.nodes.find((node) => node.id === bundle.workflow.managerNodeId);
+  const managerNode = bundle.workflow.nodes.find(
+    (node) => node.id === bundle.workflow.managerNodeId,
+  );
   if (managerNode?.kind !== "manager" && managerNode?.kind !== "root-manager") {
     issues.push(
       makeIssue(
@@ -1133,18 +1536,33 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   const seenNodeIds = new Set<string>();
   bundle.workflow.nodes.forEach((node, index) => {
     if (seenNodeIds.has(node.id)) {
-      issues.push(makeIssue("error", `workflow.nodes[${index}].id`, `duplicate node id '${node.id}'`));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.nodes[${index}].id`,
+          `duplicate node id '${node.id}'`,
+        ),
+      );
       return;
     }
     seenNodeIds.add(node.id);
 
     const payload = bundle.nodePayloads[node.id];
     if (!payload) {
-      issues.push(makeIssue("error", `nodePayloads.${node.nodeFile}`, "node payload file is missing"));
+      issues.push(
+        makeIssue(
+          "error",
+          `nodePayloads.${node.nodeFile}`,
+          "node payload file is missing",
+        ),
+      );
       return;
     }
 
-    if (payload.timeoutMs === undefined && bundle.workflow.defaults.nodeTimeoutMs === DEFAULT_NODE_TIMEOUT_MS) {
+    if (
+      payload.timeoutMs === undefined &&
+      bundle.workflow.defaults.nodeTimeoutMs === DEFAULT_NODE_TIMEOUT_MS
+    ) {
       issues.push(
         makeIssue(
           "warning",
@@ -1157,33 +1575,69 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
 
   bundle.workflow.edges.forEach((edge, index) => {
     if (!nodeIdSet.has(edge.from)) {
-      issues.push(makeIssue("error", `workflow.edges[${index}].from`, "must reference an existing node id"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.edges[${index}].from`,
+          "must reference an existing node id",
+        ),
+      );
     }
     if (!nodeIdSet.has(edge.to)) {
-      issues.push(makeIssue("error", `workflow.edges[${index}].to`, "must reference an existing node id"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.edges[${index}].to`,
+          "must reference an existing node id",
+        ),
+      );
     }
   });
 
   bundle.workflow.loops?.forEach((loop, index) => {
     if (!nodeIdSet.has(loop.judgeNodeId)) {
-      issues.push(makeIssue("error", `workflow.loops[${index}].judgeNodeId`, "must reference an existing node id"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.loops[${index}].judgeNodeId`,
+          "must reference an existing node id",
+        ),
+      );
       return;
     }
-    const judgeNode = bundle.workflow.nodes.find((node) => node.id === loop.judgeNodeId);
+    const judgeNode = bundle.workflow.nodes.find(
+      (node) => node.id === loop.judgeNodeId,
+    );
     if (judgeNode?.kind !== "loop-judge") {
-      issues.push(makeIssue("error", `workflow.loops[${index}].judgeNodeId`, "must reference a loop-judge node"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.loops[${index}].judgeNodeId`,
+          "must reference a loop-judge node",
+        ),
+      );
     }
   });
 
-  const declaredSubWorkflowIds = new Set(bundle.workflow.subWorkflows.map((entry) => entry.id));
-  const declaredLoopIds = new Set((bundle.workflow.loops ?? []).map((entry) => entry.id));
+  const declaredSubWorkflowIds = new Set(
+    bundle.workflow.subWorkflows.map((entry) => entry.id),
+  );
+  const declaredLoopIds = new Set(
+    (bundle.workflow.loops ?? []).map((entry) => entry.id),
+  );
   const subWorkflowIdSet = new Set<string>();
   const loopBodyOwnerByLoopId = new Map<string, string>();
   const subWorkflowNodeOwnership = new Map<string, string>();
   const subWorkflowBoundaryOwnership = new Map<string, string>();
   bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
     if (subWorkflowIdSet.has(subWorkflow.id)) {
-      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].id`, `duplicate subWorkflow id '${subWorkflow.id}'`));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].id`,
+          `duplicate subWorkflow id '${subWorkflow.id}'`,
+        ),
+      );
     } else {
       subWorkflowIdSet.add(subWorkflow.id);
     }
@@ -1225,7 +1679,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         ),
       );
     } else {
-      const subManagerNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.managerNodeId);
+      const subManagerNode = bundle.workflow.nodes.find(
+        (node) => node.id === subWorkflow.managerNodeId,
+      );
       if (subManagerNode?.kind !== "sub-manager") {
         issues.push(
           makeIssue(
@@ -1236,8 +1692,13 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         );
       }
     }
-    const existingBoundaryOwner = subWorkflowBoundaryOwnership.get(subWorkflow.managerNodeId);
-    if (existingBoundaryOwner !== undefined && existingBoundaryOwner !== subWorkflow.id) {
+    const existingBoundaryOwner = subWorkflowBoundaryOwnership.get(
+      subWorkflow.managerNodeId,
+    );
+    if (
+      existingBoundaryOwner !== undefined &&
+      existingBoundaryOwner !== subWorkflow.id
+    ) {
       issues.push(
         makeIssue(
           "error",
@@ -1246,7 +1707,10 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         ),
       );
     } else {
-      subWorkflowBoundaryOwnership.set(subWorkflow.managerNodeId, subWorkflow.id);
+      subWorkflowBoundaryOwnership.set(
+        subWorkflow.managerNodeId,
+        subWorkflow.id,
+      );
     }
 
     if (!nodeIdSet.has(subWorkflow.inputNodeId)) {
@@ -1258,7 +1722,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         ),
       );
     } else {
-      const inputNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.inputNodeId);
+      const inputNode = bundle.workflow.nodes.find(
+        (node) => node.id === subWorkflow.inputNodeId,
+      );
       if (inputNode?.kind !== "input") {
         issues.push(
           makeIssue(
@@ -1269,8 +1735,13 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         );
       }
     }
-    const existingInputOwner = subWorkflowBoundaryOwnership.get(subWorkflow.inputNodeId);
-    if (existingInputOwner !== undefined && existingInputOwner !== subWorkflow.id) {
+    const existingInputOwner = subWorkflowBoundaryOwnership.get(
+      subWorkflow.inputNodeId,
+    );
+    if (
+      existingInputOwner !== undefined &&
+      existingInputOwner !== subWorkflow.id
+    ) {
       issues.push(
         makeIssue(
           "error",
@@ -1291,7 +1762,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         ),
       );
     } else {
-      const outputNode = bundle.workflow.nodes.find((node) => node.id === subWorkflow.outputNodeId);
+      const outputNode = bundle.workflow.nodes.find(
+        (node) => node.id === subWorkflow.outputNodeId,
+      );
       if (outputNode?.kind !== "output") {
         issues.push(
           makeIssue(
@@ -1302,8 +1775,13 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         );
       }
     }
-    const existingOutputOwner = subWorkflowBoundaryOwnership.get(subWorkflow.outputNodeId);
-    if (existingOutputOwner !== undefined && existingOutputOwner !== subWorkflow.id) {
+    const existingOutputOwner = subWorkflowBoundaryOwnership.get(
+      subWorkflow.outputNodeId,
+    );
+    if (
+      existingOutputOwner !== undefined &&
+      existingOutputOwner !== subWorkflow.id
+    ) {
       issues.push(
         makeIssue(
           "error",
@@ -1312,11 +1790,20 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         ),
       );
     } else {
-      subWorkflowBoundaryOwnership.set(subWorkflow.outputNodeId, subWorkflow.id);
+      subWorkflowBoundaryOwnership.set(
+        subWorkflow.outputNodeId,
+        subWorkflow.id,
+      );
     }
 
     if (subWorkflow.nodeIds.length === 0) {
-      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must not be empty"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].nodeIds`,
+          "must not be empty",
+        ),
+      );
     }
     const seenNodeIds = new Set<string>();
     subWorkflow.nodeIds.forEach((nodeId, nodeIndex) => {
@@ -1365,23 +1852,51 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       );
     }
     if (!subWorkflow.nodeIds.includes(subWorkflow.inputNodeId)) {
-      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include inputNodeId"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].nodeIds`,
+          "must include inputNodeId",
+        ),
+      );
     }
     if (!subWorkflow.nodeIds.includes(subWorkflow.outputNodeId)) {
-      issues.push(makeIssue("error", `workflow.subWorkflows[${index}].nodeIds`, "must include outputNodeId"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflow.subWorkflows[${index}].nodeIds`,
+          "must include outputNodeId",
+        ),
+      );
     }
 
     subWorkflow.inputSources.forEach((source, sourceIndex) => {
       const sourcePath = `workflow.subWorkflows[${index}].inputSources[${sourceIndex}]`;
-      if (source.type === "node-output" && source.nodeId !== undefined && !nodeIdSet.has(source.nodeId)) {
-        issues.push(makeIssue("error", `${sourcePath}.nodeId`, "must reference an existing node id"));
+      if (
+        source.type === "node-output" &&
+        source.nodeId !== undefined &&
+        !nodeIdSet.has(source.nodeId)
+      ) {
+        issues.push(
+          makeIssue(
+            "error",
+            `${sourcePath}.nodeId`,
+            "must reference an existing node id",
+          ),
+        );
       }
       if (
         source.type === "sub-workflow-output" &&
         source.subWorkflowId !== undefined &&
         !declaredSubWorkflowIds.has(source.subWorkflowId)
       ) {
-        issues.push(makeIssue("error", `${sourcePath}.subWorkflowId`, "must reference an existing subWorkflow id"));
+        issues.push(
+          makeIssue(
+            "error",
+            `${sourcePath}.subWorkflowId`,
+            "must reference an existing subWorkflow id",
+          ),
+        );
       }
     });
 
@@ -1390,7 +1905,8 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       const incomingBranchEdges = bundle.workflow.edges.filter(
         (edge) =>
           edge.to === subWorkflow.managerNodeId &&
-          bundle.workflow.nodes.find((node) => node.id === edge.from)?.kind === "branch-judge",
+          bundle.workflow.nodes.find((node) => node.id === edge.from)?.kind ===
+            "branch-judge",
       );
       if (incomingBranchEdges.length === 0) {
         issues.push(
@@ -1404,11 +1920,25 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     }
     if (subWorkflow.block?.type === "loop-body") {
       if (subWorkflow.block.loopId === undefined) {
-        issues.push(makeIssue("error", `${blockPath}.loopId`, "is required when block.type is 'loop-body'"));
+        issues.push(
+          makeIssue(
+            "error",
+            `${blockPath}.loopId`,
+            "is required when block.type is 'loop-body'",
+          ),
+        );
       } else if (!declaredLoopIds.has(subWorkflow.block.loopId)) {
-        issues.push(makeIssue("error", `${blockPath}.loopId`, "must reference an existing workflow loop id"));
+        issues.push(
+          makeIssue(
+            "error",
+            `${blockPath}.loopId`,
+            "must reference an existing workflow loop id",
+          ),
+        );
       } else {
-        const existingOwner = loopBodyOwnerByLoopId.get(subWorkflow.block.loopId);
+        const existingOwner = loopBodyOwnerByLoopId.get(
+          subWorkflow.block.loopId,
+        );
         if (existingOwner !== undefined && existingOwner !== subWorkflow.id) {
           issues.push(
             makeIssue(
@@ -1421,7 +1951,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
           loopBodyOwnerByLoopId.set(subWorkflow.block.loopId, subWorkflow.id);
         }
 
-        const loopRule = bundle.workflow.loops?.find((entry) => entry.id === subWorkflow.block?.loopId);
+        const loopRule = bundle.workflow.loops?.find(
+          (entry) => entry.id === subWorkflow.block?.loopId,
+        );
         const continueEdgeToManager =
           loopRule === undefined
             ? undefined
@@ -1442,8 +1974,17 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
         }
       }
     }
-    if (subWorkflow.block?.type !== "loop-body" && subWorkflow.block?.loopId !== undefined) {
-      issues.push(makeIssue("error", `${blockPath}.loopId`, "is only allowed when block.type is 'loop-body'"));
+    if (
+      subWorkflow.block?.type !== "loop-body" &&
+      subWorkflow.block?.loopId !== undefined
+    ) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${blockPath}.loopId`,
+          "is only allowed when block.type is 'loop-body'",
+        ),
+      );
     }
   });
 
@@ -1455,7 +1996,10 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       return;
     }
 
-    if (sourceSubWorkflowId === undefined && targetSubWorkflowId !== undefined) {
+    if (
+      sourceSubWorkflowId === undefined &&
+      targetSubWorkflowId !== undefined
+    ) {
       const targetSubWorkflow = bundle.workflow.subWorkflows.find(
         (entry) => entry.id === targetSubWorkflowId,
       );
@@ -1474,7 +2018,10 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
       return;
     }
 
-    if (sourceSubWorkflowId !== undefined && targetSubWorkflowId === undefined) {
+    if (
+      sourceSubWorkflowId !== undefined &&
+      targetSubWorkflowId === undefined
+    ) {
       if (edge.to !== bundle.workflow.managerNodeId) {
         issues.push(
           makeIssue(
@@ -1540,15 +2087,33 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   const visOrderSet = new Set<number>();
   bundle.workflowVis.nodes.forEach((entry, index) => {
     if (!nodeIdSet.has(entry.id)) {
-      issues.push(makeIssue("error", `workflowVis.nodes[${index}].id`, "references unknown node id"));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflowVis.nodes[${index}].id`,
+          "references unknown node id",
+        ),
+      );
     }
     if (visNodeSet.has(entry.id)) {
-      issues.push(makeIssue("error", `workflowVis.nodes[${index}].id`, `duplicate vis node id '${entry.id}'`));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflowVis.nodes[${index}].id`,
+          `duplicate vis node id '${entry.id}'`,
+        ),
+      );
     } else {
       visNodeSet.add(entry.id);
     }
     if (visOrderSet.has(entry.order)) {
-      issues.push(makeIssue("error", `workflowVis.nodes[${index}].order`, `duplicate order '${entry.order}'`));
+      issues.push(
+        makeIssue(
+          "error",
+          `workflowVis.nodes[${index}].order`,
+          `duplicate order '${entry.order}'`,
+        ),
+      );
     } else {
       visOrderSet.add(entry.order);
     }
@@ -1556,11 +2121,21 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
 
   nodeIdSet.forEach((nodeId) => {
     if (!visNodeSet.has(nodeId)) {
-      issues.push(makeIssue("error", "workflowVis.nodes", `missing vertical order for node '${nodeId}'`));
+      issues.push(
+        makeIssue(
+          "error",
+          "workflowVis.nodes",
+          `missing vertical order for node '${nodeId}'`,
+        ),
+      );
     }
   });
 
-  const subWorkflowIntervals: Array<{ readonly id: string; readonly inputOrder: number; readonly outputOrder: number }> = [];
+  const subWorkflowIntervals: Array<{
+    readonly id: string;
+    readonly inputOrder: number;
+    readonly outputOrder: number;
+  }> = [];
   for (const subWorkflow of bundle.workflow.subWorkflows) {
     const inputOrder = visOrderByNodeId.get(subWorkflow.inputNodeId);
     const outputOrder = visOrderByNodeId.get(subWorkflow.outputNodeId);
@@ -1589,7 +2164,11 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     if (current === undefined) {
       continue;
     }
-    for (let compareIndex = index + 1; compareIndex < subWorkflowIntervals.length; compareIndex += 1) {
+    for (
+      let compareIndex = index + 1;
+      compareIndex < subWorkflowIntervals.length;
+      compareIndex += 1
+    ) {
       const other = subWorkflowIntervals[compareIndex];
       if (other === undefined) {
         continue;
@@ -1612,10 +2191,17 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     }
   }
 
-  const loopIntervals: Array<{ readonly id: string; readonly startOrder: number; readonly endOrder: number }> = [];
+  const loopIntervals: Array<{
+    readonly id: string;
+    readonly startOrder: number;
+    readonly endOrder: number;
+  }> = [];
   const loopIdsRepresentedBySubWorkflow = new Set<string>();
   bundle.workflow.subWorkflows.forEach((subWorkflow, index) => {
-    if (subWorkflow.block?.type !== "loop-body" || subWorkflow.block.loopId === undefined) {
+    if (
+      subWorkflow.block?.type !== "loop-body" ||
+      subWorkflow.block.loopId === undefined
+    ) {
       return;
     }
     const inputOrder = visOrderByNodeId.get(subWorkflow.inputNodeId);
@@ -1650,7 +2236,8 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     }
 
     const continueTargets = bundle.workflow.edges.filter(
-      (edge) => edge.from === loop.judgeNodeId && edge.when === loop.continueWhen,
+      (edge) =>
+        edge.from === loop.judgeNodeId && edge.when === loop.continueWhen,
     );
     if (continueTargets.length === 0) {
       issues.push(
@@ -1682,7 +2269,11 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
           ),
         );
       }
-      if (continueIndex > 0 && targetOrder !== undefined && targetOrder !== visOrderByNodeId.get(continueTargets[0]?.to ?? "")) {
+      if (
+        continueIndex > 0 &&
+        targetOrder !== undefined &&
+        targetOrder !== visOrderByNodeId.get(continueTargets[0]?.to ?? "")
+      ) {
         issues.push(
           makeIssue(
             "warning",
@@ -1694,7 +2285,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     });
 
     bundle.workflow.edges
-      .filter((edge) => edge.from === loop.judgeNodeId && edge.when === loop.exitWhen)
+      .filter(
+        (edge) => edge.from === loop.judgeNodeId && edge.when === loop.exitWhen,
+      )
       .forEach((edge) => {
         const targetOrder = visOrderByNodeId.get(edge.to);
         if (targetOrder === undefined) {
@@ -1717,7 +2310,11 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     if (current === undefined) {
       continue;
     }
-    for (let compareIndex = index + 1; compareIndex < loopIntervals.length; compareIndex += 1) {
+    for (
+      let compareIndex = index + 1;
+      compareIndex < loopIntervals.length;
+      compareIndex += 1
+    ) {
       const other = loopIntervals[compareIndex];
       if (other === undefined || current.id === other.id) {
         continue;
@@ -1739,7 +2336,10 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     for (const loopInterval of loopIntervals) {
       if (
         intervalsPartiallyOverlap(
-          { startOrder: groupInterval.inputOrder, endOrder: groupInterval.outputOrder },
+          {
+            startOrder: groupInterval.inputOrder,
+            endOrder: groupInterval.outputOrder,
+          },
           loopInterval,
         )
       ) {
@@ -1755,7 +2355,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
     }
   }
 
-  if (bundle.workflow.defaults.maxLoopIterations === DEFAULT_MAX_LOOP_ITERATIONS) {
+  if (
+    bundle.workflow.defaults.maxLoopIterations === DEFAULT_MAX_LOOP_ITERATIONS
+  ) {
     issues.push(
       makeIssue(
         "warning",
@@ -1766,7 +2368,9 @@ function runSemanticValidation(bundle: NormalizedWorkflowBundle, issues: Validat
   }
 }
 
-export function validateWorkflowBundleDetailed(raw: RawBundle): Result<ValidationSuccessDetails, readonly ValidationIssue[]> {
+export function validateWorkflowBundleDetailed(
+  raw: RawBundle,
+): Result<ValidationSuccessDetails, readonly ValidationIssue[]> {
   const issues: ValidationIssue[] = [];
 
   const workflow = normalizeWorkflow(raw.workflow, issues);
@@ -1777,10 +2381,21 @@ export function validateWorkflowBundleDetailed(raw: RawBundle): Result<Validatio
     workflow.nodes.forEach((node) => {
       const payloadRaw = raw.nodePayloads[node.nodeFile];
       if (payloadRaw === undefined) {
-        issues.push(makeIssue("error", `nodePayloads.${node.nodeFile}`, "node payload file is missing"));
+        issues.push(
+          makeIssue(
+            "error",
+            `nodePayloads.${node.nodeFile}`,
+            "node payload file is missing",
+          ),
+        );
         return;
       }
-      const payload = normalizeNodePayload(node.id, node.nodeFile, payloadRaw, issues);
+      const payload = normalizeNodePayload(
+        node.id,
+        node.nodeFile,
+        payloadRaw,
+        issues,
+      );
       if (payload !== null) {
         nodePayloads[node.id] = payload;
       }

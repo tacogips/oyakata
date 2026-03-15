@@ -8,13 +8,19 @@ import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "oyakata-session-store-test-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "oyakata-session-store-test-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
 describe("session-store", () => {
@@ -22,6 +28,26 @@ describe("session-store", () => {
     const root = await makeTempDir();
     const resolved = getSessionStoreRoot({ cwd: root });
     expect(resolved).toBe(path.join(root, ".oyakata-datas", "sessions"));
+  });
+
+  test("derives the session store root from OYAKATA_ROOT_DATA_DIR", async () => {
+    const resolved = getSessionStoreRoot({
+      cwd: "/tmp/project",
+      env: {
+        OYAKATA_ROOT_DATA_DIR: "env-data",
+      },
+    });
+    expect(resolved).toBe("/tmp/project/env-data/sessions");
+  });
+
+  test("accepts OYAKATA_RUNTIME_ROOT as a compatibility alias", async () => {
+    const resolved = getSessionStoreRoot({
+      cwd: "/tmp/project",
+      env: {
+        OYAKATA_RUNTIME_ROOT: "legacy-data",
+      },
+    });
+    expect(resolved).toBe("/tmp/project/legacy-data/sessions");
   });
 
   test("save/load roundtrip", async () => {
@@ -37,7 +63,9 @@ describe("session-store", () => {
     const save = await saveSession(session, { sessionStoreRoot: root });
     expect(save.ok).toBe(true);
 
-    const loaded = await loadSession(session.sessionId, { sessionStoreRoot: root });
+    const loaded = await loadSession(session.sessionId, {
+      sessionStoreRoot: root,
+    });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) {
       return;
@@ -73,7 +101,9 @@ describe("session-store", () => {
     delete parsed["communications"];
     await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
 
-    const loaded = await loadSession(session.sessionId, { sessionStoreRoot: root });
+    const loaded = await loadSession(session.sessionId, {
+      sessionStoreRoot: root,
+    });
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) {
       return;

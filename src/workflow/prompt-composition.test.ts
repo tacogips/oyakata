@@ -19,16 +19,46 @@ function makeWorkflow(): WorkflowJson {
         managerNodeId: "main-oyakata",
         inputNodeId: "workflow-input",
         outputNodeId: "workflow-output",
-        nodeIds: ["main-oyakata", "workflow-input", "implement", "workflow-output"],
+        nodeIds: [
+          "main-oyakata",
+          "workflow-input",
+          "implement",
+          "workflow-output",
+        ],
         inputSources: [{ type: "human-input" }],
       },
     ],
     nodes: [
-      { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "root-manager", completion: { type: "none" } },
-      { id: "main-oyakata", nodeFile: "node-main-oyakata.json", kind: "sub-manager", completion: { type: "none" } },
-      { id: "workflow-input", nodeFile: "node-workflow-input.json", kind: "input", completion: { type: "none" } },
-      { id: "implement", nodeFile: "node-implement.json", kind: "task", completion: { type: "none" } },
-      { id: "workflow-output", nodeFile: "node-workflow-output.json", kind: "output", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        nodeFile: "node-oyakata-manager.json",
+        kind: "root-manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "main-oyakata",
+        nodeFile: "node-main-oyakata.json",
+        kind: "sub-manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "workflow-input",
+        nodeFile: "node-workflow-input.json",
+        kind: "input",
+        completion: { type: "none" },
+      },
+      {
+        id: "implement",
+        nodeFile: "node-implement.json",
+        kind: "task",
+        completion: { type: "none" },
+      },
+      {
+        id: "workflow-output",
+        nodeFile: "node-workflow-output.json",
+        kind: "output",
+        completion: { type: "none" },
+      },
     ],
     edges: [{ from: "workflow-input", to: "implement", when: "always" }],
     loops: [],
@@ -57,7 +87,8 @@ function makeNodePayloads(): Readonly<Record<string, NodePayload>> {
     "main-oyakata": {
       id: "main-oyakata",
       model: "tacogips/codex-agent",
-      promptTemplate: "Translate the parent instruction into child workflow work.",
+      promptTemplate:
+        "Translate the parent instruction into child workflow work.",
       variables: {},
     },
     "workflow-input": {
@@ -79,7 +110,9 @@ function makeNodePayloads(): Readonly<Record<string, NodePayload>> {
   };
 }
 
-function makeNodeRef(overrides: Partial<WorkflowNodeRef> = {}): WorkflowNodeRef {
+function makeNodeRef(
+  overrides: Partial<WorkflowNodeRef> = {},
+): WorkflowNodeRef {
   return {
     id: "implement",
     nodeFile: "node-implement.json",
@@ -154,7 +187,9 @@ describe("composeExecutionPrompt", () => {
 
     expect(prompt).toContain("Current sub-workflow scope:");
     expect(prompt).toContain("- Sub-workflow: main");
-    expect(prompt).toContain("- Owned nodes: main-oyakata, workflow-input, implement, workflow-output");
+    expect(prompt).toContain(
+      "- Owned nodes: main-oyakata, workflow-input, implement, workflow-output",
+    );
   });
 
   test("includes managed child catalog for the root manager", () => {
@@ -175,8 +210,12 @@ describe("composeExecutionPrompt", () => {
 
     expect(prompt).toContain("Managed children in current scope:");
     expect(prompt).toContain("- Child sub-workflow: main");
-    expect(prompt).toContain("handoff=Parent manager output is delivered by mailbox");
-    expect(prompt).toContain("expectedReturn=Return the completed release package summary.");
+    expect(prompt).toContain(
+      "handoff=Parent manager output is delivered by mailbox",
+    );
+    expect(prompt).toContain(
+      "expectedReturn=Return the completed release package summary.",
+    );
     expect(prompt).not.toContain("- Child node: main-oyakata (sub-manager)");
     expect(prompt).not.toContain("- Child node: workflow-input (input)");
     expect(prompt).not.toContain("- Child node: workflow-output (output)");
@@ -193,7 +232,8 @@ describe("composeExecutionPrompt", () => {
       node: makeNodePayloads()["main-oyakata"] as NodePayload,
       nodePayloads: makeNodePayloads(),
       runtimeVariables: { topic: "release" },
-      basePromptText: "Translate the parent instruction into child workflow work.",
+      basePromptText:
+        "Translate the parent instruction into child workflow work.",
       assembledArguments: null,
       upstreamInputs: [],
     });
@@ -201,7 +241,9 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain("Managed children in current scope:");
     expect(prompt).toContain("- Child node: workflow-input (input)");
     expect(prompt).toContain("- Child node: implement (task)");
-    expect(prompt).toContain("promptSeed=Normalize the received instruction into workflow input.");
+    expect(prompt).toContain(
+      "promptSeed=Normalize the received instruction into workflow input.",
+    );
     expect(prompt).toContain("promptSeed=Implement the release step.");
   });
 
@@ -229,7 +271,9 @@ describe("composeExecutionPrompt", () => {
       upstreamInputs: [],
     });
 
-    expect(prompt).toContain("Execute workflow=wf purpose=Ship a release safely. node=workflow-input kind=input.");
+    expect(prompt).toContain(
+      "Execute workflow=wf purpose=Ship a release safely. node=workflow-input kind=input.",
+    );
   });
 
   test("does not allow runtime or node variables to override workflow metadata in prompt templates", () => {
@@ -269,7 +313,9 @@ describe("composeExecutionPrompt", () => {
       upstreamInputs: [],
     });
 
-    expect(prompt).toContain("Execute workflow=wf purpose=Ship a release safely. node=workflow-input kind=input.");
+    expect(prompt).toContain(
+      "Execute workflow=wf purpose=Ship a release safely. node=workflow-input kind=input.",
+    );
     expect(prompt).not.toContain("spoofed-node");
     expect(prompt).not.toContain("spoofed-runtime");
   });

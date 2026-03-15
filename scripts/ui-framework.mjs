@@ -9,7 +9,10 @@ function resolveUiRoot(options = {}) {
 }
 
 export function resolvePackageOptionsFromModuleUrl(moduleUrl) {
-  const packageRoot = path.resolve(path.dirname(fileURLToPath(moduleUrl)), "..");
+  const packageRoot = path.resolve(
+    path.dirname(fileURLToPath(moduleUrl)),
+    "..",
+  );
   return {
     baseDir: packageRoot,
     packageRoot,

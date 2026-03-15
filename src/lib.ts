@@ -1,8 +1,30 @@
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
-import { buildInspectionSummary, type WorkflowInspectionSummary } from "./workflow/inspect";
+import {
+  executeGraphqlRequest,
+  type GraphqlClientRequest,
+  type GraphqlClientResponse,
+  type GraphqlResponseError,
+} from "./graphql/client";
+import { createGraphqlSchema } from "./graphql/schema";
+import type {
+  GraphqlRequestContext,
+  GraphqlSchema,
+  GraphqlSchemaDependencies,
+} from "./graphql/types";
+import {
+  buildInspectionSummary,
+  type WorkflowInspectionSummary,
+} from "./workflow/inspect";
 import { loadWorkflowFromDisk } from "./workflow/load";
-import { listRuntimeNodeExecutions, listRuntimeNodeLogs, listRuntimeSessions } from "./workflow/runtime-db";
-import { loadSession, type SessionStoreOptions } from "./workflow/session-store";
+import {
+  listRuntimeNodeExecutions,
+  listRuntimeNodeLogs,
+  listRuntimeSessions,
+} from "./workflow/runtime-db";
+import {
+  loadSession,
+  type SessionStoreOptions,
+} from "./workflow/session-store";
 import type { WorkflowSessionState } from "./workflow/session";
 import type { MockNodeScenario } from "./workflow/adapter";
 import type { LoadOptions } from "./workflow/types";
@@ -37,8 +59,16 @@ export interface RerunWorkflowInput extends OyakataOptions {
 
 export interface RuntimeSessionView {
   readonly session: WorkflowSessionState;
-  readonly nodeExecutions: ReturnType<typeof listRuntimeNodeExecutions> extends Promise<infer T> ? T : never;
-  readonly nodeLogs: ReturnType<typeof listRuntimeNodeLogs> extends Promise<infer T> ? T : never;
+  readonly nodeExecutions: ReturnType<
+    typeof listRuntimeNodeExecutions
+  > extends Promise<infer T>
+    ? T
+    : never;
+  readonly nodeLogs: ReturnType<typeof listRuntimeNodeLogs> extends Promise<
+    infer T
+  >
+    ? T
+    : never;
 }
 
 export async function inspectWorkflow(
@@ -52,21 +82,37 @@ export async function inspectWorkflow(
   return buildInspectionSummary(loaded.value);
 }
 
-export async function executeWorkflow(
-  input: ExecuteWorkflowInput,
-): Promise<{ readonly sessionId: string; readonly status: WorkflowSessionState["status"]; readonly exitCode: number }> {
+export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
+  readonly sessionId: string;
+  readonly status: WorkflowSessionState["status"];
+  readonly exitCode: number;
+}> {
   const options: WorkflowRunOptions = {
-    ...(input.workflowRoot === undefined ? {} : { workflowRoot: input.workflowRoot }),
-    ...(input.artifactRoot === undefined ? {} : { artifactRoot: input.artifactRoot }),
-    ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.workflowRoot === undefined
+      ? {}
+      : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined
+      ? {}
+      : { artifactRoot: input.artifactRoot }),
+    ...(input.sessionStoreRoot === undefined
+      ? {}
+      : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.runtimeVariables === undefined ? {} : { runtimeVariables: input.runtimeVariables }),
-    ...(input.mockScenario === undefined ? {} : { mockScenario: input.mockScenario }),
+    ...(input.runtimeVariables === undefined
+      ? {}
+      : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
     ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined ? {} : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...(input.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: input.defaultTimeoutMs }),
   };
   const result = await runWorkflow(input.workflowName, options);
   if (!result.ok) {
@@ -79,20 +125,30 @@ export async function executeWorkflow(
   };
 }
 
-export async function resumeWorkflow(
-  input: ResumeWorkflowInput,
-): Promise<{ readonly sessionId: string; readonly status: WorkflowSessionState["status"]; readonly exitCode: number }> {
+export async function resumeWorkflow(input: ResumeWorkflowInput): Promise<{
+  readonly sessionId: string;
+  readonly status: WorkflowSessionState["status"];
+  readonly exitCode: number;
+}> {
   const existing = await loadSession(input.sessionId, input);
   if (!existing.ok) {
     throw new Error(existing.error.message);
   }
   const result = await runWorkflow(existing.value.workflowName, {
-    ...(input.workflowRoot === undefined ? {} : { workflowRoot: input.workflowRoot }),
-    ...(input.artifactRoot === undefined ? {} : { artifactRoot: input.artifactRoot }),
-    ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.workflowRoot === undefined
+      ? {}
+      : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined
+      ? {}
+      : { artifactRoot: input.artifactRoot }),
+    ...(input.sessionStoreRoot === undefined
+      ? {}
+      : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.mockScenario === undefined ? {} : { mockScenario: input.mockScenario }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
     resumeSessionId: existing.value.sessionId,
   });
   if (!result.ok) {
@@ -105,26 +161,42 @@ export async function resumeWorkflow(
   };
 }
 
-export async function rerunWorkflow(
-  input: RerunWorkflowInput,
-): Promise<{ readonly sessionId: string; readonly status: WorkflowSessionState["status"]; readonly exitCode: number }> {
+export async function rerunWorkflow(input: RerunWorkflowInput): Promise<{
+  readonly sessionId: string;
+  readonly status: WorkflowSessionState["status"];
+  readonly exitCode: number;
+}> {
   const source = await loadSession(input.sourceSessionId, input);
   if (!source.ok) {
     throw new Error(source.error.message);
   }
   const result = await runWorkflow(source.value.workflowName, {
-    ...(input.workflowRoot === undefined ? {} : { workflowRoot: input.workflowRoot }),
-    ...(input.artifactRoot === undefined ? {} : { artifactRoot: input.artifactRoot }),
-    ...(input.sessionStoreRoot === undefined ? {} : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.workflowRoot === undefined
+      ? {}
+      : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined
+      ? {}
+      : { artifactRoot: input.artifactRoot }),
+    ...(input.sessionStoreRoot === undefined
+      ? {}
+      : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.runtimeVariables === undefined ? {} : { runtimeVariables: input.runtimeVariables }),
-    ...(input.mockScenario === undefined ? {} : { mockScenario: input.mockScenario }),
+    ...(input.runtimeVariables === undefined
+      ? {}
+      : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
     rerunFromSessionId: source.value.sessionId,
     rerunFromNodeId: input.fromNodeId,
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined ? {} : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...(input.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: input.defaultTimeoutMs }),
     ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
   });
   if (!result.ok) {
@@ -165,12 +237,61 @@ export async function getRuntimeSessionView(
 export { runCli } from "./cli";
 export { startServe } from "./server/serve";
 export { handleApiRequest } from "./server/api";
+export { handleGraphqlRequest, executeGraphqlDocument } from "./server/graphql";
+export { createGraphqlSchema, executeGraphqlRequest };
 export {
   resolveRuntimeDbPath,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
   listRuntimeSessions,
 } from "./workflow/runtime-db";
+export {
+  createCommunicationService,
+  type CommunicationArtifactSnapshot,
+  type CommunicationAttemptSnapshot,
+  type CommunicationGraphqlView,
+  type CommunicationLookupInput,
+  type ReplayCommunicationInput,
+  type ReplayCommunicationResult,
+  type RetryCommunicationDeliveryInput,
+  type RetryCommunicationDeliveryResult,
+} from "./workflow/communication-service";
+export {
+  createManagerSessionStore,
+  hashManagerAuthToken,
+  verifyManagerAuthToken,
+  resolveAmbientManagerExecutionContext,
+  type AmbientManagerExecutionContext,
+  type IdempotentMutationLookup,
+  type IdempotentMutationRecord,
+  type ManagerControlMode,
+  type ManagerIntentSummary,
+  type ManagerMessageRecord,
+  type ManagerSessionRecord,
+  type ManagerSessionStore,
+} from "./workflow/manager-session-store";
+export {
+  createManagerMessageService,
+  type DataDirFileRef,
+  type ManagerMessageService,
+  type SendManagerMessageInput,
+  type SendManagerMessageResult,
+} from "./workflow/manager-message-service";
+export {
+  parseManagerControlActions,
+  parseManagerControlPayload,
+  type ManagerControlAction,
+  type ManagerControlActionType,
+  type ParsedManagerControl,
+} from "./workflow/manager-control";
+export type {
+  GraphqlClientRequest,
+  GraphqlClientResponse,
+  GraphqlResponseError,
+  GraphqlRequestContext,
+  GraphqlSchema,
+  GraphqlSchemaDependencies,
+};
 export { loadWorkflowFromDisk } from "./workflow/load";
 export { runWorkflow } from "./workflow/engine";
 export { deriveWorkflowVisualization } from "./workflow/visualization";

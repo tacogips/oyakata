@@ -23,7 +23,9 @@ function resolveApiKey(config: ClaudeAdapterConfig): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function buildRequestBody(input: AdapterExecutionInput): Record<string, unknown> {
+function buildRequestBody(
+  input: AdapterExecutionInput,
+): Record<string, unknown> {
   return {
     workflowId: input.workflowId,
     workflowExecutionId: input.workflowExecutionId,
@@ -36,7 +38,12 @@ function buildRequestBody(input: AdapterExecutionInput): Record<string, unknown>
     executionIndex: input.executionIndex,
     ...(input.output === undefined ? { artifactDir: input.artifactDir } : {}),
     upstreamCommunicationIds: input.upstreamCommunicationIds,
-    ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+    ...(input.backendSession === undefined
+      ? {}
+      : { backendSession: input.backendSession }),
+    ...(input.ambientManagerContext === undefined
+      ? {}
+      : { ambientManagerContext: input.ambientManagerContext }),
     ...(input.output === undefined ? {} : { output: input.output }),
   };
 }
@@ -48,7 +55,10 @@ export class ClaudeCodeAgentAdapter implements NodeAdapter {
     this.#config = config;
   }
 
-  async execute(input: AdapterExecutionInput, context: AdapterExecutionContext): Promise<AdapterExecutionOutput> {
+  async execute(
+    input: AdapterExecutionInput,
+    context: AdapterExecutionContext,
+  ): Promise<AdapterExecutionOutput> {
     const endpoint = this.#config.endpoint ?? DEFAULT_CLAUDE_ENDPOINT;
     const apiKey = resolveApiKey(this.#config);
     const maxAttempts = Math.max(1, this.#config.maxAttempts ?? 2);
@@ -71,31 +81,48 @@ export class ClaudeCodeAgentAdapter implements NodeAdapter {
 
         if (!response.ok) {
           if (response.status === 401 || response.status === 403) {
-            throw new AdapterExecutionError("policy_blocked", `claude adapter request blocked (${response.status})`);
+            throw new AdapterExecutionError(
+              "policy_blocked",
+              `claude adapter request blocked (${response.status})`,
+            );
           }
           if (response.status === 408 || response.status === 504) {
-            throw new AdapterExecutionError("timeout", `claude adapter request timeout (${response.status})`);
+            throw new AdapterExecutionError(
+              "timeout",
+              `claude adapter request timeout (${response.status})`,
+            );
           }
-          throw new AdapterExecutionError("provider_error", `claude adapter request failed (${response.status})`);
+          throw new AdapterExecutionError(
+            "provider_error",
+            `claude adapter request failed (${response.status})`,
+          );
         }
 
         const payload = (await response.json()) as unknown;
         return normalizeAdapterOutput(payload, input.node.model);
       } catch (error: unknown) {
         if (error instanceof DOMException && error.name === "AbortError") {
-          throw new AdapterExecutionError("timeout", "claude adapter aborted by timeout");
+          throw new AdapterExecutionError(
+            "timeout",
+            "claude adapter aborted by timeout",
+          );
         }
         const normalized =
           error instanceof AdapterExecutionError
             ? error
             : new AdapterExecutionError(
                 "provider_error",
-                error instanceof Error ? error.message : "unknown claude adapter failure",
+                error instanceof Error
+                  ? error.message
+                  : "unknown claude adapter failure",
               );
-        const retryable = normalized.code === "provider_error" || normalized.code === "timeout";
+        const retryable =
+          normalized.code === "provider_error" || normalized.code === "timeout";
         if (attempt < maxAttempts && retryable && !context.signal.aborted) {
           if (retryDelayMs > 0) {
-            await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, retryDelayMs),
+            );
           }
           continue;
         }
@@ -103,6 +130,9 @@ export class ClaudeCodeAgentAdapter implements NodeAdapter {
       }
     }
 
-    throw new AdapterExecutionError("provider_error", "claude adapter exhausted retries");
+    throw new AdapterExecutionError(
+      "provider_error",
+      "claude adapter exhausted retries",
+    );
   }
 }

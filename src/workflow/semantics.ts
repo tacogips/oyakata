@@ -20,7 +20,10 @@ export interface BranchEvaluationInput {
   readonly output: Readonly<Record<string, unknown>>;
 }
 
-function lookupCondition(output: Readonly<Record<string, unknown>>, key: string): boolean {
+function lookupCondition(
+  output: Readonly<Record<string, unknown>>,
+  key: string,
+): boolean {
   const whenMap = output["when"];
   if (typeof whenMap === "object" && whenMap !== null) {
     const fromWhen = (whenMap as Record<string, unknown>)[key];
@@ -62,7 +65,9 @@ function tokenizeExpression(expression: string): readonly string[] | null {
       continue;
     }
 
-    const identifierMatch = expression.slice(index).match(/^[A-Za-z_][A-Za-z0-9_-]*/);
+    const identifierMatch = expression
+      .slice(index)
+      .match(/^[A-Za-z_][A-Za-z0-9_-]*/);
     if (identifierMatch?.[0] !== undefined) {
       tokens.push(identifierMatch[0]);
       index += identifierMatch[0].length;
@@ -75,7 +80,10 @@ function tokenizeExpression(expression: string): readonly string[] | null {
   return tokens;
 }
 
-function evaluateBooleanExpression(expression: string, output: Readonly<Record<string, unknown>>): boolean {
+function evaluateBooleanExpression(
+  expression: string,
+  output: Readonly<Record<string, unknown>>,
+): boolean {
   const tokens = tokenizeExpression(expression);
   if (tokens === null || tokens.length === 0) {
     return false;
@@ -171,7 +179,9 @@ function evaluateChecklistCompletion(
 
   const checklist = output["checklist"];
   const checklistMap =
-    typeof checklist === "object" && checklist !== null ? (checklist as Record<string, unknown>) : {};
+    typeof checklist === "object" && checklist !== null
+      ? (checklist as Record<string, unknown>)
+      : {};
 
   for (const required of requiredRaw) {
     if (typeof required !== "string" || required.length === 0) {
@@ -201,7 +211,10 @@ function evaluateScoreThresholdCompletion(
   if (score >= threshold) {
     return { passed: true, reason: null };
   }
-  return { passed: false, reason: `score ${score} below threshold ${threshold}` };
+  return {
+    passed: false,
+    reason: `score ${score} below threshold ${threshold}`,
+  };
 }
 
 function evaluateValidatorResultCompletion(
@@ -209,14 +222,19 @@ function evaluateValidatorResultCompletion(
   output: Readonly<Record<string, unknown>>,
 ): CompletionEvaluationResult {
   const resultField = config?.["resultField"];
-  const field = typeof resultField === "string" && resultField.length > 0 ? resultField : "validatorResult";
+  const field =
+    typeof resultField === "string" && resultField.length > 0
+      ? resultField
+      : "validatorResult";
   if (output[field] === true || output["valid"] === true) {
     return { passed: true, reason: null };
   }
   return { passed: false, reason: `${field} is not true` };
 }
 
-export function evaluateCompletion(input: CompletionEvaluationInput): CompletionEvaluationResult {
+export function evaluateCompletion(
+  input: CompletionEvaluationInput,
+): CompletionEvaluationResult {
   const rule = input.rule;
   if (rule === undefined || rule.type === "none") {
     return { passed: true, reason: null };
@@ -241,8 +259,14 @@ export function resolveLoopTransition(args: {
   readonly state: LoopRuntimeState;
 }): "continue" | "exit" | "none" {
   const maxIterations = args.loopRule.maxIterations;
-  const continueMatches = evaluateBranch({ when: args.loopRule.continueWhen, output: args.output });
-  const exitMatches = evaluateBranch({ when: args.loopRule.exitWhen, output: args.output });
+  const continueMatches = evaluateBranch({
+    when: args.loopRule.continueWhen,
+    output: args.output,
+  });
+  const exitMatches = evaluateBranch({
+    when: args.loopRule.exitWhen,
+    output: args.output,
+  });
 
   if (exitMatches) {
     return "exit";
@@ -252,7 +276,10 @@ export function resolveLoopTransition(args: {
     return "none";
   }
 
-  if (typeof maxIterations === "number" && args.state.iteration >= maxIterations) {
+  if (
+    typeof maxIterations === "number" &&
+    args.state.iteration >= maxIterations
+  ) {
     return "exit";
   }
 

@@ -136,8 +136,24 @@ Runtime SQLite behavior:
   - Interactive terminal: select workflow (if omitted), input prompt, execute, and watch per-node progress.
   - Non-interactive terminal: promptless fallback mode is used; `workflow-name` is required.
   - Resume: `--resume-session` resumes an existing session directly.
-- Web UI: `oyakata serve`, then open `http://127.0.0.1:5173/`
+- Web UI: `oyakata serve`, then open `http://127.0.0.1:43173/`
   - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
+- GraphQL control plane: `oyakata gql "<graphql-document>"`
+  - Sends GraphQL requests to `http://127.0.0.1:43173/graphql` by default.
+  - Uses `--variables '{"key":"value"}'` or `--variables @vars.json` for GraphQL variables.
+  - Uses `OYAKATA_MANAGER_AUTH_TOKEN` automatically for bearer auth unless `--auth-token` or `--auth-token-env` overrides it.
+  - For manager-scoped calls, forwards `OYAKATA_MANAGER_SESSION_ID` to `/graphql` so manager mutations can omit `managerSessionId` from the GraphQL input.
+  - The HTTP server does not inherit manager auth or scope from its own ambient `OYAKATA_MANAGER_*` environment; manager-scoped HTTP calls must supply transport metadata explicitly.
+  - The HTTP server also does not trust in-process auth/session fallback fields for `/graphql`; only the request `Authorization` header and `X-Oyakata-Manager-Session-Id` header can establish manager scope there.
+
+Example:
+
+```bash
+bun run src/main.ts gql \
+  'query ($workflowName: String!) { workflow(workflowName: $workflowName) { workflowId managerNodeId } }' \
+  --variables '{"workflowName":"software-auto-pipeline"}' \
+  --output json
+```
 
 Frontend verification:
 - The browser frontend lives under `ui/` and is verified separately from the root TypeScript program.

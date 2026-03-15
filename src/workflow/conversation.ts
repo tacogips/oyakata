@@ -17,11 +17,17 @@ export interface ConversationExecutionResult {
   readonly turns: readonly ConversationTurn[];
 }
 
-function findSubWorkflow(workflow: WorkflowJson, subWorkflowId: string): SubWorkflowRef | undefined {
+function findSubWorkflow(
+  workflow: WorkflowJson,
+  subWorkflowId: string,
+): SubWorkflowRef | undefined {
   return workflow.subWorkflows.find((entry) => entry.id === subWorkflowId);
 }
 
-function managerNodeIdForSubWorkflow(_workflow: WorkflowJson, subWorkflow: SubWorkflowRef): string {
+function managerNodeIdForSubWorkflow(
+  _workflow: WorkflowJson,
+  subWorkflow: SubWorkflowRef,
+): string {
   return subWorkflow.managerNodeId;
 }
 
@@ -29,11 +35,18 @@ function findLatestSucceededNodeExecution(
   session: WorkflowSessionState,
   nodeId: string,
 ): WorkflowSessionState["nodeExecutions"][number] | undefined {
-  return [...session.nodeExecutions].reverse().find((entry) => entry.nodeId === nodeId && entry.status === "succeeded");
+  return [...session.nodeExecutions]
+    .reverse()
+    .find((entry) => entry.nodeId === nodeId && entry.status === "succeeded");
 }
 
-function conversationTurnCount(session: WorkflowSessionState, conversationId: string): number {
-  return (session.conversationTurns ?? []).filter((entry) => entry.conversationId === conversationId).length;
+function conversationTurnCount(
+  session: WorkflowSessionState,
+  conversationId: string,
+): number {
+  return (session.conversationTurns ?? []).filter(
+    (entry) => entry.conversationId === conversationId,
+  ).length;
 }
 
 function lastSentNodeExecIdForConversationSender(
@@ -42,7 +55,9 @@ function lastSentNodeExecIdForConversationSender(
   fromSubWorkflowId: string,
 ): string | undefined {
   const matchingTurns = (session.conversationTurns ?? []).filter(
-    (entry) => entry.conversationId === conversationId && entry.fromSubWorkflowId === fromSubWorkflowId,
+    (entry) =>
+      entry.conversationId === conversationId &&
+      entry.fromSubWorkflowId === fromSubWorkflowId,
   );
   const latestTurn = matchingTurns.at(-1);
   return latestTurn?.outputRef.nodeExecId;
@@ -54,7 +69,9 @@ function latestReceivedTurnSentAt(
   subWorkflowId: string,
 ): string | undefined {
   const matchingTurns = (session.conversationTurns ?? []).filter(
-    (entry) => entry.conversationId === conversationId && entry.toSubWorkflowId === subWorkflowId,
+    (entry) =>
+      entry.conversationId === conversationId &&
+      entry.toSubWorkflowId === subWorkflowId,
   );
   const latestTurn = matchingTurns.at(-1);
   return latestTurn?.sentAt;
@@ -98,7 +115,10 @@ export async function executeConversationRound(args: {
     if (receiver === undefined) {
       return { status: "failed", turns: [] };
     }
-    const outputExecution = findLatestSucceededNodeExecution(args.session, sender.outputNodeId);
+    const outputExecution = findLatestSucceededNodeExecution(
+      args.session,
+      sender.outputNodeId,
+    );
     if (outputExecution === undefined) {
       blockedByAvailability = true;
       continue;
@@ -112,8 +132,15 @@ export async function executeConversationRound(args: {
       blockedByAvailability = true;
       continue;
     }
-    const latestReceivedAt = latestReceivedTurnSentAt(args.session, conversation.id, fromSubWorkflowId);
-    if (latestReceivedAt !== undefined && outputExecution.endedAt <= latestReceivedAt) {
+    const latestReceivedAt = latestReceivedTurnSentAt(
+      args.session,
+      conversation.id,
+      fromSubWorkflowId,
+    );
+    if (
+      latestReceivedAt !== undefined &&
+      outputExecution.endedAt <= latestReceivedAt
+    ) {
       blockedByAvailability = true;
       continue;
     }
@@ -124,7 +151,10 @@ export async function executeConversationRound(args: {
       [fromSubWorkflowId]: true,
       [toSubWorkflowId]: true,
     };
-    if (conversation.stopWhen.length > 0 && evaluateBranch({ when: conversation.stopWhen, output: stopContext })) {
+    if (
+      conversation.stopWhen.length > 0 &&
+      evaluateBranch({ when: conversation.stopWhen, output: stopContext })
+    ) {
       return { status: "stopped", turns: [] };
     }
 
@@ -136,6 +166,7 @@ export async function executeConversationRound(args: {
       fromManagerNodeId: managerNodeIdForSubWorkflow(args.workflow, sender),
       toManagerNodeId: managerNodeIdForSubWorkflow(args.workflow, receiver),
       outputRef: {
+        kind: "node-output",
         workflowExecutionId: args.workflowExecutionId,
         workflowId: args.workflow.workflowId,
         subWorkflowId: fromSubWorkflowId,
@@ -146,7 +177,8 @@ export async function executeConversationRound(args: {
     };
 
     return {
-      status: completedTurns + 1 >= conversation.maxTurns ? "max_turns" : "stopped",
+      status:
+        completedTurns + 1 >= conversation.maxTurns ? "max_turns" : "stopped",
       turns: [turn],
     };
   }

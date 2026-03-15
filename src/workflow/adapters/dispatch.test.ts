@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { AdapterExecutionContext, AdapterExecutionInput } from "../adapter";
-import { DispatchingNodeAdapter, resolveNodeExecutionBackend } from "./dispatch";
+import type {
+  AdapterExecutionContext,
+  AdapterExecutionInput,
+} from "../adapter";
+import {
+  DispatchingNodeAdapter,
+  resolveNodeExecutionBackend,
+} from "./dispatch";
 
 const originalFetch = globalThis.fetch;
 
@@ -80,7 +86,8 @@ describe("DispatchingNodeAdapter", () => {
         { status: 200 },
       );
     });
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
     const adapter = new DispatchingNodeAdapter({
       codexAgent: { endpoint: "http://localhost/codex" },
@@ -122,7 +129,8 @@ describe("DispatchingNodeAdapter", () => {
         { status: 200 },
       );
     });
-    (globalThis as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+    (globalThis as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
 
     const adapter = new DispatchingNodeAdapter({
       claudeCodeAgent: { endpoint: "http://localhost/claude" },
@@ -153,7 +161,10 @@ describe("DispatchingNodeAdapter", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
     const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<string, unknown>;
+    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
+      string,
+      unknown
+    >;
     expect(body["model"]).toBe("claude-opus-4-1");
   });
 });

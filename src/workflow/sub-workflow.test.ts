@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { planRootManagerSubWorkflowStarts, planSubWorkflowChildInputs } from "./sub-workflow";
+import {
+  planRootManagerSubWorkflowStarts,
+  planSubWorkflowChildInputs,
+} from "./sub-workflow";
 import type { WorkflowSessionState } from "./session";
 import type { WorkflowJson } from "./types";
 
@@ -30,13 +33,48 @@ function makeWorkflow(): WorkflowJson {
       },
     ],
     nodes: [
-      { id: "oyakata-manager", nodeFile: "node-oyakata-manager.json", kind: "manager", completion: { type: "none" } },
-      { id: "a-manager", nodeFile: "node-a-manager.json", kind: "sub-manager", completion: { type: "none" } },
-      { id: "a-input", nodeFile: "node-a-input.json", kind: "input", completion: { type: "none" } },
-      { id: "a-output", nodeFile: "node-a-output.json", kind: "output", completion: { type: "none" } },
-      { id: "b-manager", nodeFile: "node-b-manager.json", kind: "sub-manager", completion: { type: "none" } },
-      { id: "b-input", nodeFile: "node-b-input.json", kind: "input", completion: { type: "none" } },
-      { id: "b-output", nodeFile: "node-b-output.json", kind: "output", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        nodeFile: "node-oyakata-manager.json",
+        kind: "manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-manager",
+        nodeFile: "node-a-manager.json",
+        kind: "sub-manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-input",
+        nodeFile: "node-a-input.json",
+        kind: "input",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-output",
+        nodeFile: "node-a-output.json",
+        kind: "output",
+        completion: { type: "none" },
+      },
+      {
+        id: "b-manager",
+        nodeFile: "node-b-manager.json",
+        kind: "sub-manager",
+        completion: { type: "none" },
+      },
+      {
+        id: "b-input",
+        nodeFile: "node-b-input.json",
+        kind: "input",
+        completion: { type: "none" },
+      },
+      {
+        id: "b-output",
+        nodeFile: "node-b-output.json",
+        kind: "output",
+        completion: { type: "none" },
+      },
     ],
     edges: [],
     loops: [],
@@ -44,7 +82,9 @@ function makeWorkflow(): WorkflowJson {
   };
 }
 
-function makeSession(overrides: Partial<WorkflowSessionState> = {}): WorkflowSessionState {
+function makeSession(
+  overrides: Partial<WorkflowSessionState> = {},
+): WorkflowSessionState {
   return {
     sessionId: "sess-abc12345",
     workflowName: "wf",
@@ -114,7 +154,12 @@ describe("planRootManagerSubWorkflowStarts", () => {
       ],
       nodes: [
         ...makeWorkflow().nodes,
-        { id: "a-manager", nodeFile: "node-a-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        {
+          id: "a-manager",
+          nodeFile: "node-a-manager.json",
+          kind: "sub-manager",
+          completion: { type: "none" },
+        },
       ],
     } satisfies WorkflowJson;
     const session = makeSession({
@@ -138,7 +183,12 @@ describe("planRootManagerSubWorkflowStarts", () => {
       ],
       nodes: [
         ...makeWorkflow().nodes,
-        { id: "a-manager", nodeFile: "node-a-manager.json", kind: "sub-manager", completion: { type: "none" } },
+        {
+          id: "a-manager",
+          nodeFile: "node-a-manager.json",
+          kind: "sub-manager",
+          completion: { type: "none" },
+        },
       ],
     } satisfies WorkflowJson;
     const session = makeSession({
@@ -216,7 +266,12 @@ describe("planRootManagerSubWorkflowStarts", () => {
       ],
       nodes: [
         ...makeWorkflow().nodes,
-        { id: "loop-judge", nodeFile: "node-loop-judge.json", kind: "loop-judge", completion: { type: "none" } },
+        {
+          id: "loop-judge",
+          nodeFile: "node-loop-judge.json",
+          kind: "loop-judge",
+          completion: { type: "none" },
+        },
       ],
     } satisfies WorkflowJson;
     const session = makeSession({

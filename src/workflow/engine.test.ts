@@ -2,9 +2,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { AdapterExecutionError, DeterministicNodeAdapter, ScenarioNodeAdapter } from "./adapter";
+import {
+  AdapterExecutionError,
+  DeterministicNodeAdapter,
+  ScenarioNodeAdapter,
+} from "./adapter";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
+import { createManagerSessionStore } from "./manager-session-store";
 import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
 
 const tempDirs: string[] = [];
@@ -17,7 +22,11 @@ class OutputContractRetryAdapter implements NodeAdapter {
     this.#mode = mode;
   }
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId !== "step-1") {
       return {
         provider: "test-adapter",
@@ -59,7 +68,11 @@ class OutputContractInvalidOutputAdapter implements NodeAdapter {
     this.#mode = mode;
   }
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId !== "step-1") {
       return {
         provider: "test-adapter",
@@ -83,12 +96,19 @@ class OutputContractInvalidOutputAdapter implements NodeAdapter {
       };
     }
 
-    throw new AdapterExecutionError("invalid_output", "adapter response must be a top-level JSON object");
+    throw new AdapterExecutionError(
+      "invalid_output",
+      "adapter response must be a top-level JSON object",
+    );
   }
 }
 
 class OutputContractInvalidThenProviderErrorAdapter implements NodeAdapter {
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId !== "step-1") {
       return {
         provider: "test-adapter",
@@ -123,7 +143,11 @@ class OutputContractFilePathAdapter implements NodeAdapter {
     this.#mode = mode;
   }
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     const candidatePath = input.output?.candidatePath;
     if (input.nodeId !== "step-1" || candidatePath === undefined) {
       return {
@@ -156,7 +180,11 @@ class OutputContractFilePathAdapter implements NodeAdapter {
 }
 
 class OutputContractDirectFileWriteAdapter implements NodeAdapter {
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     const candidatePath = input.output?.candidatePath;
     if (input.nodeId !== "step-1" || candidatePath === undefined) {
       return {
@@ -169,7 +197,11 @@ class OutputContractDirectFileWriteAdapter implements NodeAdapter {
       };
     }
 
-    await writeFile(candidatePath, `${JSON.stringify({ summary: "direct write" }, null, 2)}\n`, "utf8");
+    await writeFile(
+      candidatePath,
+      `${JSON.stringify({ summary: "direct write" }, null, 2)}\n`,
+      "utf8",
+    );
 
     return {
       provider: "test-adapter",
@@ -184,7 +216,11 @@ class OutputContractDirectFileWriteAdapter implements NodeAdapter {
 }
 
 class OutputContractMalformedCandidateFileAdapter implements NodeAdapter {
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     const candidatePath = input.output?.candidatePath;
     if (input.nodeId !== "step-1" || candidatePath === undefined) {
       return {
@@ -199,9 +235,13 @@ class OutputContractMalformedCandidateFileAdapter implements NodeAdapter {
 
     const attempt = input.output?.attempt ?? 1;
     if (attempt === 1) {
-      await writeFile(candidatePath, "{\"summary\": ", "utf8");
+      await writeFile(candidatePath, '{"summary": ', "utf8");
     } else {
-      await writeFile(candidatePath, `${JSON.stringify({ summary: "fixed from file" }, null, 2)}\n`, "utf8");
+      await writeFile(
+        candidatePath,
+        `${JSON.stringify({ summary: "fixed from file" }, null, 2)}\n`,
+        "utf8",
+      );
     }
 
     return {
@@ -217,7 +257,11 @@ class OutputContractMalformedCandidateFileAdapter implements NodeAdapter {
 }
 
 class NonContractMissingCandidateFileAdapter implements NodeAdapter {
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId !== "step-1") {
       return {
         provider: "test-adapter",
@@ -257,7 +301,11 @@ class OutputContractStaleCandidatePathAdapter implements NodeAdapter {
     this.#mode = mode;
   }
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     const candidatePath = input.output?.candidatePath;
     if (input.nodeId !== "step-1" || candidatePath === undefined) {
       return {
@@ -271,7 +319,11 @@ class OutputContractStaleCandidatePathAdapter implements NodeAdapter {
     }
 
     if (this.#mode === "write") {
-      await writeFile(candidatePath, `${JSON.stringify({ summary: "fresh candidate" }, null, 2)}\n`, "utf8");
+      await writeFile(
+        candidatePath,
+        `${JSON.stringify({ summary: "fresh candidate" }, null, 2)}\n`,
+        "utf8",
+      );
     }
 
     return {
@@ -289,9 +341,15 @@ class OutputContractStaleCandidatePathAdapter implements NodeAdapter {
 class OutputContractPromptCaptureAdapter implements NodeAdapter {
   capturedPromptText: string | undefined;
 
-  capturedOutputContract: Parameters<NodeAdapter["execute"]>[0]["output"] | undefined;
+  capturedOutputContract:
+    | Parameters<NodeAdapter["execute"]>[0]["output"]
+    | undefined;
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId === "step-1") {
       this.capturedPromptText = input.promptText;
       this.capturedOutputContract = input.output;
@@ -325,7 +383,11 @@ class OutputContractCandidatePathCaptureAdapter implements NodeAdapter {
     this.#mode = mode;
   }
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     const candidatePath = input.output?.candidatePath;
     if (input.nodeId !== "step-1" || candidatePath === undefined) {
       return {
@@ -341,9 +403,13 @@ class OutputContractCandidatePathCaptureAdapter implements NodeAdapter {
     this.capturedCandidatePath = candidatePath;
     await mkdir(path.dirname(candidatePath), { recursive: true });
     if (this.#mode === "success") {
-      await writeFile(candidatePath, `${JSON.stringify({ summary: "captured write" }, null, 2)}\n`, "utf8");
+      await writeFile(
+        candidatePath,
+        `${JSON.stringify({ summary: "captured write" }, null, 2)}\n`,
+        "utf8",
+      );
     } else {
-      await writeFile(candidatePath, "{\"summary\": ", "utf8");
+      await writeFile(candidatePath, '{"summary": ', "utf8");
     }
 
     return {
@@ -360,9 +426,15 @@ class OutputContractCandidatePathCaptureAdapter implements NodeAdapter {
 
 class OutputContractRetryPromptCaptureAdapter implements NodeAdapter {
   prompts: string[] = [];
-  validationErrorsByAttempt: Array<readonly { path: string; message: string }[]> = [];
+  validationErrorsByAttempt: Array<
+    readonly { path: string; message: string }[]
+  > = [];
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId === "step-1") {
       this.prompts.push(input.promptText);
       this.validationErrorsByAttempt.push(input.output?.validationErrors ?? []);
@@ -404,12 +476,19 @@ class OutputContractRetryPromptCaptureAdapter implements NodeAdapter {
 class DescriptionOnlyRetryPromptCaptureAdapter implements NodeAdapter {
   prompts: string[] = [];
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId === "step-1") {
       this.prompts.push(input.promptText);
       const attempt = input.output?.attempt ?? 1;
       if (attempt === 1) {
-        throw new AdapterExecutionError("invalid_output", "adapter response must be a top-level JSON object");
+        throw new AdapterExecutionError(
+          "invalid_output",
+          "adapter response must be a top-level JSON object",
+        );
       }
 
       return {
@@ -436,18 +515,29 @@ class DescriptionOnlyRetryPromptCaptureAdapter implements NodeAdapter {
 class ReusableSessionAdapter implements NodeAdapter {
   readonly calls: Array<{
     readonly nodeId: string;
-    readonly backendSession?: { readonly mode: "new" | "reuse"; readonly sessionId?: string };
+    readonly backendSession?: {
+      readonly mode: "new" | "reuse";
+      readonly sessionId?: string;
+    };
   }> = [];
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     this.calls.push({
       nodeId: input.nodeId,
-      ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+      ...(input.backendSession === undefined
+        ? {}
+        : { backendSession: input.backendSession }),
     });
 
     if (input.nodeId === "step-b") {
       const sessionId = input.backendSession?.sessionId ?? "backend-b-1";
-      const seen = input.backendSession?.mode === "reuse" && input.backendSession.sessionId === "backend-b-1";
+      const seen =
+        input.backendSession?.mode === "reuse" &&
+        input.backendSession.sessionId === "backend-b-1";
       return {
         provider: "test-adapter",
         model: input.node.model,
@@ -479,10 +569,17 @@ class ReusableSessionAdapter implements NodeAdapter {
 class OutputContractReusableSessionAdapter implements NodeAdapter {
   readonly calls: Array<{
     readonly attempt: number;
-    readonly backendSession?: { readonly mode: "new" | "reuse"; readonly sessionId?: string };
+    readonly backendSession?: {
+      readonly mode: "new" | "reuse";
+      readonly sessionId?: string;
+    };
   }> = [];
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId !== "step-1") {
       return {
         provider: "test-adapter",
@@ -497,7 +594,9 @@ class OutputContractReusableSessionAdapter implements NodeAdapter {
     const attempt = input.output?.attempt ?? 1;
     this.calls.push({
       attempt,
-      ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+      ...(input.backendSession === undefined
+        ? {}
+        : { backendSession: input.backendSession }),
     });
 
     return {
@@ -506,7 +605,10 @@ class OutputContractReusableSessionAdapter implements NodeAdapter {
       promptText: input.promptText,
       completionPassed: true,
       when: { always: true },
-      payload: attempt === 1 ? { wrong: true } : { summary: "valid after backend session retry" },
+      payload:
+        attempt === 1
+          ? { wrong: true }
+          : { summary: "valid after backend session retry" },
       backendSession: {
         sessionId: "backend-step-1",
       },
@@ -515,7 +617,11 @@ class OutputContractReusableSessionAdapter implements NodeAdapter {
 }
 
 class InvalidManagerControlReusableSessionAdapter implements NodeAdapter {
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     if (input.nodeId !== "oyakata-manager") {
       return {
         provider: "test-adapter",
@@ -548,13 +654,22 @@ class InvalidManagerControlReusableSessionAdapter implements NodeAdapter {
 class ExplicitNewSessionPolicyAdapter implements NodeAdapter {
   readonly calls: Array<{
     readonly nodeId: string;
-    readonly backendSession?: { readonly mode: "new" | "reuse"; readonly sessionId?: string };
+    readonly backendSession?: {
+      readonly mode: "new" | "reuse";
+      readonly sessionId?: string;
+    };
   }> = [];
 
-  async execute(input: Parameters<NodeAdapter["execute"]>[0]): Promise<ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never> {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
     this.calls.push({
       nodeId: input.nodeId,
-      ...(input.backendSession === undefined ? {} : { backendSession: input.backendSession }),
+      ...(input.backendSession === undefined
+        ? {}
+        : { backendSession: input.backendSession }),
     });
 
     return {
@@ -564,13 +679,46 @@ class ExplicitNewSessionPolicyAdapter implements NodeAdapter {
       completionPassed: true,
       when: { always: true },
       payload: { nodeId: input.nodeId },
-      ...(input.nodeId === "step-1" ? { backendSession: { sessionId: "ephemeral-step-1-session" } } : {}),
+      ...(input.nodeId === "step-1"
+        ? { backendSession: { sessionId: "ephemeral-step-1-session" } }
+        : {}),
+    };
+  }
+}
+
+class ManagerAmbientContextCaptureAdapter implements NodeAdapter {
+  readonly calls: Array<{
+    readonly nodeId: string;
+    readonly ambientManagerContext?: Parameters<NodeAdapter["execute"]>[0]["ambientManagerContext"];
+  }> = [];
+
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    this.calls.push({
+      nodeId: input.nodeId,
+      ...(input.ambientManagerContext === undefined
+        ? {}
+        : { ambientManagerContext: input.ambientManagerContext }),
+    });
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
     };
   }
 }
 
 async function makeTempDir(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "oyakata-engine-test-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "oyakata-engine-test-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -580,22 +728,55 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
 });
 
-async function createWorkflowFixture(root: string, workflowName: string, withLoop: boolean): Promise<void> {
+async function createWorkflowFixture(
+  root: string,
+  workflowName: string,
+  withLoop: boolean,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
   const nodes = withLoop
     ? [
-        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-        { id: "step-1", kind: "loop-judge", nodeFile: "node-step-1.json", completion: { type: "none" } },
-        { id: "done", kind: "output", nodeFile: "node-done.json", completion: { type: "none" } },
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
+        {
+          id: "step-1",
+          kind: "loop-judge",
+          nodeFile: "node-step-1.json",
+          completion: { type: "none" },
+        },
+        {
+          id: "done",
+          kind: "output",
+          nodeFile: "node-done.json",
+          completion: { type: "none" },
+        },
       ]
     : [
-        { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-        { id: "step-1", kind: "task", nodeFile: "node-step-1.json", completion: { type: "none" } },
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
+        {
+          id: "step-1",
+          kind: "task",
+          nodeFile: "node-step-1.json",
+          completion: { type: "none" },
+        },
       ];
 
   const edges = withLoop
@@ -664,7 +845,10 @@ async function createWorkflowFixture(root: string, workflowName: string, withLoo
   }
 }
 
-async function createNodeSessionReuseFixture(root: string, workflowName: string): Promise<void> {
+async function createNodeSessionReuseFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -675,10 +859,30 @@ async function createNodeSessionReuseFixture(root: string, workflowName: string)
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "step-a", kind: "task", nodeFile: "node-step-a.json", completion: { type: "none" } },
-      { id: "step-b", kind: "task", nodeFile: "node-step-b.json", completion: { type: "none" } },
-      { id: "step-c", kind: "task", nodeFile: "node-step-c.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-a",
+        kind: "task",
+        nodeFile: "node-step-a.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-b",
+        kind: "task",
+        nodeFile: "node-step-b.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-c",
+        kind: "task",
+        nodeFile: "node-step-c.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "oyakata-manager", to: "step-a", when: "always" },
@@ -728,7 +932,10 @@ async function createNodeSessionReuseFixture(root: string, workflowName: string)
   });
 }
 
-async function createSubWorkflowRuntimeFixture(root: string, workflowName: string): Promise<void> {
+async function createSubWorkflowRuntimeFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -766,13 +973,48 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
       },
     ],
     nodes: [
-      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "a-manager", kind: "sub-manager", nodeFile: "node-a-manager.json", completion: { type: "none" } },
-      { id: "a-input", kind: "input", nodeFile: "node-a-input.json", completion: { type: "none" } },
-      { id: "a-output", kind: "output", nodeFile: "node-a-output.json", completion: { type: "none" } },
-      { id: "b-manager", kind: "sub-manager", nodeFile: "node-b-manager.json", completion: { type: "none" } },
-      { id: "b-input", kind: "input", nodeFile: "node-b-input.json", completion: { type: "none" } },
-      { id: "b-output", kind: "output", nodeFile: "node-b-output.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "root-manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-manager",
+        kind: "sub-manager",
+        nodeFile: "node-a-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-input",
+        kind: "input",
+        nodeFile: "node-a-input.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "a-output",
+        kind: "output",
+        nodeFile: "node-a-output.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "b-manager",
+        kind: "sub-manager",
+        nodeFile: "node-b-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "b-input",
+        kind: "input",
+        nodeFile: "node-b-input.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "b-output",
+        kind: "output",
+        nodeFile: "node-b-output.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "a-input", to: "a-output", when: "always" },
@@ -840,7 +1082,10 @@ async function createSubWorkflowRuntimeFixture(root: string, workflowName: strin
   });
 }
 
-async function createManagerAfterOutputFixture(root: string, workflowName: string): Promise<void> {
+async function createManagerAfterOutputFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -851,8 +1096,18 @@ async function createManagerAfterOutputFixture(root: string, workflowName: strin
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "root-manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "workflow-output",
+        kind: "output",
+        nodeFile: "node-workflow-output.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "oyakata-manager", to: "workflow-output", when: "needs_output" },
@@ -883,7 +1138,10 @@ async function createManagerAfterOutputFixture(root: string, workflowName: strin
   });
 }
 
-async function createSingleRootOutputFixture(root: string, workflowName: string): Promise<void> {
+async function createSingleRootOutputFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -894,8 +1152,18 @@ async function createSingleRootOutputFixture(root: string, workflowName: string)
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "root-manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "workflow-output",
+        kind: "output",
+        nodeFile: "node-workflow-output.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [{ from: "oyakata-manager", to: "workflow-output", when: "always" }],
     loops: [],
@@ -919,7 +1187,10 @@ async function createSingleRootOutputFixture(root: string, workflowName: string)
   }
 }
 
-async function createMultipleRootOutputsFixture(root: string, workflowName: string): Promise<void> {
+async function createMultipleRootOutputsFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -930,9 +1201,24 @@ async function createMultipleRootOutputsFixture(root: string, workflowName: stri
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "first-output", kind: "output", nodeFile: "node-first-output.json", completion: { type: "none" } },
-      { id: "second-output", kind: "output", nodeFile: "node-second-output.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "root-manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "first-output",
+        kind: "output",
+        nodeFile: "node-first-output.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "second-output",
+        kind: "output",
+        nodeFile: "node-second-output.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "oyakata-manager", to: "first-output", when: "always" },
@@ -960,7 +1246,10 @@ async function createMultipleRootOutputsFixture(root: string, workflowName: stri
   }
 }
 
-async function createRootOutputThenTaskFixture(root: string, workflowName: string): Promise<void> {
+async function createRootOutputThenTaskFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -971,9 +1260,24 @@ async function createRootOutputThenTaskFixture(root: string, workflowName: strin
     managerNodeId: "oyakata-manager",
     subWorkflows: [],
     nodes: [
-      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
-      { id: "final-task", kind: "task", nodeFile: "node-final-task.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "root-manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "workflow-output",
+        kind: "output",
+        nodeFile: "node-workflow-output.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "final-task",
+        kind: "task",
+        nodeFile: "node-final-task.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "oyakata-manager", to: "workflow-output", when: "always" },
@@ -1001,7 +1305,10 @@ async function createRootOutputThenTaskFixture(root: string, workflowName: strin
   }
 }
 
-async function createWorkflowOutputDrivenSubWorkflowFixture(root: string, workflowName: string): Promise<void> {
+async function createWorkflowOutputDrivenSubWorkflowFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
@@ -1022,11 +1329,36 @@ async function createWorkflowOutputDrivenSubWorkflowFixture(root: string, workfl
       },
     ],
     nodes: [
-      { id: "oyakata-manager", kind: "root-manager", nodeFile: "node-oyakata-manager.json", completion: { type: "none" } },
-      { id: "workflow-output", kind: "output", nodeFile: "node-workflow-output.json", completion: { type: "none" } },
-      { id: "review-manager", kind: "sub-manager", nodeFile: "node-review-manager.json", completion: { type: "none" } },
-      { id: "review-input", kind: "input", nodeFile: "node-review-input.json", completion: { type: "none" } },
-      { id: "review-output", kind: "output", nodeFile: "node-review-output.json", completion: { type: "none" } },
+      {
+        id: "oyakata-manager",
+        kind: "root-manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "workflow-output",
+        kind: "output",
+        nodeFile: "node-workflow-output.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "review-manager",
+        kind: "sub-manager",
+        nodeFile: "node-review-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "review-input",
+        kind: "input",
+        nodeFile: "node-review-input.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "review-output",
+        kind: "output",
+        nodeFile: "node-review-output.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [
       { from: "oyakata-manager", to: "workflow-output", when: "needs_output" },
@@ -1047,7 +1379,13 @@ async function createWorkflowOutputDrivenSubWorkflowFixture(root: string, workfl
     ],
   });
 
-  for (const nodeId of ["oyakata-manager", "workflow-output", "review-manager", "review-input", "review-output"]) {
+  for (const nodeId of [
+    "oyakata-manager",
+    "workflow-output",
+    "review-manager",
+    "review-input",
+    "review-output",
+  ]) {
     await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
       id: nodeId,
       model: "tacogips/codex-agent",
@@ -1062,12 +1400,16 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "linear", false);
 
-    const result = await runWorkflow("linear", {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      runtimeVariables: { topic: "B" },
-    }, deterministicAdapter);
+    const result = await runWorkflow(
+      "linear",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      deterministicAdapter,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -1077,12 +1419,17 @@ describe("runWorkflow", () => {
     expect(result.value.session.status).toBe("completed");
     expect(result.value.session.nodeExecutions.length).toBe(2);
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec).toBeDefined();
     if (step1Exec === undefined) {
       return;
     }
-    const inputRaw = await readFile(path.join(step1Exec.artifactDir, "input.json"), "utf8");
+    const inputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "input.json"),
+      "utf8",
+    );
     const inputJson = JSON.parse(inputRaw) as {
       sessionId: string;
       workflowExecutionId: string;
@@ -1100,7 +1447,9 @@ describe("runWorkflow", () => {
     expect(inputJson.upstreamOutputRefs.length).toBe(1);
     expect(inputJson.upstreamOutputRefs[0]?.fromNodeId).toBe("oyakata-manager");
     expect(inputJson.upstreamOutputRefs[0]?.workflowId).toBe("linear");
-    expect(inputJson.upstreamOutputRefs[0]?.workflowExecutionId).toBe(result.value.session.sessionId);
+    expect(inputJson.upstreamOutputRefs[0]?.workflowExecutionId).toBe(
+      result.value.session.sessionId,
+    );
     expect(inputJson.upstreamCommunications).toEqual(["comm-000001"]);
 
     const communicationMessageRaw = await readFile(
@@ -1122,7 +1471,9 @@ describe("runWorkflow", () => {
       fromNodeId: string;
       toNodeId: string;
     };
-    expect(communicationMessageJson.workflowExecutionId).toBe(result.value.session.sessionId);
+    expect(communicationMessageJson.workflowExecutionId).toBe(
+      result.value.session.sessionId,
+    );
     expect(communicationMessageJson.communicationId).toBe("comm-000001");
     expect(communicationMessageJson.fromNodeId).toBe("oyakata-manager");
     expect(communicationMessageJson.toNodeId).toBe("step-1");
@@ -1176,7 +1527,10 @@ describe("runWorkflow", () => {
     );
     expect(mailboxOutputRaw).toBe(managerOutputRaw);
 
-    const handoffRaw = await readFile(path.join(step1Exec.artifactDir, "handoff.json"), "utf8");
+    const handoffRaw = await readFile(
+      path.join(step1Exec.artifactDir, "handoff.json"),
+      "utf8",
+    );
     const handoffJson = JSON.parse(handoffRaw) as {
       inputHash: string;
       outputHash: string;
@@ -1189,9 +1543,14 @@ describe("runWorkflow", () => {
     expect(handoffJson.outputRef.nodeExecId).toBe(step1Exec.nodeExecId);
     expect(handoffJson.nextNodes).toEqual([]);
 
-    const commitMessage = await readFile(path.join(step1Exec.artifactDir, "commit-message.txt"), "utf8");
+    const commitMessage = await readFile(
+      path.join(step1Exec.artifactDir, "commit-message.txt"),
+      "utf8",
+    );
     expect(commitMessage).toContain("Node-ID: step-1");
-    expect(commitMessage).toContain(`Run-ID: ${result.value.session.sessionId}`);
+    expect(commitMessage).toContain(
+      `Run-ID: ${result.value.session.sessionId}`,
+    );
   });
 
   test("reuses a node-local backend session across repeated executions in one workflow run", async () => {
@@ -1217,10 +1576,17 @@ describe("runWorkflow", () => {
     const bCalls = adapter.calls.filter((entry) => entry.nodeId === "step-b");
     expect(bCalls).toHaveLength(2);
     expect(bCalls[0]?.backendSession).toEqual({ mode: "new" });
-    expect(bCalls[1]?.backendSession).toEqual({ mode: "reuse", sessionId: "backend-b-1" });
-    expect(result.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+    expect(bCalls[1]?.backendSession).toEqual({
+      mode: "reuse",
+      sessionId: "backend-b-1",
+    });
+    expect(
+      result.value.session.nodeBackendSessions?.["step-b"]?.sessionId,
+    ).toBe("backend-b-1");
 
-    const bExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-b");
+    const bExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "step-b",
+    );
     expect(bExecutions).toHaveLength(2);
     expect(bExecutions[0]?.backendSessionMode).toBe("new");
     expect(bExecutions[0]?.backendSessionId).toBe("backend-b-1");
@@ -1249,7 +1615,9 @@ describe("runWorkflow", () => {
       return;
     }
     expect(first.value.session.status).toBe("paused");
-    expect(first.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+    expect(first.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe(
+      "backend-b-1",
+    );
 
     const resumedAdapter = new ReusableSessionAdapter();
     const resumed = await runWorkflow(
@@ -1268,26 +1636,36 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const resumedBCalls = resumedAdapter.calls.filter((entry) => entry.nodeId === "step-b");
+    const resumedBCalls = resumedAdapter.calls.filter(
+      (entry) => entry.nodeId === "step-b",
+    );
     expect(resumedBCalls).toHaveLength(1);
-    expect(resumedBCalls[0]?.backendSession).toEqual({ mode: "reuse", sessionId: "backend-b-1" });
+    expect(resumedBCalls[0]?.backendSession).toEqual({
+      mode: "reuse",
+      sessionId: "backend-b-1",
+    });
     expect(resumed.value.session.status).toBe("completed");
-    expect(resumed.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+    expect(
+      resumed.value.session.nodeBackendSessions?.["step-b"]?.sessionId,
+    ).toBe("backend-b-1");
   });
 
   test("forwards explicit new session policy without persisting a reusable backend session", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "explicit-new-session-policy", false);
 
-    await writeJson(path.join(root, "explicit-new-session-policy", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      sessionPolicy: {
-        mode: "new",
+    await writeJson(
+      path.join(root, "explicit-new-session-policy", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        sessionPolicy: {
+          mode: "new",
+        },
+        promptTemplate: "step {{topic}}",
+        variables: {},
       },
-      promptTemplate: "step {{topic}}",
-      variables: {},
-    });
+    );
 
     const adapter = new ExplicitNewSessionPolicyAdapter();
     const result = await runWorkflow(
@@ -1306,28 +1684,39 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Calls = adapter.calls.filter((entry) => entry.nodeId === "step-1");
-    expect(step1Calls).toEqual([{ nodeId: "step-1", backendSession: { mode: "new" } }]);
+    const step1Calls = adapter.calls.filter(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(step1Calls).toEqual([
+      { nodeId: "step-1", backendSession: { mode: "new" } },
+    ]);
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.backendSessionMode).toBe("new");
     expect(step1Exec?.backendSessionId).toBe("ephemeral-step-1-session");
-    expect(result.value.session.nodeBackendSessions?.["step-1"]).toBeUndefined();
+    expect(
+      result.value.session.nodeBackendSessions?.["step-1"],
+    ).toBeUndefined();
   });
 
   test("preserves reusable backend sessions even when post-execution manager-control parsing fails", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "manager-session-failure", false);
 
-    await writeJson(path.join(root, "manager-session-failure", "node-oyakata-manager.json"), {
-      id: "oyakata-manager",
-      model: "tacogips/claude-code-agent",
-      sessionPolicy: {
-        mode: "reuse",
+    await writeJson(
+      path.join(root, "manager-session-failure", "node-oyakata-manager.json"),
+      {
+        id: "oyakata-manager",
+        model: "tacogips/claude-code-agent",
+        sessionPolicy: {
+          mode: "reuse",
+        },
+        promptTemplate: "manager",
+        variables: {},
       },
-      promptTemplate: "manager",
-      variables: {},
-    });
+    );
 
     const adapter = new InvalidManagerControlReusableSessionAdapter();
     const result = await runWorkflow(
@@ -1358,7 +1747,7 @@ describe("runWorkflow", () => {
     expect(saved.value.nodeExecutions[0]).toMatchObject({
       nodeId: "oyakata-manager",
       nodeExecId: "exec-000001",
-      status: "succeeded",
+      status: "failed",
       backendSessionMode: "new",
       backendSessionId: "backend-manager-1",
     });
@@ -1367,6 +1756,128 @@ describe("runWorkflow", () => {
       sessionId: "backend-manager-1",
       lastNodeExecId: "exec-000001",
     });
+  });
+
+  test("mints and expires manager GraphQL context only for manager-node executions", async () => {
+    const root = await makeTempDir();
+    const workflowName = "manager-session-runtime";
+    await createWorkflowFixture(root, workflowName, false);
+
+    const adapter = new ManagerAmbientContextCaptureAdapter();
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        rootDataDir: path.join(root, "data"),
+        cwd: root,
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error(result.error.message);
+    }
+
+    expect(adapter.calls).toHaveLength(2);
+    expect(adapter.calls[0]?.nodeId).toBe("oyakata-manager");
+    expect(adapter.calls[0]?.ambientManagerContext?.environment).toMatchObject({
+      OYAKATA_GRAPHQL_ENDPOINT: "http://127.0.0.1:43173/graphql",
+      OYAKATA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+      OYAKATA_WORKFLOW_ID: workflowName,
+      OYAKATA_WORKFLOW_EXECUTION_ID: result.value.session.sessionId,
+      OYAKATA_MANAGER_NODE_ID: "oyakata-manager",
+      OYAKATA_MANAGER_NODE_EXEC_ID: "exec-000001",
+    });
+    expect(adapter.calls[1]?.nodeId).toBe("step-1");
+    expect(adapter.calls[1]?.ambientManagerContext).toBeUndefined();
+
+    const managerAuthToken =
+      adapter.calls[0]?.ambientManagerContext?.environment
+        .OYAKATA_MANAGER_AUTH_TOKEN;
+    expect(managerAuthToken).toBeDefined();
+    if (managerAuthToken === undefined) {
+      throw new Error("manager auth token was not captured");
+    }
+
+    const store = createManagerSessionStore({
+      cwd: root,
+      rootDataDir: path.join(root, "data"),
+    });
+    const persisted = await store.loadSession("mgrsess-exec-000001");
+    expect(persisted).not.toBeNull();
+    expect(persisted?.status).toBe("completed");
+    expect(persisted?.authTokenHash).not.toBe(managerAuthToken);
+    expect(
+      await store.validateAuthToken({
+        managerSessionId: "mgrsess-exec-000001",
+        authToken: managerAuthToken,
+        ...(persisted?.authTokenExpiresAt === undefined
+          ? {}
+          : { now: persisted.authTokenExpiresAt }),
+      }),
+    ).toBeNull();
+  });
+
+  test("fails a manager step that mixes GraphQL manager messages with payload managerControl", async () => {
+    const root = await makeTempDir();
+    const workflowName = "manager-mixed-control-mode";
+    await createWorkflowFixture(root, workflowName, false);
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+      sessionId: "sess-manager-mixed-control-mode",
+    };
+    const store = createManagerSessionStore({
+      cwd: root,
+      rootDataDir: path.join(root, "data"),
+    });
+    await store.createOrResumeSession({
+      managerSessionId: "mgrsess-exec-000001",
+      workflowId: workflowName,
+      workflowExecutionId: "sess-manager-mixed-control-mode",
+      managerNodeId: "oyakata-manager",
+      managerNodeExecId: "exec-000001",
+      status: "active",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z",
+      controlMode: "graphql-manager-message",
+      authTokenHash: "preexisting-hash",
+      authTokenExpiresAt: "2026-03-16T00:00:00.000Z",
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      options,
+      new ScenarioNodeAdapter({
+        "oyakata-manager": {
+          payload: {
+            managerControl: {
+              actions: [{ type: "retry-node", nodeId: "step-1" }],
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.exitCode).toBe(5);
+    expect(result.error.message).toContain(
+      "cannot mix GraphQL manager messages with payload managerControl",
+    );
+
+    const persisted = await store.loadSession("mgrsess-exec-000001");
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.controlMode).toBe("graphql-manager-message");
   });
 
   test("delivers root human input through an external mailbox communication", async () => {
@@ -1406,20 +1917,31 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const managerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
+    const managerExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "oyakata-manager",
+    );
     expect(managerExec).toBeDefined();
     if (managerExec === undefined) {
       return;
     }
 
-    const managerInputRaw = await readFile(path.join(managerExec.artifactDir, "input.json"), "utf8");
+    const managerInputRaw = await readFile(
+      path.join(managerExec.artifactDir, "input.json"),
+      "utf8",
+    );
     const managerInput = JSON.parse(managerInputRaw) as {
       upstreamOutputRefs: readonly { fromNodeId: string }[];
       upstreamCommunications: readonly string[];
       promptText: string;
     };
-    expect(managerInput.upstreamOutputRefs.some((entry) => entry.fromNodeId === "__workflow-input-mailbox__")).toBe(true);
-    expect(managerInput.upstreamCommunications).toContain(bootstrapCommunication.communicationId);
+    expect(
+      managerInput.upstreamOutputRefs.some(
+        (entry) => entry.fromNodeId === "__workflow-input-mailbox__",
+      ),
+    ).toBe(true);
+    expect(managerInput.upstreamCommunications).toContain(
+      bootstrapCommunication.communicationId,
+    );
     expect(managerInput.promptText).toContain('"request":"ship release B"');
 
     const receiptRaw = await readFile(
@@ -1448,7 +1970,12 @@ describe("runWorkflow", () => {
       "utf8",
     );
     const mailboxOutputRaw = await readFile(
-      path.join(bootstrapCommunication.artifactDir, "outbox", "__workflow-input-mailbox__", "output.json"),
+      path.join(
+        bootstrapCommunication.artifactDir,
+        "outbox",
+        "__workflow-input-mailbox__",
+        "output.json",
+      ),
       "utf8",
     );
     expect(mailboxOutputRaw).toBe(sourceOutputRaw);
@@ -1486,7 +2013,12 @@ describe("runWorkflow", () => {
     }
 
     const outputRaw = await readFile(
-      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      path.join(
+        outputCommunication.artifactDir,
+        "outbox",
+        "workflow-output",
+        "output.json",
+      ),
       "utf8",
     );
     const outputJson = JSON.parse(outputRaw) as { payload: { nodeId: string } };
@@ -1504,12 +2036,17 @@ describe("runWorkflow", () => {
     const receiptJson = JSON.parse(receiptRaw) as { deliveredByNodeId: string };
     expect(receiptJson.deliveredByNodeId).toBe("oyakata-manager");
 
-    const publishedExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "workflow-output");
+    const publishedExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "workflow-output",
+    );
     expect(publishedExec).toBeDefined();
     if (publishedExec === undefined) {
       return;
     }
-    const sourceOutputRaw = await readFile(path.join(publishedExec.artifactDir, "output.json"), "utf8");
+    const sourceOutputRaw = await readFile(
+      path.join(publishedExec.artifactDir, "output.json"),
+      "utf8",
+    );
     expect(outputRaw).toBe(sourceOutputRaw);
   });
 
@@ -1526,10 +2063,18 @@ describe("runWorkflow", () => {
       },
       new ScenarioNodeAdapter({
         "oyakata-manager": [
-          { provider: "scenario-mock", when: { needs_output: true }, payload: { phase: "plan" } },
+          {
+            provider: "scenario-mock",
+            when: { needs_output: true },
+            payload: { phase: "plan" },
+          },
           { provider: "scenario-mock", when: {}, payload: { phase: "assess" } },
         ],
-        "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "published-result" } },
+        "workflow-output": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { final: "published-result" },
+        },
       }),
     );
 
@@ -1550,7 +2095,12 @@ describe("runWorkflow", () => {
 
     expect(outputCommunication.fromNodeId).toBe("workflow-output");
     const outputRaw = await readFile(
-      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      path.join(
+        outputCommunication.artifactDir,
+        "outbox",
+        "workflow-output",
+        "output.json",
+      ),
       "utf8",
     );
     const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
@@ -1569,9 +2119,21 @@ describe("runWorkflow", () => {
         sessionStoreRoot: path.join(root, "sessions"),
       },
       new ScenarioNodeAdapter({
-        "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
-        "first-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "first" } },
-        "second-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "second" } },
+        "oyakata-manager": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "dispatch" },
+        },
+        "first-output": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { final: "first" },
+        },
+        "second-output": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { final: "second" },
+        },
       }),
     );
 
@@ -1592,12 +2154,19 @@ describe("runWorkflow", () => {
 
     expect(outputCommunication.fromNodeId).toBe("second-output");
     const outputRaw = await readFile(
-      path.join(outputCommunication.artifactDir, "outbox", "second-output", "output.json"),
+      path.join(
+        outputCommunication.artifactDir,
+        "outbox",
+        "second-output",
+        "output.json",
+      ),
       "utf8",
     );
     const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
     expect(outputJson.payload.final).toBe("second");
-    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({ final: "second" });
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({
+      final: "second",
+    });
   });
 
   test("keeps the latest root output publication source when a later non-output worker runs", async () => {
@@ -1612,9 +2181,21 @@ describe("runWorkflow", () => {
         sessionStoreRoot: path.join(root, "sessions"),
       },
       new ScenarioNodeAdapter({
-        "oyakata-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "dispatch" } },
-        "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "published" } },
-        "final-task": { provider: "scenario-mock", when: { always: true }, payload: { final: "not-publishable" } },
+        "oyakata-manager": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "dispatch" },
+        },
+        "workflow-output": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { final: "published" },
+        },
+        "final-task": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { final: "not-publishable" },
+        },
       }),
     );
 
@@ -1623,7 +2204,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    expect(result.value.session.nodeExecutions.at(-1)?.nodeId).toBe("final-task");
+    expect(result.value.session.nodeExecutions.at(-1)?.nodeId).toBe(
+      "final-task",
+    );
     const outputCommunication = result.value.session.communications.find(
       (entry) =>
         entry.toNodeId === "__workflow-output-mailbox__" &&
@@ -1636,12 +2219,19 @@ describe("runWorkflow", () => {
 
     expect(outputCommunication.fromNodeId).toBe("workflow-output");
     const outputRaw = await readFile(
-      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      path.join(
+        outputCommunication.artifactDir,
+        "outbox",
+        "workflow-output",
+        "output.json",
+      ),
       "utf8",
     );
     const outputJson = JSON.parse(outputRaw) as { payload: { final: string } };
     expect(outputJson.payload.final).toBe("published");
-    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({ final: "published" });
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({
+      final: "published",
+    });
   });
 
   test("does not publish an external output when no root output execution succeeds", async () => {
@@ -1671,12 +2261,17 @@ describe("runWorkflow", () => {
           entry.deliveryKind === "external-output",
       ),
     ).toBe(false);
-    expect(result.value.session.runtimeVariables["workflowOutput"]).toBeUndefined();
+    expect(
+      result.value.session.runtimeVariables["workflowOutput"],
+    ).toBeUndefined();
   });
 
   test("enables workflow-output input sources after a root output node succeeds", async () => {
     const root = await makeTempDir();
-    await createWorkflowOutputDrivenSubWorkflowFixture(root, "workflow-output-source");
+    await createWorkflowOutputDrivenSubWorkflowFixture(
+      root,
+      "workflow-output-source",
+    );
 
     const result = await runWorkflow(
       "workflow-output-source",
@@ -1687,13 +2282,33 @@ describe("runWorkflow", () => {
       },
       new ScenarioNodeAdapter({
         "oyakata-manager": [
-          { provider: "scenario-mock", when: { needs_output: true }, payload: { phase: "plan" } },
+          {
+            provider: "scenario-mock",
+            when: { needs_output: true },
+            payload: { phase: "plan" },
+          },
           { provider: "scenario-mock", when: {}, payload: { phase: "assess" } },
         ],
-        "workflow-output": { provider: "scenario-mock", when: { always: true }, payload: { final: "root-output" } },
-        "review-manager": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review-dispatch" } },
-        "review-input": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review-input" } },
-        "review-output": { provider: "scenario-mock", when: { always: true }, payload: { stage: "review-output" } },
+        "workflow-output": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { final: "root-output" },
+        },
+        "review-manager": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "review-dispatch" },
+        },
+        "review-input": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "review-input" },
+        },
+        "review-output": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "review-output" },
+        },
       }),
     );
 
@@ -1702,10 +2317,24 @@ describe("runWorkflow", () => {
       return;
     }
 
-    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({ final: "root-output" });
-    expect(result.value.session.nodeExecutions.some((entry) => entry.nodeId === "review-manager")).toBe(true);
-    expect(result.value.session.nodeExecutions.some((entry) => entry.nodeId === "review-input")).toBe(true);
-    expect(result.value.session.nodeExecutions.some((entry) => entry.nodeId === "review-output")).toBe(true);
+    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({
+      final: "root-output",
+    });
+    expect(
+      result.value.session.nodeExecutions.some(
+        (entry) => entry.nodeId === "review-manager",
+      ),
+    ).toBe(true);
+    expect(
+      result.value.session.nodeExecutions.some(
+        (entry) => entry.nodeId === "review-input",
+      ),
+    ).toBe(true);
+    expect(
+      result.value.session.nodeExecutions.some(
+        (entry) => entry.nodeId === "review-output",
+      ),
+    ).toBe(true);
   });
 
   test("composes manager and worker prompts with workflow-level orchestration context", async () => {
@@ -1713,10 +2342,13 @@ describe("runWorkflow", () => {
     await createWorkflowFixture(root, "prompt-composition", false);
 
     const workflowPath = path.join(root, "prompt-composition", "workflow.json");
-    const workflowJson = JSON.parse(await readFile(workflowPath, "utf8")) as Record<string, unknown>;
+    const workflowJson = JSON.parse(
+      await readFile(workflowPath, "utf8"),
+    ) as Record<string, unknown>;
     workflowJson["prompts"] = {
       oyakataPromptTemplate: "Plan and audit work for {{topic}}.",
-      workerSystemPromptTemplate: "Complete the assigned worker step for {{topic}}.",
+      workerSystemPromptTemplate:
+        "Complete the assigned worker step for {{topic}}.",
     };
     await writeJson(workflowPath, workflowJson);
 
@@ -1736,20 +2368,32 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const managerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
-    const workerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const managerExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "oyakata-manager",
+    );
+    const workerExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(managerExec).toBeDefined();
     expect(workerExec).toBeDefined();
     if (managerExec === undefined || workerExec === undefined) {
       return;
     }
 
-    const managerInputRaw = await readFile(path.join(managerExec.artifactDir, "input.json"), "utf8");
-    const workerInputRaw = await readFile(path.join(workerExec.artifactDir, "input.json"), "utf8");
+    const managerInputRaw = await readFile(
+      path.join(managerExec.artifactDir, "input.json"),
+      "utf8",
+    );
+    const workerInputRaw = await readFile(
+      path.join(workerExec.artifactDir, "input.json"),
+      "utf8",
+    );
     const managerInput = JSON.parse(managerInputRaw) as { promptText: string };
     const workerInput = JSON.parse(workerInputRaw) as { promptText: string };
 
-    expect(managerInput.promptText).toContain("You are `oyakata`, the orchestration manager");
+    expect(managerInput.promptText).toContain(
+      "You are `oyakata`, the orchestration manager",
+    );
     expect(managerInput.promptText).toContain("Plan and audit work for B.");
     expect(managerInput.promptText).toContain("Execution context:");
     expect(managerInput.promptText).toContain("Given data:");
@@ -1758,7 +2402,9 @@ describe("runWorkflow", () => {
     expect(managerInput.promptText).toContain("Node-specific instruction:");
     expect(managerInput.promptText).toContain("manager B");
 
-    expect(workerInput.promptText).toContain("Complete the assigned worker step for B.");
+    expect(workerInput.promptText).toContain(
+      "Complete the assigned worker step for B.",
+    );
     expect(workerInput.promptText).toContain("Given data:");
     expect(workerInput.promptText).toContain("Reason this node is running:");
     expect(workerInput.promptText).toContain("Expected return:");
@@ -1792,24 +2438,33 @@ describe("runWorkflow", () => {
       ],
     });
 
-    const result = await runWorkflow("assembled-input", {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      runtimeVariables: { topic: "B" },
-    }, deterministicAdapter);
+    const result = await runWorkflow(
+      "assembled-input",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      deterministicAdapter,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec).toBeDefined();
     if (step1Exec === undefined) {
       return;
     }
 
-    const inputRaw = await readFile(path.join(step1Exec.artifactDir, "input.json"), "utf8");
+    const inputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "input.json"),
+      "utf8",
+    );
     const inputJson = JSON.parse(inputRaw) as {
       arguments: { task: { topic: string; managerNode: string } } | null;
     };
@@ -1825,24 +2480,27 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-retry", false);
 
-    await writeJson(path.join(root, "output-contract-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-retry", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-retry",
@@ -1860,7 +2518,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec).toBeDefined();
     if (step1Exec === undefined) {
       return;
@@ -1868,23 +2528,43 @@ describe("runWorkflow", () => {
     expect(step1Exec.outputAttemptCount).toBe(2);
     expect(step1Exec.outputValidationErrors).toBeUndefined();
 
-    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
-    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    const outputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { summary: string };
+    };
     expect(outputJson.payload.summary).toBe("valid output");
 
     const firstValidationRaw = await readFile(
-      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "validation.json"),
+      path.join(
+        step1Exec.artifactDir,
+        "output-attempts",
+        "attempt-000001",
+        "validation.json",
+      ),
       "utf8",
     );
-    const firstValidationJson = JSON.parse(firstValidationRaw) as { valid: boolean; errors: readonly { path: string }[] };
+    const firstValidationJson = JSON.parse(firstValidationRaw) as {
+      valid: boolean;
+      errors: readonly { path: string }[];
+    };
     expect(firstValidationJson.valid).toBe(false);
     expect(firstValidationJson.errors[0]?.path).toBe("$.summary");
 
     const secondValidationRaw = await readFile(
-      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000002", "validation.json"),
+      path.join(
+        step1Exec.artifactDir,
+        "output-attempts",
+        "attempt-000002",
+        "validation.json",
+      ),
       "utf8",
     );
-    const secondValidationJson = JSON.parse(secondValidationRaw) as { valid: boolean };
+    const secondValidationJson = JSON.parse(secondValidationRaw) as {
+      valid: boolean;
+    };
     expect(secondValidationJson.valid).toBe(true);
   });
 
@@ -1892,27 +2572,30 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-session-retry", false);
 
-    await writeJson(path.join(root, "output-contract-session-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      sessionPolicy: {
-        mode: "reuse",
-      },
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-session-retry", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        sessionPolicy: {
+          mode: "reuse",
+        },
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const adapter = new OutputContractReusableSessionAdapter();
     const result = await runWorkflow(
@@ -1942,34 +2625,41 @@ describe("runWorkflow", () => {
       },
     ]);
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     expect(step1Exec?.backendSessionMode).toBe("new");
     expect(step1Exec?.backendSessionId).toBe("backend-step-1");
-    expect(result.value.session.nodeBackendSessions?.["step-1"]?.sessionId).toBe("backend-step-1");
+    expect(
+      result.value.session.nodeBackendSessions?.["step-1"]?.sessionId,
+    ).toBe("backend-step-1");
   });
 
   test("supports output-validation retry flows with scenario-mock sequences", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-scenario-retry", false);
 
-    await writeJson(path.join(root, "output-contract-scenario-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-scenario-retry", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-scenario-retry",
@@ -1980,8 +2670,16 @@ describe("runWorkflow", () => {
       },
       new ScenarioNodeAdapter({
         "step-1": [
-          { provider: "scenario-mock", when: { always: true }, payload: { wrong: true } },
-          { provider: "scenario-mock", when: { always: true }, payload: { summary: "valid via scenario" } },
+          {
+            provider: "scenario-mock",
+            when: { always: true },
+            payload: { wrong: true },
+          },
+          {
+            provider: "scenario-mock",
+            when: { always: true },
+            payload: { summary: "valid via scenario" },
+          },
         ],
       }),
     );
@@ -1991,11 +2689,18 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
 
-    const outputRaw = await readFile(path.join(step1Exec?.artifactDir ?? "", "output.json"), "utf8");
-    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    const outputRaw = await readFile(
+      path.join(step1Exec?.artifactDir ?? "", "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { summary: string };
+    };
     expect(outputJson.payload.summary).toBe("valid via scenario");
   });
 
@@ -2003,24 +2708,27 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-file-retry", false);
 
-    await writeJson(path.join(root, "output-contract-file-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-file-retry", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-file-retry",
@@ -2038,7 +2746,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     expect(step1Exec?.outputValidationErrors).toBeUndefined();
     if (step1Exec === undefined) {
@@ -2046,7 +2756,12 @@ describe("runWorkflow", () => {
     }
 
     const firstValidationRaw = await readFile(
-      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "validation.json"),
+      path.join(
+        step1Exec.artifactDir,
+        "output-attempts",
+        "attempt-000001",
+        "validation.json",
+      ),
       "utf8",
     );
     const firstValidationJson = JSON.parse(firstValidationRaw) as {
@@ -2055,33 +2770,43 @@ describe("runWorkflow", () => {
     };
     expect(firstValidationJson.valid).toBe(false);
     expect(firstValidationJson.errors[0]?.path).toBe("$");
-    expect(firstValidationJson.errors[0]?.message).toContain("unable to read candidate file");
+    expect(firstValidationJson.errors[0]?.message).toContain(
+      "unable to read candidate file",
+    );
 
-    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
-    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    const outputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { summary: string };
+    };
     expect(outputJson.payload.summary).toBe("fixed from file");
   });
 
   test("clears stale reserved candidate files before each attempt", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-stale-candidate", false);
-    await writeJson(path.join(root, "output-contract-stale-candidate", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/codex-agent",
-      promptTemplate: "step stale file",
-      variables: {},
-      output: {
-        description: "return a summary object",
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-stale-candidate", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/codex-agent",
+        promptTemplate: "step stale file",
+        variables: {},
+        output: {
+          description: "return a summary object",
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const sessionId = "sess-output-contract-stale-candidate";
     const firstRun = await runWorkflow(
@@ -2119,7 +2844,9 @@ describe("runWorkflow", () => {
     const sessionJson = JSON.parse(sessionRaw) as {
       nodeExecutions: readonly { nodeId: string; artifactDir: string }[];
     };
-    const stepExecution = sessionJson.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const stepExecution = sessionJson.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExecution).toBeDefined();
     if (stepExecution === undefined) {
       return;
@@ -2128,25 +2855,37 @@ describe("runWorkflow", () => {
       path.join(stepExecution.artifactDir, "output.json"),
       "utf8",
     );
-    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    const outputJson = JSON.parse(outputRaw) as {
+      error: string;
+      validationErrors: readonly { message: string }[];
+    };
     expect(outputJson.error).toBe("output_validation_failed");
-    expect(outputJson.validationErrors[0]?.message).toContain("unable to read candidate file");
+    expect(outputJson.validationErrors[0]?.message).toContain(
+      "unable to read candidate file",
+    );
   });
 
   test("retries malformed structured outputs for description-only contracts", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-description-retry", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-description-retry",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-description-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return only the summary payload as a JSON object.",
-        maxValidationAttempts: 2,
+    await writeJson(
+      path.join(root, "output-contract-description-retry", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return only the summary payload as a JSON object.",
+          maxValidationAttempts: 2,
+        },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-description-retry",
@@ -2164,14 +2903,21 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     if (step1Exec === undefined) {
       return;
     }
 
     const firstValidationRaw = await readFile(
-      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "validation.json"),
+      path.join(
+        step1Exec.artifactDir,
+        "output-attempts",
+        "attempt-000001",
+        "validation.json",
+      ),
       "utf8",
     );
     const firstValidationJson = JSON.parse(firstValidationRaw) as {
@@ -2179,27 +2925,45 @@ describe("runWorkflow", () => {
       errors: readonly { path: string; message: string }[];
     };
     expect(firstValidationJson.valid).toBe(false);
-    expect(firstValidationJson.errors[0]?.message).toContain("top-level JSON object");
+    expect(firstValidationJson.errors[0]?.message).toContain(
+      "top-level JSON object",
+    );
 
-    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
-    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    const outputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { summary: string };
+    };
     expect(outputJson.payload.summary).toBe("valid after invalid-output retry");
   });
 
   test("uses non-schema retry wording for description-only output contracts", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-description-retry-text", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-description-retry-text",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-description-retry-text", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return only a structured JSON object.",
-        maxValidationAttempts: 2,
+    await writeJson(
+      path.join(
+        root,
+        "output-contract-description-retry-text",
+        "node-step-1.json",
+      ),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return only a structured JSON object.",
+          maxValidationAttempts: 2,
+        },
       },
-    });
+    );
 
     const captureAdapter = new DescriptionOnlyRetryPromptCaptureAdapter();
     const result = await runWorkflow(
@@ -2228,23 +2992,26 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-fail", false);
 
-    await writeJson(path.join(root, "output-contract-fail", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-fail", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-fail",
@@ -2276,7 +3043,10 @@ describe("runWorkflow", () => {
       ),
       "utf8",
     );
-    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { path: string }[] };
+    const outputJson = JSON.parse(outputRaw) as {
+      error: string;
+      validationErrors: readonly { path: string }[];
+    };
     expect(outputJson.error).toBe("output_validation_failed");
     expect(outputJson.validationErrors[0]?.path).toBe("$.summary");
 
@@ -2291,33 +3061,46 @@ describe("runWorkflow", () => {
         outputValidationErrors?: readonly { path: string }[];
       }>;
     };
-    const step1Exec = failedSessionJson.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = failedSessionJson.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     expect(step1Exec?.outputValidationErrors?.[0]?.path).toBe("$.summary");
   });
 
   test("retries invalid adapter output as contract feedback until a valid payload is submitted", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-invalid-output-retry", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-invalid-output-retry",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-invalid-output-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(
+        root,
+        "output-contract-invalid-output-retry",
+        "node-step-1.json",
+      ),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-invalid-output-retry",
@@ -2334,45 +3117,73 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     expect(step1Exec?.outputValidationErrors).toBeUndefined();
 
-    const outputRaw = await readFile(path.join(step1Exec?.artifactDir ?? "", "output.json"), "utf8");
-    const outputJson = JSON.parse(outputRaw) as { payload: { summary: string } };
+    const outputRaw = await readFile(
+      path.join(step1Exec?.artifactDir ?? "", "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { summary: string };
+    };
     expect(outputJson.payload.summary).toBe("valid after invalid-output retry");
 
     const firstValidationRaw = await readFile(
-      path.join(step1Exec?.artifactDir ?? "", "output-attempts", "attempt-000001", "validation.json"),
+      path.join(
+        step1Exec?.artifactDir ?? "",
+        "output-attempts",
+        "attempt-000001",
+        "validation.json",
+      ),
       "utf8",
     );
-    const firstValidationJson = JSON.parse(firstValidationRaw) as { valid: boolean; errors: readonly { message: string }[] };
+    const firstValidationJson = JSON.parse(firstValidationRaw) as {
+      valid: boolean;
+      errors: readonly { message: string }[];
+    };
     expect(firstValidationJson.valid).toBe(false);
-    expect(firstValidationJson.errors[0]?.message).toContain("top-level JSON object");
+    expect(firstValidationJson.errors[0]?.message).toContain(
+      "top-level JSON object",
+    );
   });
 
   test("fails with output_validation_failed when invalid adapter output exhausts contract retries", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-invalid-output-fail", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-invalid-output-fail",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-invalid-output-fail", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(
+        root,
+        "output-contract-invalid-output-fail",
+        "node-step-1.json",
+      ),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-invalid-output-fail",
@@ -2405,32 +3216,48 @@ describe("runWorkflow", () => {
       ),
       "utf8",
     );
-    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    const outputJson = JSON.parse(outputRaw) as {
+      error: string;
+      validationErrors: readonly { message: string }[];
+    };
     expect(outputJson.error).toBe("output_validation_failed");
-    expect(outputJson.validationErrors[0]?.message).toContain("top-level JSON object");
+    expect(outputJson.validationErrors[0]?.message).toContain(
+      "top-level JSON object",
+    );
   });
 
   test("does not report output validation failure after a later provider failure", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-provider-fail-after-retry", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-provider-fail-after-retry",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-provider-fail-after-retry", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(
+        root,
+        "output-contract-provider-fail-after-retry",
+        "node-step-1.json",
+      ),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-provider-fail-after-retry",
@@ -2475,7 +3302,11 @@ describe("runWorkflow", () => {
     expect(outputJson.validationErrors).toBeUndefined();
 
     const failedSessionRaw = await readFile(
-      path.join(root, "sessions", "sess-output-contract-provider-fail-after-retry.json"),
+      path.join(
+        root,
+        "sessions",
+        "sess-output-contract-provider-fail-after-retry.json",
+      ),
       "utf8",
     );
     const failedSessionJson = JSON.parse(failedSessionRaw) as {
@@ -2485,7 +3316,9 @@ describe("runWorkflow", () => {
         outputValidationErrors?: readonly { path: string }[];
       }>;
     };
-    const step1Exec = failedSessionJson.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = failedSessionJson.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     expect(step1Exec?.outputValidationErrors).toBeUndefined();
   });
@@ -2494,23 +3327,26 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-prompt", false);
 
-    await writeJson(path.join(root, "output-contract-prompt", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-prompt", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-prompt",
@@ -2527,13 +3363,18 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec).toBeDefined();
     if (step1Exec === undefined) {
       return;
     }
 
-    const inputRaw = await readFile(path.join(step1Exec.artifactDir, "input.json"), "utf8");
+    const inputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "input.json"),
+      "utf8",
+    );
     const inputJson = JSON.parse(inputRaw) as {
       promptText: string;
       outputContract?: Record<string, unknown>;
@@ -2558,7 +3399,10 @@ describe("runWorkflow", () => {
       },
     });
 
-    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output.json"),
+      "utf8",
+    );
     const outputJson = JSON.parse(outputRaw) as { promptText: string };
     expect(outputJson.promptText).toContain("Execution context:");
     expect(outputJson.promptText).toContain("Node-specific instruction:\nstep");
@@ -2568,26 +3412,33 @@ describe("runWorkflow", () => {
 
   test("persists per-attempt contract request artifacts for retry auditability", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-request-artifacts", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-request-artifacts",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-request-artifacts", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: { topic: "audit" },
-      output: {
-        description: "Return a structured summary object.",
-        maxValidationAttempts: 2,
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-request-artifacts", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: { topic: "audit" },
+        output: {
+          description: "Return a structured summary object.",
+          maxValidationAttempts: 2,
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-request-artifacts",
@@ -2604,14 +3455,21 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const step1Exec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const step1Exec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(step1Exec?.outputAttemptCount).toBe(2);
     if (step1Exec === undefined) {
       return;
     }
 
     const firstRequestRaw = await readFile(
-      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000001", "request.json"),
+      path.join(
+        step1Exec.artifactDir,
+        "output-attempts",
+        "attempt-000001",
+        "request.json",
+      ),
       "utf8",
     );
     const firstRequestJson = JSON.parse(firstRequestRaw) as {
@@ -2622,13 +3480,24 @@ describe("runWorkflow", () => {
     };
     expect(firstRequestJson.attempt).toBe(1);
     expect(firstRequestJson.promptText).toContain("Candidate-Path:");
-    expect(firstRequestJson.promptText).not.toContain("Previous output was rejected:");
+    expect(firstRequestJson.promptText).not.toContain(
+      "Previous output was rejected:",
+    );
     expect(firstRequestJson.validationErrors).toEqual([]);
-    expect(firstRequestJson.candidatePath).toContain("/oyakata-output-candidates/");
-    expect(firstRequestJson.candidatePath).toContain("/attempt-000001/candidate.json");
+    expect(firstRequestJson.candidatePath).toContain(
+      "/oyakata-output-candidates/",
+    );
+    expect(firstRequestJson.candidatePath).toContain(
+      "/attempt-000001/candidate.json",
+    );
 
     const secondRequestRaw = await readFile(
-      path.join(step1Exec.artifactDir, "output-attempts", "attempt-000002", "request.json"),
+      path.join(
+        step1Exec.artifactDir,
+        "output-attempts",
+        "attempt-000002",
+        "request.json",
+      ),
       "utf8",
     );
     const secondRequestJson = JSON.parse(secondRequestRaw) as {
@@ -2638,39 +3507,55 @@ describe("runWorkflow", () => {
       validationErrors: readonly { path: string; message: string }[];
     };
     expect(secondRequestJson.attempt).toBe(2);
-    expect(secondRequestJson.promptText).toContain("Previous output was rejected:");
+    expect(secondRequestJson.promptText).toContain(
+      "Previous output was rejected:",
+    );
     expect(secondRequestJson.validationErrors[0]?.path).toBe("$.summary");
-    expect(secondRequestJson.candidatePath).toContain("/oyakata-output-candidates/");
-    expect(secondRequestJson.candidatePath).toContain("/attempt-000002/candidate.json");
+    expect(secondRequestJson.candidatePath).toContain(
+      "/oyakata-output-candidates/",
+    );
+    expect(secondRequestJson.candidatePath).toContain(
+      "/attempt-000002/candidate.json",
+    );
 
-    const outputRaw = await readFile(path.join(step1Exec.artifactDir, "output.json"), "utf8");
+    const outputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "output.json"),
+      "utf8",
+    );
     const outputJson = JSON.parse(outputRaw) as { promptText: string };
     expect(outputJson.promptText).toContain("Execution context:");
-    expect(outputJson.promptText).toContain("Node-specific instruction:\nstep audit");
-    expect(outputJson.promptText).not.toContain("Previous output was rejected:");
+    expect(outputJson.promptText).toContain(
+      "Node-specific instruction:\nstep audit",
+    );
+    expect(outputJson.promptText).not.toContain(
+      "Previous output was rejected:",
+    );
   });
 
   test("makes runtime-owned publication rules explicit to contract-enabled adapters", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-boundary", false);
 
-    await writeJson(path.join(root, "output-contract-boundary", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-boundary", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const captureAdapter = new OutputContractPromptCaptureAdapter();
     const result = await runWorkflow(
@@ -2688,8 +3573,12 @@ describe("runWorkflow", () => {
       return;
     }
 
-    expect(captureAdapter.capturedPromptText).toContain("Final output.json publication and mailbox delivery are runtime-owned.");
-    expect(captureAdapter.capturedPromptText).toContain("Do not write mailbox files, output.json, or invent communication ids.");
+    expect(captureAdapter.capturedPromptText).toContain(
+      "Final output.json publication and mailbox delivery are runtime-owned.",
+    );
+    expect(captureAdapter.capturedPromptText).toContain(
+      "Do not write mailbox files, output.json, or invent communication ids.",
+    );
     expect(captureAdapter.capturedPromptText).toContain("Candidate-Path:");
     expect(captureAdapter.capturedOutputContract).toMatchObject({
       publication: {
@@ -2704,25 +3593,32 @@ describe("runWorkflow", () => {
 
   test("keeps retry validation feedback compact in follow-up prompts", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "output-contract-compact-feedback", false);
+    await createWorkflowFixture(
+      root,
+      "output-contract-compact-feedback",
+      false,
+    );
 
-    await writeJson(path.join(root, "output-contract-compact-feedback", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-compact-feedback", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
+          maxValidationAttempts: 2,
         },
-        maxValidationAttempts: 2,
       },
-    });
+    );
 
     const captureAdapter = new OutputContractRetryPromptCaptureAdapter();
     const result = await runWorkflow(
@@ -2743,7 +3639,9 @@ describe("runWorkflow", () => {
     expect(captureAdapter.prompts).toHaveLength(2);
     expect(captureAdapter.validationErrorsByAttempt).toHaveLength(2);
     expect(captureAdapter.validationErrorsByAttempt[0]).toEqual([]);
-    expect(captureAdapter.validationErrorsByAttempt[1]?.length).toBeLessThanOrEqual(8);
+    expect(
+      captureAdapter.validationErrorsByAttempt[1]?.length,
+    ).toBeLessThanOrEqual(8);
     const retryPrompt = captureAdapter.prompts[1] ?? "";
     expect(retryPrompt).toContain("Previous output was rejected:");
     expect(retryPrompt).toContain("additional validation errors omitted");
@@ -2757,22 +3655,25 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-file-path", false);
 
-    await writeJson(path.join(root, "output-contract-file-path", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-file-path", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const result = await runWorkflow(
       "output-contract-file-path",
@@ -2805,14 +3706,23 @@ describe("runWorkflow", () => {
       ),
       "utf8",
     );
-    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    const outputJson = JSON.parse(outputRaw) as {
+      error: string;
+      validationErrors: readonly { message: string }[];
+    };
     expect(outputJson.error).toBe("invalid_output");
-    expect(outputJson.validationErrors[0]?.message).toContain("reserved candidate path");
+    expect(outputJson.validationErrors[0]?.message).toContain(
+      "reserved candidate path",
+    );
   });
 
   test("classifies non-contract candidate-file failures as invalid adapter output", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "non-contract-candidate-file-failure", false);
+    await createWorkflowFixture(
+      root,
+      "non-contract-candidate-file-failure",
+      false,
+    );
 
     const result = await runWorkflow(
       "non-contract-candidate-file-failure",
@@ -2845,14 +3755,23 @@ describe("runWorkflow", () => {
       ),
       "utf8",
     );
-    const outputJson = JSON.parse(outputRaw) as { error: string; validationErrors: readonly { message: string }[] };
+    const outputJson = JSON.parse(outputRaw) as {
+      error: string;
+      validationErrors: readonly { message: string }[];
+    };
     expect(outputJson.error).toBe("invalid_output");
-    expect(outputJson.validationErrors[0]?.message).toContain("candidateFilePath is only supported");
+    expect(outputJson.validationErrors[0]?.message).toContain(
+      "candidateFilePath is only supported",
+    );
   });
 
   test("does not persist output-attempt artifacts for nodes without output contracts", async () => {
     const root = await makeTempDir();
-    await createWorkflowFixture(root, "non-contract-no-output-attempt-artifacts", false);
+    await createWorkflowFixture(
+      root,
+      "non-contract-no-output-attempt-artifacts",
+      false,
+    );
 
     const result = await runWorkflow(
       "non-contract-no-output-attempt-artifacts",
@@ -2870,14 +3789,24 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const stepExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const stepExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExecution).toBeDefined();
     if (stepExecution === undefined) {
       return;
     }
 
     await expect(
-      readFile(path.join(stepExecution.artifactDir, "output-attempts", "attempt-000001", "request.json"), "utf8"),
+      readFile(
+        path.join(
+          stepExecution.artifactDir,
+          "output-attempts",
+          "attempt-000001",
+          "request.json",
+        ),
+        "utf8",
+      ),
     ).rejects.toThrow();
   });
 
@@ -2886,7 +3815,11 @@ describe("runWorkflow", () => {
     const artifactRoot = await makeTempDir();
     await createWorkflowFixture(workflowRoot, "file-output-ready", false);
 
-    const nodeFile = path.join(workflowRoot, "file-output-ready", "node-step-1.json");
+    const nodeFile = path.join(
+      workflowRoot,
+      "file-output-ready",
+      "node-step-1.json",
+    );
     await writeJson(nodeFile, {
       id: "step-1",
       model: "tacogips/claude-code-agent",
@@ -2918,10 +3851,17 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const stepExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const stepExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExecution).toBeDefined();
     const candidateRaw = await readFile(
-      path.join(stepExecution!.artifactDir, "output-attempts", "attempt-000001", "candidate.json"),
+      path.join(
+        stepExecution!.artifactDir,
+        "output-attempts",
+        "attempt-000001",
+        "candidate.json",
+      ),
       "utf8",
     );
     expect(JSON.parse(candidateRaw)).toEqual({ summary: "direct write" });
@@ -2931,23 +3871,26 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-staging-path", false);
 
-    await writeJson(path.join(root, "output-contract-staging-path", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      output: {
-        description: "Return a structured summary object.",
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(root, "output-contract-staging-path", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        output: {
+          description: "Return a structured summary object.",
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
     const captureAdapter = new OutputContractPromptCaptureAdapter();
     const result = await runWorkflow(
@@ -2965,34 +3908,53 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const stepExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const stepExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExecution).toBeDefined();
-    expect(captureAdapter.capturedOutputContract?.candidatePath).toContain("/oyakata-output-candidates/");
-    expect(captureAdapter.capturedOutputContract?.candidatePath).not.toContain(stepExecution?.artifactDir ?? "");
+    expect(captureAdapter.capturedOutputContract?.candidatePath).toContain(
+      "/oyakata-output-candidates/",
+    );
+    expect(captureAdapter.capturedOutputContract?.candidatePath).not.toContain(
+      stepExecution?.artifactDir ?? "",
+    );
   });
 
   test("cleans up reserved candidate staging files after publication and after terminal failure", async () => {
     const successRoot = await makeTempDir();
-    await createWorkflowFixture(successRoot, "output-contract-cleanup-success", false);
+    await createWorkflowFixture(
+      successRoot,
+      "output-contract-cleanup-success",
+      false,
+    );
 
-    await writeJson(path.join(successRoot, "output-contract-cleanup-success", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step",
-      variables: {},
-      output: {
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(
+        successRoot,
+        "output-contract-cleanup-success",
+        "node-step-1.json",
+      ),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step",
+        variables: {},
+        output: {
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
-    const successCaptureAdapter = new OutputContractCandidatePathCaptureAdapter("success");
+    const successCaptureAdapter = new OutputContractCandidatePathCaptureAdapter(
+      "success",
+    );
     const successResult = await runWorkflow(
       "output-contract-cleanup-success",
       {
@@ -3009,26 +3971,39 @@ describe("runWorkflow", () => {
     await expect(readFile(successCandidatePath!, "utf8")).rejects.toThrow();
 
     const failureRoot = await makeTempDir();
-    await createWorkflowFixture(failureRoot, "output-contract-cleanup-failure", false);
+    await createWorkflowFixture(
+      failureRoot,
+      "output-contract-cleanup-failure",
+      false,
+    );
 
-    await writeJson(path.join(failureRoot, "output-contract-cleanup-failure", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step",
-      variables: {},
-      output: {
-        jsonSchema: {
-          type: "object",
-          required: ["summary"],
-          additionalProperties: false,
-          properties: {
-            summary: { type: "string", minLength: 1 },
+    await writeJson(
+      path.join(
+        failureRoot,
+        "output-contract-cleanup-failure",
+        "node-step-1.json",
+      ),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step",
+        variables: {},
+        output: {
+          jsonSchema: {
+            type: "object",
+            required: ["summary"],
+            additionalProperties: false,
+            properties: {
+              summary: { type: "string", minLength: 1 },
+            },
           },
         },
       },
-    });
+    );
 
-    const failureCaptureAdapter = new OutputContractCandidatePathCaptureAdapter("invalid-json");
+    const failureCaptureAdapter = new OutputContractCandidatePathCaptureAdapter(
+      "invalid-json",
+    );
     const failureResult = await runWorkflow(
       "output-contract-cleanup-failure",
       {
@@ -3049,28 +4024,35 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "missing-required-binding", false);
 
-    await writeJson(path.join(root, "missing-required-binding", "node-step-1.json"), {
-      id: "step-1",
-      model: "tacogips/claude-code-agent",
-      promptTemplate: "step {{topic}}",
-      variables: {},
-      argumentsTemplate: {},
-      argumentBindings: [
-        {
-          targetPath: "task.userInput",
-          source: "human-input",
-          sourcePath: "response",
-          required: true,
-        },
-      ],
-    });
+    await writeJson(
+      path.join(root, "missing-required-binding", "node-step-1.json"),
+      {
+        id: "step-1",
+        model: "tacogips/claude-code-agent",
+        promptTemplate: "step {{topic}}",
+        variables: {},
+        argumentsTemplate: {},
+        argumentBindings: [
+          {
+            targetPath: "task.userInput",
+            source: "human-input",
+            sourcePath: "response",
+            required: true,
+          },
+        ],
+      },
+    );
 
-    const result = await runWorkflow("missing-required-binding", {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      runtimeVariables: { topic: "B" },
-    }, deterministicAdapter);
+    const result = await runWorkflow(
+      "missing-required-binding",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "B" },
+      },
+      deterministicAdapter,
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -3090,33 +4072,49 @@ describe("runWorkflow", () => {
       sessionStoreRoot: path.join(root, "sessions"),
     };
 
-    const paused = await runWorkflow(workflowName, {
-      ...options,
-      sessionId: "sess-corrupt-upstream",
-      maxSteps: 1,
-    }, deterministicAdapter);
+    const paused = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId: "sess-corrupt-upstream",
+        maxSteps: 1,
+      },
+      deterministicAdapter,
+    );
     expect(paused.ok).toBe(true);
     if (!paused.ok) {
       return;
     }
     expect(paused.value.session.status).toBe("paused");
 
-    const managerExec = paused.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
+    const managerExec = paused.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "oyakata-manager",
+    );
     expect(managerExec).toBeDefined();
     if (managerExec === undefined) {
       return;
     }
-    await writeFile(path.join(managerExec.artifactDir, "output.json"), "\"corrupted\"\n", "utf8");
+    await writeFile(
+      path.join(managerExec.artifactDir, "output.json"),
+      '"corrupted"\n',
+      "utf8",
+    );
 
-    const resumed = await runWorkflow(workflowName, {
-      ...options,
-      resumeSessionId: paused.value.session.sessionId,
-    }, deterministicAdapter);
+    const resumed = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        resumeSessionId: paused.value.session.sessionId,
+      },
+      deterministicAdapter,
+    );
 
     expect(resumed.ok).toBe(false);
     if (!resumed.ok) {
       expect(resumed.error.exitCode).toBe(1);
-      expect(resumed.error.message).toContain("failed to resolve upstream communication");
+      expect(resumed.error.message).toContain(
+        "failed to resolve upstream communication",
+      );
       expect(resumed.error.message).toContain("comm-000001");
     }
   });
@@ -3146,18 +4144,29 @@ describe("runWorkflow", () => {
     }
     expect(completed.value.session.status).toBe("completed");
 
-    const outputExec = completed.value.session.nodeExecutions.find((entry) => entry.nodeId === "workflow-output");
+    const outputExec = completed.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "workflow-output",
+    );
     expect(outputExec).toBeDefined();
     if (outputExec === undefined) {
       return;
     }
 
-    await writeFile(path.join(outputExec.artifactDir, "output.json"), "[]\n", "utf8");
-
-    const resumableCommunications = completed.value.session.communications.filter(
-      (entry) => entry.deliveryKind !== "external-output",
+    await writeFile(
+      path.join(outputExec.artifactDir, "output.json"),
+      "[]\n",
+      "utf8",
     );
-    const { endedAt: _endedAt, lastError: _lastError, ...completedWithoutTerminalFields } = completed.value.session;
+
+    const resumableCommunications =
+      completed.value.session.communications.filter(
+        (entry) => entry.deliveryKind !== "external-output",
+      );
+    const {
+      endedAt: _endedAt,
+      lastError: _lastError,
+      ...completedWithoutTerminalFields
+    } = completed.value.session;
     const resumableSession = {
       ...completedWithoutTerminalFields,
       status: "paused" as const,
@@ -3167,33 +4176,48 @@ describe("runWorkflow", () => {
     const saved = await saveSession(resumableSession, options);
     expect(saved.ok).toBe(true);
 
-    const resumed = await runWorkflow(workflowName, {
-      ...options,
-      resumeSessionId: completed.value.session.sessionId,
-    }, deterministicAdapter);
+    const resumed = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        resumeSessionId: completed.value.session.sessionId,
+      },
+      deterministicAdapter,
+    );
 
     expect(resumed.ok).toBe(false);
     if (!resumed.ok) {
       expect(resumed.error.exitCode).toBe(1);
-      expect(resumed.error.message).toContain("failed to publish selected external output");
+      expect(resumed.error.message).toContain(
+        "failed to publish selected external output",
+      );
       expect(resumed.error.message).toContain("workflow-output");
       expect(resumed.error.message).toContain(outputExec.nodeExecId);
       expect(resumed.error.message).toContain("output artifact");
-      expect(resumed.error.message).toContain(path.join(outputExec.artifactDir, "output.json"));
+      expect(resumed.error.message).toContain(
+        path.join(outputExec.artifactDir, "output.json"),
+      );
       expect(resumed.error.message).toContain("must contain a JSON object");
     }
 
-    const failedSession = await loadSession(completed.value.session.sessionId, options);
+    const failedSession = await loadSession(
+      completed.value.session.sessionId,
+      options,
+    );
     expect(failedSession.ok).toBe(true);
     if (!failedSession.ok) {
       return;
     }
 
     expect(failedSession.value.status).toBe("failed");
-    expect(failedSession.value.lastError).toContain("failed to publish selected external output");
+    expect(failedSession.value.lastError).toContain(
+      "failed to publish selected external output",
+    );
     expect(failedSession.value.lastError).toContain("workflow-output");
     expect(failedSession.value.lastError).toContain(outputExec.nodeExecId);
-    expect(failedSession.value.lastError).toContain(path.join(outputExec.artifactDir, "output.json"));
+    expect(failedSession.value.lastError).toContain(
+      path.join(outputExec.artifactDir, "output.json"),
+    );
   });
 
   test("preserves selected external output artifact bytes when publication resumes", async () => {
@@ -3221,21 +4245,30 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const outputExec = completed.value.session.nodeExecutions.find((entry) => entry.nodeId === "workflow-output");
+    const outputExec = completed.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "workflow-output",
+    );
     expect(outputExec).toBeDefined();
     if (outputExec === undefined) {
       return;
     }
 
     const outputPath = path.join(outputExec.artifactDir, "output.json");
-    const originalOutputJson = JSON.parse(await readFile(outputPath, "utf8")) as unknown;
+    const originalOutputJson = JSON.parse(
+      await readFile(outputPath, "utf8"),
+    ) as unknown;
     const reformattedOutputRaw = `${JSON.stringify(originalOutputJson, null, 4)}\n`;
     await writeFile(outputPath, reformattedOutputRaw, "utf8");
 
-    const resumableCommunications = completed.value.session.communications.filter(
-      (entry) => entry.deliveryKind !== "external-output",
-    );
-    const { endedAt: _endedAt, lastError: _lastError, ...completedWithoutTerminalFields } = completed.value.session;
+    const resumableCommunications =
+      completed.value.session.communications.filter(
+        (entry) => entry.deliveryKind !== "external-output",
+      );
+    const {
+      endedAt: _endedAt,
+      lastError: _lastError,
+      ...completedWithoutTerminalFields
+    } = completed.value.session;
     const resumableSession = {
       ...completedWithoutTerminalFields,
       status: "paused" as const,
@@ -3245,10 +4278,14 @@ describe("runWorkflow", () => {
     const saved = await saveSession(resumableSession, options);
     expect(saved.ok).toBe(true);
 
-    const resumed = await runWorkflow(workflowName, {
-      ...options,
-      resumeSessionId: sessionId,
-    }, deterministicAdapter);
+    const resumed = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        resumeSessionId: sessionId,
+      },
+      deterministicAdapter,
+    );
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) {
       return;
@@ -3266,7 +4303,12 @@ describe("runWorkflow", () => {
     }
 
     const mailboxOutputRaw = await readFile(
-      path.join(outputCommunication.artifactDir, "outbox", "workflow-output", "output.json"),
+      path.join(
+        outputCommunication.artifactDir,
+        "outbox",
+        "workflow-output",
+        "output.json",
+      ),
       "utf8",
     );
     expect(mailboxOutputRaw).toBe(reformattedOutputRaw);
@@ -3310,7 +4352,9 @@ describe("runWorkflow", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.exitCode).toBe(1);
-      expect(result.error.message).toContain("failed to persist external output publication");
+      expect(result.error.message).toContain(
+        "failed to persist external output publication",
+      );
       expect(result.error.message).toContain("workflow-output");
       expect(result.error.message).toContain("exec-000002");
     }
@@ -3322,10 +4366,14 @@ describe("runWorkflow", () => {
     }
 
     expect(failedSession.value.status).toBe("failed");
-    expect(failedSession.value.lastError).toContain("failed to persist external output publication");
+    expect(failedSession.value.lastError).toContain(
+      "failed to persist external output publication",
+    );
     expect(failedSession.value.lastError).toContain("exec-000002");
     expect(
-      failedSession.value.communications.some((entry) => entry.deliveryKind === "external-output"),
+      failedSession.value.communications.some(
+        (entry) => entry.deliveryKind === "external-output",
+      ),
     ).toBe(false);
   });
 
@@ -3335,9 +4383,12 @@ describe("runWorkflow", () => {
     const sessionId = "sess-completed-save-failure";
     await createSingleRootOutputFixture(root, workflowName);
 
-    const sessionFilePath = path.join(getSessionStoreRoot({
-      sessionStoreRoot: path.join(root, "sessions"),
-    }), `${sessionId}.json`);
+    const sessionFilePath = path.join(
+      getSessionStoreRoot({
+        sessionStoreRoot: path.join(root, "sessions"),
+      }),
+      `${sessionId}.json`,
+    );
     await mkdir(path.dirname(sessionFilePath), { recursive: true });
     await mkdir(sessionFilePath, { recursive: true });
 
@@ -3355,7 +4406,9 @@ describe("runWorkflow", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.exitCode).toBe(1);
-      expect(result.error.message).toContain("failed to persist completed workflow session state");
+      expect(result.error.message).toContain(
+        "failed to persist completed workflow session state",
+      );
       expect(result.error.message).toContain("failed writing session file");
     }
   });
@@ -3383,16 +4436,27 @@ describe("runWorkflow", () => {
     }
     expect(result.value.session.status).toBe("completed");
     expect(result.value.session.loopIterationCounts?.["main-loop"]).toBe(2);
-    const stepExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-1");
+    const stepExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExecutions).toHaveLength(3);
     const upstreamCommunications = await Promise.all(
       stepExecutions.map(async (execution) => {
-        const inputRaw = await readFile(path.join(execution.artifactDir, "input.json"), "utf8");
-        const inputJson = JSON.parse(inputRaw) as { upstreamCommunications: readonly string[] };
+        const inputRaw = await readFile(
+          path.join(execution.artifactDir, "input.json"),
+          "utf8",
+        );
+        const inputJson = JSON.parse(inputRaw) as {
+          upstreamCommunications: readonly string[];
+        };
         return inputJson.upstreamCommunications;
       }),
     );
-    expect(upstreamCommunications).toEqual([["comm-000001"], ["comm-000002"], ["comm-000003"]]);
+    expect(upstreamCommunications).toEqual([
+      ["comm-000001"],
+      ["comm-000002"],
+      ["comm-000003"],
+    ]);
   });
 
   test("supports dry-run without adapter execution", async () => {
@@ -3411,9 +4475,14 @@ describe("runWorkflow", () => {
       return;
     }
     expect(result.value.session.status).toBe("completed");
-    const managerExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "oyakata-manager");
+    const managerExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "oyakata-manager",
+    );
     expect(managerExec).toBeDefined();
-    const outputRaw = await readFile(path.join(managerExec!.artifactDir, "output.json"), "utf8");
+    const outputRaw = await readFile(
+      path.join(managerExec!.artifactDir, "output.json"),
+      "utf8",
+    );
     const outputJson = JSON.parse(outputRaw) as { provider: string };
     expect(outputJson.provider).toBe("dry-run");
   });
@@ -3460,7 +4529,9 @@ describe("runWorkflow", () => {
     expect(result.value.session.status).toBe("completed");
     expect((result.value.session.restartEvents ?? []).length).toBe(1);
     expect((result.value.session.restartCounts ?? {})["step-1"]).toBe(1);
-    const stepExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "step-1");
+    const stepExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExecutions).toHaveLength(2);
     expect(stepExecutions[0]?.status).toBe("timed_out");
     expect(stepExecutions[1]?.status).toBe("succeeded");
@@ -3501,11 +4572,20 @@ describe("runWorkflow", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.exitCode).toBe(6);
-      const timedOutSessionRaw = await readFile(path.join(root, "sessions", `${sessionId}.json`), "utf8");
+      const timedOutSessionRaw = await readFile(
+        path.join(root, "sessions", `${sessionId}.json`),
+        "utf8",
+      );
       const timedOutSession = JSON.parse(timedOutSessionRaw) as {
-        communications: readonly { status: string; fromNodeId: string; toNodeId: string }[];
+        communications: readonly {
+          status: string;
+          fromNodeId: string;
+          toNodeId: string;
+        }[];
       };
-      const timedOutNodeOutgoing = timedOutSession.communications.filter((entry) => entry.fromNodeId === "step-1");
+      const timedOutNodeOutgoing = timedOutSession.communications.filter(
+        (entry) => entry.fromNodeId === "step-1",
+      );
       expect(timedOutNodeOutgoing).toEqual([]);
     }
   });
@@ -3516,7 +4596,10 @@ describe("runWorkflow", () => {
 
     const blockedAdapter: NodeAdapter = {
       async execute(_input) {
-        throw new AdapterExecutionError("policy_blocked", "blocked by provider policy");
+        throw new AdapterExecutionError(
+          "policy_blocked",
+          "blocked by provider policy",
+        );
       },
     };
 
@@ -3563,13 +4646,21 @@ describe("runWorkflow", () => {
       return;
     }
     expect(result.value.session.status).toBe("completed");
-    const stepExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "step-1");
+    const stepExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
     expect(stepExec).toBeDefined();
     if (stepExec === undefined) {
       return;
     }
-    const outputRaw = await readFile(path.join(stepExec.artifactDir, "output.json"), "utf8");
-    const outputJson = JSON.parse(outputRaw) as { provider: string; payload: { stage: string } };
+    const outputRaw = await readFile(
+      path.join(stepExec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      provider: string;
+      payload: { stage: string };
+    };
     expect(outputJson.provider).toBe("scenario-mock");
     expect(outputJson.payload.stage).toBe("test-review");
   });
@@ -3589,17 +4680,23 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const rerun = await runWorkflow("rerun", {
-      ...options,
-      rerunFromSessionId: first.value.session.sessionId,
-      rerunFromNodeId: "step-1",
-    }, deterministicAdapter);
+    const rerun = await runWorkflow(
+      "rerun",
+      {
+        ...options,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromNodeId: "step-1",
+      },
+      deterministicAdapter,
+    );
     expect(rerun.ok).toBe(true);
     if (!rerun.ok) {
       return;
     }
 
-    expect(rerun.value.session.sessionId).not.toBe(first.value.session.sessionId);
+    expect(rerun.value.session.sessionId).not.toBe(
+      first.value.session.sessionId,
+    );
     expect(rerun.value.session.nodeExecutions).toHaveLength(1);
     expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
     expect(rerun.value.session.startedAt.length).toBeGreaterThan(0);
@@ -3615,12 +4712,18 @@ describe("runWorkflow", () => {
     };
 
     const firstAdapter = new ReusableSessionAdapter();
-    const first = await runWorkflow("rerun-node-session-reuse", options, firstAdapter);
+    const first = await runWorkflow(
+      "rerun-node-session-reuse",
+      options,
+      firstAdapter,
+    );
     expect(first.ok).toBe(true);
     if (!first.ok) {
       return;
     }
-    expect(first.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe("backend-b-1");
+    expect(first.value.session.nodeBackendSessions?.["step-b"]?.sessionId).toBe(
+      "backend-b-1",
+    );
 
     const rerunAdapter = new ReusableSessionAdapter();
     const rerun = await runWorkflow(
@@ -3637,11 +4740,18 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const stepBCalls = rerunAdapter.calls.filter((entry) => entry.nodeId === "step-b");
+    const stepBCalls = rerunAdapter.calls.filter(
+      (entry) => entry.nodeId === "step-b",
+    );
     expect(stepBCalls).toHaveLength(2);
     expect(stepBCalls[0]?.backendSession).toEqual({ mode: "new" });
-    expect(stepBCalls[1]?.backendSession).toEqual({ mode: "reuse", sessionId: "backend-b-1" });
-    expect(rerun.value.session.sessionId).not.toBe(first.value.session.sessionId);
+    expect(stepBCalls[1]?.backendSession).toEqual({
+      mode: "reuse",
+      sessionId: "backend-b-1",
+    });
+    expect(rerun.value.session.sessionId).not.toBe(
+      first.value.session.sessionId,
+    );
     expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-b");
   });
 
@@ -3649,14 +4759,18 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createSubWorkflowRuntimeFixture(root, "subworkflow-runtime");
 
-    const result = await runWorkflow("subworkflow-runtime", {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      runtimeVariables: {
-        humanInput: { topic: "demo" },
+    const result = await runWorkflow(
+      "subworkflow-runtime",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: {
+          humanInput: { topic: "demo" },
+        },
       },
-    }, deterministicAdapter);
+      deterministicAdapter,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -3664,45 +4778,93 @@ describe("runWorkflow", () => {
     }
     expect(result.value.session.status).toBe("completed");
 
-    const executionOrder = result.value.session.nodeExecutions.map((entry) => entry.nodeId);
-    expect(executionOrder.indexOf("a-manager")).toBeGreaterThan(executionOrder.indexOf("oyakata-manager"));
-    expect(executionOrder.indexOf("a-input")).toBeGreaterThan(executionOrder.indexOf("a-manager"));
-    expect(executionOrder.indexOf("a-output")).toBeGreaterThan(executionOrder.indexOf("a-input"));
-    expect(executionOrder.indexOf("b-manager")).toBeGreaterThan(executionOrder.indexOf("a-output"));
-    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(executionOrder.indexOf("a-output"));
-    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(executionOrder.indexOf("b-manager"));
-    expect(executionOrder.indexOf("b-output")).toBeGreaterThan(executionOrder.indexOf("b-input"));
-    expect((result.value.session.conversationTurns ?? []).length).toBeGreaterThan(0);
-    expect(result.value.session.conversationTurns?.[0]?.fromSubWorkflowId).toBe("sw-a");
-    expect(result.value.session.conversationTurns?.[0]?.toSubWorkflowId).toBe("sw-b");
-    expect(result.value.session.conversationTurns?.[0]?.communicationId).toMatch(/^comm-\d{6}$/);
+    const executionOrder = result.value.session.nodeExecutions.map(
+      (entry) => entry.nodeId,
+    );
+    expect(executionOrder.indexOf("a-manager")).toBeGreaterThan(
+      executionOrder.indexOf("oyakata-manager"),
+    );
+    expect(executionOrder.indexOf("a-input")).toBeGreaterThan(
+      executionOrder.indexOf("a-manager"),
+    );
+    expect(executionOrder.indexOf("a-output")).toBeGreaterThan(
+      executionOrder.indexOf("a-input"),
+    );
+    expect(executionOrder.indexOf("b-manager")).toBeGreaterThan(
+      executionOrder.indexOf("a-output"),
+    );
+    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(
+      executionOrder.indexOf("a-output"),
+    );
+    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(
+      executionOrder.indexOf("b-manager"),
+    );
+    expect(executionOrder.indexOf("b-output")).toBeGreaterThan(
+      executionOrder.indexOf("b-input"),
+    );
+    expect(
+      (result.value.session.conversationTurns ?? []).length,
+    ).toBeGreaterThan(0);
+    expect(result.value.session.conversationTurns?.[0]?.fromSubWorkflowId).toBe(
+      "sw-a",
+    );
+    expect(result.value.session.conversationTurns?.[0]?.toSubWorkflowId).toBe(
+      "sw-b",
+    );
+    expect(
+      result.value.session.conversationTurns?.[0]?.communicationId,
+    ).toMatch(/^comm-\d{6}$/);
 
-    const bInputExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "b-input");
+    const bInputExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "b-input",
+    );
     expect(bInputExec).toBeDefined();
     if (bInputExec === undefined) {
       return;
     }
-    const bInputRaw = await readFile(path.join(bInputExec.artifactDir, "input.json"), "utf8");
+    const bInputRaw = await readFile(
+      path.join(bInputExec.artifactDir, "input.json"),
+      "utf8",
+    );
     const bInputJson = JSON.parse(bInputRaw) as {
-      upstreamOutputRefs: readonly { subWorkflowId?: string; outputNodeId: string }[];
+      upstreamOutputRefs: readonly {
+        subWorkflowId?: string;
+        outputNodeId: string;
+      }[];
       upstreamCommunications: readonly string[];
     };
-    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.subWorkflowId === "sw-b")).toBe(true);
-    expect(bInputJson.upstreamOutputRefs.some((entry) => entry.outputNodeId === "b-manager")).toBe(true);
+    expect(
+      bInputJson.upstreamOutputRefs.some(
+        (entry) => entry.subWorkflowId === "sw-b",
+      ),
+    ).toBe(true);
+    expect(
+      bInputJson.upstreamOutputRefs.some(
+        (entry) => entry.outputNodeId === "b-manager",
+      ),
+    ).toBe(true);
     expect(bInputJson.upstreamCommunications.length).toBeGreaterThan(0);
 
-    const aOutputExec = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-output");
+    const aOutputExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "a-output",
+    );
     expect(aOutputExec).toBeDefined();
     if (aOutputExec === undefined) {
       return;
     }
-    const aOutputHandoffRaw = await readFile(path.join(aOutputExec.artifactDir, "handoff.json"), "utf8");
+    const aOutputHandoffRaw = await readFile(
+      path.join(aOutputExec.artifactDir, "handoff.json"),
+      "utf8",
+    );
     const aOutputHandoffJson = JSON.parse(aOutputHandoffRaw) as {
       outputRef: { subWorkflowId?: string };
     };
     expect(aOutputHandoffJson.outputRef.subWorkflowId).toBe("sw-a");
 
-    const aOutputCommitMessage = await readFile(path.join(aOutputExec.artifactDir, "commit-message.txt"), "utf8");
+    const aOutputCommitMessage = await readFile(
+      path.join(aOutputExec.artifactDir, "commit-message.txt"),
+      "utf8",
+    );
     expect(aOutputCommitMessage).toContain("Subworkflow-ID: sw-a");
 
     const conversationCommunication = result.value.session.communications.find(
@@ -3713,16 +4875,20 @@ describe("runWorkflow", () => {
     expect(conversationCommunication?.toSubWorkflowId).toBe("sw-b");
     expect(conversationCommunication?.payloadRef.outputNodeId).toBe("a-output");
 
-    const parentToSubWorkflowCommunication = result.value.session.communications.find(
-      (entry) => entry.routingScope === "parent-to-sub-workflow" && entry.toNodeId === "a-manager",
-    );
+    const parentToSubWorkflowCommunication =
+      result.value.session.communications.find(
+        (entry) =>
+          entry.routingScope === "parent-to-sub-workflow" &&
+          entry.toNodeId === "a-manager",
+      );
     expect(parentToSubWorkflowCommunication).toBeDefined();
     if (parentToSubWorkflowCommunication === undefined) {
       return;
     }
 
     const childEdgeCommunication = result.value.session.communications.find(
-      (entry) => entry.fromNodeId === "a-input" && entry.toNodeId === "a-output",
+      (entry) =>
+        entry.fromNodeId === "a-input" && entry.toNodeId === "a-output",
     );
     expect(childEdgeCommunication).toBeDefined();
     if (childEdgeCommunication === undefined) {
@@ -3738,23 +4904,29 @@ describe("runWorkflow", () => {
       ),
       "utf8",
     );
-    const childReceiptJson = JSON.parse(childReceiptRaw) as { deliveredByNodeId: string };
+    const childReceiptJson = JSON.parse(childReceiptRaw) as {
+      deliveredByNodeId: string;
+    };
     expect(childReceiptJson.deliveredByNodeId).toBe("a-manager");
 
     const rootReceiptRaw = await readFile(
       path.join(
         parentToSubWorkflowCommunication.artifactDir,
         "attempts",
-        parentToSubWorkflowCommunication.activeDeliveryAttemptId ?? "attempt-000001",
+        parentToSubWorkflowCommunication.activeDeliveryAttemptId ??
+          "attempt-000001",
         "receipt.json",
       ),
       "utf8",
     );
-    const rootReceiptJson = JSON.parse(rootReceiptRaw) as { deliveredByNodeId: string };
+    const rootReceiptJson = JSON.parse(rootReceiptRaw) as {
+      deliveredByNodeId: string;
+    };
     expect(rootReceiptJson.deliveredByNodeId).toBe("oyakata-manager");
 
     const childToRootCommunication = result.value.session.communications.find(
-      (entry) => entry.fromNodeId === "a-output" && entry.toNodeId === "oyakata-manager",
+      (entry) =>
+        entry.fromNodeId === "a-output" && entry.toNodeId === "oyakata-manager",
     );
     expect(childToRootCommunication).toBeDefined();
     expect(childToRootCommunication?.routingScope).toBe("cross-sub-workflow");
@@ -3771,18 +4943,26 @@ describe("runWorkflow", () => {
     const workflowJson = JSON.parse(workflowRaw) as {
       edges: Array<{ from: string; to: string; when: string }>;
     };
-    workflowJson.edges.unshift({ from: "oyakata-manager", to: "a-manager", when: "always" });
+    workflowJson.edges.unshift({
+      from: "oyakata-manager",
+      to: "a-manager",
+      when: "always",
+    });
     await writeJson(workflowPath, workflowJson);
 
-    const result = await runWorkflow(workflowName, {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      maxSteps: 1,
-      runtimeVariables: {
-        humanInput: { topic: "demo" },
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        maxSteps: 1,
+        runtimeVariables: {
+          humanInput: { topic: "demo" },
+        },
       },
-    }, deterministicAdapter);
+      deterministicAdapter,
+    );
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -3790,12 +4970,17 @@ describe("runWorkflow", () => {
     }
     expect(result.value.session.status).toBe("paused");
 
-    const rootToAManagerCommunications = result.value.session.communications.filter(
-      (entry) => entry.fromNodeId === "oyakata-manager" && entry.toNodeId === "a-manager",
-    );
+    const rootToAManagerCommunications =
+      result.value.session.communications.filter(
+        (entry) =>
+          entry.fromNodeId === "oyakata-manager" &&
+          entry.toNodeId === "a-manager",
+      );
 
     expect(rootToAManagerCommunications).toHaveLength(1);
-    expect(rootToAManagerCommunications[0]?.routingScope).toBe("parent-to-sub-workflow");
+    expect(rootToAManagerCommunications[0]?.routingScope).toBe(
+      "parent-to-sub-workflow",
+    );
     expect(rootToAManagerCommunications[0]?.toSubWorkflowId).toBe("sw-a");
   });
 
@@ -3810,36 +4995,52 @@ describe("runWorkflow", () => {
       sessionStoreRoot: path.join(root, "sessions"),
     };
 
-    const paused = await runWorkflow(workflowName, {
-      ...options,
-      sessionId: "sess-corrupt-conversation",
-      runtimeVariables: {
-        humanInput: { topic: "demo" },
+    const paused = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId: "sess-corrupt-conversation",
+        runtimeVariables: {
+          humanInput: { topic: "demo" },
+        },
+        maxSteps: 4,
       },
-      maxSteps: 4,
-    }, deterministicAdapter);
+      deterministicAdapter,
+    );
     expect(paused.ok).toBe(true);
     if (!paused.ok) {
       return;
     }
     expect(paused.value.session.status).toBe("paused");
 
-    const senderExec = paused.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-output");
+    const senderExec = paused.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "a-output",
+    );
     expect(senderExec).toBeDefined();
     if (senderExec === undefined) {
       return;
     }
-    await writeFile(path.join(senderExec.artifactDir, "output.json"), "\"corrupted\"\n", "utf8");
+    await writeFile(
+      path.join(senderExec.artifactDir, "output.json"),
+      '"corrupted"\n',
+      "utf8",
+    );
 
-    const resumed = await runWorkflow(workflowName, {
-      ...options,
-      resumeSessionId: paused.value.session.sessionId,
-    }, deterministicAdapter);
+    const resumed = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        resumeSessionId: paused.value.session.sessionId,
+      },
+      deterministicAdapter,
+    );
 
     expect(resumed.ok).toBe(false);
     if (!resumed.ok) {
       expect(resumed.error.exitCode).toBe(1);
-      expect(resumed.error.message).toContain("failed to resolve upstream communication");
+      expect(resumed.error.message).toContain(
+        "failed to resolve upstream communication",
+      );
       expect(resumed.error.message).toContain("comm-");
       expect(resumed.error.message).toContain("oyakata-manager");
       expect(resumed.error.message).toContain("a-output");
@@ -3870,14 +5071,18 @@ describe("runWorkflow", () => {
 
     const conversationTurns = result.value.session.conversationTurns ?? [];
     expect(conversationTurns).toHaveLength(3);
-    expect(conversationTurns.map((entry) => `${entry.fromSubWorkflowId}->${entry.toSubWorkflowId}`)).toEqual([
-      "sw-a->sw-b",
-      "sw-b->sw-a",
-      "sw-a->sw-b",
-    ]);
+    expect(
+      conversationTurns.map(
+        (entry) => `${entry.fromSubWorkflowId}->${entry.toSubWorkflowId}`,
+      ),
+    ).toEqual(["sw-a->sw-b", "sw-b->sw-a", "sw-a->sw-b"]);
 
-    const aInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "a-input");
-    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    const aInputExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "a-input",
+    );
+    const bInputExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "b-input",
+    );
     expect(aInputExecutions).toHaveLength(2);
     expect(bInputExecutions).toHaveLength(2);
   });
@@ -3918,7 +5123,9 @@ describe("runWorkflow", () => {
           payload: {
             marker: "from-b-manager",
             managerControl: {
-              actions: [{ type: "deliver-to-child-input", inputNodeId: "b-input" }],
+              actions: [
+                { type: "deliver-to-child-input", inputNodeId: "b-input" },
+              ],
             },
           },
         },
@@ -3930,7 +5137,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    const bInputExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "b-input",
+    );
     expect(bInputExecutions.length).toBeGreaterThan(0);
     const firstBInputExecution = bInputExecutions[0];
     expect(firstBInputExecution).toBeDefined();
@@ -3938,7 +5147,10 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const inputRaw = await readFile(path.join(firstBInputExecution.artifactDir, "input.json"), "utf8");
+    const inputRaw = await readFile(
+      path.join(firstBInputExecution.artifactDir, "input.json"),
+      "utf8",
+    );
     const inputJson = JSON.parse(inputRaw) as {
       arguments: { routed: { marker: string } };
     };
@@ -3975,7 +5187,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const bInputExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-input");
+    const bInputExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "b-input",
+    );
     expect(bInputExecutions).toHaveLength(0);
   });
 
@@ -3997,7 +5211,9 @@ describe("runWorkflow", () => {
           {
             payload: {
               managerControl: {
-                actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+                actions: [
+                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
+                ],
               },
             },
           },
@@ -4011,7 +5227,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const aManagerExecution = result.value.session.nodeExecutions.find((entry) => entry.nodeId === "a-manager");
+    const aManagerExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "a-manager",
+    );
     expect(aManagerExecution).toBeDefined();
 
     const startCommunication = result.value.session.communications.find(
@@ -4041,14 +5259,18 @@ describe("runWorkflow", () => {
           {
             payload: {
               managerControl: {
-                actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+                actions: [
+                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
+                ],
               },
             },
           },
           {
             payload: {
               managerControl: {
-                actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+                actions: [
+                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
+                ],
               },
             },
           },
@@ -4068,15 +5290,18 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const aManagerExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "a-manager");
+    const aManagerExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "a-manager",
+    );
     expect(aManagerExecutions.length).toBeGreaterThanOrEqual(2);
 
-    const repeatedStartCommunications = result.value.session.communications.filter(
-      (entry) =>
-        entry.fromNodeId === "oyakata-manager" &&
-        entry.toNodeId === "a-manager" &&
-        entry.transitionWhen === "sub-workflow-start:sw-a",
-    );
+    const repeatedStartCommunications =
+      result.value.session.communications.filter(
+        (entry) =>
+          entry.fromNodeId === "oyakata-manager" &&
+          entry.toNodeId === "a-manager" &&
+          entry.transitionWhen === "sub-workflow-start:sw-a",
+      );
     expect(repeatedStartCommunications).toHaveLength(2);
   });
 
@@ -4110,7 +5335,9 @@ describe("runWorkflow", () => {
     }
 
     expect(result.error.exitCode).toBe(5);
-    expect(result.error.message).toContain("must re-invoke that sub-workflow with start-sub-workflow instead");
+    expect(result.error.message).toContain(
+      "must re-invoke that sub-workflow with start-sub-workflow instead",
+    );
   });
 
   test("exposes conversation routing metadata in transcript bindings", async () => {
@@ -4148,7 +5375,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const bManagerExecutions = result.value.session.nodeExecutions.filter((entry) => entry.nodeId === "b-manager");
+    const bManagerExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "b-manager",
+    );
     expect(bManagerExecutions.length).toBeGreaterThan(0);
     const bManagerExec = bManagerExecutions[0];
     expect(bManagerExec).toBeDefined();
@@ -4156,7 +5385,10 @@ describe("runWorkflow", () => {
       return;
     }
 
-    const inputRaw = await readFile(path.join(bManagerExec.artifactDir, "input.json"), "utf8");
+    const inputRaw = await readFile(
+      path.join(bManagerExec.artifactDir, "input.json"),
+      "utf8",
+    );
     const inputJson = JSON.parse(inputRaw) as {
       arguments: {
         transcript: readonly {
@@ -4168,9 +5400,15 @@ describe("runWorkflow", () => {
     };
 
     expect(inputJson.arguments.transcript.length).toBeGreaterThan(0);
-    expect(inputJson.arguments.transcript[0]?.fromManagerNodeId).toBe("a-manager");
-    expect(inputJson.arguments.transcript[0]?.toManagerNodeId).toBe("b-manager");
-    expect(inputJson.arguments.transcript[0]?.communicationId).toMatch(/^comm-\d{6}$/);
+    expect(inputJson.arguments.transcript[0]?.fromManagerNodeId).toBe(
+      "a-manager",
+    );
+    expect(inputJson.arguments.transcript[0]?.toManagerNodeId).toBe(
+      "b-manager",
+    );
+    expect(inputJson.arguments.transcript[0]?.communicationId).toMatch(
+      /^comm-\d{6}$/,
+    );
   });
 
   test("rejects a sub-workflow that attempts to reuse the root manager", async () => {
@@ -4188,11 +5426,15 @@ describe("runWorkflow", () => {
       managerNodeId: undefined,
       nodeIds: ["b-input", "b-output"],
     };
-    workflowJson.nodes = workflowJson.nodes.filter((node) => node.id !== "b-manager");
+    workflowJson.nodes = workflowJson.nodes.filter(
+      (node) => node.id !== "b-manager",
+    );
     await writeJson(workflowPath, workflowJson);
 
     const workflowVisPath = path.join(root, workflowName, "workflow-vis.json");
-    const workflowVisJson = JSON.parse(await readFile(workflowVisPath, "utf8")) as {
+    const workflowVisJson = JSON.parse(
+      await readFile(workflowVisPath, "utf8"),
+    ) as {
       nodes: Array<{ id: string; order: number }>;
     };
     workflowVisJson.nodes = workflowVisJson.nodes

@@ -12,5 +12,6 @@ Core responsibilities:
 - When the result is insufficient, request or justify a retry or re-execution according to the workflow structure and guardrails.
 - Treat a sub-workflow as one node from the parent perspective, while allowing the sub-workflow manager to treat the received instruction as if it were a user instruction at its own scope.
 - Use mailbox-oriented thinking: inputs arrive through mailbox-backed handoff, and outputs are handed back through mailbox-backed publication managed by the runtime.
+- When your execution environment exposes `oyakata gql`, use typed GraphQL manager actions for privileged control-plane requests instead of encoding new control intent only in freeform prose.
 
 Do not lose sight of scope boundaries. The parent `oyakata` manages workflow-level orchestration; a sub-workflow `oyakata` manages only its own owned nodes.

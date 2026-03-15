@@ -1,9 +1,9 @@
 # Workflow Web Editor Execution Implementation Plan
 
-**Status**: In Progress
+**Status**: Completed
 **Design Reference**: design-docs/specs/design-workflow-web-editor.md#overview
 **Created**: 2026-03-07
-**Last Updated**: 2026-03-09
+**Last Updated**: 2026-03-15
 
 ---
 
@@ -71,7 +71,7 @@ interface ApiWorkflowCreationExpectation {
 
 #### e2e/workflow-web-editor.pw.cjs, e2e/workflow-web-editor-file-harness.pw.cjs
 
-**Status**: IN_PROGRESS
+**Status**: COMPLETED
 
 ```typescript
 interface WorkflowEditorFixture {
@@ -81,8 +81,8 @@ interface WorkflowEditorFixture {
 
 **Checklist**:
 - [x] Add Playwright coverage for create/edit/run/status flow
-- [ ] Verify browser UI can create and load a workflow
-- [ ] Verify browser UI can execute and inspect session status
+- [x] Verify browser UI can create and load a workflow
+- [x] Verify browser UI can execute and inspect session status
 
 ---
 
@@ -92,7 +92,7 @@ interface WorkflowEditorFixture {
 |--------|-----------|--------|-------|
 | Workflow creation and status UX | `src/server/api.ts` | COMPLETED | Smoke verified |
 | API coverage | `src/server/api.test.ts` | COMPLETED | Targeted Bun test run passes |
-| Browser E2E verification | `e2e/workflow-web-editor.pw.cjs`, `e2e/workflow-web-editor-file-harness.pw.cjs` | IN_PROGRESS | File-backed coverage added, live serve/browser blocked |
+| Browser E2E verification | `e2e/workflow-web-editor.pw.cjs`, `e2e/workflow-web-editor-file-harness.pw.cjs` | COMPLETED | `bun run test:e2e` passes; file-backed Playwright coverage runs against the built UI while the live serve path remains environment-conditional |
 
 ## Dependencies
 
@@ -108,7 +108,7 @@ interface WorkflowEditorFixture {
 - [x] Browser can cancel an active workflow execution
 - [x] API tests pass
 - [x] Type checking passes
-- [ ] Playwright E2E passes
+- [x] Playwright E2E passes
 - [x] Browser verification completed
 
 ## Progress Log
@@ -238,6 +238,12 @@ interface WorkflowEditorFixture {
 **Tasks In Progress**: TASK-003
 **Blockers**: The execution plan still stops short of completion because this sandbox blocks both loopback listen on `127.0.0.1` and Chromium startup, so the live browser path cannot finish here even though the regression harness files are now in place.
 **Notes**: Re-reviewed the current diff specifically to sync task progress. TASK-001 and TASK-002 remain complete. TASK-003 also remains correctly `IN_PROGRESS`, but the plan now points at the actual checked-in E2E files (`workflow-web-editor.pw.cjs` and `workflow-web-editor-file-harness.pw.cjs`) instead of the obsolete older spec path. The current implementation state is: live serve/browser verification is environment-blocked, while file-backed browser regression coverage and serve/runtime hardening are already part of the diff.
+
+### Session: 2026-03-15 16:11 JST
+**Tasks Completed**: TASK-003
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Replaced the broken `file://` Playwright fallback with a same-origin mock HTTP harness because Chromium blocks the built ES-module bundle on cross-origin file loads. Fixed the browser workflow selector so the selected workflow stays reflected in the sidebar control after creation. Re-ran `bun run test:e2e`, `bun run test`, and `bun run typecheck`; all passed. The live `serve` Playwright spec still skips when startup is unavailable, but the checked-in E2E command now succeeds with the built-UI browser regression path.
 
 ## Related Plans
 

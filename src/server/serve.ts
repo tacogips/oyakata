@@ -28,6 +28,7 @@ const DEFAULT_RUNTIME: ServeRuntime = {
   serve: (options) => Bun.serve(options),
   reservePort: reserveEphemeralPort,
 };
+export const DEFAULT_SERVE_PORT = 43173;
 
 function errorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) {
@@ -77,7 +78,8 @@ export async function startServe(
 ): Promise<StartedServe> {
   const host =
     options.host ?? options.env?.["OYAKATA_SERVE_HOST"] ?? "127.0.0.1";
-  const rawPort = options.port ?? options.env?.["OYAKATA_SERVE_PORT"] ?? "5173";
+  const rawPort =
+    options.port ?? options.env?.["OYAKATA_SERVE_PORT"] ?? DEFAULT_SERVE_PORT;
   const port = typeof rawPort === "number" ? rawPort : Number(rawPort);
 
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
