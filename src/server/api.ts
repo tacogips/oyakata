@@ -18,7 +18,10 @@ import { createWorkflowTemplate } from "../workflow/create";
 import { runWorkflow } from "../workflow/engine";
 import { loadWorkflowFromDisk } from "../workflow/load";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "../workflow/paths";
-import { computeWorkflowRevisionFromFiles } from "../workflow/revision";
+import {
+  collectPromptTemplateFiles,
+  computeWorkflowRevisionFromFiles,
+} from "../workflow/revision";
 import { createSessionId } from "../workflow/session";
 import { saveWorkflowToDisk } from "../workflow/save";
 import {
@@ -298,6 +301,7 @@ export async function handleApiRequest(
     const revision = await computeWorkflowRevisionFromFiles(
       loaded.value.workflowDirectory,
       nodeFiles,
+      collectPromptTemplateFiles(loaded.value.bundle.nodePayloads),
     );
 
     return json(
@@ -381,6 +385,7 @@ export async function handleApiRequest(
       const revision = await computeWorkflowRevisionFromFiles(
         loaded.value.workflowDirectory,
         nodeFiles,
+        collectPromptTemplateFiles(loaded.value.bundle.nodePayloads),
       );
       return json({
         workflowName: loaded.value.workflowName,

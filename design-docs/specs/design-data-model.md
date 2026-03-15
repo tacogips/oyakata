@@ -140,14 +140,20 @@ Block semantics:
 | Field | Type | Required | Notes |
 |------|------|----------|-------|
 | `id` | string | Yes | Must match workflow node id |
-| `executionBackend` | string | No | Canonical execution interface identifier such as `tacogips/codex-agent`, `tacogips/claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk` |
+| `executionBackend` | string | No | Canonical execution interface identifier such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk` |
 | `model` | string | Yes | Provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5` |
-| `promptTemplate` | string | Yes | Render template |
+| `promptTemplate` | string | Yes* | Render template; may be resolved from `promptTemplateFile` during workflow load |
+| `promptTemplateFile` | string | No | Workflow-relative path to a prompt source file such as `prompts/<node-id>.md` |
 | `variables` | object | Yes | Template bindings |
 | `argumentsTemplate` | object | No | Structured arguments skeleton to pass to skill/tool adapters |
 | `argumentBindings` | array of `ArgumentBinding` | No | Runtime mapping rules for complex input assembly |
 | `templateEngine` | string | No | Default `mustache`; logic-heavy engines are out of scope |
 | `timeoutMs` | number | No | Overrides workflow default timeout |
+
+`*` Authoring rule:
+- Disk-backed workflow definitions may omit inline `promptTemplate` and provide `promptTemplateFile` instead.
+- After workflow load, the normalized runtime node payload must always contain the effective `promptTemplate` string.
+- `promptTemplateFile` remains on the normalized payload as provenance and authoring metadata.
 
 Legacy read-compatible aliases:
 - `prompt` -> `promptTemplate`
@@ -226,12 +232,18 @@ These are normalized in memory after file loading and validation.
 
 - `id: NodeId`
 - `kind: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-manager" | "input" | "output"`
-- `executionBackend?: "tacogips/codex-agent" | "tacogips/claude-code-agent" | "official/openai-sdk" | "official/anthropic-sdk"`
+- `executionBackend?: "codex-agent" | "claude-code-agent" | "official/openai-sdk" | "official/anthropic-sdk"`
 - `model: string`
 - `promptTemplate: string`
+- `promptTemplateFile?: string`
 - `variables: Record<string, unknown>`
 - `timeoutMs: number` (effective timeout after default merge)
 - `completion: CompletionRule | null` (null means auto-complete)
+
+Prompt-source invariants:
+- Referenced prompt files must remain within the workflow directory.
+- Prompt files are part of the workflow-definition revision surface.
+- Long prompt bodies should prefer `promptTemplateFile` plus workflow-local Markdown/text files over large JSON string literals.
 
 ### SubWorkflow
 

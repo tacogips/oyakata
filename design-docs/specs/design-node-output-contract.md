@@ -24,7 +24,7 @@ The runtime continues to own the execution envelope (`provider`, `model`, `when`
 ```json
 {
   "id": "implement",
-  "executionBackend": "tacogips/codex-agent",
+  "executionBackend": "codex-agent",
   "model": "gpt-5",
   "promptTemplate": "Implement {{feature}}.",
   "variables": {

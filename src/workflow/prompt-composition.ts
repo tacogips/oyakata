@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { buildPromptTemplateVariables } from "./prompt-template-context";
 import { renderPromptTemplate } from "./render";
 import type {
   NodeKind,
@@ -14,6 +15,7 @@ export interface PromptCompositionUpstreamInput {
   readonly transitionWhen: string;
   readonly communicationId: string;
   readonly output: Readonly<Record<string, unknown>>;
+  readonly outputRaw?: string;
 }
 
 export interface PromptCompositionInput {
@@ -356,6 +358,8 @@ function buildGivenDataSummary(input: {
 function buildManagerControlSchemaSummary(): string {
   return [
     "Manager control payload:",
+    "When `oyakata gql` is available in the execution environment, prefer typed GraphQL manager actions over freeform control prose.",
+    "Use payload `managerControl` only as the compatibility fallback when `oyakata gql` is unavailable for that execution backend.",
     "Include workflow assessment in normal JSON fields, and place runtime control decisions under `managerControl`.",
     "Supported actions:",
     '- `{"type":"start-sub-workflow","subWorkflowId":"<sub-workflow-id>"}`',
@@ -371,14 +375,27 @@ function buildManagerControlSchemaSummary(): string {
 }
 
 export function composeExecutionPrompt(input: PromptCompositionInput): string {
-  const mergedVariables = {
-    ...input.node.variables,
-    ...input.runtimeVariables,
+  const mergedVariables = buildPromptTemplateVariables({
+    nodeVariables: input.node.variables,
+    runtimeVariables: input.runtimeVariables,
     workflowId: input.workflow.workflowId,
     workflowDescription: input.workflow.description,
     nodeId: input.nodeRef.id,
-    nodeKind: input.nodeRef.kind ?? "task",
-  };
+    ...(input.nodeRef.kind === undefined ? {} : { nodeKind: input.nodeRef.kind }),
+    upstream: input.upstreamInputs.map((entry) => ({
+      fromNodeId: entry.fromNodeId,
+      ...(entry.fromSubWorkflowId === undefined
+        ? {}
+        : { fromSubWorkflowId: entry.fromSubWorkflowId }),
+      ...(entry.toSubWorkflowId === undefined
+        ? {}
+        : { toSubWorkflowId: entry.toSubWorkflowId }),
+      transitionWhen: entry.transitionWhen,
+      communicationId: entry.communicationId,
+      output: entry.output,
+      ...(entry.outputRaw === undefined ? {} : { outputRaw: entry.outputRaw }),
+    })),
+  });
   const workflowPrompt =
     input.workflow.prompts?.oyakataPromptTemplate === undefined
       ? ""

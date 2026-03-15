@@ -10,10 +10,10 @@ The project uses workflow-driven coordination where agent behavior is explicit a
 
 ### Primary Agent Providers
 
-Initial design scope includes exactly two tacogips execution backends:
+Initial design scope includes exactly two CLI execution backends:
 
-- `tacogips/codex-agent`
-- `tacogips/claude-code-agent`
+- `codex-agent`
+- `claude-code-agent`
 
 ### Prompt Decomposition
 

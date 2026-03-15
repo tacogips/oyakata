@@ -1,0 +1,9 @@
+{
+  "id": "main-oyakata",
+  "executionBackend": "claude-code-agent",
+  "model": "claude-sonnet-4-5",
+  "promptTemplateFile": "prompts/main-oyakata.md",
+  "variables": {
+    "workflowId": "claude-oyakata-codex-coding"
+  }
+}

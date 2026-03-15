@@ -17,6 +17,9 @@ describe("assembleNodeInput", () => {
     const assembled = assembleNodeInput({
       runtimeVariables: { topic: "runtime-topic" },
       node: makeNode(),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      nodeKind: "task",
       upstream: [],
       transcript: [],
     });
@@ -46,6 +49,9 @@ describe("assembleNodeInput", () => {
           },
         ],
       }),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      nodeKind: "task",
       upstream: [
         {
           fromNodeId: "oyakata-manager",
@@ -78,6 +84,9 @@ describe("assembleNodeInput", () => {
           },
         ],
       }),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      nodeKind: "task",
       upstream: [],
       transcript: [{ turn: 1 }, { turn: 2 }],
     });
@@ -102,9 +111,59 @@ describe("assembleNodeInput", () => {
             },
           ],
         }),
+        workflowId: "wf",
+        workflowDescription: "Ship a release safely.",
+        nodeKind: "task",
         upstream: [],
         transcript: [],
       }),
     ).toThrow(/required binding resolution failed/);
+  });
+
+  test("renders node prompt templates with inbox variables", () => {
+    const assembled = assembleNodeInput({
+      runtimeVariables: {},
+      node: makeNode({
+        promptTemplate:
+          "latest={{inbox.latest.output.payload.request}} count={{inbox.count}} sender={{inbox.latest.fromNodeId}}",
+      }),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      nodeKind: "input",
+      upstream: [
+        {
+          fromNodeId: "oyakata-manager",
+          communicationId: "comm-000001",
+          transitionWhen: "always",
+          output: {
+            payload: {
+              request: "implement release flow",
+            },
+          },
+          outputRaw:
+            "{\"provider\":\"mock\",\"payload\":{\"request\":\"implement release flow\"}}\n",
+        },
+      ],
+      transcript: [],
+    });
+
+    expect(assembled.promptText).toBe(
+      "latest=implement release flow count=1 sender=oyakata-manager",
+    );
+  });
+
+  test("defaults template nodeKind to task when workflow metadata omits it", () => {
+    const assembled = assembleNodeInput({
+      runtimeVariables: {},
+      node: makeNode({
+        promptTemplate: "kind={{nodeKind}}",
+      }),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      upstream: [],
+      transcript: [],
+    });
+
+    expect(assembled.promptText).toBe("kind=task");
   });
 });

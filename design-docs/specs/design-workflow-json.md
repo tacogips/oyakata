@@ -14,6 +14,7 @@ Required files per workflow:
 - `workflow.json`
 - `workflow-vis.json`
 - `node-{id}.json` (one file per executable node, where `id` is a stable slug-like identifier)
+- optional workflow-local prompt source files such as `prompts/<node-id>.md`
 
 Example:
 
@@ -24,6 +25,9 @@ Example:
     workflow-vis.json
     node-a1b2c3d4.json
     node-e5f6a7b8.json
+    prompts/
+      a1b2c3d4.md
+      e5f6a7b8.md
 ```
 
 Workflow root resolution:
@@ -159,9 +163,10 @@ Each `node-{id}.json` contains execution payload used at runtime:
 - `id`: stable slug-like identifier matching `^[a-z0-9][a-z0-9-]{1,63}$`
 - `name`: human-readable node name
 - `description`: brief summary of the node's purpose
-- `executionBackend` (optional canonical interface selector such as `tacogips/codex-agent`, `tacogips/claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk`)
+- `executionBackend` (optional canonical interface selector such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk`)
 - `model` (required provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5`)
 - `promptTemplate`
+- optional `promptTemplateFile`
 - `variables`
 - optional `sessionPolicy`
   - `mode: "new" | "reuse"`
@@ -174,6 +179,15 @@ Each `node-{id}.json` contains execution payload used at runtime:
   - `maxValidationAttempts`
   - runtime-owned publication: contract-enabled adapters submit only a candidate JSON object or reserved temp candidate file; runtime validation and mailbox publication happen after acceptance
 - optional `timeoutMs` (node execution timeout override)
+
+Prompt authoring policy:
+
+- `workflow.json` and `node-{id}.json` remain canonical JSON workflow-definition files.
+- Long multiline prompts should usually live in workflow-local text files such as `prompts/<node-id>.md`.
+- `promptTemplateFile` is a workflow-relative path resolved during workflow load.
+- `promptTemplateFile` must stay inside the workflow directory; path traversal outside the workflow root is invalid.
+- When `promptTemplateFile` is present, the loader resolves that file and uses its contents as the effective `promptTemplate` sent to the runtime.
+- Save/revision behavior treats referenced prompt files as part of the workflow definition so prompt-only edits are visible to revision checks.
 
 ## Workflow-Level Prompt Policy
 
@@ -195,6 +209,12 @@ Effective worker prompt order:
 2. runtime-generated node reason and expected-return context
 3. rendered node `promptTemplate`
 
+Template-variable context:
+
+- Workflow-level prompt templates and node-level prompt templates may reference workflow metadata such as `{{workflowId}}`, `{{workflowDescription}}`, `{{nodeId}}`, and `{{nodeKind}}`.
+- Node-level prompt templates may also reference upstream mailbox/inbox context through `{{inbox.*}}` or the equivalent alias `{{mailbox.*}}`.
+- The canonical inbox shape includes `{{inbox.count}}`, `{{inbox.hasMessages}}`, `{{inbox.latest.fromNodeId}}`, `{{inbox.latest.output}}`, and `{{inbox.messages}}`.
+
 Example:
 
 ```json
@@ -202,17 +222,26 @@ Example:
   "id": "a1b2c3d4",
   "name": "draft",
   "description": "Write the initial document draft.",
-  "executionBackend": "tacogips/codex-agent",
+  "executionBackend": "codex-agent",
   "model": "gpt-5",
+  "promptTemplateFile": "prompts/draft.md",
   "sessionPolicy": {
     "mode": "reuse"
   },
   "timeoutMs": 90000,
-  "promptTemplate": "Write draft for {{topic}}",
   "variables": {
     "topic": "workflow design"
   }
 }
+```
+
+Example prompt file:
+
+```md
+Write draft for {{topic}}.
+
+Latest inbox payload:
+{{inbox.latest.output}}
 ```
 
 Legacy compatibility:

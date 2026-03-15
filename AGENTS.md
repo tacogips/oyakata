@@ -132,8 +132,8 @@ feat: implement user authentication system
 This is oyakata, a TypeScript/Bun system for cooperative multi-agent session management.
 The project orchestrates writing sessions with two primary agent backends:
 
-- `tacogips/codex-agent`
-- `tacogips/claude-code-agent`
+- `codex-agent`
+- `claude-code-agent`
 
 Agent cooperation is defined by a JSON-managed `workflow` model. A workflow can represent:
 
@@ -150,7 +150,7 @@ Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
 - `workflow.json` (purpose via `description`, graph/control-flow)
 - `workflow.json` (purpose via `description`, graph/control-flow, global defaults)
 - `workflow-vis.json` (browser visualization state for vertical ordering such as node `order`; `indent`/`color` are derived)
-- `node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate`, `variables`, optional `timeoutMs`)
+- `node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate` or `promptTemplateFile`, `variables`, optional `timeoutMs`)
 
 ## Development Environment
 - **Language**: TypeScript
@@ -168,6 +168,7 @@ Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
 ├── .envrc             # direnv configuration
 ├── AGENTS.md          # Agent operation and workflow rules
 ├── README.md          # Project overview and workflow model summary
+├── examples/          # Reference workflows runnable with --workflow-root ./examples
 ├── .oyakata/          # Workflow definitions and browser visualization state
 ├── design-docs/       # Architecture and command design docs
 ├── src/               # Source code
@@ -176,6 +177,22 @@ Workflow storage is directory-based under `.oyakata/<workflow-name>/` and uses:
 │   └── lib.test.ts    # Test files
 └── .gitignore         # Git ignore patterns
 ```
+
+## Examples Directory
+
+- `examples/` stores reference workflow bundles that should remain directly
+  usable with `--workflow-root ./examples`.
+- Keep example bundles aligned with the canonical workflow file set:
+  `workflow.json`, `workflow-vis.json`, and `node-{id}.json`.
+- Prefer examples that demonstrate the recommended backend split:
+  `oyakata` managers on `claude-code-agent` and coding workers on
+  `codex-agent`.
+- Example workflow-level `oyakataPromptTemplate` content may explicitly instruct
+  managers to prefer `oyakata gql` when that tool path is available.
+- Example node `promptTemplate` content may reference inbox data via template
+  variables such as `{{inbox.latest.output}}`.
+- Prefer `promptTemplateFile` plus workflow-local `prompts/*.md` files for long
+  prompts rather than embedding large multiline prompt bodies directly in JSON.
 
 ## Development Tools Available
 - `bun` - JavaScript/TypeScript runtime and package manager

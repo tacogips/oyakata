@@ -6,8 +6,8 @@ This document defines the architecture for cooperative multi-agent workflow exec
 
 `oyakata` manages writing sessions by executing JSON-defined workflows across multiple execution backends, primarily:
 
-- `tacogips/codex-agent`
-- `tacogips/claude-code-agent`
+- `codex-agent`
+- `claude-code-agent`
 
 The architecture focuses on deterministic orchestration, explicit completion conditions, and controlled branching/looping. Structural blocks such as grouped steps, branch bodies, and loop bodies are all modeled as sub-workflow scopes.
 
@@ -49,7 +49,7 @@ Outputs:
 
 - Maps `executionBackend` in node to backend implementation
 - Sends node `model` through that backend as the provider/backend-specific model name
-- Initial targets: `tacogips/codex-agent`, `tacogips/claude-code-agent`
+- Initial targets: `codex-agent`, `claude-code-agent`
 
 5. Execution Engine
 

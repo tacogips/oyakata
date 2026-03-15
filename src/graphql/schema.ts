@@ -10,7 +10,10 @@ import { createWorkflowTemplate } from "../workflow/create";
 import { buildInspectionSummary } from "../workflow/inspect";
 import { loadWorkflowFromDisk } from "../workflow/load";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "../workflow/paths";
-import { computeWorkflowRevisionFromFiles } from "../workflow/revision";
+import {
+  collectPromptTemplateFiles,
+  computeWorkflowRevisionFromFiles,
+} from "../workflow/revision";
 import { saveWorkflowToDisk } from "../workflow/save";
 import {
   createCommunicationService,
@@ -231,6 +234,7 @@ async function buildWorkflowDefinitionView(
   const revision = await computeWorkflowRevisionFromFiles(
     loaded.value.workflowDirectory,
     nodeFiles,
+    collectPromptTemplateFiles(loaded.value.bundle.nodePayloads),
   );
   return {
     workflowName: loaded.value.workflowName,

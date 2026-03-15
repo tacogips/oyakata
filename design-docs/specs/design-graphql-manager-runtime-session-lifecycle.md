@@ -59,7 +59,7 @@ Rules:
 
 - worker/input/output/judge nodes must not receive this context
 - manager auth tokens must not be written into workflow execution artifacts such as `input.json`
-- CLI-capable backends such as `tacogips/codex-agent` and `tacogips/claude-code-agent` may translate the provided environment map into the actual tool-process environment used by `oyakata gql`
+- CLI-capable backends such as `codex-agent` and `claude-code-agent` may translate the provided environment map into the actual tool-process environment used by `oyakata gql`
 - official SDK backends may ignore the field safely
 
 ## Security Notes

@@ -1,9 +1,13 @@
+import { buildPromptTemplateVariables } from "./prompt-template-context";
 import { renderPromptTemplate } from "./render";
-import type { ArgumentBinding, NodePayload } from "./types";
+import type { ArgumentBinding, NodeKind, NodePayload } from "./types";
 
 export interface InputAssemblyContext {
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly node: NodePayload;
+  readonly workflowId?: string;
+  readonly workflowDescription?: string;
+  readonly nodeKind?: NodeKind;
   readonly upstream: readonly Readonly<Record<string, unknown>>[];
   readonly transcript: readonly Readonly<Record<string, unknown>>[];
 }
@@ -131,7 +135,42 @@ function resolveBindingSource(
 export function assembleNodeInput(
   ctx: InputAssemblyContext,
 ): AssembledNodeInput {
-  const mergedVariables = { ...ctx.node.variables, ...ctx.runtimeVariables };
+  const mergedVariables = buildPromptTemplateVariables({
+    nodeVariables: ctx.node.variables,
+    runtimeVariables: ctx.runtimeVariables,
+    ...(ctx.workflowId === undefined ? {} : { workflowId: ctx.workflowId }),
+    ...(ctx.workflowDescription === undefined
+      ? {}
+      : { workflowDescription: ctx.workflowDescription }),
+    nodeId: ctx.node.id,
+    ...(ctx.nodeKind === undefined ? {} : { nodeKind: ctx.nodeKind }),
+    upstream: ctx.upstream.map((entry) => ({
+      fromNodeId:
+        typeof entry["fromNodeId"] === "string" ? entry["fromNodeId"] : "",
+      ...(typeof entry["fromSubWorkflowId"] === "string"
+        ? { fromSubWorkflowId: entry["fromSubWorkflowId"] }
+        : {}),
+      ...(typeof entry["toSubWorkflowId"] === "string"
+        ? { toSubWorkflowId: entry["toSubWorkflowId"] }
+        : {}),
+      ...(typeof entry["transitionWhen"] === "string"
+        ? { transitionWhen: entry["transitionWhen"] }
+        : {}),
+      ...(typeof entry["communicationId"] === "string"
+        ? { communicationId: entry["communicationId"] }
+        : {}),
+      ...(typeof entry["status"] === "string" ? { status: entry["status"] } : {}),
+      output:
+        typeof entry["output"] === "object" &&
+        entry["output"] !== null &&
+        !Array.isArray(entry["output"])
+          ? (entry["output"] as Readonly<Record<string, unknown>>)
+          : {},
+      ...(typeof entry["outputRaw"] === "string"
+        ? { outputRaw: entry["outputRaw"] }
+        : {}),
+    })),
+  });
   const promptText = renderPromptTemplate(
     ctx.node.promptTemplate,
     mergedVariables,

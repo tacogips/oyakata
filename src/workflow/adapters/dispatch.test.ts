@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("resolveNodeExecutionBackend", () => {
-  test("derives tacogips cli-wrapper backend from model when executionBackend is omitted", () => {
+  test("derives canonical short backend from legacy model alias when executionBackend is omitted", () => {
     expect(
       resolveNodeExecutionBackend({
         id: "node-1",
@@ -29,7 +29,7 @@ describe("resolveNodeExecutionBackend", () => {
         promptTemplate: "test",
         variables: {},
       }),
-    ).toBe("tacogips/codex-agent");
+    ).toBe("codex-agent");
   });
 });
 
@@ -73,7 +73,7 @@ describe("DispatchingNodeAdapter", () => {
     expect(output.payload["text"]).toBe("hello from openai");
   });
 
-  test("routes to tacogips codex-agent backend from model when executionBackend is omitted", async () => {
+  test("routes to codex-agent backend from legacy model alias when executionBackend is omitted", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -116,7 +116,7 @@ describe("DispatchingNodeAdapter", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  test("routes to tacogips claude-code-agent backend when explicitly selected and preserves provider model", async () => {
+  test("routes to canonical claude-code-agent backend and preserves provider model", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -142,7 +142,7 @@ describe("DispatchingNodeAdapter", () => {
       nodeExecId: "exec-1",
       node: {
         id: "node-1",
-        executionBackend: "tacogips/claude-code-agent",
+        executionBackend: "claude-code-agent",
         model: "claude-opus-4-1",
         promptTemplate: "test",
         variables: {},

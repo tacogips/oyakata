@@ -14,7 +14,7 @@ const baseInput: AdapterExecutionInput = {
   nodeExecId: "exec-1",
   node: {
     id: "node-1",
-    executionBackend: "tacogips/claude-code-agent",
+    executionBackend: "claude-code-agent",
     model: "claude-opus-4-1",
     promptTemplate: "test",
     variables: {},

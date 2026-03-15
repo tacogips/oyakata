@@ -18,7 +18,7 @@ Canonical node payloads use both fields:
 ```json
 {
   "id": "implement",
-  "executionBackend": "tacogips/claude-code-agent",
+  "executionBackend": "claude-code-agent",
   "model": "claude-sonnet-4-5",
   "promptTemplate": "Implement {{feature}}.",
   "variables": {
@@ -29,8 +29,8 @@ Canonical node payloads use both fields:
 
 Examples:
 
-- `executionBackend: "tacogips/codex-agent"` with `model: "gpt-5"`
-- `executionBackend: "tacogips/claude-code-agent"` with `model: "claude-opus-4-1"`
+- `executionBackend: "codex-agent"` with `model: "gpt-5"`
+- `executionBackend: "claude-code-agent"` with `model: "claude-opus-4-1"`
 - `executionBackend: "official/openai-sdk"` with `model: "gpt-5"`
 - `executionBackend: "official/anthropic-sdk"` with `model: "claude-sonnet-4-5"`
 

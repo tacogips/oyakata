@@ -13,6 +13,7 @@
 - `workflow.json`
 - `workflow-vis.json`
 - `node-{id}.json` (one file per node)
+- optional workflow-local prompt files such as `prompts/<node-id>.md`
 
 3. workflow.json role
 - Must include `description` describing workflow purpose.
@@ -22,6 +23,7 @@
 - Defines runtime execution payload for each node:
   - `executionBackend`
   - `promptTemplate`
+  - optional `promptTemplateFile`
   - `model`
   - `variables`
 
@@ -52,6 +54,8 @@
 
 1. Node payload field names
 - Canonical fields are `promptTemplate` and `variables`.
+- Node payloads may additionally declare `promptTemplateFile` as a workflow-local authoring pointer for long prompt text.
+- For disk-backed workflows, `promptTemplateFile` may supply the prompt body and the loader resolves it into the effective `promptTemplate`.
 - Legacy aliases `prompt` and `variable` are read-compatible only.
 - Writers/normalizers must output canonical field names.
 
@@ -79,3 +83,9 @@
   2. `OYAKATA_ARTIFACT_ROOT`
   3. `./.oyakata-datas/workflow` (default)
 - Artifact path format remains `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`.
+
+6. Prompt authoring policy
+- Keep workflow structure in JSON (`workflow.json`, `node-{id}.json`).
+- Prefer workflow-local prompt files such as `prompts/<node-id>.md` for long multiline prompt bodies.
+- `promptTemplateFile` must resolve within the workflow directory.
+- Prompt-file changes are part of the workflow-definition revision surface.

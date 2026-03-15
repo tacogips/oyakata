@@ -1,12 +1,20 @@
 import { err, ok, type Result } from "./result";
 import { validateJsonSchemaDefinition } from "./json-schema";
 import {
+  isReservedWorkflowDefinitionPath,
+  isSafeWorkflowRelativePath,
+} from "./prompt-template-file";
+import {
+  isCliAgentBackend,
+  normalizeCliAgentBackend,
+  normalizeNodeExecutionBackend,
+} from "./backend";
+import {
   DEFAULT_MAX_LOOP_ITERATIONS,
   DEFAULT_NODE_TIMEOUT_MS,
   NODE_ID_PATTERN,
   type ArgumentBinding,
   type JsonObject,
-  type CliAgentBackend,
   type CompletionRule,
   type NodeOutputContract,
   type LoopRule,
@@ -59,20 +67,6 @@ interface ValidationSuccessDetails {
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isCliAgentBackend(value: unknown): value is CliAgentBackend {
-  return (
-    value === "tacogips/codex-agent" || value === "tacogips/claude-code-agent"
-  );
-}
-
-function isNodeExecutionBackend(value: unknown): value is NodeExecutionBackend {
-  return (
-    isCliAgentBackend(value) ||
-    value === "official/openai-sdk" ||
-    value === "official/anthropic-sdk"
-  );
 }
 
 function requiresSeparatedModel(
@@ -1068,14 +1062,28 @@ function normalizeNodePayload(
   const executionBackendRaw = payload["executionBackend"];
   let executionBackend: NodeExecutionBackend | undefined;
   if (executionBackendRaw !== undefined) {
-    if (isNodeExecutionBackend(executionBackendRaw)) {
-      executionBackend = executionBackendRaw;
+    const normalizedExecutionBackend =
+      normalizeNodeExecutionBackend(executionBackendRaw);
+    if (normalizedExecutionBackend !== null) {
+      executionBackend = normalizedExecutionBackend;
+      if (
+        typeof executionBackendRaw === "string" &&
+        executionBackendRaw !== normalizedExecutionBackend
+      ) {
+        issues.push(
+          makeIssue(
+            "warning",
+            `${path}.executionBackend`,
+            `legacy executionBackend '${executionBackendRaw}' normalized to '${normalizedExecutionBackend}'`,
+          ),
+        );
+      }
     } else {
       issues.push(
         makeIssue(
           "error",
           `${path}.executionBackend`,
-          "must be tacogips/codex-agent, tacogips/claude-code-agent, official/openai-sdk, or official/anthropic-sdk",
+          "must be codex-agent, claude-code-agent, official/openai-sdk, or official/anthropic-sdk",
         ),
       );
     }
@@ -1096,14 +1104,14 @@ function normalizeNodePayload(
       makeIssue(
         "warning",
         `${path}.model`,
-        "legacy tacogips backend identifier encoded in model; prefer explicit executionBackend plus a provider model name",
+        "legacy CLI backend identifier encoded in model; prefer explicit executionBackend plus a provider model name",
       ),
     );
   }
   if (
     model !== null &&
     requiresSeparatedModel(executionBackend) &&
-    isCliAgentBackend(model)
+    normalizeCliAgentBackend(model) !== null
   ) {
     issues.push(
       makeIssue(
@@ -1115,8 +1123,46 @@ function normalizeNodePayload(
   }
 
   const promptTemplateRaw = payload["promptTemplate"];
+  const promptTemplateFileRaw = payload["promptTemplateFile"];
   const promptAlias = payload["prompt"];
   let promptTemplate: string | null = null;
+  let promptTemplateFile: string | undefined;
+  if (promptTemplateFileRaw !== undefined) {
+    if (
+      typeof promptTemplateFileRaw === "string" &&
+      promptTemplateFileRaw.length > 0
+    ) {
+      if (isSafeWorkflowRelativePath(promptTemplateFileRaw)) {
+        if (isReservedWorkflowDefinitionPath(promptTemplateFileRaw)) {
+          issues.push(
+            makeIssue(
+              "error",
+              `${path}.promptTemplateFile`,
+              "must not target canonical workflow definition files such as workflow.json, workflow-vis.json, or node-*.json",
+            ),
+          );
+        } else {
+          promptTemplateFile = promptTemplateFileRaw;
+        }
+      } else {
+        issues.push(
+          makeIssue(
+            "error",
+            `${path}.promptTemplateFile`,
+            "must be a workflow-relative path without '.' or '..' segments",
+          ),
+        );
+      }
+    } else {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.promptTemplateFile`,
+          "must be a non-empty string when provided",
+        ),
+      );
+    }
+  }
   if (typeof promptTemplateRaw === "string" && promptTemplateRaw.length > 0) {
     promptTemplate = promptTemplateRaw;
   } else if (typeof promptAlias === "string" && promptAlias.length > 0) {
@@ -1300,6 +1346,7 @@ function normalizeNodePayload(
     ...(executionBackend === undefined ? {} : { executionBackend }),
     ...(sessionPolicy === undefined ? {} : { sessionPolicy }),
     promptTemplate,
+    ...(promptTemplateFile === undefined ? {} : { promptTemplateFile }),
     variables,
     ...(argumentsTemplate === undefined ? {} : { argumentsTemplate }),
     ...(argumentBindings === undefined ? {} : { argumentBindings }),

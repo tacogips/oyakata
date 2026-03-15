@@ -89,11 +89,11 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.model).toBe("gpt-5");
   });
 
-  test("accepts explicit tacogips backend with provider model string", () => {
+  test("accepts canonical short backend with provider model string", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {
       id: "worker-1",
-      executionBackend: "tacogips/claude-code-agent",
+      executionBackend: "claude-code-agent",
       model: "claude-opus-4-1",
       promptTemplate: "worker",
       variables: {},
@@ -105,11 +105,38 @@ describe("validateWorkflowBundle", () => {
       return;
     }
     expect(result.value.nodePayloads["worker-1"]?.executionBackend).toBe(
-      "tacogips/claude-code-agent",
+      "claude-code-agent",
     );
     expect(result.value.nodePayloads["worker-1"]?.model).toBe(
       "claude-opus-4-1",
     );
+  });
+
+  test("normalizes legacy tacogips executionBackend alias to canonical short name", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      executionBackend: "tacogips/claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundleDetailed(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.bundle.nodePayloads["worker-1"]?.executionBackend).toBe(
+      "claude-code-agent",
+    );
+    expect(
+      result.value.issues.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.executionBackend" &&
+          issue.message.includes("normalized"),
+      ),
+    ).toBe(true);
   });
 
   test("accepts node session reuse policy", () => {
@@ -132,6 +159,54 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.nodePayloads["worker-1"]?.sessionPolicy?.mode).toBe(
       "reuse",
     );
+  });
+
+  test("rejects unsafe promptTemplateFile paths", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      promptTemplateFile: "../outside.md",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.promptTemplateFile" &&
+          issue.message.includes("workflow-relative path"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects promptTemplateFile paths that target canonical workflow definition files", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      promptTemplateFile: "workflow.json",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.promptTemplateFile" &&
+          issue.message.includes("must not target canonical workflow definition files"),
+      ),
+    ).toBe(true);
   });
 
   test("rejects unsupported node session policy mode", () => {
@@ -229,7 +304,7 @@ describe("validateWorkflowBundle", () => {
     ).toBe(true);
   });
 
-  test("warns when legacy tacogips backend identifier is encoded in model", () => {
+  test("warns when legacy cli backend identifier is encoded in model", () => {
     const result = validateWorkflowBundleDetailed(makeValidRaw());
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -239,7 +314,7 @@ describe("validateWorkflowBundle", () => {
       result.value.issues.some(
         (issue) =>
           issue.path === "nodePayloads.node-worker-1.json.model" &&
-          issue.message.includes("legacy tacogips backend identifier"),
+          issue.message.includes("legacy CLI backend identifier"),
       ),
     ).toBe(true);
   });

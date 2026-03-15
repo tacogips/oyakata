@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveWorkflowRelativePath } from "./prompt-template-file";
 import { err, ok, type Result } from "./result";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "./paths";
 import { validateWorkflowBundle } from "./validate";
@@ -41,6 +42,70 @@ async function readJsonFile(
       message: `failed reading JSON file '${filePath}': ${message}`,
     });
   }
+}
+
+async function readTextFile(
+  filePath: string,
+): Promise<Result<string, LoadFailure>> {
+  try {
+    return ok(await readFile(filePath, "utf8"));
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    if (message.includes("ENOENT")) {
+      return err({
+        code: "NOT_FOUND",
+        message: `required file was not found: ${filePath}`,
+      });
+    }
+    return err({
+      code: "IO",
+      message: `failed reading text file '${filePath}': ${message}`,
+    });
+  }
+}
+
+async function resolvePromptTemplateFileForNode(input: {
+  readonly workflowDirectory: string;
+  readonly nodeFile: string;
+  readonly rawPayload: unknown;
+}): Promise<Result<unknown, LoadFailure>> {
+  if (typeof input.rawPayload !== "object" || input.rawPayload === null) {
+    return ok(input.rawPayload);
+  }
+
+  const payload = input.rawPayload as Record<string, unknown>;
+  const promptTemplateFile = payload["promptTemplateFile"];
+  if (
+    typeof promptTemplateFile !== "string" ||
+    promptTemplateFile.length === 0
+  ) {
+    return ok(input.rawPayload);
+  }
+
+  const resolvedPath = resolveWorkflowRelativePath(
+    input.workflowDirectory,
+    promptTemplateFile,
+  );
+  if (!resolvedPath.ok) {
+    return err({
+      code: "IO",
+      message: resolvedPath.error.message,
+    });
+  }
+
+  const promptText = await readTextFile(resolvedPath.value);
+  if (!promptText.ok) {
+    return err({
+      code: promptText.error.code,
+      message:
+        `failed resolving promptTemplateFile for '${input.nodeFile}': ${promptText.error.message}`,
+    });
+  }
+
+  return ok({
+    ...payload,
+    promptTemplate: promptText.value,
+  });
 }
 
 function buildDefaultWorkflowVis(
@@ -147,7 +212,15 @@ export async function loadWorkflowFromDisk(
     if (!nodeRaw.ok) {
       return err(nodeRaw.error);
     }
-    nodePayloads[node.nodeFile] = nodeRaw.value;
+    const resolvedNodeRaw = await resolvePromptTemplateFileForNode({
+      workflowDirectory,
+      nodeFile: node.nodeFile,
+      rawPayload: nodeRaw.value,
+    });
+    if (!resolvedNodeRaw.ok) {
+      return err(resolvedNodeRaw.error);
+    }
+    nodePayloads[node.nodeFile] = resolvedNodeRaw.value;
   }
 
   const validation = validateWorkflowBundle({

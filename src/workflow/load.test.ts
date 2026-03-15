@@ -18,6 +18,10 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+async function writeText(filePath: string, text: string): Promise<void> {
+  await writeFile(filePath, `${text}\n`, "utf8");
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirs
@@ -277,15 +281,130 @@ describe("loadWorkflowFromDisk", () => {
     ]);
     expect(
       result.value.bundle.nodePayloads["oyakata-manager"]?.executionBackend,
-    ).toBe("tacogips/codex-agent");
+    ).toBe("codex-agent");
     expect(result.value.bundle.nodePayloads["oyakata-manager"]?.model).toBe(
       "gpt-5",
     );
     expect(
+      result.value.bundle.nodePayloads["oyakata-manager"]?.promptTemplateFile,
+    ).toBe("prompts/oyakata-manager.md");
+    expect(
+      result.value.bundle.nodePayloads["oyakata-manager"]?.promptTemplate,
+    ).toContain("Coordinate workflow execution");
+    expect(
       result.value.bundle.nodePayloads["workflow-output"]?.executionBackend,
-    ).toBe("tacogips/codex-agent");
+    ).toBe("codex-agent");
     expect(result.value.bundle.nodePayloads["workflow-output"]?.model).toBe(
       "gpt-5",
+    );
+  });
+
+  test("loads promptTemplate from a workflow-local promptTemplateFile", async () => {
+    const root = await makeTempDir();
+    const workflowName = "prompt-file-workflow";
+    const workflowDirectory = path.join(root, workflowName);
+    await mkdir(path.join(workflowDirectory, "prompts"), { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      description: "sample",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [],
+      nodes: [
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+
+    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+      nodes: [{ id: "oyakata-manager", order: 0 }],
+    });
+
+    await writeJson(path.join(workflowDirectory, "node-oyakata-manager.json"), {
+      id: "oyakata-manager",
+      model: "tacogips/codex-agent",
+      promptTemplateFile: "prompts/oyakata-manager.md",
+      variables: {},
+    });
+    await writeText(
+      path.join(workflowDirectory, "prompts", "oyakata-manager.md"),
+      "Coordinate via prompt file {{workflowId}}",
+    );
+
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(
+      result.value.bundle.nodePayloads["oyakata-manager"]?.promptTemplateFile,
+    ).toBe("prompts/oyakata-manager.md");
+    expect(
+      result.value.bundle.nodePayloads["oyakata-manager"]?.promptTemplate,
+    ).toBe("Coordinate via prompt file {{workflowId}}\n");
+  });
+
+  test("rejects promptTemplateFile values that target canonical workflow definition files", async () => {
+    const root = await makeTempDir();
+    const workflowName = "invalid-prompt-file-workflow";
+    const workflowDirectory = path.join(root, workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      description: "sample",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [],
+      nodes: [
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+
+    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+      nodes: [{ id: "oyakata-manager", order: 0 }],
+    });
+
+    await writeJson(path.join(workflowDirectory, "node-oyakata-manager.json"), {
+      id: "oyakata-manager",
+      model: "tacogips/codex-agent",
+      promptTemplateFile: "workflow.json",
+      variables: {},
+    });
+
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.code).toBe("IO");
+    expect(result.error.message).toContain(
+      "must not overwrite canonical workflow definition files",
     );
   });
 });

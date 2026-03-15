@@ -1,0 +1,118 @@
+{
+  "workflowId": "claude-oyakata-codex-coding",
+  "description": "Reference workflow that keeps oyakata orchestration on claude-code while delegating concrete coding work to codex.",
+  "defaults": {
+    "maxLoopIterations": 3,
+    "nodeTimeoutMs": 120000
+  },
+  "prompts": {
+    "oyakataPromptTemplate": "Coordinate {{workflowId}} so claude-code managers preserve scope, keep instructions concrete, and hand coding tasks to codex only when the implementation brief is ready. When `oyakata gql` is available, use it for manager control actions such as sub-workflow starts, child-input delivery, retries, and manager-authored routing instead of relying only on prose.",
+    "workerSystemPromptTemplate": "Work only on the current node's responsibility. Return a concise business JSON payload that is useful to the next node."
+  },
+  "managerNodeId": "oyakata-manager",
+  "subWorkflows": [
+    {
+      "id": "delivery",
+      "description": "Single delivery lane that turns a human request into a codex implementation handoff.",
+      "managerNodeId": "main-oyakata",
+      "inputNodeId": "workflow-input",
+      "outputNodeId": "workflow-output",
+      "nodeIds": [
+        "main-oyakata",
+        "workflow-input",
+        "implementation-brief",
+        "implement",
+        "workflow-output"
+      ],
+      "inputSources": [
+        {
+          "type": "human-input"
+        }
+      ],
+      "block": {
+        "type": "plain"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "oyakata-manager",
+      "kind": "root-manager",
+      "nodeFile": "node-oyakata-manager.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "main-oyakata",
+      "kind": "sub-manager",
+      "nodeFile": "node-main-oyakata.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "workflow-input",
+      "kind": "input",
+      "nodeFile": "node-workflow-input.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "implementation-brief",
+      "kind": "task",
+      "nodeFile": "node-implementation-brief.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "implement",
+      "kind": "task",
+      "nodeFile": "node-implement.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "workflow-output",
+      "kind": "output",
+      "nodeFile": "node-workflow-output.json",
+      "completion": {
+        "type": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "oyakata-manager",
+      "to": "main-oyakata",
+      "when": "always"
+    },
+    {
+      "from": "main-oyakata",
+      "to": "workflow-input",
+      "when": "always"
+    },
+    {
+      "from": "workflow-input",
+      "to": "implementation-brief",
+      "when": "always"
+    },
+    {
+      "from": "implementation-brief",
+      "to": "implement",
+      "when": "always"
+    },
+    {
+      "from": "implement",
+      "to": "workflow-output",
+      "when": "always"
+    }
+  ],
+  "loops": [],
+  "branching": {
+    "mode": "fan-out"
+  }
+}

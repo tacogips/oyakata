@@ -14,7 +14,7 @@ const baseInput: AdapterExecutionInput = {
   nodeExecId: "exec-1",
   node: {
     id: "node-1",
-    executionBackend: "tacogips/codex-agent",
+    executionBackend: "codex-agent",
     model: "gpt-5",
     promptTemplate: "test",
     variables: {},

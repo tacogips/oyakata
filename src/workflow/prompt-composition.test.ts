@@ -319,4 +319,47 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).not.toContain("spoofed-node");
     expect(prompt).not.toContain("spoofed-runtime");
   });
+
+  test("renders inbox variables inside workflow-level manager prompts", () => {
+    const workflow = makeWorkflow();
+    const prompt = composeExecutionPrompt({
+      workflow: {
+        ...workflow,
+        prompts: {
+          ...workflow.prompts,
+          oyakataPromptTemplate:
+            "If inboxCount={{inbox.count}} latestSender={{inbox.latest.fromNodeId}}, prefer oyakata gql.",
+        },
+      },
+      nodeRef: makeNodeRef({
+        id: "main-oyakata",
+        nodeFile: "node-main-oyakata.json",
+        kind: "sub-manager",
+      }),
+      node: makeNodePayloads()["main-oyakata"] as NodePayload,
+      nodePayloads: makeNodePayloads(),
+      runtimeVariables: {},
+      basePromptText:
+        "Translate the parent instruction into child workflow work.",
+      assembledArguments: null,
+      upstreamInputs: [
+        {
+          fromNodeId: "oyakata-manager",
+          transitionWhen: "always",
+          communicationId: "comm-000001",
+          output: {
+            payload: {
+              request: "ship the release",
+            },
+          },
+          outputRaw:
+            "{\"provider\":\"mock\",\"payload\":{\"request\":\"ship the release\"}}\n",
+        },
+      ],
+    });
+
+    expect(prompt).toContain(
+      "If inboxCount=1 latestSender=oyakata-manager, prefer oyakata gql.",
+    );
+  });
 });

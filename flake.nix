@@ -44,6 +44,7 @@
           gnused
           gh
           go-task
+          podman
 
           # LLM browser agent
           llm-agents.packages.${system}.agent-browser

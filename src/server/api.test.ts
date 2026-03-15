@@ -629,13 +629,13 @@ describe("handleApiRequest", () => {
     expect(createJson.bundle.workflow.description).toBe("New workflow");
     expect(
       createJson.bundle.nodePayloads["oyakata-manager"]?.executionBackend,
-    ).toBe("tacogips/codex-agent");
+    ).toBe("codex-agent");
     expect(createJson.bundle.nodePayloads["oyakata-manager"]?.model).toBe(
       "gpt-5",
     );
     expect(
       createJson.bundle.nodePayloads["workflow-output"]?.executionBackend,
-    ).toBe("tacogips/codex-agent");
+    ).toBe("codex-agent");
     expect(createJson.bundle.nodePayloads["workflow-output"]?.model).toBe(
       "gpt-5",
     );

@@ -14,11 +14,15 @@ export interface CreateWorkflowFailure {
   readonly message: string;
 }
 
-const TEMPLATE_EXECUTION_BACKEND = "tacogips/codex-agent";
+const TEMPLATE_EXECUTION_BACKEND = "codex-agent";
 const TEMPLATE_MODEL = "gpt-5";
 
 async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+async function writeText(filePath: string, text: string): Promise<void> {
+  await writeFile(filePath, `${text.trimEnd()}\n`, "utf8");
 }
 
 export async function createWorkflowTemplate(
@@ -34,6 +38,7 @@ export async function createWorkflowTemplate(
 
   const roots = resolveEffectiveRoots(options);
   const workflowDirectory = path.join(roots.workflowRoot, workflowName);
+  const promptDirectory = path.join(workflowDirectory, "prompts");
 
   try {
     await mkdir(roots.workflowRoot, { recursive: true });
@@ -132,7 +137,7 @@ export async function createWorkflowTemplate(
         id: managerId,
         executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
-        promptTemplate: "Coordinate workflow execution for {{workflowId}}",
+        promptTemplateFile: `prompts/${managerId}.md`,
         variables: { workflowId },
       },
     },
@@ -142,8 +147,7 @@ export async function createWorkflowTemplate(
         id: mainManagerId,
         executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
-        promptTemplate:
-          "Translate the parent oyakata instruction into this sub-workflow's child work for {{workflowId}}",
+        promptTemplateFile: `prompts/${mainManagerId}.md`,
         variables: { workflowId },
       },
     },
@@ -153,8 +157,7 @@ export async function createWorkflowTemplate(
         id: inputId,
         executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
-        promptTemplate:
-          "Normalize the received sub-workflow instruction into workflow input",
+        promptTemplateFile: `prompts/${inputId}.md`,
         variables: {},
       },
     },
@@ -164,9 +167,30 @@ export async function createWorkflowTemplate(
         id: outputId,
         executionBackend: TEMPLATE_EXECUTION_BACKEND,
         model: TEMPLATE_MODEL,
-        promptTemplate: "Finalize workflow output",
+        promptTemplateFile: `prompts/${outputId}.md`,
         variables: {},
       },
+    },
+  ];
+
+  const promptFiles: Array<{ fileName: string; content: string }> = [
+    {
+      fileName: `${managerId}.md`,
+      content: "Coordinate workflow execution for {{workflowId}}",
+    },
+    {
+      fileName: `${mainManagerId}.md`,
+      content:
+        "Translate the parent oyakata instruction into this sub-workflow's child work for {{workflowId}}",
+    },
+    {
+      fileName: `${inputId}.md`,
+      content:
+        "Normalize the received sub-workflow instruction into workflow input",
+    },
+    {
+      fileName: `${outputId}.md`,
+      content: "Finalize workflow output",
     },
   ];
 
@@ -179,11 +203,15 @@ export async function createWorkflowTemplate(
       path.join(workflowDirectory, "workflow-vis.json"),
       workflowVis,
     );
+    await mkdir(promptDirectory, { recursive: true });
     for (const node of nodePayloads) {
       await writeJson(
         path.join(workflowDirectory, node.fileName),
         node.payload,
       );
+    }
+    for (const promptFile of promptFiles) {
+      await writeText(path.join(promptDirectory, promptFile.fileName), promptFile.content);
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";

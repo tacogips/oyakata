@@ -1551,6 +1551,9 @@ export async function runWorkflow(
         const assembled = assembleNodeInput({
           runtimeVariables: session.runtimeVariables,
           node: nodePayload,
+          workflowId: workflow.workflowId,
+          workflowDescription: workflow.description,
+          ...(nodeRef.kind === undefined ? {} : { nodeKind: nodeRef.kind }),
           upstream: upstreamBindingInputs,
           transcript: transcriptInput,
         });

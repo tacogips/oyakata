@@ -6,10 +6,10 @@ import {
   type NodeAdapter,
 } from "../adapter";
 import type {
-  CliAgentBackend,
   NodeExecutionBackend,
   NodePayload,
 } from "../types";
+import { normalizeCliAgentBackend } from "../backend";
 import {
   AnthropicSdkAdapter,
   type AnthropicSdkAdapterConfig,
@@ -25,20 +25,15 @@ export interface DispatchingNodeAdapterConfig {
   readonly anthropicSdk?: AnthropicSdkAdapterConfig;
 }
 
-function isCliAgentBackend(value: string): value is CliAgentBackend {
-  return (
-    value === "tacogips/codex-agent" || value === "tacogips/claude-code-agent"
-  );
-}
-
 export function resolveNodeExecutionBackend(
   node: NodePayload,
 ): NodeExecutionBackend {
   if (node.executionBackend !== undefined) {
     return node.executionBackend;
   }
-  if (isCliAgentBackend(node.model)) {
-    return node.model;
+  const legacyCliBackend = normalizeCliAgentBackend(node.model);
+  if (legacyCliBackend !== null) {
+    return legacyCliBackend;
   }
   throw new AdapterExecutionError(
     "provider_error",
@@ -64,9 +59,9 @@ export class DispatchingNodeAdapter implements NodeAdapter {
     context: AdapterExecutionContext,
   ): Promise<AdapterExecutionOutput> {
     switch (resolveNodeExecutionBackend(input.node)) {
-      case "tacogips/codex-agent":
+      case "codex-agent":
         return this.#codexAgent.execute(input, context);
-      case "tacogips/claude-code-agent":
+      case "claude-code-agent":
         return this.#claudeCodeAgent.execute(input, context);
       case "official/openai-sdk":
         return this.#openAiSdk.execute(input, context);

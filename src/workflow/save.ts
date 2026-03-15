@@ -1,10 +1,14 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { atomicWriteJsonFile } from "../shared/fs";
+import { atomicWriteJsonFile, atomicWriteTextFile } from "../shared/fs";
+import { resolveWorkflowRelativePath } from "./prompt-template-file";
 import { err, ok, type Result } from "./result";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "./paths";
 import { validateWorkflowBundle } from "./validate";
-import { computeWorkflowRevisionFromFiles } from "./revision";
+import {
+  collectPromptTemplateFiles,
+  computeWorkflowRevisionFromFiles,
+} from "./revision";
 import type { LoadOptions } from "./types";
 
 export interface SaveWorkflowInput {
@@ -62,6 +66,131 @@ function buildNodePayloadMapForValidation(
   return mapped;
 }
 
+async function persistNodePayload(input: {
+  readonly workflowDirectory: string;
+  readonly nodeFile: string;
+  readonly payload: unknown;
+}): Promise<void> {
+  if (typeof input.payload !== "object" || input.payload === null) {
+    await atomicWriteJsonFile(
+      path.join(input.workflowDirectory, input.nodeFile),
+      input.payload,
+    );
+    return;
+  }
+
+  const payload = input.payload as Record<string, unknown>;
+  const promptTemplateFile = payload["promptTemplateFile"];
+  const promptTemplate = payload["promptTemplate"];
+
+  if (
+    typeof promptTemplateFile === "string" &&
+    promptTemplateFile.length > 0 &&
+    typeof promptTemplate === "string"
+  ) {
+    const promptFilePath = resolveWorkflowRelativePath(
+      input.workflowDirectory,
+      promptTemplateFile,
+    );
+    if (!promptFilePath.ok) {
+      throw new Error(promptFilePath.error.message);
+    }
+    await atomicWriteTextFile(
+      promptFilePath.value,
+      `${promptTemplate.trimEnd()}\n`,
+    );
+
+    const persistedPayload = { ...payload };
+    delete persistedPayload["promptTemplate"];
+    await atomicWriteJsonFile(
+      path.join(input.workflowDirectory, input.nodeFile),
+      persistedPayload,
+    );
+    return;
+  }
+
+  await atomicWriteJsonFile(
+    path.join(input.workflowDirectory, input.nodeFile),
+    input.payload,
+  );
+}
+
+async function hydratePromptTemplateFilesForValidation(input: {
+  readonly workflowDirectory: string;
+  readonly nodePayloads: Readonly<Record<string, unknown>>;
+}): Promise<Result<Readonly<Record<string, unknown>>, SaveWorkflowFailure>> {
+  const hydrated: Record<string, unknown> = { ...input.nodePayloads };
+
+  for (const [nodeFile, payload] of Object.entries(input.nodePayloads)) {
+    if (typeof payload !== "object" || payload === null) {
+      continue;
+    }
+
+    const payloadRecord = payload as Record<string, unknown>;
+    const promptTemplate = payloadRecord["promptTemplate"];
+    if (typeof promptTemplate === "string" && promptTemplate.length > 0) {
+      continue;
+    }
+
+    const promptTemplateFile = payloadRecord["promptTemplateFile"];
+    if (
+      typeof promptTemplateFile !== "string" ||
+      promptTemplateFile.length === 0
+    ) {
+      continue;
+    }
+
+    const resolvedPath = resolveWorkflowRelativePath(
+      input.workflowDirectory,
+      promptTemplateFile,
+    );
+    if (!resolvedPath.ok) {
+      return err({
+        code: "VALIDATION",
+        message: "workflow validation failed",
+        issues: [
+          {
+            severity: "error",
+            path: `bundle.nodePayloads.${nodeFile}.promptTemplateFile`,
+            message: resolvedPath.error.message,
+          },
+        ],
+      });
+    }
+
+    try {
+      hydrated[nodeFile] = {
+        ...payloadRecord,
+        promptTemplate: await readFile(resolvedPath.value, "utf8"),
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      if (message.includes("ENOENT")) {
+        return err({
+          code: "VALIDATION",
+          message: "workflow validation failed",
+          issues: [
+            {
+              severity: "error",
+              path: `bundle.nodePayloads.${nodeFile}.promptTemplate`,
+              message:
+                `must be provided inline or by an existing promptTemplateFile '${promptTemplateFile}'`,
+            },
+          ],
+        });
+      }
+
+      return err({
+        code: "IO",
+        message:
+          `failed reading promptTemplateFile '${promptTemplateFile}' for validation: ${message}`,
+      });
+    }
+  }
+
+  return ok(hydrated);
+}
+
 export async function saveWorkflowToDisk(
   workflowName: string,
   input: SaveWorkflowInput,
@@ -78,11 +207,20 @@ export async function saveWorkflowToDisk(
     input.workflow,
     input.nodePayloads,
   );
+  const roots = resolveEffectiveRoots(options);
+  const workflowDirectory = path.join(roots.workflowRoot, workflowName);
+  const validationNodePayloads = await hydratePromptTemplateFilesForValidation({
+    workflowDirectory,
+    nodePayloads: normalizedNodePayloads,
+  });
+  if (!validationNodePayloads.ok) {
+    return err(validationNodePayloads.error);
+  }
 
   const validation = validateWorkflowBundle({
     workflow: input.workflow,
     workflowVis: input.workflowVis,
-    nodePayloads: normalizedNodePayloads,
+    nodePayloads: validationNodePayloads.value,
   });
 
   if (!validation.ok) {
@@ -93,8 +231,6 @@ export async function saveWorkflowToDisk(
     });
   }
 
-  const roots = resolveEffectiveRoots(options);
-  const workflowDirectory = path.join(roots.workflowRoot, workflowName);
   const nodeFiles = validation.value.workflow.nodes.map(
     (node) => node.nodeFile,
   );
@@ -102,6 +238,7 @@ export async function saveWorkflowToDisk(
   const currentRevision = await computeWorkflowRevisionFromFiles(
     workflowDirectory,
     nodeFiles,
+    collectPromptTemplateFiles(normalizedNodePayloads),
   );
   if (input.expectedRevision !== undefined) {
     if (
@@ -143,10 +280,11 @@ export async function saveWorkflowToDisk(
           ],
         });
       }
-      await atomicWriteJsonFile(
-        path.join(workflowDirectory, node.nodeFile),
+      await persistNodePayload({
+        workflowDirectory,
+        nodeFile: node.nodeFile,
         payload,
-      );
+      });
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
@@ -159,6 +297,7 @@ export async function saveWorkflowToDisk(
   const revision = await computeWorkflowRevisionFromFiles(
     workflowDirectory,
     nodeFiles,
+    collectPromptTemplateFiles(normalizedNodePayloads),
   );
   if (!revision.ok) {
     return err({ code: "IO", message: revision.error.message });

@@ -1,6 +1,6 @@
 export type CliAgentBackend =
-  | "tacogips/codex-agent"
-  | "tacogips/claude-code-agent";
+  | "codex-agent"
+  | "claude-code-agent";
 
 export type NodeExecutionBackend =
   | CliAgentBackend
@@ -172,6 +172,7 @@ export interface NodePayload {
   readonly executionBackend?: NodeExecutionBackend;
   readonly sessionPolicy?: NodeSessionPolicy;
   readonly promptTemplate: string;
+  readonly promptTemplateFile?: string;
   readonly variables: Readonly<Record<string, unknown>>;
   readonly argumentsTemplate?: Readonly<Record<string, unknown>>;
   readonly argumentBindings?: readonly ArgumentBinding[];

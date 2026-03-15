@@ -481,7 +481,7 @@ describe("manager-message-service", () => {
       `${JSON.stringify(
         {
           id: "workflow-input",
-          executionBackend: "tacogips/codex-agent",
+          executionBackend: "codex-agent",
           model: "gpt-5",
           promptTemplate: "Normalize the received sub-workflow instruction",
           variables: {},
