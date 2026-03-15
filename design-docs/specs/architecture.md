@@ -60,10 +60,12 @@ Outputs:
 - Tracks completion evidence
 - Stores transition history
 - Writes node execution artifacts to `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`
+- Persists routed communications and, in the GraphQL redesign direction, manager-session control-plane state used by GraphQL manager-message mutations invoked through `oyakata gql`
 
 7. Local HTTP Server (`oyakata serve`)
 - Hosts the built browser UI and local API on one process
 - Serves the built frontend bundle from `ui/dist/`
+- Exposes the canonical GraphQL control-plane endpoint at `/graphql`
 - Returns an explicit setup error page when the built frontend bundle is unavailable instead of embedding a second browser implementation in the server
 - Exposes a small UI bootstrap/config endpoint so frontend assets do not need server mode baked in at build time
 - Derives the reported frontend mode for that bootstrap/config endpoint from explicit metadata published under `ui/dist/` when available, while still allowing an explicit override for tests or forced deployments
@@ -77,6 +79,12 @@ Outputs:
 - Supports workflow listing/loading/saving/validation
 - Supports workflow execution start/observe/cancel
 - Restricts by default to local interface (`127.0.0.1`)
+
+GraphQL-first redesign direction:
+- GraphQL becomes the canonical domain API for execution, communication inspection/replay, and manager control-plane messaging
+- CLI commands become thin clients over the same application services/GraphQL contract for domain operations
+- GraphQL file/image parameters use data-root-relative file references resolved under the configured Oyakata root data directory instead of host absolute paths
+- existing REST editor/workflow-definition endpoints remain supported during migration until GraphQL replacements are implemented
 
 8. Browser Workflow Editor
 - Vertical workflow editing for nodes, edges, branch/loop rules, and defaults
@@ -147,6 +155,25 @@ Required artifact files per execution:
 - `input.json`: fully resolved runtime input passed to the node
 - `output.json`: node execution output payload
 - `meta.json`: execution metadata (timestamps, status, model, timeout result)
+
+Node output acceptance contract:
+- the Oyakata runtime must capture node completion in the same execution path that launched or awaited that node
+- node output becomes accepted only when the runtime marks the node execution complete and publishes runtime-owned artifacts
+- after acceptance, the runtime immediately persists `output.json` / `meta.json`, updates session state, and decides the next orchestration step
+- if the next step requires manager involvement, the runtime itself starts or queues the manager execution from that transition
+- a periodic filesystem watcher must not be the primary mechanism for detecting ordinary node completion
+- file watching may exist only inside a backend-specific adapter when an external system can publish results solely through a shared file drop, and even then the adapter must hand the accepted result back into the normal runtime-owned completion path
+
+Timeout/missed-notification inspection contract:
+- if the expected manager wake-up or downstream transition does not occur and the workflow times out or appears stuck, operators must be able to inspect the last known node execution state without depending on the original notification path
+- the runtime must preserve enough information in session state, runtime DB rows, logs, and node execution artifacts to recover:
+  - node execution `status`
+  - timeout/failure message
+  - `artifactDir`
+  - published `output.json` when present
+  - published `meta.json`
+- GraphQL should expose this through `nodeExecution(...)`
+- internal/library inspection should expose the same information through session/runtime-db helpers
 
 `oyakata` manager node responsibilities for chaining:
 - read `output.json` from prior node execution artifacts
@@ -231,10 +258,32 @@ Mailbox transport contract:
 - the root workflow manager owns global `communicationId` allocation within one `workflowExecutionId`
 - one communication may have multiple `deliveryAttemptId` retries and optional AI/code-agent `agentSessionId` restarts
 - any send re-execution/rerun/resend must allocate a new `communicationId`
+- communication delivery retry and communication replay are distinct operations:
+  - delivery retry keeps the same `communicationId` and allocates a new `deliveryAttemptId`
+  - replay/resend allocates a new `communicationId` and may supersede the prior communication
 - when a node declares an output contract, external LLM adapters must receive only the reserved candidate staging path for structured-output submission, not the final publish path
 - detailed storage and replay rules are defined in `design-docs/specs/design-node-mailbox.md`
 - node output contract and schema-validation publication rules are defined in `design-docs/specs/design-node-output-contract.md`
 - external workflow result publication is runtime-owned and must resolve from the latest accepted root-scope `output` node artifact, never from an arbitrary last session response; see `design-docs/specs/design-runtime-owned-external-output-publication.md`
+
+Root data directory contract:
+- Oyakata must have one canonical root data directory resolved from env/config
+- artifact storage, session storage, attachment storage, and future container-mounted work paths may be derived from that root when more specific overrides are absent
+- GraphQL file references must be relative to that root, not host absolute paths
+- recommended attachment path layout is `files/{workflowId}/{workflowExecutionId}/attachments/{fileName}`
+- this is required so future Podman/container execution can bind-mount the same logical data root without changing GraphQL-visible paths
+- precedence for each derived path is:
+  1. explicit CLI flag
+  2. explicit surface-specific environment variable
+  3. derived path from `OYAKATA_ROOT_DATA_DIR`
+  4. built-in default
+
+Manager control-plane contract:
+- manager-to-runtime control messages are distinct from mailbox communications
+- mailbox artifacts remain the durable node-to-node transport record
+- manager control-plane messages are append-only commands scoped to one manager session and may result in mailbox writes, node starts, retries, or replay requests
+- the long-term primary manager interaction path for CLI-backed managers is GraphQL manager-message mutation execution through `oyakata gql`, with payload-embedded `managerControl.actions` retained as compatibility mode
+- detailed design is defined in `design-docs/specs/design-graphql-manager-control-plane.md`
 
 ### Node Model
 
@@ -349,26 +398,24 @@ Node execution supports timeout configuration:
 
 Timeout events are treated as explicit execution results for downstream routing.
 
-## HTTP/API Runtime Model (Serve Mode)
+## HTTP/GraphQL Runtime Model (Serve Mode)
 
-`oyakata serve` runs a local web application and API for editing/execution.
+`oyakata serve` runs a local web application and GraphQL endpoint for editing/execution.
 
-Primary API groups:
-- `GET /api/workflows`: list available `<workflow-root>/*` workflows
-- `GET /api/workflows/:name`: load normalized workflow + node payloads + vis state
-- `PUT /api/workflows/:name`: save workflow changes to file set
-- `POST /api/workflows/:name/validate`: run structural and semantic validation
-- `POST /api/workflows/:name/execute`: start execution session and return canonical `workflowExecutionId` plus compatibility `sessionId`
-- `GET /api/workflow-executions/:id`: poll current execution state
-- `POST /api/workflow-executions/:id/cancel`: request cancellation
-- Legacy compatibility aliases through `2026-09-30`:
-  - `GET /api/sessions/:id`
-  - `POST /api/sessions/:id/cancel`
+Primary GraphQL groups:
+- workflow definition queries and mutations
+- workflow execution queries and mutations
+- communication inspection, replay, and retry mutations
+- manager-session queries and `sendManagerMessage` mutation
+
+Migration note:
+- existing REST endpoints under `/api/*` remain active for browser/editor flows until the corresponding GraphQL workflow-definition/editor surfaces are implemented
+- GraphQL is canonical first for execution, communication inspection/replay, and manager control-plane messaging
 
 Design constraints:
 - File writes must be atomic (temp file + rename) to avoid JSON corruption.
 - Concurrent edits are conflict-protected via revision token or last-write detection.
-- Execution API reuses the same engine as CLI run path.
+- GraphQL execution services reuse the same engine as CLI run path.
 
 ## TUI Runtime Model
 

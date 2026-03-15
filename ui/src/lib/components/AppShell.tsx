@@ -1,6 +1,7 @@
 import { Show, type JSX } from "solid-js";
 
 import type { UiConfigResponse } from "../../../../src/shared/ui-contract";
+import { Badge, Button, StatCard } from "./ui";
 
 export interface AppShellProps {
   readonly config: UiConfigResponse | null;
@@ -8,6 +9,9 @@ export interface AppShellProps {
   readonly busy: boolean;
   readonly errorMessage: string;
   readonly infoMessage: string;
+  readonly workflowCount: number;
+  readonly sessionCount: number;
+  readonly selectedWorkflowName: string;
   readonly onReload: () => void | Promise<void>;
   readonly sidebar: JSX.Element;
   readonly editor: JSX.Element;
@@ -17,43 +21,102 @@ export interface AppShellProps {
 export default function AppShell(props: AppShellProps): JSX.Element {
   const reloadDisabled = (): boolean => props.loading || props.busy;
   const lede =
-    "The SolidJS editor is active and continues to use the existing workflow and session API contract behind the same ui/dist serving boundary.";
+    "A workflow workbench with structured editing, execution telemetry, and tighter operator-facing controls.";
 
   return (
-    <div class="page">
-      <header class="hero">
-        <div>
-          <p class="eyebrow">Browser Workflow Editor</p>
+    <div class="page shell-page">
+      <header class="hero hero-surface">
+        <div class="hero-copy">
+          <p class="eyebrow">Workflow Control Room</p>
           <h1>oyakata Workflow Editor</h1>
           <p class="lede">{lede}</p>
+          <div class="hero-badges">
+            <Show when={props.loading}>
+              <Badge variant="outline">Loading workspace</Badge>
+            </Show>
+            <Show when={!props.loading && props.workflowCount === 0}>
+              <Badge variant="secondary">Create your first workflow</Badge>
+            </Show>
+            <Show
+              when={
+                !props.loading &&
+                props.workflowCount > 0 &&
+                props.selectedWorkflowName.length === 0
+              }
+            >
+              <Badge variant="outline">Select a workflow to begin</Badge>
+            </Show>
+            <Show when={props.selectedWorkflowName.length > 0}>
+              <Badge variant="outline">{props.selectedWorkflowName}</Badge>
+            </Show>
+          </div>
+          <Show when={!props.loading && props.workflowCount === 0}>
+            <p class="hero-hint">
+              Create a workflow from the sidebar to unlock editing, validation,
+              and execution.
+            </p>
+          </Show>
+          <Show
+            when={
+              !props.loading &&
+              props.workflowCount > 0 &&
+              props.selectedWorkflowName.length === 0
+            }
+          >
+            <p class="hero-hint">
+              Select a workflow to inspect its graph, validation state, and
+              execution history.
+            </p>
+          </Show>
         </div>
-        <div class="hero-actions">
-          <button
-            class="ghost"
+        <div class="hero-rail">
+          <div class="hero-stats">
+            <StatCard
+              label="Workflows"
+              value={String(props.workflowCount)}
+              detail="Available definitions"
+            />
+            <StatCard
+              label="Sessions"
+              value={String(props.sessionCount)}
+              detail="Loaded in sidebar"
+            />
+            <StatCard
+              label="Mode"
+              value={props.config?.readOnly ? "Read only" : "Editable"}
+              detail={
+                props.config?.fixedWorkflowName
+                  ? `Fixed to ${props.config.fixedWorkflowName}`
+                  : "Workflow selection unlocked"
+              }
+            />
+          </div>
+          <Button
+            variant="outline"
             type="button"
             onClick={() => void props.onReload()}
             disabled={reloadDisabled()}
           >
             Reload
-          </button>
+          </Button>
         </div>
       </header>
 
       <Show when={props.config}>
         {(config) => (
-          <section class="modes">
-            <Show when={config().fixedWorkflowName}>
+          <section class="modes panel-strip">
+            <Show when={config().fixedWorkflowName?.length}>
               {(workflowName) => (
-                <span class="badge">Fixed workflow: {workflowName()}</span>
+                <Badge>Fixed workflow: {workflowName()}</Badge>
               )}
             </Show>
             <Show when={config().readOnly}>
-              <span class="badge warn">Read-only</span>
+              <Badge variant="destructive">Read-only</Badge>
             </Show>
             <Show when={config().noExec}>
-              <span class="badge warn">Execution disabled</span>
+              <Badge variant="destructive">Execution disabled</Badge>
             </Show>
-            <span class="badge subtle">Frontend mode: {config().frontend}</span>
+            <Badge variant="outline">Frontend mode: {config().frontend}</Badge>
           </section>
         )}
       </Show>

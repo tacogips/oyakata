@@ -9,6 +9,7 @@ import {
   canCancelWorkflowExecution,
   sessionStatusClass,
 } from "../editor-support";
+import { Badge, Button } from "./ui";
 
 type AsyncAction = () => void | Promise<void>;
 type SelectSessionAction = (
@@ -49,7 +50,13 @@ export default function ExecutionPanel(
 
   return (
     <section class="panel side-panel">
-      <h2>Execution</h2>
+      <div class="panel-heading">
+        <div>
+          <p class="section-kicker">Runtime</p>
+          <h2>Execution</h2>
+        </div>
+        <Badge variant="outline">{props.sessions.length} sessions</Badge>
+      </div>
       <Show
         when={props.selectedWorkflowName.length > 0}
         fallback={
@@ -148,16 +155,16 @@ export default function ExecutionPanel(
           </label>
 
           <div class="toolbar-grid single-row">
-            <button
-              class="secondary"
+            <Button
+              variant="secondary"
               type="button"
               disabled={executionDisabled()}
               onClick={() => void props.onExecuteWorkflow()}
             >
               Run Workflow
-            </button>
-            <button
-              class="ghost"
+            </Button>
+            <Button
+              variant="outline"
               type="button"
               disabled={
                 executionDisabled() ||
@@ -166,7 +173,7 @@ export default function ExecutionPanel(
               onClick={() => void props.onCancelSelectedSession()}
             >
               Cancel Selected
-            </button>
+            </Button>
           </div>
         </div>
 

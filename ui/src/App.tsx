@@ -869,6 +869,9 @@ export default function App(): JSX.Element {
       busy={busy()}
       errorMessage={errorMessage()}
       infoMessage={infoMessage()}
+      workflowCount={appData()?.workflows.length ?? 0}
+      sessionCount={appData()?.sessionPanelState.sessions.length ?? 0}
+      selectedWorkflowName={appData()?.selectedWorkflowName ?? ""}
       onReload={() => refresh()}
       sidebar={
         <WorkflowSidebar

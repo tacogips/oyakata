@@ -2,6 +2,7 @@ import { For, Show, type JSX } from "solid-js";
 
 import type { UiConfigResponse } from "../../../../src/shared/ui-contract";
 import { isValidWorkflowNameInput } from "../editor-support";
+import { Badge, Button } from "./ui";
 
 type AsyncAction = () => void | Promise<void>;
 type SelectWorkflowAction = (workflowName: string) => void | Promise<void>;
@@ -48,7 +49,13 @@ export default function WorkflowSidebar(
 
   return (
     <section class="panel side-panel">
-      <h2>Workflows</h2>
+      <div class="panel-heading">
+        <div>
+          <p class="section-kicker">Control</p>
+          <h2>Workflows</h2>
+        </div>
+        <Badge variant="outline">{props.workflows.length} total</Badge>
+      </div>
       <label for="workflow">Select Workflow</label>
       <select
         id="workflow"
@@ -68,7 +75,31 @@ export default function WorkflowSidebar(
         </For>
       </select>
 
-      <div class="create">
+      <Show when={!props.loading && props.workflows.length === 0}>
+        <div class="section-card compact-message">
+          <p class="subtle">
+            No workflows are available yet. Create one below to start editing
+            and running sessions.
+          </p>
+        </div>
+      </Show>
+
+      <Show
+        when={
+          !props.loading &&
+          props.workflows.length > 0 &&
+          props.selectedWorkflowName.length === 0
+        }
+      >
+        <div class="section-card compact-message">
+          <p class="subtle">
+            Select a workflow to load its editor state, validation results, and
+            recent executions.
+          </p>
+        </div>
+      </Show>
+
+      <div class="create section-card">
         <label for="new-workflow">Create Workflow</label>
         <input
           id="new-workflow"
@@ -83,26 +114,26 @@ export default function WorkflowSidebar(
             props.onNewWorkflowNameChange(event.currentTarget.value);
           }}
         />
-        <button
-          class="secondary"
+        <Button
+          variant="secondary"
           type="button"
           disabled={createWorkflowDisabled(props)}
           onClick={() => void onCreateWorkflow()()}
         >
           Create
-        </button>
+        </Button>
       </div>
 
-      <div class="toolbar-grid">
-        <button
-          class="ghost"
+      <div class="toolbar-grid quick-actions">
+        <Button
+          variant="outline"
           type="button"
           disabled={!props.hasEditableBundle || props.busy}
           onClick={() => void onValidateWorkflow()()}
         >
           Validate
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           disabled={
             !props.hasEditableBundle ||
@@ -113,18 +144,18 @@ export default function WorkflowSidebar(
           onClick={() => void onSaveWorkflow()()}
         >
           Save
-        </button>
-        <button
-          class="ghost"
+        </Button>
+        <Button
+          variant="outline"
           type="button"
           disabled={props.selectedWorkflowName.length === 0 || props.busy}
           onClick={() => void onRefreshSessions()()}
         >
           Refresh Sessions
-        </button>
+        </Button>
       </div>
 
-      <div class="list">
+      <div class="list workflow-list">
         <Show
           when={props.workflows.length > 0}
           fallback={<p class="empty">No workflows found.</p>}

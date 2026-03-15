@@ -1,68 +1,34 @@
-.page {
-  max-width: 1440px;
-  margin: 0 auto;
-  padding: 1.5rem;
-}
-
-.hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  align-items: flex-start;
+.message {
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  padding: 0.9rem 1rem;
   margin-bottom: 1rem;
+  background: rgba(255, 255, 255, 0.72);
 }
 
-.hero-actions {
-  display: flex;
-  align-items: center;
-}
-
-.eyebrow {
-  margin: 0 0 0.35rem;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-h1,
-h2,
-h3,
-p {
-  margin-top: 0;
-}
-
-h1 {
-  margin-bottom: 0.5rem;
-  font-size: clamp(2rem, 4vw, 3.2rem);
-  line-height: 0.95;
-}
-
-h2 {
+.compact-message {
+  margin-top: 0.75rem;
   margin-bottom: 0.75rem;
 }
 
-.lede,
-.subtle,
-.detail-label {
-  color: var(--muted);
+.message.error {
+  border-color: rgba(185, 28, 28, 0.18);
+}
+
+.message.info {
+  background: rgba(219, 234, 254, 0.62);
+  color: #1d4ed8;
 }
 
 .layout {
   display: grid;
-  grid-template-columns: 20rem minmax(0, 1fr) 23rem;
+  grid-template-columns: 19rem minmax(0, 1fr) 24rem;
   gap: 1rem;
   align-items: start;
 }
 
 .panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 1.25rem;
-  padding: 1rem;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(8px);
+  padding: 1.15rem;
 }
 
 .side-panel {
@@ -74,56 +40,32 @@ h2 {
   min-width: 0;
 }
 
-.modes {
+.panel-heading,
+.section-head,
+.node-head,
+.node-meta,
+.node-actions,
+.issue-head,
+.session-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.panel-heading {
   margin-bottom: 1rem;
 }
 
-.badge {
-  border-radius: 999px;
-  padding: 0.35rem 0.7rem;
-  background: rgba(139, 61, 22, 0.12);
-  color: var(--text);
-  font-size: 0.85rem;
-}
-
-.badge.warn,
-.error {
-  background: rgba(160, 48, 48, 0.12);
-}
-
-.badge.subtle,
-.ok {
-  background: rgba(45, 91, 70, 0.12);
-}
-
-.warning {
-  color: #8a5f00;
-}
-
-.running {
-  color: var(--accent-2);
-}
-
-.message {
-  border-radius: 1rem;
-  padding: 0.85rem 1rem;
-  margin-bottom: 1rem;
-}
-
-.compact-message {
-  margin-top: 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.message.error {
-  color: var(--danger);
-}
-
-.message.info {
-  background: rgba(45, 91, 70, 0.12);
+.section-card,
+.structure-block,
+.validation-block,
+.session-detail,
+.execution-history {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 1.2rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(248, 250, 252, 0.45));
 }
 
 .create,
@@ -135,7 +77,7 @@ h2 {
 .session-detail,
 .execution-history {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.8rem;
   margin-top: 1rem;
 }
 
@@ -154,12 +96,22 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.quick-actions {
+  grid-template-columns: 1fr;
+}
+
 .property-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .single-row {
   grid-template-columns: 1fr 1fr;
+}
+
+.workflow-list {
+  max-height: 28rem;
+  overflow: auto;
+  padding-right: 0.2rem;
 }
 
 .workflow-link,
@@ -169,36 +121,36 @@ h2 {
   border-radius: 1rem;
   text-align: left;
   display: grid;
-  gap: 0.35rem;
+  gap: 0.42rem;
   width: 100%;
+  padding: 0.95rem;
+}
+
+.workflow-link,
+.session-card {
+  background: rgba(255, 255, 255, 0.56);
 }
 
 .node-card {
   cursor: pointer;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(239, 246, 255, 0.76)),
+    rgba(255, 255, 255, 0.78);
 }
 
 .workflow-link.selected,
 .node-card.selected,
 .session-card.selected {
-  border-color: rgba(139, 61, 22, 0.45);
-  background: rgba(139, 61, 22, 0.12);
-}
-
-.section-head,
-.node-head,
-.node-meta,
-.node-actions,
-.issue-head,
-.session-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  align-items: center;
+  border-color: rgba(59, 130, 246, 0.28);
+  background:
+    linear-gradient(135deg, rgba(219, 234, 254, 0.82), rgba(255, 255, 255, 0.88)),
+    rgba(255, 255, 255, 0.88);
+  box-shadow: 0 12px 28px rgba(59, 130, 246, 0.1);
 }
 
 .editor-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
   gap: 1rem;
   align-items: start;
 }
@@ -215,6 +167,12 @@ h2 {
   font-size: 0.85rem;
 }
 
+.node-kind {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+}
+
 .execution-grid {
   margin-top: 0;
 }
@@ -222,8 +180,12 @@ h2 {
 .toggle {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  color: var(--text);
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--foreground);
 }
 
 .toggle input {
@@ -233,27 +195,36 @@ h2 {
 
 .history-card,
 .issue-card {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 1rem;
-  padding: 0.85rem;
-  background: rgba(255, 255, 255, 0.62);
+  padding: 0.9rem;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .issue-card.error {
-  border-color: rgba(160, 48, 48, 0.3);
+  border-color: rgba(185, 28, 28, 0.18);
 }
 
 .issue-card.warning {
-  border-color: rgba(138, 95, 0, 0.3);
+  border-color: rgba(245, 158, 11, 0.24);
+  background: var(--warning-surface);
+}
+
+.warning {
+  color: #a16207;
+}
+
+.running {
+  color: #2563eb;
 }
 
 .detail-grid code,
 pre {
   display: block;
   border-radius: 1rem;
-  padding: 0.85rem;
-  background: #12211a;
-  color: #e4f0e5;
+  padding: 0.95rem;
+  background: #0f172a;
+  color: #e2e8f0;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -267,11 +238,7 @@ pre {
   min-height: 8rem;
 }
 
-.empty {
-  color: var(--muted);
-}
-
-@media (max-width: 1180px) {
+@media (max-width: 1320px) {
   .layout {
     grid-template-columns: 1fr;
   }
@@ -282,14 +249,12 @@ pre {
 }
 
 @media (max-width: 760px) {
-  .page {
-    padding: 1rem;
-  }
-
-  .hero,
+  .panel-heading,
   .section-head,
   .node-head,
   .node-meta,
+  .node-actions,
+  .issue-head,
   .session-head {
     flex-direction: column;
     align-items: flex-start;

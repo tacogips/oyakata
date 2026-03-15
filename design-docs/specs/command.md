@@ -22,10 +22,14 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Show current node, branch state, and loop counters.
 - `session resume <session-id>`
   - Continue an interrupted session from persisted state.
+- `gql <graphql-document>`
+  - Execute a GraphQL query or mutation against the canonical control-plane endpoint.
+  - Manager-node LLM/tool use should call GraphQL mutations such as `sendManagerMessage` through this command rather than dedicated domain subcommands.
 - `serve [workflow-name]`
   - Start local HTTP server for browser-based workflow editing and execution.
   - If `workflow-name` is omitted, server starts in workflow selection mode.
-  - Serves the built browser frontend from `ui/dist/` and exposes local API for workflow CRUD/validation/run operations.
+  - Serves the built browser frontend from `ui/dist/`, keeps the current local editor REST API during migration, and adds the GraphQL control plane.
+  - Exposes the canonical GraphQL control-plane endpoint at `/graphql` for execution, communication, and manager-control operations.
   - Returns an explicit UI-unavailable response when the built frontend bundle is missing.
 - `tui`
   - Start interactive terminal UI for workflow selection and execution.
@@ -36,17 +40,20 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--variables` | string (path) | none | JSON file supplying runtime prompt variables (merged with node variables) |
+| `--variables` | string | none | For legacy execution commands: JSON file supplying runtime prompt variables. For `oyakata gql`: inline GraphQL variables JSON or `@path/to/variables.json` |
 | `--workflow-root` | string (path) | `./.oyakata` | Root directory containing workflow definitions |
-| `--artifact-root` | string (path) | `./.oyakata-datas/workflow` | Root directory for execution artifacts |
+| `--artifact-root` | string (path) | derived from `OYAKATA_ROOT_DATA_DIR` or `./.oyakata-datas/workflow` | Root directory for execution artifacts |
 | `--workflow` | string | none | Workflow name for direct TUI launch (skip workflow chooser) |
 | `--resume-session` | string | none | Session id to resume in TUI |
 | `--tui-log-level` | string | `info` | Log verbosity in TUI panel (`error`, `warn`, `info`, `debug`) |
 | `--max-steps` | number | none | Hard cap on node executions per run |
 | `--max-loop-iterations` | number | `3` | Override loop budget for safety |
 | `--default-timeout-ms` | number | `120000` | Override default node timeout for this run |
-| `--output` | string | `text` | Output format (`text` or `json`) |
+| `--output` | string | `text` | Output format (`text` or `json`) for CLI-rendered GraphQL results |
 | `--dry-run` | boolean | `false` | Validate and simulate transitions without agent execution |
+| `--endpoint` | string | local serve endpoint | GraphQL endpoint used by CLI commands |
+| `--auth-token` | string | none | Explicit auth token for GraphQL manager/control-plane requests |
+| `--auth-token-env` | string | `OYAKATA_MANAGER_AUTH_TOKEN` | Environment variable used to resolve GraphQL auth token |
 | `--host` | string | `127.0.0.1` | Bind address for `serve` |
 | `--port` | number | `5173` | Listen port for `serve` |
 | `--open` | boolean | `false` | Open browser automatically after `serve` starts |
@@ -58,13 +65,20 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OYAKATA_DEFAULT_MODEL` | No | none | Default model used only by create/template flows; runtime still requires explicit node `model` |
-| `OYAKATA_ARTIFACT_ROOT` | No | `./.oyakata-datas/workflow` | Default root directory for execution artifacts |
+| `OYAKATA_ARTIFACT_ROOT` | No | derived from `OYAKATA_ROOT_DATA_DIR` or `./.oyakata-datas/workflow` | Default root directory for execution artifacts |
 | `OYAKATA_WORKFLOW_ROOT` | No | `./.oyakata` | Default workflow definition root directory |
 | `OYAKATA_TUI_LOG_LEVEL` | No | `info` | Default TUI log panel verbosity |
 | `OYAKATA_SESSION_STORE` | No | local file store | Session state backend selector |
 | `OYAKATA_LOG_LEVEL` | No | `info` | Runtime logging level |
 | `OYAKATA_SERVE_HOST` | No | `127.0.0.1` | Default bind address for `serve` |
 | `OYAKATA_SERVE_PORT` | No | `5173` | Default listen port for `serve` |
+| `OYAKATA_ROOT_DATA_DIR` | No | `./.oyakata-datas` | Canonical Oyakata root data directory used to resolve artifact, session, and attachment file references |
+| `OYAKATA_GRAPHQL_ENDPOINT` | No | local serve endpoint | Default GraphQL endpoint for CLI manager/control-plane commands |
+| `OYAKATA_MANAGER_AUTH_TOKEN` | No | none | Manager-session auth token for `oyakata gql` and GraphQL control-plane mutations |
+| `OYAKATA_WORKFLOW_ID` | No | none | Ambient workflow id for manager tool environments |
+| `OYAKATA_WORKFLOW_EXECUTION_ID` | No | none | Ambient workflow execution id for manager tool environments |
+| `OYAKATA_MANAGER_NODE_ID` | No | none | Ambient manager node id for manager tool environments |
+| `OYAKATA_MANAGER_NODE_EXEC_ID` | No | none | Ambient manager node execution id for manager tool environments |
 
 Workflow root resolution order:
 1. `--workflow-root`
@@ -74,7 +88,42 @@ Workflow root resolution order:
 Artifact root resolution order:
 1. `--artifact-root`
 2. `OYAKATA_ARTIFACT_ROOT`
-3. `./.oyakata-datas/workflow`
+3. `OYAKATA_ROOT_DATA_DIR/workflow`
+4. `./.oyakata-datas/workflow`
+
+Session store root resolution order:
+1. `--session-store`
+2. `OYAKATA_SESSION_STORE`
+3. `OYAKATA_ROOT_DATA_DIR/sessions`
+4. existing runtime default
+
+GraphQL control-plane resolution order:
+1. `--endpoint`
+2. `OYAKATA_GRAPHQL_ENDPOINT`
+3. local `oyakata serve` default (`http://127.0.0.1:5173/graphql`)
+
+Data-root file reference rule:
+1. GraphQL file/image parameters use data-root-relative paths, not host absolute paths
+2. Those paths are resolved under `OYAKATA_ROOT_DATA_DIR`
+3. Recommended attachment layout: `files/{workflowId}/{workflowExecutionId}/attachments/{fileName}`
+4. Attachment files must already exist before the GraphQL request; first-iteration design does not add an upload mutation
+
+## GraphQL Canonicalization
+
+GraphQL is the canonical domain-parameter transport during migration for:
+
+- workflow execution requests,
+- communication inspection,
+- communication replay/retry,
+- manager send/control-plane requests.
+
+Compatibility rule:
+
+- domain parameters should be modeled in GraphQL inputs,
+- the CLI should expose a generic `oyakata gql` GraphQL client rather than separate domain-specific control-plane commands,
+- existing REST endpoints remain supported until the browser/editor surfaces migrate.
+
+Supporting design: `design-docs/specs/design-graphql-manager-control-plane.md`.
 
 ### Exit Codes
 

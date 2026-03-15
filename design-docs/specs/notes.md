@@ -53,6 +53,14 @@ Implicit transitions are avoided.
 - Timeout: each node can define execution timeout, with workflow-level default fallback.
 - Conversation handoff: `oyakata` routes by explicit `OutputRef` (`workflowExecutionId`, `outputNodeId`, `nodeExecId`, and optional `subWorkflowId` for sub-workflow outputs) instead of implicit latest-output inference.
 - Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. The parent workflow manager writes only to the recipient sub-workflow manager inbox, and the recipient sub-workflow manager writes only to nodes inside that sub-workflow (validated via `subWorkflows[].nodeIds`). A re-executed/resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
+- GraphQL migration direction: GraphQL is the canonical control-plane schema during migration for execution, communication inspection/replay, and manager send operations. CLI may remain as a thin client surface over GraphQL, while existing REST editor endpoints remain active until migrated. See `design-docs/specs/design-graphql-manager-control-plane.md`.
+- Manager control-plane separation: a manager-issued GraphQL manager-message mutation invoked through `oyakata gql` is not itself a mailbox communication. It is a scoped control-plane request that may cause new mailbox communications, retries, planner-state changes, or node execution requests.
+- File/image reference portability: GraphQL must use data-root-relative file references resolved under `OYAKATA_ROOT_DATA_DIR`, never host absolute paths. This is required for future Podman/container node execution with bind-mounted or synchronized data volumes.
+- `oyakata gql` variables contract: GraphQL variables are passed through `--variables`, which accepts inline JSON or `@path/to/variables.json`. First-iteration attachment handling assumes files are pre-placed under the Oyakata root data directory; no upload mutation is introduced yet.
+- Manager action contract: execution-affecting manager requests must use typed GraphQL actions. Freeform text may be retained for audit notes, but must not be the only source of truth for privileged control decisions.
+- Manager auth/idempotency contract: GraphQL manager mutations use a runtime-issued bearer token scoped to one manager session and enforce persisted idempotency by `(mutationName, managerSessionId, idempotencyKey)`.
+- Node output ingestion contract: ordinary node completion is runtime-captured in the execution path itself, not discovered by periodic scanning for `output.json` files. File watching is only an adapter-local fallback for special external backends and must still feed results back into the runtime-owned completion path.
+- Timeout inspection fallback: if the normal transition/notification path fails, Oyakata still needs a deterministic inspection path for node `status`, published `output.json`, `meta.json`, and timeout/failure messages via GraphQL `nodeExecution(...)` or internal runtime-db/session helpers.
 
 ### Completion-First Progression
 
@@ -62,6 +70,18 @@ This supports quality gates in collaborative writing workflows.
 ### Open Items
 
 - See `design-docs/qa.md` for current decision status and any remaining confirmation items.
+
+### GraphQL Redesign Decision
+
+- The requested GraphQL-first redesign does not conflict with the current execution/mailbox architecture.
+- It does conflict with the current CLI/control-surface layering if attempted as a direct in-place replacement.
+- The approved direction is therefore additive and layered:
+  - keep workflow/session/mailbox artifacts,
+  - introduce GraphQL as the canonical control plane,
+  - expose `oyakata gql` as the manager tool client over that control plane,
+  - add first-class communication inspection and replay services,
+  - keep CLI only as a thin GraphQL client surface,
+  - keep current REST editor/workflow-definition endpoints until those browser surfaces migrate.
 
 ### Migration Rule
 
