@@ -1,8 +1,17 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import type {
+  SaveWorkflowResponse,
+  ValidationResponse,
+  WorkflowResponse,
+} from "../shared/ui-contract";
 import { runWorkflow } from "../workflow/engine";
+import { createWorkflowTemplate } from "../workflow/create";
 import { buildInspectionSummary } from "../workflow/inspect";
 import { loadWorkflowFromDisk } from "../workflow/load";
+import { isSafeWorkflowName, resolveEffectiveRoots } from "../workflow/paths";
+import { computeWorkflowRevisionFromFiles } from "../workflow/revision";
+import { saveWorkflowToDisk } from "../workflow/save";
 import {
   createCommunicationService,
   type CommunicationLookupInput,
@@ -25,9 +34,18 @@ import {
   listRuntimeNodeLogs,
 } from "../workflow/runtime-db";
 import { loadSession, saveSession } from "../workflow/session-store";
+import { listSessions } from "../workflow/session-store";
 import type { WorkflowSessionState } from "../workflow/session";
+import { createSessionId } from "../workflow/session";
+import type { WorkflowExecutionSummary } from "../shared/ui-contract";
+import { validateWorkflowBundleDetailed } from "../workflow/validate";
+import { deriveWorkflowVisualization } from "../workflow/visualization";
+import { remapNodePayloadsForValidation } from "../server/api-workflow-bundle";
 import type {
+  CreateWorkflowDefinitionInput,
   CommunicationConnection,
+  SaveWorkflowDefinitionInput,
+  SaveWorkflowDefinitionPayload,
   ExecuteWorkflowInput,
   ExecuteWorkflowPayload,
   GraphqlManagerScope,
@@ -38,6 +56,12 @@ import type {
   ManagerSessionView,
   NodeExecutionLookupInput,
   NodeExecutionView,
+  ValidateWorkflowDefinitionInput,
+  ValidateWorkflowDefinitionPayload,
+  WorkflowDefinitionLookupInput,
+  WorkflowDefinitionView,
+  WorkflowDefinitionsView,
+  WorkflowExecutionConnection,
   ReplayCommunicationInput,
   ReplayCommunicationPayload,
   RetryCommunicationDeliveryInput,
@@ -49,6 +73,7 @@ import type {
   SendManagerMessageInput,
   SendManagerMessagePayload,
   WorkflowExecutionLookupInput,
+  WorkflowExecutionsQueryInput,
   WorkflowExecutionView,
   WorkflowLookupInput,
   WorkflowView,
@@ -127,6 +152,203 @@ function resolveScopedAuthToken(context: GraphqlRequestContext): string | undefi
     return context.authToken;
   }
   return resolveAmbientManagerExecutionContext(context.env)?.authToken;
+}
+
+async function listWorkflowDefinitionNames(
+  context: GraphqlRequestContext,
+): Promise<WorkflowDefinitionsView> {
+  const roots = resolveEffectiveRoots(context);
+  let entries;
+  try {
+    entries = await readdir(roots.workflowRoot, { withFileTypes: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("ENOENT")) {
+      return [];
+    }
+    throw error;
+  }
+
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const workflowPath = path.join(roots.workflowRoot, entry.name, "workflow.json");
+    try {
+      const details = await stat(workflowPath);
+      if (details.isFile()) {
+        names.push(entry.name);
+      }
+    } catch {
+      // Ignore incomplete workflow directories.
+    }
+  }
+
+  return names.sort((left, right) => left.localeCompare(right));
+}
+
+function assertWorkflowDefinitionAccess(
+  workflowName: string,
+  context: GraphqlRequestContext,
+): void {
+  if (!isSafeWorkflowName(workflowName)) {
+    throw new Error(`invalid workflow name '${workflowName}'`);
+  }
+  if (
+    context.fixedWorkflowName !== undefined &&
+    context.fixedWorkflowName !== workflowName
+  ) {
+    throw new Error("workflow name not allowed in fixed workflow mode");
+  }
+}
+
+function assertWorkflowDefinitionWritable(
+  workflowName: string,
+  context: GraphqlRequestContext,
+): void {
+  if (context.readOnly === true) {
+    throw new Error("read-only mode enabled");
+  }
+  if (
+    context.fixedWorkflowName !== undefined &&
+    context.fixedWorkflowName !== workflowName
+  ) {
+    throw new Error("cannot write workflows outside fixed workflow mode target");
+  }
+}
+
+async function buildWorkflowDefinitionView(
+  workflowName: string,
+  context: GraphqlRequestContext,
+): Promise<WorkflowDefinitionView | null> {
+  assertWorkflowDefinitionAccess(workflowName, context);
+  const loaded = await loadWorkflowFromDisk(workflowName, context);
+  if (!loaded.ok) {
+    return null;
+  }
+  const nodeFiles = loaded.value.bundle.workflow.nodes.map((node) => node.nodeFile);
+  const revision = await computeWorkflowRevisionFromFiles(
+    loaded.value.workflowDirectory,
+    nodeFiles,
+  );
+  return {
+    workflowName: loaded.value.workflowName,
+    workflowDirectory: loaded.value.workflowDirectory,
+    artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+    revision: revision.ok ? revision.value : null,
+    bundle: loaded.value.bundle,
+    derivedVisualization: deriveWorkflowVisualization({
+      workflow: loaded.value.bundle.workflow,
+      workflowVis: loaded.value.bundle.workflowVis,
+    }),
+  } satisfies WorkflowResponse;
+}
+
+async function createWorkflowDefinitionMutation(
+  input: CreateWorkflowDefinitionInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowDefinitionView> {
+  if (context.readOnly === true) {
+    throw new Error("read-only mode enabled");
+  }
+  if (context.fixedWorkflowName !== undefined) {
+    throw new Error("cannot create workflows in fixed workflow mode");
+  }
+  if (!isSafeWorkflowName(input.workflowName)) {
+    throw new Error(`invalid workflow name '${input.workflowName}'`);
+  }
+  const created = await createWorkflowTemplate(input.workflowName, context);
+  if (!created.ok) {
+    throw new Error(created.error.message);
+  }
+  const loaded = await buildWorkflowDefinitionView(created.value.workflowName, context);
+  if (loaded === null) {
+    throw new Error(`workflow '${created.value.workflowName}' was not found after creation`);
+  }
+  return loaded;
+}
+
+async function saveWorkflowDefinitionMutation(
+  input: SaveWorkflowDefinitionInput,
+  context: GraphqlRequestContext,
+): Promise<SaveWorkflowDefinitionPayload> {
+  assertWorkflowDefinitionWritable(input.workflowName, context);
+  const saveResult = await saveWorkflowToDisk(
+    input.workflowName,
+    {
+      workflow: input.bundle.workflow,
+      workflowVis: input.bundle.workflowVis,
+      nodePayloads: input.bundle.nodePayloads,
+      ...(input.expectedRevision === undefined
+        ? {}
+        : { expectedRevision: input.expectedRevision }),
+    },
+    context,
+  );
+  if (!saveResult.ok) {
+    return {
+      workflowName: input.workflowName,
+      error: saveResult.error.message,
+      ...(saveResult.error.currentRevision === undefined
+        ? {}
+        : { currentRevision: saveResult.error.currentRevision }),
+      ...(saveResult.error.issues === undefined
+        ? {}
+        : { issues: saveResult.error.issues }),
+    };
+  }
+  return {
+    workflowName: saveResult.value.workflowName,
+    workflowDirectory: saveResult.value.workflowDirectory,
+    revision: saveResult.value.revision,
+  } satisfies SaveWorkflowResponse;
+}
+
+async function validateWorkflowDefinitionMutation(
+  input: ValidateWorkflowDefinitionInput,
+  context: GraphqlRequestContext,
+): Promise<ValidateWorkflowDefinitionPayload> {
+  if (input.bundle !== undefined) {
+    const validation = validateWorkflowBundleDetailed({
+      workflow: input.bundle.workflow,
+      workflowVis: input.bundle.workflowVis,
+      nodePayloads: remapNodePayloadsForValidation(
+        input.bundle as unknown as Parameters<
+          typeof remapNodePayloadsForValidation
+        >[0],
+      ),
+    });
+    if (!validation.ok) {
+      return {
+        valid: false,
+        issues: validation.error,
+      } satisfies ValidationResponse;
+    }
+    return {
+      valid: true,
+      workflowId: validation.value.bundle.workflow.workflowId,
+      warnings: validation.value.issues.filter(
+        (issue) => issue.severity === "warning",
+      ),
+      issues: validation.value.issues,
+    } satisfies ValidationResponse;
+  }
+
+  assertWorkflowDefinitionAccess(input.workflowName, context);
+  const loaded = await loadWorkflowFromDisk(input.workflowName, context);
+  if (!loaded.ok) {
+    return {
+      valid: false,
+      error: loaded.error.message,
+      issues: loaded.error.issues ?? [],
+    } satisfies ValidationResponse;
+  }
+  return {
+    valid: true,
+    workflowId: loaded.value.bundle.workflow.workflowId,
+    warnings: [],
+  } satisfies ValidationResponse;
 }
 
 async function authenticateManagerScope(
@@ -276,6 +498,79 @@ async function buildNodeExecutionView(
   };
 }
 
+function toWorkflowExecutionSummary(
+  session: WorkflowSessionState,
+): WorkflowExecutionSummary {
+  return {
+    workflowExecutionId: session.sessionId,
+    sessionId: session.sessionId,
+    workflowName: session.workflowName,
+    status: session.status,
+    currentNodeId: session.currentNodeId ?? null,
+    nodeExecutionCounter: session.nodeExecutionCounter,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt ?? null,
+  };
+}
+
+async function buildWorkflowExecutionConnection(
+  input: WorkflowExecutionsQueryInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowExecutionConnection> {
+  const listed = await listSessions(context);
+  if (!listed.ok) {
+    throw new Error(listed.error.message);
+  }
+
+  const loadedSessions = await Promise.all(
+    listed.value.map(async (workflowExecutionId) => {
+      const loaded = await loadSession(workflowExecutionId, context);
+      if (!loaded.ok) {
+        return undefined;
+      }
+      return toWorkflowExecutionSummary(loaded.value);
+    }),
+  );
+
+  const filtered = loadedSessions
+    .filter(
+      (entry): entry is WorkflowExecutionSummary => entry !== undefined,
+    )
+    .filter((entry) =>
+      input.workflowName === undefined
+        ? true
+        : entry.workflowName === input.workflowName,
+    )
+    .filter((entry) =>
+      input.status === undefined ? true : entry.status === input.status,
+    );
+
+  const startIndex =
+    input.afterWorkflowExecutionId === undefined
+      ? 0
+      : Math.max(
+          filtered.findIndex(
+            (entry) =>
+              entry.workflowExecutionId === input.afterWorkflowExecutionId,
+          ) + 1,
+          0,
+        );
+  const totalCount = filtered.length;
+  const pageSize =
+    input.first === undefined || input.first <= 0 ? filtered.length : input.first;
+  const items = filtered.slice(startIndex, startIndex + pageSize);
+  const nextCursor =
+    startIndex + pageSize < filtered.length && items.length > 0
+      ? items[items.length - 1]?.workflowExecutionId
+      : undefined;
+
+  return {
+    items,
+    totalCount,
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  };
+}
+
 async function buildWorkflowExecutionView(
   input: WorkflowExecutionLookupInput,
   context: GraphqlRequestContext,
@@ -413,11 +708,42 @@ async function executeWorkflowMutation(
   input: ExecuteWorkflowInput,
   context: GraphqlRequestContext,
 ): Promise<ExecuteWorkflowPayload> {
+  if (input.async === true) {
+    const workflowExecutionId = createSessionId();
+    void runWorkflow(input.workflowName, {
+      ...context,
+      sessionId: workflowExecutionId,
+      ...(input.runtimeVariables === undefined
+        ? {}
+        : { runtimeVariables: input.runtimeVariables }),
+      ...(input.mockScenario === undefined
+        ? {}
+        : { mockScenario: input.mockScenario }),
+      ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+      ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+      ...(input.maxLoopIterations === undefined
+        ? {}
+        : { maxLoopIterations: input.maxLoopIterations }),
+      ...(input.defaultTimeoutMs === undefined
+        ? {}
+        : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    }).catch(() => undefined);
+    return {
+      workflowExecutionId,
+      sessionId: workflowExecutionId,
+      status: "running",
+      accepted: true,
+    };
+  }
+
   const result = await runWorkflow(input.workflowName, {
     ...context,
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
     ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.maxLoopIterations === undefined
@@ -546,6 +872,13 @@ export function createGraphqlSchema(
 
   return {
     query: {
+      async workflows(
+        _input: Record<string, never> = {},
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowDefinitionsView> {
+        return listWorkflowDefinitionNames(context);
+      },
+
       async workflow(
         input: WorkflowLookupInput,
         context: GraphqlRequestContext = {},
@@ -557,11 +890,25 @@ export function createGraphqlSchema(
         return buildInspectionSummary(loaded.value);
       },
 
+      async workflowDefinition(
+        input: WorkflowDefinitionLookupInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowDefinitionView | null> {
+        return buildWorkflowDefinitionView(input.workflowName, context);
+      },
+
       async workflowExecution(
         input: WorkflowExecutionLookupInput,
         context: GraphqlRequestContext = {},
       ): Promise<WorkflowExecutionView | null> {
         return buildWorkflowExecutionView(input, context);
+      },
+
+      async workflowExecutions(
+        input: WorkflowExecutionsQueryInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowExecutionConnection> {
+        return buildWorkflowExecutionConnection(input, context);
       },
 
       async communications(
@@ -605,6 +952,27 @@ export function createGraphqlSchema(
     },
 
     mutation: {
+      async createWorkflowDefinition(
+        input: CreateWorkflowDefinitionInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowDefinitionView> {
+        return createWorkflowDefinitionMutation(input, context);
+      },
+
+      async saveWorkflowDefinition(
+        input: SaveWorkflowDefinitionInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<SaveWorkflowDefinitionPayload> {
+        return saveWorkflowDefinitionMutation(input, context);
+      },
+
+      async validateWorkflowDefinition(
+        input: ValidateWorkflowDefinitionInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<ValidateWorkflowDefinitionPayload> {
+        return validateWorkflowDefinitionMutation(input, context);
+      },
+
       async executeWorkflow(
         input: ExecuteWorkflowInput,
         context: GraphqlRequestContext = {},

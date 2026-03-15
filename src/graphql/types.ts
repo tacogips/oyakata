@@ -1,4 +1,11 @@
 import type { MockNodeScenario } from "../workflow/adapter";
+import type { WorkflowExecutionSummary } from "../shared/ui-contract";
+import type {
+  SaveWorkflowResponse,
+  ValidationResponse,
+  WorkflowListResponse,
+  WorkflowResponse,
+} from "../shared/ui-contract";
 import type {
   CommunicationGraphqlView,
   CommunicationLookupInput,
@@ -27,6 +34,7 @@ import type {
 import type { SessionStoreOptions } from "../workflow/session-store";
 import type { NodeExecutionRecord, WorkflowSessionState } from "../workflow/session";
 import type { LoadOptions } from "../workflow/types";
+import type { NormalizedWorkflowBundle, ValidationIssue } from "../workflow/types";
 import type {
   CommunicationService,
 } from "../workflow/communication-service";
@@ -34,14 +42,30 @@ import type {
 export interface GraphqlRequestContext extends SessionStoreOptions {
   readonly authToken?: string;
   readonly managerSessionId?: string;
+  readonly readOnly?: boolean;
+  readonly fixedWorkflowName?: string;
+  readonly noExec?: boolean;
 }
 
 export interface WorkflowLookupInput {
   readonly workflowName: string;
 }
 
+export interface WorkflowDefinitionLookupInput {
+  readonly workflowName: string;
+}
+
 export interface WorkflowExecutionLookupInput {
   readonly workflowExecutionId: string;
+}
+
+export type WorkflowDefinitionsView = WorkflowListResponse["workflows"];
+
+export interface WorkflowExecutionsQueryInput {
+  readonly workflowName?: string;
+  readonly status?: WorkflowSessionState["status"];
+  readonly first?: number;
+  readonly afterWorkflowExecutionId?: string;
 }
 
 export interface NodeExecutionLookupInput {
@@ -68,11 +92,19 @@ export interface CommunicationsQueryInput {
 
 export interface WorkflowView extends WorkflowInspectionSummary {}
 
+export interface WorkflowDefinitionView extends WorkflowResponse {}
+
 export interface WorkflowExecutionView {
   readonly workflowExecutionId: string;
   readonly session: WorkflowSessionState;
   readonly nodeExecutions: readonly RuntimeNodeExecutionSummary[];
   readonly nodeLogs: readonly RuntimeNodeLogEntry[];
+}
+
+export interface WorkflowExecutionConnection {
+  readonly items: readonly WorkflowExecutionSummary[];
+  readonly totalCount: number;
+  readonly nextCursor?: string;
 }
 
 export interface NodeExecutionView {
@@ -113,17 +145,46 @@ export interface ManagerSessionView {
 export interface ExecuteWorkflowInput {
   readonly workflowName: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly mockScenario?: MockNodeScenario;
+  readonly async?: boolean;
   readonly dryRun?: boolean;
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
 }
 
+export interface CreateWorkflowDefinitionInput {
+  readonly workflowName: string;
+}
+
+export interface SaveWorkflowDefinitionInput {
+  readonly workflowName: string;
+  readonly bundle: NormalizedWorkflowBundle;
+  readonly expectedRevision?: string;
+}
+
+export interface SaveWorkflowDefinitionPayload
+  extends Partial<SaveWorkflowResponse> {
+  readonly workflowName: string;
+  readonly error?: string;
+  readonly currentRevision?: string | null;
+  readonly issues?: readonly ValidationIssue[];
+}
+
+export interface ValidateWorkflowDefinitionInput {
+  readonly workflowName: string;
+  readonly bundle?: NormalizedWorkflowBundle;
+}
+
+export interface ValidateWorkflowDefinitionPayload
+  extends ValidationResponse {}
+
 export interface ExecuteWorkflowPayload {
   readonly workflowExecutionId: string;
   readonly sessionId: string;
   readonly status: WorkflowSessionState["status"];
-  readonly exitCode: number;
+  readonly accepted?: boolean;
+  readonly exitCode?: number;
 }
 
 export interface ResumeWorkflowExecutionInput {
@@ -215,14 +276,26 @@ export interface GraphqlSchemaDependencies {
 }
 
 export interface GraphqlQueryRoot {
+  workflows(
+    input: Record<string, never>,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowDefinitionsView>;
   workflow(
     input: WorkflowLookupInput,
     context?: GraphqlRequestContext,
   ): Promise<WorkflowView | null>;
+  workflowDefinition(
+    input: WorkflowDefinitionLookupInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowDefinitionView | null>;
   workflowExecution(
     input: WorkflowExecutionLookupInput,
     context?: GraphqlRequestContext,
   ): Promise<WorkflowExecutionView | null>;
+  workflowExecutions(
+    input: WorkflowExecutionsQueryInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowExecutionConnection>;
   communications(
     input: CommunicationsQueryInput,
     context?: GraphqlRequestContext,
@@ -242,6 +315,18 @@ export interface GraphqlQueryRoot {
 }
 
 export interface GraphqlMutationRoot {
+  createWorkflowDefinition(
+    input: CreateWorkflowDefinitionInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowDefinitionView>;
+  saveWorkflowDefinition(
+    input: SaveWorkflowDefinitionInput,
+    context?: GraphqlRequestContext,
+  ): Promise<SaveWorkflowDefinitionPayload>;
+  validateWorkflowDefinition(
+    input: ValidateWorkflowDefinitionInput,
+    context?: GraphqlRequestContext,
+  ): Promise<ValidateWorkflowDefinitionPayload>;
   executeWorkflow(
     input: ExecuteWorkflowInput,
     context?: GraphqlRequestContext,

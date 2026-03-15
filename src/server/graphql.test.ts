@@ -12,6 +12,10 @@ import {
 import { handleApiRequest } from "./api";
 import { handleGraphqlRequest } from "./graphql";
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
@@ -145,6 +149,303 @@ describe("GraphQL HTTP transport", () => {
           counts: {
             nodes: 4,
           },
+        },
+      },
+    });
+  });
+
+  test("exposes workflow execution summaries and async execute over /graphql", async () => {
+    const root = await makeTempDir();
+    const { options, session } = await createCompletedWorkflowFixture(root);
+
+    const listResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query WorkflowExecutions($workflowName: String!, $first: Int!) {
+              workflowExecutions(workflowName: $workflowName, first: $first) {
+                totalCount
+                items
+              }
+            }
+          `,
+          variables: {
+            workflowName: "demo",
+            first: 10,
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toMatchObject({
+      data: {
+        workflowExecutions: {
+          totalCount: 1,
+          items: [
+            {
+              workflowExecutionId: session.sessionId,
+              sessionId: session.sessionId,
+              workflowName: "demo",
+            },
+          ],
+        },
+      },
+    });
+
+    const executeResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation ExecuteWorkflow($input: ExecuteWorkflowInput!) {
+              executeWorkflow(input: $input) {
+                workflowExecutionId
+                sessionId
+                status
+                accepted
+                exitCode
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowName: "demo",
+              async: true,
+              runtimeVariables: {
+                humanInput: {
+                  request: "start demo workflow",
+                },
+              },
+              mockScenario: makeDefaultTemplateScenario(),
+            },
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(executeResponse.status).toBe(200);
+    await expect(executeResponse.json()).resolves.toMatchObject({
+      data: {
+        executeWorkflow: {
+          workflowExecutionId: expect.any(String),
+          sessionId: expect.any(String),
+          status: "running",
+          accepted: true,
+          exitCode: null,
+        },
+      },
+    });
+  });
+
+  test("exposes workflow-definition list/load/create/save/validate over /graphql", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const createResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation CreateWorkflowDefinition($input: CreateWorkflowDefinitionInput!) {
+              createWorkflowDefinition(input: $input) {
+                workflowName
+                revision
+                bundle
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowName: "demo",
+            },
+          },
+        }),
+      }),
+      options,
+    );
+    expect(createResponse.status).toBe(200);
+    const createJson = (await createResponse.json()) as {
+      readonly data: {
+        readonly createWorkflowDefinition: {
+          readonly workflowName: string;
+          readonly revision: string;
+          readonly bundle: Record<string, unknown>;
+        };
+      };
+    };
+    expect(createJson).toMatchObject({
+      data: {
+        createWorkflowDefinition: {
+          workflowName: "demo",
+          revision: expect.any(String),
+        },
+      },
+    });
+
+    const listResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query Workflows {
+              workflows
+            }
+          `,
+        }),
+      }),
+      options,
+    );
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toMatchObject({
+      data: {
+        workflows: ["demo"],
+      },
+    });
+
+    const loadResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query WorkflowDefinition($workflowName: String!) {
+              workflowDefinition(workflowName: $workflowName) {
+                workflowName
+                revision
+                bundle
+              }
+            }
+          `,
+          variables: {
+            workflowName: "demo",
+          },
+        }),
+      }),
+      options,
+    );
+    expect(loadResponse.status).toBe(200);
+    const loadJson = (await loadResponse.json()) as {
+      readonly data: {
+        readonly workflowDefinition: {
+          readonly workflowName: string;
+          readonly revision: string;
+          readonly bundle: Record<string, unknown>;
+        };
+      };
+    };
+    expect(loadJson).toMatchObject({
+      data: {
+        workflowDefinition: {
+          workflowName: "demo",
+          revision: expect.any(String),
+        },
+      },
+    });
+
+    const validBundle = cloneJson(
+      loadJson.data.workflowDefinition.bundle,
+    ) as {
+      workflow: {
+        description: string;
+        nodes: unknown[];
+      };
+    } & Record<string, unknown>;
+    validBundle.workflow.description = "Updated through GraphQL";
+    const saveResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation SaveWorkflowDefinition($input: SaveWorkflowDefinitionInput!) {
+              saveWorkflowDefinition(input: $input) {
+                workflowName
+                workflowDirectory
+                revision
+                error
+                currentRevision
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowName: "demo",
+              bundle: validBundle,
+            },
+          },
+        }),
+      }),
+      options,
+    );
+    expect(saveResponse.status).toBe(200);
+    await expect(saveResponse.json()).resolves.toMatchObject({
+      data: {
+        saveWorkflowDefinition: {
+          workflowName: "demo",
+          revision: expect.any(String),
+          error: null,
+        },
+      },
+    });
+
+    const invalidBundle = cloneJson(validBundle) as typeof validBundle;
+    invalidBundle.workflow.nodes = [];
+    const validateResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation ValidateWorkflowDefinition($input: ValidateWorkflowDefinitionInput!) {
+              validateWorkflowDefinition(input: $input) {
+                valid
+                issues
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowName: "demo",
+              bundle: invalidBundle,
+            },
+          },
+        }),
+      }),
+      options,
+    );
+    expect(validateResponse.status).toBe(200);
+    await expect(validateResponse.json()).resolves.toMatchObject({
+      data: {
+        validateWorkflowDefinition: {
+          valid: false,
+          issues: expect.any(Array),
         },
       },
     });

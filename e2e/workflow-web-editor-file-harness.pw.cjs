@@ -185,6 +185,232 @@ function sessionSummaryFromDetail(detail) {
   };
 }
 
+function jsonResponse(response, status, payload) {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+  });
+  response.end(JSON.stringify(payload, null, 2));
+}
+
+function handleGraphqlRequest(state, body) {
+  const query =
+    typeof body.query === "string" ? body.query : "";
+  const variables =
+    body.variables !== null && typeof body.variables === "object"
+      ? body.variables
+      : {};
+
+  if (query.includes("query Workflows")) {
+    return {
+      data: {
+        workflows: [...state.workflows],
+      },
+    };
+  }
+
+  if (query.includes("workflowDefinition(")) {
+    const workflowName =
+      typeof variables.workflowName === "string"
+        ? variables.workflowName
+        : "";
+    return {
+      data: {
+        workflowDefinition: deepClone(
+          state.workflowResponses[workflowName] ?? null,
+        ),
+      },
+    };
+  }
+
+  if (query.includes("createWorkflowDefinition")) {
+    const input =
+      variables.input !== null && typeof variables.input === "object"
+        ? variables.input
+        : {};
+    const workflowName =
+      typeof input.workflowName === "string" ? input.workflowName.trim() : "";
+    const created = createWorkflowResponse(workflowName);
+    state.workflows = [...state.workflows, workflowName];
+    state.workflowResponses[workflowName] = created;
+    return {
+      data: {
+        createWorkflowDefinition: deepClone(created),
+      },
+    };
+  }
+
+  if (query.includes("saveWorkflowDefinition")) {
+    const input =
+      variables.input !== null && typeof variables.input === "object"
+        ? variables.input
+        : {};
+    const workflowName =
+      typeof input.workflowName === "string" ? input.workflowName : "";
+    const current = state.workflowResponses[workflowName];
+    const revisionNumber =
+      Number(String(current.revision).split("-rev-")[1] ?? "1") + 1;
+    const updated = {
+      ...current,
+      revision: "sha256:" + workflowName + "-rev-" + String(revisionNumber),
+      bundle: deepClone(input.bundle),
+    };
+    state.workflowResponses[workflowName] = updated;
+    return {
+      data: {
+        saveWorkflowDefinition: {
+          workflowName,
+          workflowDirectory: updated.workflowDirectory,
+          revision: updated.revision,
+        },
+      },
+    };
+  }
+
+  if (query.includes("validateWorkflowDefinition")) {
+    const input =
+      variables.input !== null && typeof variables.input === "object"
+        ? variables.input
+        : {};
+    const bundle =
+      input.bundle !== null && typeof input.bundle === "object"
+        ? input.bundle
+        : null;
+    const nodes = Array.isArray(bundle?.workflow?.nodes)
+      ? bundle.workflow.nodes
+      : [];
+    if (bundle !== null && nodes.length === 0) {
+      return {
+        data: {
+          validateWorkflowDefinition: {
+            valid: false,
+            issues: [
+              {
+                severity: "error",
+                path: "workflow.nodes",
+                message: "at least one node is required",
+              },
+            ],
+          },
+        },
+      };
+    }
+    const workflowName =
+      typeof input.workflowName === "string" ? input.workflowName : "";
+    return {
+      data: {
+        validateWorkflowDefinition: {
+          valid: true,
+          workflowId:
+            bundle?.workflow?.workflowId ?? workflowName,
+          warnings: [],
+          issues: [],
+        },
+      },
+    };
+  }
+
+  if (query.includes("workflowExecutions")) {
+    return {
+      data: {
+        workflowExecutions: {
+          items: deepClone(state.sessions),
+          totalCount: state.sessions.length,
+          nextCursor: null,
+        },
+      },
+    };
+  }
+
+  if (query.includes("workflowExecution(")) {
+    const workflowExecutionId =
+      typeof variables.workflowExecutionId === "string"
+        ? variables.workflowExecutionId
+        : "";
+    const detail = state.sessionDetails[workflowExecutionId] ?? null;
+    return {
+      data: {
+        workflowExecution:
+          detail === null
+            ? null
+            : {
+                workflowExecutionId,
+                session: deepClone(detail),
+              },
+      },
+    };
+  }
+
+  if (query.includes("executeWorkflow")) {
+    const input =
+      variables.input !== null && typeof variables.input === "object"
+        ? variables.input
+        : {};
+    const workflowName =
+      typeof input.workflowName === "string" ? input.workflowName : "";
+    const workflowExecutionId =
+      "sess-20260309T100000Z-" +
+      String(state.nextSessionCounter).padStart(2, "0");
+    state.nextSessionCounter += 1;
+    const detail = createSessionDetail(workflowName, workflowExecutionId);
+    state.sessionDetails[workflowExecutionId] = detail;
+    state.sessions = [sessionSummaryFromDetail(detail), ...state.sessions];
+    return {
+      data: {
+        executeWorkflow: {
+          accepted: true,
+          workflowExecutionId,
+          sessionId: workflowExecutionId,
+          status: "running",
+          exitCode: null,
+        },
+      },
+    };
+  }
+
+  if (query.includes("cancelWorkflowExecution")) {
+    const input =
+      variables.input !== null && typeof variables.input === "object"
+        ? variables.input
+        : {};
+    const workflowExecutionId =
+      typeof input.workflowExecutionId === "string"
+        ? input.workflowExecutionId
+        : "";
+    const current = state.sessionDetails[workflowExecutionId];
+    if (current !== undefined) {
+      current.status = "cancelled";
+      current.endedAt = "2026-03-09T10:05:00.000Z";
+      state.sessions = state.sessions.map((session) =>
+        session.workflowExecutionId === workflowExecutionId
+          ? {
+              ...session,
+              status: "cancelled",
+              endedAt: current.endedAt,
+            }
+          : session,
+      );
+    }
+    return {
+      data: {
+        cancelWorkflowExecution: {
+          accepted: true,
+          workflowExecutionId,
+          sessionId: workflowExecutionId,
+          status: current?.status ?? "cancelled",
+        },
+      },
+    };
+  }
+
+  return {
+    errors: [
+      {
+        message: `Unhandled harness GraphQL request: ${query.trim()}`,
+      },
+    ],
+  };
+}
+
 async function detectFrontendModeFromEntrypoints() {
   const { detectUiFramework, frontendModeFromUiFramework } = await import(
     "../scripts/ui-framework.mjs"
@@ -284,18 +510,12 @@ async function startHarnessServer(assetUrls, frontendMode) {
       }
 
       if (pathname === "/api/ui-config" && method === "GET") {
-        response.writeHead(200, {
-          "content-type": "application/json; charset=utf-8",
-        });
-        response.end(JSON.stringify(deepClone(state.config), null, 2));
+        jsonResponse(response, 200, deepClone(state.config));
         return;
       }
 
       if (pathname === "/api/workflows" && method === "GET") {
-        response.writeHead(200, {
-          "content-type": "application/json; charset=utf-8",
-        });
-        response.end(JSON.stringify({ workflows: [...state.workflows] }, null, 2));
+        jsonResponse(response, 200, { workflows: [...state.workflows] });
         return;
       }
 
@@ -306,18 +526,18 @@ async function startHarnessServer(assetUrls, frontendMode) {
         const created = createWorkflowResponse(workflowName);
         state.workflows = [...state.workflows, workflowName];
         state.workflowResponses[workflowName] = created;
-        response.writeHead(201, {
-          "content-type": "application/json; charset=utf-8",
-        });
-        response.end(JSON.stringify(deepClone(created), null, 2));
+        jsonResponse(response, 201, deepClone(created));
         return;
       }
 
       if (pathname === "/api/sessions" && method === "GET") {
-        response.writeHead(200, {
-          "content-type": "application/json; charset=utf-8",
-        });
-        response.end(JSON.stringify({ sessions: deepClone(state.sessions) }, null, 2));
+        jsonResponse(response, 200, { sessions: deepClone(state.sessions) });
+        return;
+      }
+
+      if (pathname === "/graphql" && method === "POST") {
+        const body = await readJsonRequest(request);
+        jsonResponse(response, 200, handleGraphqlRequest(state, body));
         return;
       }
 
@@ -328,10 +548,7 @@ async function startHarnessServer(assetUrls, frontendMode) {
         const current = state.workflowResponses[workflowName];
 
         if (tail === "" && method === "GET") {
-          response.writeHead(200, {
-            "content-type": "application/json; charset=utf-8",
-          });
-          response.end(JSON.stringify(deepClone(current), null, 2));
+          jsonResponse(response, 200, deepClone(current));
           return;
         }
 
@@ -346,28 +563,16 @@ async function startHarnessServer(assetUrls, frontendMode) {
             bundle: nextBundle,
           };
           state.workflowResponses[workflowName] = updated;
-          response.writeHead(200, {
-            "content-type": "application/json; charset=utf-8",
+          jsonResponse(response, 200, {
+            workflowName,
+            workflowDirectory: updated.workflowDirectory,
+            revision: updated.revision,
           });
-          response.end(
-            JSON.stringify(
-              {
-                workflowName,
-                workflowDirectory: updated.workflowDirectory,
-                revision: updated.revision,
-              },
-              null,
-              2,
-            ),
-          );
           return;
         }
 
         if (tail === "validate" && method === "POST") {
-          response.writeHead(200, {
-            "content-type": "application/json; charset=utf-8",
-          });
-          response.end(JSON.stringify({ valid: true, warnings: [] }, null, 2));
+          jsonResponse(response, 200, { valid: true, warnings: [] });
           return;
         }
 
@@ -379,21 +584,12 @@ async function startHarnessServer(assetUrls, frontendMode) {
           const detail = createSessionDetail(workflowName, workflowExecutionId);
           state.sessionDetails[workflowExecutionId] = detail;
           state.sessions = [sessionSummaryFromDetail(detail), ...state.sessions];
-          response.writeHead(200, {
-            "content-type": "application/json; charset=utf-8",
+          jsonResponse(response, 200, {
+            accepted: true,
+            workflowExecutionId,
+            sessionId: workflowExecutionId,
+            status: "running",
           });
-          response.end(
-            JSON.stringify(
-              {
-                accepted: true,
-                workflowExecutionId,
-                sessionId: workflowExecutionId,
-                status: "running",
-              },
-              null,
-              2,
-            ),
-          );
           return;
         }
       }
@@ -405,10 +601,7 @@ async function startHarnessServer(assetUrls, frontendMode) {
         const current = state.sessionDetails[workflowExecutionId];
 
         if (tail === "" && method === "GET") {
-          response.writeHead(200, {
-            "content-type": "application/json; charset=utf-8",
-          });
-          response.end(JSON.stringify(deepClone(current), null, 2));
+          jsonResponse(response, 200, deepClone(current));
           return;
         }
 
@@ -424,50 +617,23 @@ async function startHarnessServer(assetUrls, frontendMode) {
                 }
               : session,
           );
-          response.writeHead(200, {
-            "content-type": "application/json; charset=utf-8",
+          jsonResponse(response, 200, {
+            accepted: true,
+            workflowExecutionId,
+            sessionId: workflowExecutionId,
+            status: "cancelled",
           });
-          response.end(
-            JSON.stringify(
-              {
-                accepted: true,
-                workflowExecutionId,
-                sessionId: workflowExecutionId,
-                status: "cancelled",
-              },
-              null,
-              2,
-            ),
-          );
           return;
         }
       }
 
-      response.writeHead(404, {
-        "content-type": "application/json; charset=utf-8",
+      jsonResponse(response, 404, {
+        error: `Unhandled harness request: ${method} ${pathname}`,
       });
-      response.end(
-        JSON.stringify(
-          {
-            error: `Unhandled harness request: ${method} ${pathname}`,
-          },
-          null,
-          2,
-        ),
-      );
     } catch (error) {
-      response.writeHead(500, {
-        "content-type": "application/json; charset=utf-8",
+      jsonResponse(response, 500, {
+        error: error instanceof Error ? error.message : String(error),
       });
-      response.end(
-        JSON.stringify(
-          {
-            error: error instanceof Error ? error.message : String(error),
-          },
-          null,
-          2,
-        ),
-      );
     }
   });
 

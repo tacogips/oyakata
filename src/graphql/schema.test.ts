@@ -11,6 +11,10 @@ import {
 } from "../workflow/manager-session-store";
 import { createGraphqlSchema } from "./schema";
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
@@ -175,6 +179,126 @@ describe("createGraphqlSchema", () => {
     expect(nodeExecution?.nodeExecId).toBe(nodeExecutionRecord.nodeExecId);
     expect(nodeExecution?.output).toContain(nodeExecutionRecord.nodeId);
     expect(nodeExecution?.recentLogs.length).toBeGreaterThan(0);
+  });
+
+  test("lists workflow execution summaries for browser session views", async () => {
+    const root = await makeTempDir();
+    const { options, session } = await createCompletedWorkflowFixture(root);
+    const schema = createGraphqlSchema();
+
+    const connection = await schema.query.workflowExecutions(
+      {
+        workflowName: "demo",
+        first: 10,
+      },
+      options,
+    );
+
+    expect(connection.totalCount).toBeGreaterThan(0);
+    expect(connection.items).toContainEqual(
+      expect.objectContaining({
+        workflowExecutionId: session.sessionId,
+        sessionId: session.sessionId,
+        workflowName: "demo",
+      }),
+    );
+  });
+
+  test("supports async browser execution inputs over GraphQL", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const schema = createGraphqlSchema();
+
+    const payload = await schema.mutation.executeWorkflow(
+      {
+        workflowName: "demo",
+        async: true,
+        runtimeVariables: {
+          humanInput: {
+            request: "start demo workflow",
+          },
+        },
+        mockScenario: makeDefaultTemplateScenario(),
+      },
+      options,
+    );
+
+    expect(payload.accepted).toBe(true);
+    expect(payload.status).toBe("running");
+    expect(payload.workflowExecutionId).toBe(payload.sessionId);
+    expect(payload.exitCode).toBeUndefined();
+  });
+
+  test("lists and mutates workflow definitions for browser editor views", async () => {
+    const root = await makeTempDir();
+    const schema = createGraphqlSchema();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const created = await schema.mutation.createWorkflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    expect(created.workflowName).toBe("demo");
+    expect(created.revision).toEqual(expect.any(String));
+
+    const workflows = await schema.query.workflows({}, options);
+    expect(workflows).toContain("demo");
+
+    const loaded = await schema.query.workflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    expect(loaded?.bundle.workflow.workflowId).toBe("demo");
+
+    const validBundle = cloneJson(created.bundle) as typeof created.bundle & {
+      workflow: {
+        description: string;
+        nodes: unknown[];
+      };
+    };
+    validBundle.workflow.description = "Updated through GraphQL";
+    const saved = await schema.mutation.saveWorkflowDefinition(
+      {
+        workflowName: "demo",
+        bundle: validBundle,
+        ...(created.revision === null
+          ? {}
+          : { expectedRevision: created.revision }),
+      },
+      options,
+    );
+    expect(saved.error).toBeUndefined();
+    expect(saved.revision).toEqual(expect.any(String));
+
+    const invalidBundle = cloneJson(validBundle) as typeof validBundle;
+    invalidBundle.workflow.nodes = [];
+    const validation = await schema.mutation.validateWorkflowDefinition(
+      {
+        workflowName: "demo",
+        bundle: invalidBundle,
+      },
+      options,
+    );
+    expect(validation.valid).toBe(false);
+    expect(validation.issues?.length ?? 0).toBeGreaterThan(0);
   });
 
   test("authenticates managerSession and sendManagerMessage through the shared manager services", async () => {

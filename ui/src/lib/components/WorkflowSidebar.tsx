@@ -1,4 +1,4 @@
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, createEffect, type JSX } from "solid-js";
 
 import type { UiConfigResponse } from "../../../../src/shared/ui-contract";
 import { isValidWorkflowNameInput } from "../editor-support";
@@ -39,6 +39,8 @@ function createWorkflowDisabled(props: WorkflowSidebarProps): boolean {
 export default function WorkflowSidebar(
   props: WorkflowSidebarProps,
 ): JSX.Element {
+  let workflowSelect: HTMLSelectElement | undefined;
+
   const onSelectWorkflow = (): SelectWorkflowAction =>
     props.onSelectWorkflow ?? noop;
   const onCreateWorkflow = (): AsyncAction => props.onCreateWorkflow ?? noop;
@@ -46,6 +48,12 @@ export default function WorkflowSidebar(
     props.onValidateWorkflow ?? noop;
   const onSaveWorkflow = (): AsyncAction => props.onSaveWorkflow ?? noop;
   const onRefreshSessions = (): AsyncAction => props.onRefreshSessions ?? noop;
+
+  createEffect(() => {
+    if (workflowSelect !== undefined) {
+      workflowSelect.value = props.selectedWorkflowName;
+    }
+  });
 
   return (
     <section class="panel side-panel">
@@ -59,6 +67,7 @@ export default function WorkflowSidebar(
       <label for="workflow">Select Workflow</label>
       <select
         id="workflow"
+        ref={workflowSelect}
         value={props.selectedWorkflowName}
         disabled={props.loading || props.busy}
         onChange={(event) => {
@@ -67,17 +76,12 @@ export default function WorkflowSidebar(
           void onSelectWorkflow()(workflowName);
         }}
       >
-        <option value="" selected={props.selectedWorkflowName.length === 0}>
+        <option value="">
           Select a workflow
         </option>
         <For each={props.workflows}>
           {(workflowName) => (
-            <option
-              value={workflowName}
-              selected={workflowName === props.selectedWorkflowName}
-            >
-              {workflowName}
-            </option>
+            <option value={workflowName}>{workflowName}</option>
           )}
         </For>
       </select>

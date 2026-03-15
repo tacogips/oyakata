@@ -26,7 +26,7 @@ impl-plans/
 
 | Plan                            | Status      | Design Reference             | Last Updated |
 | ------------------------------- | ----------- | ---------------------------- | ------------ |
-| _None_                          | -           | -                            | -            |
+| _None_ | - | - | - |
 
 ## Completed Plans
 
@@ -92,6 +92,8 @@ impl-plans/
 | `graphql-manager-attachment-scope-enforcement` | 2026-03-15 | `design-graphql-manager-control-plane`, `command`, `notes`                                         |
 | `graphql-manager-http-transport-context-hardening` | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                         |
 | `graphql-cli-execution-transport`            | 2026-03-15 | `design-graphql-manager-control-plane`, `command`                                                 |
+| `graphql-browser-execution-session-migration` | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                            |
+| `graphql-browser-workflow-definition-migration` | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                           |
 | `runtime-artifact-atomic-write-collision-safety` | 2026-03-15 | `architecture`, `design-graphql-manager-control-plane`                                           |
 | `tui-resume-runtime-variable-merge`           | 2026-03-15 | `design-tui`, `command`                                                                            |
 
@@ -160,6 +162,8 @@ impl-plans/
 | 59    | COMPLETED   | Phase 58   |
 | 60    | COMPLETED   | Phase 59   |
 | 61    | COMPLETED   | Phase 60   |
+| 62    | COMPLETED | Phase 61   |
+| 63    | COMPLETED | Phase 62 |
 
 ### Phase to Plans Mapping
 
@@ -225,6 +229,8 @@ PHASE_TO_PLANS = {
   58: ["impl-plans/graphql-manager-communication-scope-enforcement.md"],
   59: ["impl-plans/graphql-manager-attachment-scope-enforcement.md"],
   60: ["impl-plans/graphql-manager-http-transport-context-hardening.md"],
-  61: ["impl-plans/graphql-cli-execution-transport.md"]
+  61: ["impl-plans/graphql-cli-execution-transport.md"],
+  62: ["impl-plans/graphql-browser-execution-session-migration.md"],
+  63: ["impl-plans/graphql-browser-workflow-definition-migration.md"]
 }
 ```
