@@ -73,6 +73,7 @@ Implicit transitions are avoided.
 - Manager control-mode exclusivity: each manager execution persists one authoritative control source, so `sendManagerMessage` and payload `managerControl` cannot both drive the same manager step; the control-mode claim itself must be atomic at the storage boundary.
 - Node output ingestion contract: ordinary node completion is runtime-captured in the execution path itself, not discovered by periodic scanning for `output.json` files. File watching is only an adapter-local fallback for special external backends and must still feed results back into the runtime-owned completion path.
 - Timeout inspection fallback: if the normal transition/notification path fails, Oyakata still needs a deterministic inspection path for node `status`, published `output.json`, `meta.json`, and timeout/failure messages via GraphQL `nodeExecution(...)` or internal runtime-db/session helpers.
+- Podman image-source contract: future Podman-isolated nodes may declare either a prebuilt `image` or a workflow-local `build` block with `contextPath` and optional `dockerfilePath`. The additive authoring and validation rules are specified in `design-docs/specs/design-podman-runtime-isolation-build-contract.md`.
 
 ### Completion-First Progression
 

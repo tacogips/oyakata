@@ -145,6 +145,70 @@ describe("loadWorkflowFromDisk", () => {
     );
   });
 
+  test("preserves podman runtimeIsolation build metadata during load", async () => {
+    const root = await makeTempDir();
+    const workflowName = "podman-build-load";
+    const workflowDirectory = path.join(root, workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      description: "sample",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "oyakata-manager",
+      subWorkflows: [],
+      nodes: [
+        {
+          id: "oyakata-manager",
+          kind: "manager",
+          nodeFile: "node-oyakata-manager.json",
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+
+    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+      nodes: [{ id: "oyakata-manager", order: 0 }],
+    });
+
+    await writeJson(path.join(workflowDirectory, "node-oyakata-manager.json"), {
+      id: "oyakata-manager",
+      model: "tacogips/codex-agent",
+      promptTemplate: "manager",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        build: {
+          contextPath: "containers/manager",
+          dockerfilePath: "containers/manager/Dockerfile",
+          target: "runtime",
+        },
+      },
+    });
+
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(
+      result.value.bundle.nodePayloads["oyakata-manager"]?.runtimeIsolation,
+    ).toEqual({
+      mode: "podman",
+      build: {
+        contextPath: "containers/manager",
+        dockerfilePath: "containers/manager/Dockerfile",
+        target: "runtime",
+      },
+    });
+  });
+
   test("returns validation error when files are invalid", async () => {
     const root = await makeTempDir();
     const workflowName = "broken-workflow";

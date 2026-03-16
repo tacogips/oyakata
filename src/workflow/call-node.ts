@@ -756,6 +756,13 @@ class ExecutionDispatcher {
         message: `missing node definition for '${input.nodeId}'`,
       });
     }
+    if (nodePayload.runtimeIsolation?.mode === "podman") {
+      return err({
+        session,
+        exitCode: 1,
+        message: `node '${input.nodeId}' requests runtimeIsolation.mode='podman', but Podman execution is not implemented yet`,
+      });
+    }
 
     const nextExecutionCounter = session.nodeExecutionCounter + 1;
     const executionIndex = (session.nodeExecutionCounts[input.nodeId] ?? 0) + 1;

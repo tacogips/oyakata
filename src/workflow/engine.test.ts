@@ -689,7 +689,9 @@ class ExplicitNewSessionPolicyAdapter implements NodeAdapter {
 class ManagerAmbientContextCaptureAdapter implements NodeAdapter {
   readonly calls: Array<{
     readonly nodeId: string;
-    readonly ambientManagerContext?: Parameters<NodeAdapter["execute"]>[0]["ambientManagerContext"];
+    readonly ambientManagerContext?: Parameters<
+      NodeAdapter["execute"]
+    >[0]["ambientManagerContext"];
   }> = [];
 
   async execute(
@@ -1551,6 +1553,38 @@ describe("runWorkflow", () => {
     expect(commitMessage).toContain(
       `Run-ID: ${result.value.session.sessionId}`,
     );
+  });
+
+  test("rejects podman-isolated nodes until Podman execution is implemented", async () => {
+    const root = await makeTempDir();
+    const workflowName = "podman-isolation-unsupported";
+    await createWorkflowFixture(root, workflowName, false);
+    await writeJson(path.join(root, workflowName, "node-step-1.json"), {
+      id: "step-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        image: "ghcr.io/example/step-1:latest",
+      },
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain("runtimeIsolation.mode='podman'");
+    expect(result.error.message).toContain("not implemented yet");
   });
 
   test("reuses a node-local backend session across repeated executions in one workflow run", async () => {

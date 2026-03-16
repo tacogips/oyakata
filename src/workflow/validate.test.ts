@@ -198,6 +198,156 @@ describe("validateWorkflowBundle", () => {
     );
   });
 
+  test("accepts podman runtimeIsolation with a prebuilt image", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        image: "ghcr.io/example/reviewer:latest",
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.runtimeIsolation).toEqual({
+      mode: "podman",
+      image: "ghcr.io/example/reviewer:latest",
+    });
+  });
+
+  test("accepts podman runtimeIsolation build metadata with dockerfilePath", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        build: {
+          contextPath: "containers/reviewer",
+          dockerfilePath: "containers/reviewer/Dockerfile",
+          target: "runtime",
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.runtimeIsolation).toEqual({
+      mode: "podman",
+      build: {
+        contextPath: "containers/reviewer",
+        dockerfilePath: "containers/reviewer/Dockerfile",
+        target: "runtime",
+      },
+    });
+  });
+
+  test("rejects podman runtimeIsolation when both image and build are provided", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        image: "ghcr.io/example/reviewer:latest",
+        build: {
+          contextPath: "containers/reviewer",
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.runtimeIsolation" &&
+          issue.message.includes("exactly one"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects unsafe podman dockerfilePath", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        build: {
+          contextPath: "containers/reviewer",
+          dockerfilePath: "../Dockerfile",
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path ===
+            "nodePayloads.node-worker-1.json.runtimeIsolation.build.dockerfilePath" &&
+          issue.message.includes("workflow-relative path"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects podman dockerfilePath values that target canonical workflow definition files", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        build: {
+          contextPath: "containers/reviewer",
+          dockerfilePath: "workflow.json",
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path ===
+            "nodePayloads.node-worker-1.json.runtimeIsolation.build.dockerfilePath" &&
+          issue.message.includes(
+            "must not target canonical workflow definition files",
+          ),
+      ),
+    ).toBe(true);
+  });
+
   test("rejects unsafe promptTemplateFile paths", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {
@@ -241,7 +391,9 @@ describe("validateWorkflowBundle", () => {
       result.error.some(
         (issue) =>
           issue.path === "nodePayloads.node-worker-1.json.promptTemplateFile" &&
-          issue.message.includes("must not target canonical workflow definition files"),
+          issue.message.includes(
+            "must not target canonical workflow definition files",
+          ),
       ),
     ).toBe(true);
   });

@@ -353,4 +353,59 @@ describe("callNode", () => {
     expect(result.error.message).toContain("terminal session");
     expect(result.error.message).toContain("completed");
   });
+
+  test("rejects podman-isolated nodes until Podman execution is implemented", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-node-podman";
+    const sessionId = "sess-call-node-podman";
+
+    await createCallNodeFixture(root, workflowName);
+    await writeJson(path.join(root, workflowName, "node-writer.json"), {
+      id: "writer",
+      model: "tacogips/codex-agent",
+      promptTemplate: "write a structured review",
+      variables: {},
+      runtimeIsolation: {
+        mode: "podman",
+        build: {
+          contextPath: "containers/writer",
+          dockerfilePath: "containers/writer/Dockerfile",
+        },
+      },
+      output: {
+        description: "writer output",
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          properties: {
+            summary: { type: "string" },
+          },
+        },
+      },
+    });
+    await createCallNodeSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    const result = await callNode({
+      workflowRoot: root,
+      artifactRoot: artifactsRoot,
+      sessionStoreRoot,
+      workflowId: workflowName,
+      workflowRunId: sessionId,
+      nodeId: "writer",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain("runtimeIsolation.mode='podman'");
+    expect(result.error.message).toContain("not implemented yet");
+  });
 });

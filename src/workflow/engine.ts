@@ -562,7 +562,9 @@ function isManagerNodeKind(
   kind: WorkflowJson["nodes"][number]["kind"],
 ): boolean {
   return (
-    kind === "manager" || kind === "root-manager" || kind === "sub-oyakata-manager"
+    kind === "manager" ||
+    kind === "root-manager" ||
+    kind === "sub-oyakata-manager"
   );
 }
 
@@ -1465,6 +1467,22 @@ export async function runWorkflow(
         message: failed.lastError ?? "missing node definition",
       });
     }
+    if (nodePayload.runtimeIsolation?.mode === "podman") {
+      const failed: WorkflowSessionState = {
+        ...session,
+        queue,
+        status: "failed",
+        currentNodeId: nodeId,
+        endedAt: nowIso(),
+        lastError: `node '${nodeId}' requests runtimeIsolation.mode='podman', but Podman execution is not implemented yet`,
+      };
+      await saveSession(failed, options);
+      return err({
+        exitCode: 1,
+        message:
+          failed.lastError ?? "unsupported podman runtime isolation request",
+      });
+    }
 
     let restartAttempt = 0;
     let previousNodeExecId: string | undefined;
@@ -2127,8 +2145,7 @@ export async function runWorkflow(
             await saveSession(failed, options);
             return err({
               exitCode: 1,
-              message:
-                failed.lastError ?? "failed to finalize manager session",
+              message: failed.lastError ?? "failed to finalize manager session",
             });
           }
           const message =
@@ -2300,8 +2317,7 @@ export async function runWorkflow(
             await saveSession(failed, options);
             return err({
               exitCode: 1,
-              message:
-                failed.lastError ?? "failed to finalize manager session",
+              message: failed.lastError ?? "failed to finalize manager session",
             });
           }
           const failed: WorkflowSessionState = {
@@ -2355,8 +2371,7 @@ export async function runWorkflow(
             await saveSession(failed, options);
             return err({
               exitCode: 1,
-              message:
-                failed.lastError ?? "failed to finalize manager session",
+              message: failed.lastError ?? "failed to finalize manager session",
             });
           }
           const failed: WorkflowSessionState = {

@@ -21,6 +21,7 @@ import {
   type NodeExecutionBackend,
   type NodeKind,
   type NodePayload,
+  type RuntimeIsolation,
   type NodeSessionPolicy,
   type NormalizedWorkflowBundle,
   type SubWorkflowBlock,
@@ -140,6 +141,190 @@ function readNumberField(
     return null;
   }
   return value;
+}
+
+function normalizeRuntimeIsolation(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): RuntimeIsolation | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return undefined;
+  }
+
+  const allowedKeys = new Set(["mode", "image", "build"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.${key}`,
+          "uses an unsupported runtimeIsolation field",
+        ),
+      );
+    }
+  }
+
+  const modeRaw = value["mode"];
+  if (modeRaw !== "host" && modeRaw !== "podman") {
+    issues.push(
+      makeIssue("error", `${path}.mode`, "must be 'host' or 'podman'"),
+    );
+    return undefined;
+  }
+
+  const imageRaw = value["image"];
+  let image: string | undefined;
+  if (imageRaw !== undefined) {
+    if (typeof imageRaw === "string" && imageRaw.length > 0) {
+      image = imageRaw;
+    } else {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.image`,
+          "must be a non-empty string when provided",
+        ),
+      );
+    }
+  }
+
+  const buildRaw = value["build"];
+  let build: RuntimeIsolation["build"];
+  if (buildRaw !== undefined) {
+    if (!isRecord(buildRaw)) {
+      issues.push(
+        makeIssue("error", `${path}.build`, "must be an object when provided"),
+      );
+    } else {
+      const buildAllowedKeys = new Set([
+        "contextPath",
+        "dockerfilePath",
+        "target",
+      ]);
+      for (const key of Object.keys(buildRaw)) {
+        if (!buildAllowedKeys.has(key)) {
+          issues.push(
+            makeIssue(
+              "error",
+              `${path}.build.${key}`,
+              "uses an unsupported runtimeIsolation.build field",
+            ),
+          );
+        }
+      }
+
+      const contextPath = readStringField(
+        buildRaw,
+        "contextPath",
+        `${path}.build`,
+        issues,
+      );
+      const dockerfilePathRaw = buildRaw["dockerfilePath"];
+      const targetRaw = buildRaw["target"];
+      let dockerfilePath: string | undefined;
+      let target: string | undefined;
+
+      if (contextPath !== null && !isSafeWorkflowRelativePath(contextPath)) {
+        issues.push(
+          makeIssue(
+            "error",
+            `${path}.build.contextPath`,
+            "must be a workflow-relative path without '.' or '..' segments",
+          ),
+        );
+      }
+
+      if (dockerfilePathRaw !== undefined) {
+        if (
+          typeof dockerfilePathRaw === "string" &&
+          dockerfilePathRaw.length > 0
+        ) {
+          if (isSafeWorkflowRelativePath(dockerfilePathRaw)) {
+            if (isReservedWorkflowDefinitionPath(dockerfilePathRaw)) {
+              issues.push(
+                makeIssue(
+                  "error",
+                  `${path}.build.dockerfilePath`,
+                  "must not target canonical workflow definition files such as workflow.json, workflow-vis.json, or node-*.json",
+                ),
+              );
+            } else {
+              dockerfilePath = dockerfilePathRaw;
+            }
+          } else {
+            issues.push(
+              makeIssue(
+                "error",
+                `${path}.build.dockerfilePath`,
+                "must be a workflow-relative path without '.' or '..' segments",
+              ),
+            );
+          }
+        } else {
+          issues.push(
+            makeIssue(
+              "error",
+              `${path}.build.dockerfilePath`,
+              "must be a non-empty string when provided",
+            ),
+          );
+        }
+      }
+
+      if (targetRaw !== undefined) {
+        if (typeof targetRaw === "string" && targetRaw.length > 0) {
+          target = targetRaw;
+        } else {
+          issues.push(
+            makeIssue(
+              "error",
+              `${path}.build.target`,
+              "must be a non-empty string when provided",
+            ),
+          );
+        }
+      }
+
+      if (contextPath !== null && isSafeWorkflowRelativePath(contextPath)) {
+        build = {
+          contextPath,
+          ...(dockerfilePath === undefined ? {} : { dockerfilePath }),
+          ...(target === undefined ? {} : { target }),
+        };
+      }
+    }
+  }
+
+  if (modeRaw === "podman") {
+    if ((image === undefined) === (build === undefined)) {
+      issues.push(
+        makeIssue(
+          "error",
+          path,
+          "podman isolation requires exactly one of runtimeIsolation.image or runtimeIsolation.build",
+        ),
+      );
+    }
+  } else if (image !== undefined || build !== undefined) {
+    issues.push(
+      makeIssue(
+        "error",
+        path,
+        "runtimeIsolation.image and runtimeIsolation.build are only supported when mode is 'podman'",
+      ),
+    );
+  }
+
+  return {
+    mode: modeRaw,
+    ...(image === undefined ? {} : { image }),
+    ...(build === undefined ? {} : { build }),
+  };
 }
 
 function normalizeCompletion(
@@ -1237,6 +1422,12 @@ function normalizeNodePayload(
     }
   }
 
+  const runtimeIsolation = normalizeRuntimeIsolation(
+    payload["runtimeIsolation"],
+    `${path}.runtimeIsolation`,
+    issues,
+  );
+
   const sessionPolicyRaw = payload["sessionPolicy"];
   let sessionPolicy: NodeSessionPolicy | undefined;
   if (sessionPolicyRaw !== undefined) {
@@ -1375,6 +1566,7 @@ function normalizeNodePayload(
     ...(argumentBindings === undefined ? {} : { argumentBindings }),
     ...(templateEngine === undefined ? {} : { templateEngine }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(runtimeIsolation === undefined ? {} : { runtimeIsolation }),
     ...(outputContract === undefined ? {} : { output: outputContract }),
   };
 }

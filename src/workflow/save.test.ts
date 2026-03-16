@@ -213,4 +213,73 @@ describe("saveWorkflowToDisk", () => {
     );
     expect(workflowJsonAfter).toBe(originalWorkflowJson);
   });
+
+  test("preserves podman runtimeIsolation metadata across save and reload", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+
+    const loaded = await loadWorkflowFromDisk("demo", {
+      workflowRoot: root,
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+
+    const updatedNodePayloads = {
+      ...loaded.value.bundle.nodePayloads,
+      "oyakata-manager": {
+        ...loaded.value.bundle.nodePayloads["oyakata-manager"],
+        runtimeIsolation: {
+          mode: "podman" as const,
+          build: {
+            contextPath: "containers/oyakata-manager",
+            dockerfilePath: "containers/oyakata-manager/Dockerfile",
+            target: "runtime",
+          },
+        },
+      },
+    };
+
+    const saveResult = await saveWorkflowToDisk(
+      "demo",
+      {
+        workflow: loaded.value.bundle.workflow,
+        workflowVis: loaded.value.bundle.workflowVis,
+        nodePayloads: updatedNodePayloads,
+      },
+      {
+        workflowRoot: root,
+      },
+    );
+    expect(saveResult.ok).toBe(true);
+    if (!saveResult.ok) {
+      return;
+    }
+
+    const reloaded = await loadWorkflowFromDisk("demo", {
+      workflowRoot: root,
+    });
+    expect(reloaded.ok).toBe(true);
+    if (!reloaded.ok) {
+      return;
+    }
+
+    expect(
+      reloaded.value.bundle.nodePayloads["oyakata-manager"]?.runtimeIsolation,
+    ).toEqual({
+      mode: "podman",
+      build: {
+        contextPath: "containers/oyakata-manager",
+        dockerfilePath: "containers/oyakata-manager/Dockerfile",
+        target: "runtime",
+      },
+    });
+  });
 });

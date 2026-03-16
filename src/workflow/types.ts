@@ -1,6 +1,4 @@
-export type CliAgentBackend =
-  | "codex-agent"
-  | "claude-code-agent";
+export type CliAgentBackend = "codex-agent" | "claude-code-agent";
 
 export type NodeExecutionBackend =
   | CliAgentBackend
@@ -166,6 +164,18 @@ export interface NodeSessionPolicy {
   readonly mode: NodeSessionMode;
 }
 
+export interface RuntimeIsolationBuild {
+  readonly contextPath: string;
+  readonly dockerfilePath?: string;
+  readonly target?: string;
+}
+
+export interface RuntimeIsolation {
+  readonly mode: "host" | "podman";
+  readonly image?: string;
+  readonly build?: RuntimeIsolationBuild;
+}
+
 export interface NodePayload {
   readonly id: string;
   readonly model: string;
@@ -178,6 +188,7 @@ export interface NodePayload {
   readonly argumentBindings?: readonly ArgumentBinding[];
   readonly templateEngine?: string;
   readonly timeoutMs?: number;
+  readonly runtimeIsolation?: RuntimeIsolation;
   readonly output?: NodeOutputContract;
 }
 
