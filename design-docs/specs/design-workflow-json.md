@@ -4,9 +4,11 @@ This document defines the JSON model for workflow orchestration and the required
 
 ## Overview
 
-Workflow orchestration is split into multiple files under `<workflow-root>/<workflow-name>/` with explicit completion, branching, and loop semantics.
+Workflow orchestration is split into multiple files under `<workflow-root>/<workflow-name>/` with explicit completion, branching, loop, and nested workflow semantics.
 
 Branch bodies and loop bodies should be represented as ordinary `subWorkflows` whenever they contain more than a single leaf step. The separate branch/loop fields remain the control-plane policy, while `subWorkflows` are the structural block abstraction.
+
+A workflow may also be invoked from another workflow by `workflowId`. In that case the invoked workflow behaves as one callable execution unit from the parent workflow's perspective, while still keeping its own internal execution graph and mailbox/runtime state.
 
 ## Workflow Directory Structure
 
@@ -49,10 +51,12 @@ Path variable mapping:
 
 `workflow.json` holds structural and control-flow definitions and must include:
 - `description`: purpose of the workflow
+- optional `workflowType`: `single` or `orchestrate` (`orchestrate` by default)
 - optional workflow-level prompt policy for manager/worker execution
 - node graph and connectivity
-- sub-workflow definitions for node sequences
+- sub-workflow definitions for node sequences and callable workflow references
 - inter-sub-workflow conversation definitions
+- optional concurrent `nodeGroups`
 - conversation orchestration policy definitions
 - mandatory `oyakata` manager node reference
 - completion conditions
@@ -73,6 +77,7 @@ Partial conceptual example (not copy-paste ready):
 {
   "workflowId": "writing-session",
   "description": "Draft and review a document cooperatively.",
+  "workflowType": "orchestrate",
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
@@ -86,6 +91,7 @@ Partial conceptual example (not copy-paste ready):
     {
       "id": "writer-sw",
       "description": "Writer sequence.",
+      "definitionType": "inline",
       "managerNodeId": "writer-sub-oyakata",
       "inputNodeId": "writer-input",
       "outputNodeId": "writer-output",
@@ -97,10 +103,8 @@ Partial conceptual example (not copy-paste ready):
     {
       "id": "reviewer-sw",
       "description": "Reviewer sequence.",
-      "managerNodeId": "reviewer-sub-oyakata",
-      "inputNodeId": "reviewer-input",
-      "outputNodeId": "reviewer-output",
-      "nodeIds": ["reviewer-sub-oyakata", "reviewer-input", "reviewer-review", "reviewer-output"],
+      "definitionType": "workflow-ref",
+      "workflowId": "reviewer-workflow",
       "inputSources": [
         { "type": "sub-workflow-output", "subWorkflowId": "writer-sw" }
       ]
@@ -148,7 +152,7 @@ Partial conceptual example (not copy-paste ready):
   ],
   "edges": [
     { "from": "a1b2c3d4", "to": "e5f6a7b8", "when": "always" },
-    { "from": "e5f6a7b8", "to": "review", "when": "needs_review" },
+    { "from": "e5f6a7b8", "to": "reviewer-sw", "when": "needs_review" },
     { "from": "e5f6a7b8", "to": "done", "when": "skip_review" }
   ],
   "branching": {
@@ -163,11 +167,24 @@ Each `node-{id}.json` contains execution payload used at runtime:
 - `id`: stable slug-like identifier matching `^[a-z0-9][a-z0-9-]{1,63}$`
 - `name`: human-readable node name
 - `description`: brief summary of the node's purpose
-- `executionBackend` (optional canonical interface selector such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk`)
-- `model` (required provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5`)
-- `promptTemplate`
+- optional `nodeType`: `agent` or `command` (`agent` by default)
+- `executionBackend` (optional canonical interface selector such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk`; used by `agent` nodes)
+- `model` (required provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5`; used by `agent` nodes)
+- `promptTemplate` (used by `agent` nodes and manager nodes)
 - optional `promptTemplateFile`
 - `variables`
+- optional `command`
+  - `scriptPath`: workflow-relative path to the command/script entrypoint
+  - optional `argvTemplate`: array of rendered argv entries; render context includes `{{inbox.*}}`, `{{mailbox.*}}`, and `{{variables.*}}`
+  - optional `envTemplate`: string map rendered with the same context
+  - optional `workingDirectory`: workflow-relative working directory
+  - runtime must execute the rendered argv directly without implicit shell interpolation
+- optional `runtimeIsolation`
+  - `mode: "host" | "podman"` (`host` by default)
+  - optional `image`
+  - optional `workspaceMountMode: "none" | "read-only" | "read-write"`
+  - optional `extraMounts`
+  - optional `futureAgentIsolationReserved: true` to document author intent for future isolated `agent` support
 - optional `sessionPolicy`
   - `mode: "new" | "reuse"`
   - omitted means `new`
@@ -179,6 +196,22 @@ Each `node-{id}.json` contains execution payload used at runtime:
   - `maxValidationAttempts`
   - runtime-owned publication: contract-enabled adapters submit only a candidate JSON object or reserved temp candidate file; runtime validation and mailbox publication happen after acceptance
 - optional `timeoutMs` (node execution timeout override)
+
+Execution type policy:
+
+- `agent` nodes call an AI/backend adapter and use `executionBackend`, `model`, prompt rendering, and optional backend session reuse.
+- `command` nodes execute a local command/script and must define `command.scriptPath`.
+- Structural `kind` in `workflow.json` remains the topology/role classifier (`root-manager`, `sub-oyakata-manager`, `branch-judge`, and so on). Execution flavor is modeled separately by `nodeType` to avoid overloading `kind`.
+- `root-manager` and `sub-oyakata-manager` nodes are still expected to use `nodeType: "agent"` in the current design.
+
+Isolation policy:
+
+- `runtimeIsolation.mode = "podman"` is currently valid only for `command` nodes.
+- The schema is intentionally node-type-agnostic so `agent` nodes can adopt the same isolation contract later without redesigning the workflow format.
+- When Podman isolation is enabled, the runtime must bind-mount a node-scoped mailbox view into the container:
+  - `/mailbox/inbox` -> host read-only inbox view for that node execution
+  - `/mailbox/outbox` -> host writable outbox staging directory for that node execution
+- The container mailbox mount is not the canonical cross-node communications tree. It is a runtime-prepared node-local view that preserves manager-owned routing rules while still giving the isolated process a filesystem transport boundary.
 
 Prompt authoring policy:
 
@@ -248,6 +281,7 @@ Legacy compatibility:
 
 - Older workflows may omit `executionBackend` and encode `tacogips/codex-agent` or `tacogips/claude-code-agent` directly in `model`.
 - Runtime still accepts that shape, but new workflow authoring must prefer explicit `executionBackend`.
+- Older workflows may omit `workflowType` and `nodeType`; loaders should normalize them to `orchestrate` and `agent`.
 
 ## workflow-vis.json
 
@@ -287,11 +321,19 @@ Input handoff rule:
 
 - Node sequences can be grouped and defined as `subWorkflows`.
 - Branch blocks and loop bodies should also be authored as `subWorkflows` rather than as anonymous visual-only groups.
-- Each `subWorkflow` must define:
-  - `managerNodeId` (node kind `sub-manager`; the sub-workflow-local `sub oyakata`)
+- Each `subWorkflow` must define `definitionType`:
+  - `inline`: structural sub-workflow defined by nodes in the current workflow file set
+  - `workflow-ref`: callable child workflow resolved by `workflowId`
+- Each `inline` `subWorkflow` must define:
+  - `managerNodeId` (node kind `sub-oyakata-manager`; the sub-workflow-local `sub oyakata`)
   - `inputNodeId` (node kind `input`)
   - `outputNodeId` (node kind `output`)
   - `nodeIds` (complete membership list of node ids owned by that sub-workflow; must include `managerNodeId`, `inputNodeId`, and `outputNodeId`)
+- Each `workflow-ref` `subWorkflow` must define:
+  - `workflowId` (stable identifier of the referenced workflow definition)
+  - optional local alias `id` distinct from `workflowId` when the same child workflow is invoked multiple times from one parent
+  - `inputSources`
+- Both variants may define `inputSources`.
 - `block` may classify the structural role:
   - `plain`: ordinary grouped sub-workflow
   - `branch-block`: a branch body entered from a branch decision
@@ -307,15 +349,46 @@ Input handoff rule:
   - `latest-any`
   - `by-loop-iteration` (with `loopIteration`)
 - root `managerNodeId` is required and must point to a node with kind `root-manager`.
-- each `subWorkflow.managerNodeId` is required and must point to a node with kind `sub-manager`.
-- each `subWorkflow.nodeIds` is required and must fully define membership for mailbox write-boundary validation.
-- Parent-workflow or peer-sub-workflow deliveries must target the recipient sub-workflow `managerNodeId`.
+- each `inline subWorkflow.managerNodeId` is required and must point to a node with kind `sub-oyakata-manager`.
+- each `inline subWorkflow.nodeIds` is required and must fully define membership for mailbox write-boundary validation.
+- Parent-workflow or peer-sub-workflow deliveries must target the recipient sub-workflow manager boundary.
+- For `inline` sub-workflows, the recipient boundary is `managerNodeId`.
+- For `workflow-ref` sub-workflows, the recipient boundary is the child workflow's root manager node in the child workflow execution.
 - The recipient sub-workflow manager orchestrates sub-workflow execution, reads that delivery, and instructs child nodes inside the sub-workflow.
-- For branch-block sub-workflows, at least one incoming edge to `managerNodeId` must originate from a `branch-judge`.
-- For branch-block sub-workflows, generic root-manager auto-start planning must ignore input-source readiness; entry should come from branch routing (or explicit manager control), not eager startup.
-- For loop-body sub-workflows, `block.loopId` must reference exactly one `loops[].id`; visualization and validation use that to treat the sub-workflow as the canonical loop block.
-- For loop-body sub-workflows, the linked loop's `continueWhen` edge must re-enter the body through that sub-workflow `managerNodeId`.
-- For loop-body sub-workflows, generic root-manager auto-start planning must ignore input-source readiness; entry should come from the loop judge's continue edge (or explicit manager control), not eager startup.
+- A `workflow-ref` invocation must allocate a distinct child workflow execution; the parent workflow sees only the child workflow boundary input/output contract.
+- A referenced workflow with `workflowType = "single"` behaves as one lightweight callable node whose root manager performs the work directly.
+- A referenced workflow with `workflowType = "orchestrate"` may call its own nodes, node groups, and further sub-workflows.
+- `block` semantics (`plain`, `branch-block`, `loop-body`) are defined only for `inline` sub-workflows.
+- For branch-block inline sub-workflows, at least one incoming edge to `managerNodeId` must originate from a `branch-judge`.
+- For branch-block inline sub-workflows, generic root-manager auto-start planning must ignore input-source readiness; entry should come from branch routing (or explicit manager control), not eager startup.
+- For loop-body inline sub-workflows, `block.loopId` must reference exactly one `loops[].id`; visualization and validation use that to treat the sub-workflow as the canonical loop block.
+- For loop-body inline sub-workflows, the linked loop's `continueWhen` edge must re-enter the body through that sub-workflow `managerNodeId`.
+- For loop-body inline sub-workflows, generic root-manager auto-start planning must ignore input-source readiness; entry should come from the loop judge's continue edge (or explicit manager control), not eager startup.
+
+## Workflow Type Semantics
+
+- `workflowType = "orchestrate"` is the default.
+- `workflowType = "single"` means the workflow is a lightweight job executed only by the root `oyakata` manager node.
+- `single` workflows must not depend on child worker nodes, inline sub-workflows, or concurrent node groups for their main execution path.
+- Every workflow, regardless of `workflowType`, is callable as one mailbox-addressable execution unit from a parent workflow.
+- Workflow-level input and output therefore form a stable boundary even when the workflow is also executed standalone.
+
+## Concurrent Node Group Semantics
+
+- `nodeGroups` defines explicit execution groups for work that may run concurrently.
+- Each `nodeGroup` must define:
+  - `id`
+  - `executionMode: "concurrent"`
+  - `members`:
+    - `type: "node"` with `nodeId`, or
+    - `type: "sub-workflow"` with `subWorkflowId`
+  - optional `completionPolicy: "all" | "any"` (`all` by default)
+  - optional `maxParallelism`
+  - optional `failurePolicy: "fail-fast" | "wait-all"` (`fail-fast` by default)
+- Group membership is structural execution metadata; it does not change individual node payload files.
+- Edges may target a `nodeGroup.id`. Entering that group allows the manager/runtime to start all eligible members concurrently subject to `maxParallelism`.
+- Outbound transitions from a `nodeGroup.id` evaluate only after the group's completion policy is satisfied.
+- Group members should belong to the same workflow scope. Mixing unrelated scopes in one group should be rejected.
 
 ## Inter-Sub-Workflow Conversation Semantics
 
@@ -634,20 +707,28 @@ Completion result drives transition decisions.
 
 - Workflow must be located under `<workflow-root>/<workflow-name>/`.
 - `workflow.json` must include `description`.
+- `workflowType` must be `single` or `orchestrate` when present.
 - Node ids must be unique and match `^[a-z0-9][a-z0-9-]{1,63}$`.
-- All edge endpoints must exist.
+- All edge endpoints must exist as node ids, sub-workflow ids, or node-group ids.
 - Every executable node must have a valid `node-{id}.json`.
 - Every node execution must persist artifacts under `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`.
 - Every execution artifact directory must contain `input.json`, `output.json`, and `meta.json`.
 - `managerNodeId` must be present and point to a node with `kind: "root-manager"`.
-- Every `subWorkflow` must include one `sub-manager`, one `input`, and one `output` node reference.
-- Every `subWorkflow` must include `nodeIds`, and those node ids must be unique across sub-workflows.
-- Cross-sub-workflow deliveries must target the recipient `subWorkflow.managerNodeId`, not a leaf task node.
+- Every `inline subWorkflow` must include one `sub-oyakata-manager`, one `input`, and one `output` node reference.
+- Every `inline subWorkflow` must include `nodeIds`, and those node ids must be unique across sub-workflows.
+- Every `workflow-ref subWorkflow` must reference an existing `workflowId`.
+- Cross-sub-workflow deliveries must target the recipient sub-workflow manager boundary, not a leaf task node.
 - Every `subWorkflow.inputSources[]` entry must use one of:
   - `human-input`
   - `workflow-output`
   - `node-output`
   - `sub-workflow-output`
+- `workflowType = "single"` must not declare execution-time child nodes, inline sub-workflows, or `nodeGroups` on its main path.
+- `nodeType` must be `agent` or `command` when present.
+- `command` nodes must define a workflow-relative `command.scriptPath` that stays inside the workflow directory.
+- `runtimeIsolation.mode = "podman"` is currently valid only for `command` nodes.
+- Every `nodeGroup.members[]` entry must reference an existing node or sub-workflow id.
+- Every `nodeGroup` with `executionMode = "concurrent"` must contain at least two members.
 - Every `subWorkflowConversations[].participants[]` entry must reference an existing `subWorkflow.id`.
 - `subWorkflowConversations[].participants` must contain at least two distinct sub-workflow ids.
 - `subWorkflowConversations[].maxTurns` must be a positive integer.

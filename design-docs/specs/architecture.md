@@ -9,7 +9,15 @@ This document defines the architecture for cooperative multi-agent workflow exec
 - `codex-agent`
 - `claude-code-agent`
 
-The architecture focuses on deterministic orchestration, explicit completion conditions, and controlled branching/looping. Structural blocks such as grouped steps, branch bodies, and loop bodies are all modeled as sub-workflow scopes.
+The architecture focuses on deterministic orchestration, explicit completion conditions, and controlled branching/looping. Structural blocks such as grouped steps, branch bodies, and loop bodies are all modeled as sub-workflow scopes. A workflow may itself be invoked as a callable child workflow by `workflowId`, so workflow boundaries are also execution boundaries.
+
+Near-term runtime direction:
+
+- The longer-term queue-based runtime remains documented in this file.
+- The current simplification target is a manager-driven execution model where a long-lived manager session explicitly calls child nodes through a dedicated runtime API.
+- In that simplified model, workflow-order adherence is carried mainly by the manager prompt contract instead of a second runtime order-state machine.
+- Near-term policy: do not add dedicated runtime state/order management for next-step legality; instead, make the manager LLM explicitly aware of the workflow and instruct it to call nodes in authored workflow order.
+- That near-term direction, including the approved component names `Oyakata Session Driver`, `Call-Node API`, `Execution Dispatcher`, `Node Adapter`, `Output Validator`, and `Mailbox Publisher`, is specified in `design-docs/specs/design-manager-driven-call-node-runtime.md`.
 
 ## System Context
 
@@ -45,16 +53,22 @@ Outputs:
 - Resolves `promptTemplate` with `variables`
 - Produces provider-ready prompt payloads
 
-4. Agent Adapter Layer
+4. Execution Adapter Layer
 
-- Maps `executionBackend` in node to backend implementation
-- Sends node `model` through that backend as the provider/backend-specific model name
-- Initial targets: `codex-agent`, `claude-code-agent`
+- Distinguishes executable `nodeType` from structural node `kind`
+- Runs `agent` nodes through backend adapters selected by `executionBackend`
+- Runs `command` nodes through direct process execution or Podman-isolated process execution
+- Sends node `model` through the selected agent backend as the provider/backend-specific model name
+- Initial agent targets: `codex-agent`, `claude-code-agent`
+- Initial isolation target: Podman for `command` nodes only
 
 5. Execution Engine
 
 - Traverses workflow graph
-- Expands and executes node sequences defined as sub-workflows
+- Expands and executes inline node sequences defined as sub-workflows
+- Invokes callable child workflows by `workflowId` and tracks them as node-like execution units in the parent workflow
+- Honors `workflowType = "single"` by executing only the root manager path for that workflow
+- Honors explicit concurrent `nodeGroups` and dispatches their members in parallel subject to group policy
 - Evaluates completion conditions
 - Applies branch rules (including branch-judge node results)
 - Enforces loop limits (including loop-judge node results)
@@ -62,6 +76,7 @@ Outputs:
 - Applies fan-out transitions when multiple branch conditions match
 - Enforces node execution timeout (node override or workflow default)
 - Composes execution prompts from workflow-level manager/worker prompt policy, runtime context, and node-level prompt text
+- Prepares node-local mailbox mount views for isolated executions when `runtimeIsolation.mode = "podman"`
 
 6. Session State Store
 
@@ -81,7 +96,7 @@ Outputs:
 - Treats caller-provided in-process auth/session fallbacks as non-authoritative on the HTTP boundary as well; `handleGraphqlRequest(...)` must not authenticate manager scope from local `context.authToken` or `context.managerSessionId`
 - Mints runtime-scoped manager sessions for real manager-node executions and passes ambient GraphQL manager context only to manager-capable adapter backends; see `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`
 - Persists the authoritative manager control source on each manager session so one manager execution cannot mix GraphQL manager messages with payload `managerControl`
-- Enforces manager communication replay/retry scope so root managers stay at root scope and sub-managers stay within their owned sub-workflow, with node-ownership fallback for legacy records missing boundary ids
+- Enforces manager communication replay/retry scope so root managers stay at root scope and sub-oyakata-managers stay within their owned sub-workflow, with node-ownership fallback for legacy records missing boundary ids
 - Returns an explicit setup error page when the built frontend bundle is unavailable instead of embedding a second browser implementation in the server
 - Exposes a small UI bootstrap/config endpoint so frontend assets do not need server mode baked in at build time
 - Derives the reported frontend mode for that bootstrap/config endpoint from explicit metadata published under `ui/dist/` when available, while still allowing an explicit override for tests or forced deployments
@@ -107,7 +122,7 @@ GraphQL-first redesign direction:
 
 - Vertical workflow editing for nodes, edges, branch/loop rules, and defaults
 - Ordered list interaction for reorder, indent, and color-based group/loop expression
-- Node payload editing (`executionBackend`, `model`, `promptTemplate`, `variables`, `timeoutMs`)
+- Node payload editing (`nodeType`, `executionBackend`, `model`, `promptTemplate`, `variables`, command/isolation settings, `timeoutMs`)
 - Layout editing persisted to `workflow-vis.json`
 - Run controls and execution trace view for local sessions
 - Uses the existing local JSON API; frontend build output is treated as replaceable static assets rather than inline server-rendered HTML
@@ -129,7 +144,7 @@ GraphQL-first redesign direction:
 - Repository Bun unit-test commands must scope discovery to source roots (`src/`, `ui/src/`) rather than repository-wide default discovery, so generated `dist/` artifacts cannot re-run stale compiled tests during migration work
 - Framework-detecting UI verification must fail with an explicit dependency-install message when the detected frontend framework is not actually installed, so migration-time failures stay actionable instead of surfacing as opaque plugin/import errors
 - Repository development environments such as `flake.nix` must provide a real `node` binary in addition to Bun, because Vite, Vitest, and Playwright remain Node-owned tooling in this architecture
-- Reserved structure node roles (`root-manager`, `sub-manager`, `input`, `output`) are assigned from workflow structure metadata and sub-workflow boundaries, not treated as freeform node-kind values
+- Reserved structure node roles (`root-manager`, `sub-oyakata-manager`, `input`, `output`) are assigned from workflow structure metadata and sub-workflow boundaries, not treated as freeform node-kind values
 
 9. TUI Runtime (Bun + `neo-blessed`)
 
@@ -217,27 +232,35 @@ Node sequences may be represented as reusable `sub-workflow` units.
 
 Rules:
 
-- A sub-workflow must include exactly one `input` node, one `output` node, and one `sub-manager` node (`sub oyakata`).
-- A sub-workflow must declare explicit `nodeIds` membership; mailbox writes from that sub-workflow manager are restricted to those `nodeIds`.
+- There are two sub-workflow forms:
+  - `inline`: declared by nodes in the current workflow definition
+  - `workflow-ref`: declared by referencing another workflow via `workflowId`
+- An inline sub-workflow must include exactly one `input` node, one `output` node, and one `sub-oyakata-manager` node (`sub oyakata`).
+- An inline sub-workflow must declare explicit `nodeIds` membership; mailbox writes from that sub-workflow manager are restricted to those `nodeIds`.
 - Sub-workflow `input` may receive data from:
   - direct human input
   - another workflow output
   - another node output
   - another sub-workflow output
+- Every workflow has a callable boundary and may therefore behave as one node from a parent workflow's perspective.
+- `workflowType = "single"` means the callable workflow executes only its root manager as a lightweight job.
+- `workflowType = "orchestrate"` means the callable workflow may invoke nodes, inline sub-workflows, node groups, and further child workflows.
 - A workflow must contain exactly one `oyakata` manager node.
-- The root workflow manager node (`kind: "root-manager"`) is distinct from sub-workflow manager nodes (`kind: "sub-manager"`).
+- The root workflow manager node (`kind: "root-manager"`) is distinct from sub-workflow manager nodes (`kind: "sub-oyakata-manager"`).
 - The `oyakata` manager node is responsible for:
   - selecting and triggering sub-workflow execution
-  - writing mailbox deliveries only to the recipient sub-workflow manager node for parent-to-sub-workflow or cross-sub-workflow handoff
+  - writing mailbox deliveries only to the recipient sub-workflow manager boundary for parent-to-sub-workflow or cross-sub-workflow handoff
   - collecting each sub-workflow `output` node result for downstream routing
   - routing messages between sub-workflows during conversation sessions
   - mapping execution artifact outputs to downstream sub-workflow manager inputs
   - emitting plan/assessment instructions that include workflow purpose, given data, and expected child return values
-- Each sub-workflow manager node is responsible for:
+- Each inline sub-workflow manager node is responsible for:
   - reading parent-workflow or peer-sub-workflow mailbox deliveries addressed to that sub-workflow
   - resolving input bindings into child nodes inside the sub-workflow
   - writing mailbox deliveries only to nodes that belong to the same sub-workflow
   - collecting the sub-workflow `output` node result and returning it to the parent workflow manager
+- Each `workflow-ref` invocation allocates a distinct child workflow execution. The child workflow's root manager becomes the receiving boundary for the parent mailbox handoff.
+- Concurrently executable work should be modeled explicitly as `nodeGroups` rather than inferred from arbitrary sibling edges.
 
 ### Inter-Sub-Workflow Conversation
 
@@ -283,10 +306,12 @@ Mailbox transport contract:
 - routed node-to-node delivery uses a file-based mailbox artifact under `{artifact-root}/{workflowId}/executions/{workflowExecutionId}/communications/{communicationId}/`
 - each communication has manager-written `inbox/` and `outbox/` directories
 - only the manager that owns the recipient scope writes recipient inbox files
-- the parent workflow manager may write only to a sub-workflow manager inbox for cross-boundary delivery
+- the parent workflow manager may write only to a sub-workflow manager boundary for cross-boundary delivery
 - a sub-workflow manager may write only to nodes that belong to that same sub-workflow
 - worker nodes never perform direct peer-to-peer delivery
 - worker nodes consume manager-resolved `input.json`; they do not poll mailbox directories
+- callable child workflows keep their own execution-local mailbox roots; parent/child handoff is a boundary translation, not one shared mailbox tree across workflows
+- when a `command` node runs in Podman, the runtime exposes a node-local mailbox view at `/mailbox/inbox` and `/mailbox/outbox`; those mounts are execution-scoped views, not direct write access to canonical cross-node routing directories
 - the root workflow manager owns global `communicationId` allocation within one `workflowExecutionId`
 - one communication may have multiple `deliveryAttemptId` retries and optional AI/code-agent `agentSessionId` restarts
 - any send re-execution/rerun/resend must allocate a new `communicationId`
@@ -325,20 +350,25 @@ Manager control-plane contract:
 
 Execution node payload is externalized in `node-{id}.json`:
 
+- `nodeType`: execution flavor (`agent` by default, `command` for script/process execution)
 - `executionBackend`: adapter/interface identifier
 - `model`: provider or backend-specific model name
 - `promptTemplate`: template text
 - `variables`: runtime bindings
+- optional `command`: workflow-relative script path plus inbox-derived argv/env templates
 - optional `sessionPolicy`: backend session handling policy (`new` by default, `reuse` for node-local backend session continuation)
 - optional `argumentsTemplate`: structured argument skeleton
 - optional `argumentBindings`: deterministic mapping rules from runtime sources to `argumentsTemplate`
 - optional `templateEngine`: rendering engine for prompt text (default: `mustache`)
+- optional `runtimeIsolation`: host or Podman execution environment selection
 
 Node input injection policy:
 
 - For skill/tool adapters that accept `ARGUMENTS` only, `oyakata` must pass assembled `arguments` object.
 - Complex data composition must be done via `argumentBindings` and source references, not logic-heavy template syntax.
 - Keep template engine intentionally simple for prompt text rendering; avoid full Handlebars-style execution semantics in core runtime.
+- `command` nodes should prefer explicit argv/env templates over shell string concatenation; inbox-derived values must be passed as direct argv entries rather than through implicit shell parsing.
+- `runtimeIsolation.mode = "podman"` is currently supported for `command` nodes only, but the architecture keeps the isolation contract generic so future `agent` node isolation can reuse it unchanged.
 
 Node backend session reuse:
 

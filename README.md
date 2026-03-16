@@ -58,122 +58,108 @@ Required files:
 Runtime boundary rule:
 - root `oyakata` input and final workflow output are also exposed through mailbox artifacts, so external-to-root handoff uses the same mailbox model as parent/sub-workflow nesting
 
-## Runtime Components
+## Project Direction
 
-The runtime model is easier to follow if component names are separated by scope:
+Near-term purpose:
 
-- `Workflow Session`: one end-to-end workflow run; persists queue, communications, node executions, and runtime variables
-- `Execution Engine`: the main runtime loop that pops a node from the queue, executes it, persists artifacts, and plans follow-up work
-- `Step Scheduler`: the part of the engine that appends next node ids back into the session queue
-- `Mailbox Transport`: durable node-to-node communication artifacts materialized by the runtime
-- `Artifact Store`: runtime-owned `input.json`, `output.json`, `meta.json`, and `handoff.json` files for each node execution
-- `Runtime DB Index`: SQLite index used for queryable execution summaries and logs; file artifacts remain source of truth
+- `oyakata` exists to execute multi-agent workflows with high confidence.
+- Workflow authors define node roles explicitly, for example `write code`, `review code`, `test`, and `re-review`.
+- The system should guarantee that those roles are executed in the intended order or loop structure written in the workflow.
+- That includes strict sequential execution and explicit repeated loops, for example "run this review/fix cycle at least 10 times".
+
+Longer-term purpose:
+
+- `oyakata` should eventually create new workflows by itself.
+- It should then execute those workflows, inspect the results, and create the next workflow again.
+- The long-term goal is a fully autonomous system that decides the next task by itself and eventually sets its own intermediate goals in service of a broader objective.
+
+## Near-Term Execution Direction
+
+The near-term execution model is intentionally simple:
+
+- The `Oyakata Session Driver` keeps the main orchestration AI session.
+- That manager session reads the workflow and decides which node to run next.
+- Each node is treated as a simple worker that reads inbox/input context and writes outbox/output results, even if the node also edits code or other files in the workspace.
+- The manager calls the next node through the `Call-Node API`, for example `oyakata call-node`.
+- Workflow-order adherence is primarily a manager prompt responsibility rather than a separate runtime order-state machine.
+- Timeout, semantic retry, deduplication, and similar policy decisions are owned by the active `Oyakata Session Driver` rather than by a separate runtime planner.
+- The runtime still owns output validation and accepted artifact publication through the `Execution Dispatcher`, `Output Validator`, and `Mailbox Publisher`.
+- The near-term direction does not introduce a separate `Runtime Arbiter` component.
+
+Current implementation note:
+
+- A first local `oyakata call-node <workflow-id> <workflow-run-id> <node-id>` path is now implemented for existing workflow sessions.
+- That path already includes runtime-owned output validation and repair before accepted artifact publication.
+- The current codebase still contains queue-based execution internals.
+- The direction described below is the intended simplification target for the next iteration of the runtime model.
+
+## Near-Term Components
+
+- `Workflow Definition`: the JSON workflow that defines node roles, ordering, loops, and conditions
+- `Workflow Run`: one end-to-end execution of a workflow
+- `Oyakata Session Driver`: the long-lived orchestration AI session for a workflow run
+- `Call-Node API`: the dedicated command or API used by the manager to invoke a node
+- `Execution Dispatcher`: runtime-side lifecycle owner for one node call
 - `Node Adapter`: backend bridge such as `codex-agent` or `claude-code-agent`
-- `Manager Control Parser`: parser for manager-authored `managerControl` payloads after a manager step finishes
+- `Output Validator`: runtime-side contract validation for candidate node output
+- `Mailbox Publisher`: runtime-side publication of accepted output artifacts
+- `Node Inbox`: the persisted input/inbox payload the node reads from
+- `Node Outbox`: the persisted output payload the node writes to
+- `Artifact Store`: runtime-owned `input.json`, accepted `output.json`, `meta.json`, validation-attempt artifacts, and related execution artifacts
+- `Runtime DB Index`: optional query/index layer; file artifacts remain source of truth
 
-Node roles and names:
+## Near-Term Sequence
 
-- `oyakata-manager`: the root manager node of the workflow; owns root-scope orchestration and cross-boundary manager handoff
-- `sub-manager`: the manager node inside a sub-workflow; owns child-node delivery within that sub-workflow
-- `input`: the boundary input node of a sub-workflow
-- `output`: the boundary output node of a sub-workflow or root workflow
-- `worker node`: any non-manager executable node that performs task/input/output/judge work
-
-Session terms:
-
-- `Workflow Session` is the long-lived orchestration state for the full run
-- `Manager Session` is the short-lived control-plane/auth scope for one manager step
-- `Oyakata Step` means one execution of `oyakata-manager` or a `sub-manager`
-- `Worker Step` means one execution of a non-manager node
-
-Execution rule:
-
-- `oyakata-manager` does not remain blocked inside one long-lived step waiting for child output
-- instead, a child step finishes, the runtime accepts and publishes its output, writes mailbox communication addressed to the owning manager, and enqueues the next manager step
-- backend session reuse is optional and node-local; orchestration progression still happens as discrete runtime steps
-
-## Workflow Step Sequence
-
-The sequence below shows the current runtime behavior when `oyakata` starts a workflow and nodes execute step-by-step.
+The sequence below shows the intended manager-driven flow for the next simplified execution model.
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor U as User / Caller
-    participant S as Workflow Session Store
-    participant E as Execution Engine
-    participant Q as Step Scheduler
-    participant I as Input Assembler / Prompt Composer
+    participant W as Workflow Definition
+    participant O as Oyakata Session Driver
+    participant C as Call-Node API
+    participant E as Execution Dispatcher
     participant A as Node Adapter
-    participant W as Worker or Manager Node
-    participant M as Mailbox Transport
-    participant F as Artifact Store
+    participant N as Worker Node Session
+    participant V as Output Validator
+    participant M as Mailbox Publisher
     participant D as Runtime DB Index
-    participant C as Manager Control Parser
 
-    U->>E: start workflow(run request, humanInput)
-    E->>S: create Workflow Session
-    E->>M: persist external-input communication to oyakata-manager
-    E->>S: save queue = [oyakata-manager]
+    U->>O: start workflow with purpose / human input
+    O->>W: read workflow structure and current run state
 
-    loop while queue is not empty
-        E->>S: load current session state
-        E->>Q: pop next nodeId from queue
+    loop until workflow completes
+        O->>O: decide next node from workflow order, loop rules, and prior outputs
+        O->>C: call-node(workflowId, workflowRunId, nodeId, inbox message)
+        C->>E: authenticate manager scope and dispatch node call
 
-        E->>M: resolve upstream communications for nodeId
-        E->>I: assemble input.json + promptText
-        I-->>E: resolved input payload
-        E->>F: write node input.json
+        loop until output accepted or retry budget exhausted
+            E->>A: execute or resume node session
+            A->>N: run node
+            N-->>A: candidate output
+            A-->>E: candidate output
+            E->>V: validate candidate output
 
-        alt node is manager
-            E->>S: create manager-step session/auth context
+            alt output valid
+                V-->>E: accepted
+                E->>M: publish accepted output artifacts
+                M->>D: index execution(best effort)
+                M-->>E: output refs and published result
+            else output invalid and retry remains
+                V-->>E: validation errors
+                E->>A: continue same node session with repair request
+            else output invalid and retry exhausted
+                V-->>E: terminal validation failure
+            end
         end
 
-        E->>A: execute node(nodeId, promptText, args, backendSession?)
-        A->>W: run backend step
-        W-->>A: output payload / completion result
-        A-->>E: adapter result
-
-        E->>F: write output.json
-        E->>F: write meta.json
-        E->>F: write handoff.json
-        E->>D: index execution(best effort)
-
-        alt node is manager
-            E->>C: parse managerControl payload
-            C-->>E: child-input / retry / sub-workflow-start intents
-            E->>S: finalize manager-step session
-        end
-
-        E->>M: mark consumed upstream communications
-        E->>M: persist transition communications for matched edges
-
-        alt root manager planned sub-workflow starts
-            E->>M: write parent-to-sub-workflow manager handoff
-            E->>Q: enqueue child sub-manager
-        end
-
-        alt sub-manager planned child input delivery
-            E->>M: write sub-manager to child-input communication
-            E->>Q: enqueue child input node
-        end
-
-        alt ordinary worker edge to oyakata-manager
-            E->>M: write child-output communication addressed to oyakata-manager
-            E->>Q: enqueue oyakata-manager
-        end
-
-        alt conversation turn between sub-workflows
-            E->>M: write cross-sub-workflow manager communication
-            E->>Q: enqueue receiver sub-manager
-        end
-
-        E->>S: save updated session(queue, communications, executions)
+        E-->>C: accepted output summary or failure
+        C-->>O: return output summary, refs, and status
+        O->>O: decide continue / retry / next node / loop exit
     end
 
-    E->>F: publish final external-output communication
-    E->>S: mark Workflow Session completed
-    E-->>U: workflow result
+    O-->>U: final workflow result
 ```
 
 ## Deterministic Mock Workflow Example
@@ -252,6 +238,9 @@ Runtime SQLite behavior:
 
 ## Interfaces
 
+- Direct node call: `oyakata call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>]`
+  - Local-only in the current implementation.
+  - Loads an existing workflow session, executes one node directly, validates candidate output, retries invalid output in the same node session when possible, and publishes accepted artifacts.
 - TUI: `oyakata tui [workflow-name] [--workflow <name>] [--resume-session <session-id>]`
   - Interactive terminal: select workflow (if omitted), input prompt, execute, and watch per-node progress.
   - Non-interactive terminal: promptless fallback mode is used; `workflow-name` is required.

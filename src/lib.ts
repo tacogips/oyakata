@@ -1,4 +1,5 @@
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
+import { callNode, type CallNodeInput } from "./workflow/call-node";
 import {
   executeGraphqlRequest,
   type GraphqlClientRequest,
@@ -70,6 +71,8 @@ export interface RuntimeSessionView {
     ? T
     : never;
 }
+
+export interface CallWorkflowNodeInput extends CallNodeInput {}
 
 export async function inspectWorkflow(
   workflowName: string,
@@ -234,6 +237,26 @@ export async function getRuntimeSessionView(
   return { session, nodeExecutions, nodeLogs };
 }
 
+export async function callWorkflowNode(input: CallWorkflowNodeInput): Promise<{
+  readonly sessionId: string;
+  readonly nodeExecId: string;
+  readonly status: "succeeded";
+  readonly exitCode: number;
+  readonly output: Readonly<Record<string, unknown>>;
+}> {
+  const result = await callNode(input);
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+  return {
+    sessionId: result.value.session.sessionId,
+    nodeExecId: result.value.nodeExecution.nodeExecId,
+    status: "succeeded",
+    exitCode: result.value.exitCode,
+    output: result.value.output,
+  };
+}
+
 export { runCli } from "./cli";
 export { startServe } from "./server/serve";
 export { handleApiRequest } from "./server/api";
@@ -294,4 +317,5 @@ export type {
 };
 export { loadWorkflowFromDisk } from "./workflow/load";
 export { runWorkflow } from "./workflow/engine";
+export { callNode } from "./workflow/call-node";
 export { deriveWorkflowVisualization } from "./workflow/visualization";

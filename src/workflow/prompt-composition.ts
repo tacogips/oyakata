@@ -36,7 +36,7 @@ const DEFAULT_OYAKATA_SYSTEM_PROMPT = readFileSync(
 
 function isManagerNodeKind(kind: NodeKind | undefined): boolean {
   return (
-    kind === "manager" || kind === "root-manager" || kind === "sub-manager"
+    kind === "manager" || kind === "root-manager" || kind === "sub-oyakata-manager"
   );
 }
 
@@ -91,7 +91,7 @@ function buildNodeReason(
   switch (nodeKind) {
     case "root-manager":
       return "Coordinate the overall workflow plan, sub-workflow dispatch, output assessment, and retry decisions.";
-    case "sub-manager":
+    case "sub-oyakata-manager":
       return ownedSubWorkflow === undefined
         ? "Coordinate the current sub-workflow scope."
         : `Coordinate sub-workflow '${ownedSubWorkflow.id}' and translate parent mailbox input into child-node work.`;
@@ -124,7 +124,7 @@ function buildExpectedReturn(
 
   switch (nodeRef.kind) {
     case "root-manager":
-    case "sub-manager":
+    case "sub-oyakata-manager":
     case "manager":
       return "Return a manager assessment/plan JSON object that records the current state, what was judged, and what should happen next.";
     case "input":

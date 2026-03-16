@@ -6,10 +6,6 @@ dist/
 ui/dist/
 *.tsbuildinfo
 
-# SvelteKit
-**/.svelte-kit/
-**/static/build/
-
 # Bun (binary lockfile - we use text lockfile bun.lock instead)
 bun.lockb
 

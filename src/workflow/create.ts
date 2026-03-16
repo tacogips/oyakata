@@ -98,7 +98,7 @@ export async function createWorkflowTemplate(
       },
       {
         id: mainManagerId,
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
         nodeFile: `node-${mainManagerId}.json`,
         completion: { type: "none" },
       },

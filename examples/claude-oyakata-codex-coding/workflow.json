@@ -45,7 +45,7 @@
     },
     {
       "id": "main-oyakata",
-      "kind": "sub-manager",
+      "kind": "sub-oyakata-manager",
       "nodeFile": "node-main-oyakata.json",
       "completion": {
         "type": "none"

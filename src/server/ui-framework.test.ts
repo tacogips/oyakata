@@ -163,7 +163,7 @@ describe("ui-framework tooling guards", () => {
     expect(() => detectUiFramework({ uiRoot })).toThrow(/main\.tsx/);
   });
 
-  test("rejects a legacy Svelte entrypoint in the repository", async () => {
+  test("rejects a legacy frontend entrypoint in the repository", async () => {
     const root = await makeTempDir();
     const uiRoot = path.join(root, "ui");
     await mkdir(path.join(uiRoot, "src"), { recursive: true });
@@ -174,7 +174,7 @@ describe("ui-framework tooling guards", () => {
     );
 
     expect(() => detectUiFramework({ uiRoot })).toThrow(
-      /legacy Svelte entrypoint/i,
+      /legacy frontend entrypoint/i,
     );
     expect(() => detectUiFramework({ uiRoot })).toThrow(/main\.ts/);
   });
@@ -383,7 +383,7 @@ describe("ui-framework tooling guards", () => {
     expect(status.currentFramework.readyForBuild).toBe(false);
     expect(status.solidCutover.ready).toBe(false);
     expect(status.solidCutover.entrypointExists).toBe(false);
-    expect(status.solidCutover.conflictingSvelteEntrypoint).toBe(false);
+    expect(status.solidCutover.conflictingLegacyEntrypoint).toBe(false);
     expect(status.solidCutover.missingBuildDeclarations).toEqual([
       "solid-js",
       "vite-plugin-solid",
@@ -393,7 +393,7 @@ describe("ui-framework tooling guards", () => {
     );
   });
 
-  test("reports a legacy Svelte entrypoint as a blocker", async () => {
+  test("reports a legacy frontend entrypoint as a blocker", async () => {
     const root = await makeTempDir();
     const uiRoot = path.join(root, "ui");
     await mkdir(path.join(uiRoot, "src"), { recursive: true });
@@ -410,10 +410,10 @@ describe("ui-framework tooling guards", () => {
 
     const status = collectUiFrameworkStatus({ packageRoot: root, uiRoot });
 
-    expect(status.detectionError).toMatch(/legacy Svelte entrypoint/i);
-    expect(status.solidCutover.conflictingSvelteEntrypoint).toBe(true);
+    expect(status.detectionError).toMatch(/legacy frontend entrypoint/i);
+    expect(status.solidCutover.conflictingLegacyEntrypoint).toBe(true);
     expect(formatUiFrameworkStatus(status)).toContain(
-      "remove or replace the checked-in Svelte entrypoint ui/src/main.ts",
+      "remove the legacy checked-in frontend entrypoint ui/src/main.ts",
     );
   });
 

@@ -144,7 +144,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "group-manager",
           nodeFile: "node-group-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -229,7 +229,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "branch-manager",
           nodeFile: "node-branch-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -326,7 +326,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "group-manager",
           nodeFile: "node-group-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -442,7 +442,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "loop-manager",
           nodeFile: "node-loop-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -558,7 +558,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "loop-manager",
           nodeFile: "node-loop-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -570,7 +570,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "inner-manager",
           nodeFile: "node-inner-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -722,7 +722,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "branch-manager",
           nodeFile: "node-branch-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {
@@ -734,7 +734,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "inner-manager",
           nodeFile: "node-inner-manager.json",
-          kind: "sub-manager",
+          kind: "sub-oyakata-manager",
           completion: { type: "none" },
         },
         {

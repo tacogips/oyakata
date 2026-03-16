@@ -19,7 +19,7 @@ What was still missing in the runtime was the lifecycle that makes those primiti
 
 ## Runtime Lifecycle
 
-For every non-dry-run manager-node execution (`root-manager` or `sub-manager`):
+For every non-dry-run manager-node execution (`root-manager` or `sub-oyakata-manager`):
 
 1. The engine allocates a new `managerSessionId` scoped to the current `nodeExecId`.
 2. The engine mints a fresh bearer token and stores only its hash.

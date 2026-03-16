@@ -38,7 +38,7 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "main-oyakata",
         nodeFile: "node-main-oyakata.json",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
         completion: { type: "none" },
       },
       {
@@ -216,18 +216,18 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain(
       "expectedReturn=Return the completed release package summary.",
     );
-    expect(prompt).not.toContain("- Child node: main-oyakata (sub-manager)");
+    expect(prompt).not.toContain("- Child node: main-oyakata (sub-oyakata-manager)");
     expect(prompt).not.toContain("- Child node: workflow-input (input)");
     expect(prompt).not.toContain("- Child node: workflow-output (output)");
   });
 
-  test("includes managed child node catalog for a sub-manager", () => {
+  test("includes managed child node catalog for a sub-oyakata-manager", () => {
     const prompt = composeExecutionPrompt({
       workflow: makeWorkflow(),
       nodeRef: makeNodeRef({
         id: "main-oyakata",
         nodeFile: "node-main-oyakata.json",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
       }),
       node: makeNodePayloads()["main-oyakata"] as NodePayload,
       nodePayloads: makeNodePayloads(),
@@ -334,7 +334,7 @@ describe("composeExecutionPrompt", () => {
       nodeRef: makeNodeRef({
         id: "main-oyakata",
         nodeFile: "node-main-oyakata.json",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
       }),
       node: makeNodePayloads()["main-oyakata"] as NodePayload,
       nodePayloads: makeNodePayloads(),

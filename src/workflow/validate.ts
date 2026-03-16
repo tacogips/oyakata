@@ -19,6 +19,7 @@ import {
   type NodeOutputContract,
   type LoopRule,
   type NodeExecutionBackend,
+  type NodeKind,
   type NodePayload,
   type NodeSessionPolicy,
   type NormalizedWorkflowBundle,
@@ -85,6 +86,28 @@ function makeIssue(
   message: string,
 ): ValidationIssue {
   return { severity, path, message };
+}
+
+function normalizeNodeKind(value: unknown): NodeKind | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  switch (value) {
+    case "task":
+    case "branch-judge":
+    case "loop-judge":
+    case "root-manager":
+    case "sub-oyakata-manager":
+    case "manager":
+    case "input":
+    case "output":
+      return value;
+    case "sub-manager":
+      return "sub-oyakata-manager";
+    default:
+      return undefined;
+  }
 }
 
 function readStringField(
@@ -179,24 +202,24 @@ function normalizeNodeRef(
   );
 
   const kindRaw = value["kind"];
-  const allowedKinds = new Set([
-    "task",
-    "branch-judge",
-    "loop-judge",
-    "root-manager",
-    "sub-manager",
-    "manager",
-    "input",
-    "output",
-  ]);
   let kind: WorkflowNodeRef["kind"];
   if (kindRaw !== undefined) {
-    if (typeof kindRaw !== "string" || !allowedKinds.has(kindRaw)) {
+    const normalizedKind = normalizeNodeKind(kindRaw);
+    if (normalizedKind === undefined) {
       issues.push(
         makeIssue("error", `${path}.kind`, "must be a valid node kind"),
       );
     } else {
-      kind = kindRaw as WorkflowNodeRef["kind"];
+      kind = normalizedKind;
+      if (typeof kindRaw === "string" && kindRaw !== normalizedKind) {
+        issues.push(
+          makeIssue(
+            "warning",
+            `${path}.kind`,
+            `legacy node kind '${kindRaw}' normalized to '${normalizedKind}'`,
+          ),
+        );
+      }
     }
   }
 
@@ -1729,12 +1752,12 @@ function runSemanticValidation(
       const subManagerNode = bundle.workflow.nodes.find(
         (node) => node.id === subWorkflow.managerNodeId,
       );
-      if (subManagerNode?.kind !== "sub-manager") {
+      if (subManagerNode?.kind !== "sub-oyakata-manager") {
         issues.push(
           makeIssue(
             "error",
             `workflow.subWorkflows[${index}].managerNodeId`,
-            "must reference a node with kind 'sub-manager'",
+            "must reference a node with kind 'sub-oyakata-manager'",
           ),
         );
       }

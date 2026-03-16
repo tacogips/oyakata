@@ -179,7 +179,7 @@ export function assertCommunicationInManagerScope(
     workflow,
   );
 
-  if (context.managerKind === "sub-manager") {
+  if (context.managerKind === "sub-oyakata-manager") {
     const ownedSubWorkflow = findOwnedSubWorkflow(
       workflow,
       context.managerNodeId,
@@ -206,7 +206,7 @@ export function assertCommunicationInManagerScope(
       effectiveScope.toSubWorkflowId !== undefined
     ) {
       throw new Error(
-        `${operationLabel} communication '${communication.communicationId}' is outside root-manager scope; re-invoke the sub-workflow or use the owning sub-manager`,
+        `${operationLabel} communication '${communication.communicationId}' is outside root-manager scope; re-invoke the sub-workflow or use the owning sub-oyakata-manager`,
       );
     }
     return;
@@ -249,9 +249,9 @@ export function parseManagerControlActions(
     }
 
     if (action.type === "deliver-to-child-input") {
-      if (context.managerKind !== "sub-manager") {
+      if (context.managerKind !== "sub-oyakata-manager") {
         throw new Error(
-          "managerControl deliver-to-child-input is only allowed for a sub-manager",
+          "managerControl deliver-to-child-input is only allowed for a sub-oyakata-manager",
         );
       }
       const node = workflow.nodes.find(
@@ -273,7 +273,7 @@ export function parseManagerControlActions(
       }
       if (ownedSubWorkflow.inputNodeId !== action.inputNodeId) {
         throw new Error(
-          `managerControl input node '${action.inputNodeId}' must be the owned input node '${ownedSubWorkflow.inputNodeId}' for sub-manager '${context.managerNodeId}'`,
+          `managerControl input node '${action.inputNodeId}' must be the owned input node '${ownedSubWorkflow.inputNodeId}' for sub-oyakata-manager '${context.managerNodeId}'`,
         );
       }
       continue;
@@ -305,7 +305,7 @@ export function parseManagerControlActions(
         );
       }
     }
-    if (context.managerKind === "sub-manager") {
+    if (context.managerKind === "sub-oyakata-manager") {
       const ownedSubWorkflow = findOwnedSubWorkflow(
         workflow,
         context.managerNodeId,

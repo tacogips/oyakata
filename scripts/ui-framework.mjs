@@ -25,7 +25,7 @@ function solidEntrypointPath(options = {}) {
   return path.join(uiRoot, "src", "main.tsx");
 }
 
-function legacySvelteEntrypointPath(options = {}) {
+function legacyEntrypointPath(options = {}) {
   const uiRoot = resolveUiRoot(options);
   return path.join(uiRoot, "src", "main.ts");
 }
@@ -33,13 +33,13 @@ function legacySvelteEntrypointPath(options = {}) {
 export function detectUiFramework(options = {}) {
   const uiRoot = resolveUiRoot(options);
   const solidEntry = solidEntrypointPath({ uiRoot });
-  const legacySvelteEntry = legacySvelteEntrypointPath({ uiRoot });
+  const legacyEntry = legacyEntrypointPath({ uiRoot });
   const hasSolidEntry = fs.existsSync(solidEntry);
-  const hasLegacySvelteEntry = fs.existsSync(legacySvelteEntry);
+  const hasLegacyEntry = fs.existsSync(legacyEntry);
 
-  if (hasLegacySvelteEntry) {
+  if (hasLegacyEntry) {
     throw new Error(
-      `legacy Svelte entrypoint detected under ${uiRoot}: remove ui/src/main.ts and keep ui/src/main.tsx as the only checked-in frontend entrypoint.`,
+      `legacy frontend entrypoint detected under ${uiRoot}: remove ui/src/main.ts and keep ui/src/main.tsx as the only checked-in frontend entrypoint.`,
     );
   }
 
@@ -224,9 +224,7 @@ export function collectUiFrameworkStatus(options = {}) {
   const solidCutover = {
     entrypoint: uiEntrypointRelativePath("solid", options),
     entrypointExists: activeEntrypoints.solid,
-    conflictingSvelteEntrypoint: fs.existsSync(
-      legacySvelteEntrypointPath(options),
-    ),
+    conflictingLegacyEntrypoint: fs.existsSync(legacyEntrypointPath(options)),
     missingTypecheckDeclarations: missingUiFrameworkPackageDeclarations(
       "solid",
       "typecheck",
@@ -253,7 +251,7 @@ export function collectUiFrameworkStatus(options = {}) {
       ...solidCutover,
       ready:
         solidCutover.entrypointExists &&
-        !solidCutover.conflictingSvelteEntrypoint &&
+        !solidCutover.conflictingLegacyEntrypoint &&
         solidCutover.missingTypecheckDeclarations.length === 0 &&
         solidCutover.missingBuildDeclarations.length === 0 &&
         solidCutover.missingTypecheckPackages.length === 0 &&
@@ -310,9 +308,9 @@ export function formatUiFrameworkStatus(status) {
     );
   }
 
-  if (status.solidCutover.conflictingSvelteEntrypoint) {
+  if (status.solidCutover.conflictingLegacyEntrypoint) {
     lines.push(
-      "  - remove or replace the checked-in Svelte entrypoint ui/src/main.ts",
+      "  - remove the legacy checked-in frontend entrypoint ui/src/main.ts",
     );
   }
 

@@ -33,7 +33,7 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "a-manager",
         nodeFile: "node-a-manager.json",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
         completion: { type: "none" },
       },
       {
@@ -94,7 +94,7 @@ describe("parseManagerControlPayload", () => {
     expect(parsed?.overridesChildInputPlanning).toBe(true);
   });
 
-  test("parses supported sub-manager child-input and retry actions", () => {
+  test("parses supported sub-oyakata-manager child-input and retry actions", () => {
     const parsed = parseManagerControlPayload(
       {
         managerControl: {
@@ -107,7 +107,7 @@ describe("parseManagerControlPayload", () => {
       makeWorkflow(),
       {
         managerNodeId: "a-manager",
-        managerKind: "sub-manager",
+        managerKind: "sub-oyakata-manager",
       },
     );
 
@@ -153,7 +153,7 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
       ),
     ).toThrow("only allowed for the root manager");
@@ -170,7 +170,7 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
       ),
     ).toThrow("does not exist");
@@ -195,7 +195,7 @@ describe("parseManagerControlPayload", () => {
     ).toThrow("reason must be a string");
   });
 
-  test("rejects child-input dispatch outside the sub-manager owned scope", () => {
+  test("rejects child-input dispatch outside the sub-oyakata-manager owned scope", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -211,7 +211,7 @@ describe("parseManagerControlPayload", () => {
           managerKind: "root-manager",
         },
       ),
-    ).toThrow("only allowed for a sub-manager");
+    ).toThrow("only allowed for a sub-oyakata-manager");
 
     expect(() =>
       parseManagerControlPayload(
@@ -228,7 +228,7 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
       ),
     ).toThrow("must exist with kind 'input'");
@@ -245,13 +245,13 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
       ),
     ).toThrow("must exist with kind 'input'");
   });
 
-  test("rejects sub-manager retries outside the owned sub-workflow scope", () => {
+  test("rejects sub-oyakata-manager retries outside the owned sub-workflow scope", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -262,7 +262,7 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
       ),
     ).toThrow("must belong to sub-workflow 'sw-a'");
@@ -298,7 +298,7 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
       ),
     ).toThrow("cannot target the manager node itself");
@@ -335,7 +335,7 @@ describe("parseManagerControlPayload", () => {
         workflow,
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
         "test replay",
       ),
@@ -369,7 +369,7 @@ describe("parseManagerControlPayload", () => {
         workflow,
         {
           managerNodeId: "a-manager",
-          managerKind: "sub-manager",
+          managerKind: "sub-oyakata-manager",
         },
         "test replay",
       ),

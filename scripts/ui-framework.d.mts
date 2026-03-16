@@ -33,7 +33,7 @@ export interface UiFrameworkReadiness {
 export interface SolidCutoverStatus {
   readonly entrypoint: string;
   readonly entrypointExists: boolean;
-  readonly conflictingSvelteEntrypoint: boolean;
+  readonly conflictingLegacyEntrypoint: boolean;
   readonly missingTypecheckDeclarations: readonly string[];
   readonly missingBuildDeclarations: readonly string[];
   readonly missingTypecheckPackages: readonly string[];

@@ -562,7 +562,7 @@ function isManagerNodeKind(
   kind: WorkflowJson["nodes"][number]["kind"],
 ): boolean {
   return (
-    kind === "manager" || kind === "root-manager" || kind === "sub-manager"
+    kind === "manager" || kind === "root-manager" || kind === "sub-oyakata-manager"
   );
 }
 
@@ -2326,7 +2326,7 @@ export async function runWorkflow(
         }
 
         if (
-          nodeRef.kind !== "sub-manager" &&
+          nodeRef.kind !== "sub-oyakata-manager" &&
           (managerControl?.childInputNodeIds.length ?? 0) > 0
         ) {
           nodeStatus = "failed";
@@ -2371,7 +2371,7 @@ export async function runWorkflow(
             communicationCounter: session.communicationCounter,
             communications: session.communications,
             nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control at '${nodeId}': only a sub-manager can dispatch child input nodes`,
+            lastError: `invalid manager control at '${nodeId}': only a sub-oyakata-manager can dispatch child input nodes`,
           };
           await saveSession(failed, options);
           return err({
@@ -2809,7 +2809,7 @@ export async function runWorkflow(
         runtimeVariables: currentRuntimeVariables,
       };
       let managerPlannedInputs = isManagerNodeKind(nodeRef.kind)
-        ? nodeRef.kind === "sub-manager"
+        ? nodeRef.kind === "sub-oyakata-manager"
           ? [
               ...((managerControl?.overridesChildInputPlanning ?? false)
                 ? (managerControl?.childInputNodeIds ?? [])
@@ -2911,7 +2911,7 @@ export async function runWorkflow(
           ...persistedStarts,
           ...persistedChildInputs,
         ];
-      } else if (nodeRef.kind === "sub-manager") {
+      } else if (nodeRef.kind === "sub-oyakata-manager") {
         const forwardedPayloads = [{ payloadRef: outputRef, outputRaw }];
         const persistedChildInputs: CommunicationRecord[] = [];
         for (const inputNodeId of managerPlannedInputs) {
@@ -2925,7 +2925,7 @@ export async function runWorkflow(
               toNodeId: inputNodeId,
               routingScope: "intra-sub-workflow",
               deliveryKind: "edge-transition",
-              transitionWhen: `sub-manager-input:${inputNodeId}`,
+              transitionWhen: `sub-oyakata-manager-input:${inputNodeId}`,
               sourceNodeExecId: forwarded.payloadRef.nodeExecId,
               payloadRef: forwarded.payloadRef,
               outputRaw: forwarded.outputRaw,

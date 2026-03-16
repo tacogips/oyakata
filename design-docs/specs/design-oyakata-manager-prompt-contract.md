@@ -17,9 +17,14 @@ What was missing was the prompt contract that makes the manager LLM explicitly a
 - the workflow structure in its current scope,
 - why each child node/sub-workflow is being asked to act,
 - what value each child is expected to return,
-- how parent/sub-manager nesting should be interpreted.
+- how parent/sub-oyakata-manager nesting should be interpreted.
 
 The prior iteration still left one boundary mismatch: the root `oyakata` received user input from `runtimeVariables.humanInput` rather than from a mailbox-visible external handoff, and completed workflow output was not published through an external mailbox artifact.
+
+Near-term policy:
+
+- do not add dedicated runtime state management or order-management logic just to determine the next legal node
+- instead, make the manager prompt carry enough workflow structure and progress context that the manager calls nodes in authored workflow order
 
 ## Phase 1 Contract
 
@@ -58,10 +63,20 @@ The runtime composes prompt context that includes:
 - for manager nodes, a scoped child catalog that lists each child node or sub-workflow together with its reason, prompt seed, and expected return contract,
 - current sub-workflow scope when applicable,
 - root workflow structure summary for root manager nodes,
+- enough progress context from prior accepted outputs/executions that the manager can infer where it is in the workflow,
 - mailbox/upstream payload summary.
 
 This ensures every node instruction contains the "why" of the work rather than only the task wording.
 It also ensures `oyakata` can inspect the concrete child contracts it is expected to plan, invoke, and assess.
+
+For the near-term manager-driven runtime direction, this prompt context also carries the main workflow-order discipline:
+
+- the manager should treat the authored workflow order, branch structure, and loop structure as binding instructions
+- the manager should call the next node in that authored order rather than treating child selection as open-ended planning
+- explicit repeated loops in the workflow should be followed as written
+- sub-oyakata managers should stay within their owned child scope
+
+This keeps workflow awareness in the manager prompt rather than requiring a second runtime order-management subsystem.
 
 ## Phase 2 Manager Control Payload
 
@@ -119,8 +134,8 @@ The runtime still uses:
 Structural constraints now enforced by validation/runtime:
 
 - every `subWorkflow` must declare `managerNodeId`
-- `managerNodeId` must reference a `sub-manager`
-- a `sub-manager` may dispatch only to its owned `inputNodeId`
+- `managerNodeId` must reference a `sub-oyakata-manager`
+- a `sub-oyakata-manager` may dispatch only to its owned `inputNodeId`
 - root `oyakata` may not use `retry-node` to pierce into nodes owned by a sub-workflow boundary
 
 Manager control is therefore explicit for manager-owned dispatch/retry decisions, but not yet a full replacement for structural workflow semantics.

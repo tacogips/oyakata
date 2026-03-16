@@ -466,11 +466,11 @@ Rules:
 
 - root-manager scope may target only root-scope communications
   - effective root scope means both sender and recipient resolve outside any sub-workflow
-- sub-manager scope may target only communications that stay entirely within the sub-manager's owned sub-workflow
+- sub-oyakata-manager scope may target only communications that stay entirely within the sub-oyakata-manager's owned sub-workflow
   - effective sub-workflow scope means both sender and recipient resolve to that owned sub-workflow
 - root managers must not replay or retry communications that cross a sub-workflow boundary or operate entirely inside a child sub-workflow
-  - those cases must be handled by re-invoking the sub-workflow or by the owning sub-manager
-- sub-managers must not replay or retry parent-to-sub-workflow, cross-sub-workflow, or root-scope communications
+  - those cases must be handled by re-invoking the sub-workflow or by the owning sub-oyakata-manager
+- sub-oyakata-managers must not replay or retry parent-to-sub-workflow, cross-sub-workflow, or root-scope communications
 
 Compatibility rule for previously persisted artifacts:
 
@@ -631,7 +631,7 @@ Concrete direction for the next implementation slice:
   - for manager-message-backed deliveries it is the active `managerNodeExecId`
 - keep replay/retry compatibility by reading the existing communication outbox payload first and falling back to `payloadRef.artifactDir/output.json`
 
-With that widened provenance model in place, `deliver-to-child-input` can be accepted for an owning sub-manager because the mailbox delivery now has durable source artifacts even before the manager node publishes its final node output.
+With that widened provenance model in place, `deliver-to-child-input` can be accepted for an owning sub-oyakata-manager because the mailbox delivery now has durable source artifacts even before the manager node publishes its final node output.
 
 ### Output Shape
 

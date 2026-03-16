@@ -33,10 +33,12 @@ Scope:
 |------|------|----------|-------|
 | `workflowId` | string | Yes | Stable identifier |
 | `description` | string | Yes | Human-readable purpose |
+| `workflowType` | string | No | `single` or `orchestrate`; default `orchestrate` |
 | `defaults.maxLoopIterations` | number | Yes | Initial default: `3` |
 | `defaults.nodeTimeoutMs` | number | Yes | Initial default: `120000` |
 | `managerNodeId` | string | Yes | Must reference the root `oyakata` manager node id (`kind: "root-manager"`) |
-| `subWorkflows` | array of `SubWorkflowRef` | Yes | Node sequence units with input/output boundaries |
+| `subWorkflows` | array of `SubWorkflowRef` | Yes | Node sequence units and callable workflow references |
+| `nodeGroups` | array of `NodeGroup` | No | Concurrent execution groups |
 | `subWorkflowConversations` | array of `SubWorkflowConversation` | No | Conversation sessions between sub-workflows |
 | `nodes` | array of `WorkflowNodeRef` | Yes | Node definitions and references |
 | `edges` | array of `WorkflowEdge` | Yes | Directed transitions |
@@ -46,16 +48,18 @@ Scope:
 `WorkflowNodeRef`:
 - `id: string`
 - `nodeFile: string` (expected format: `node-{id}.json`)
-- `kind?: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-manager" | "input" | "output"`
+- `kind?: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-oyakata-manager" | "input" | "output"`
 - `completion?: CompletionRule` (optional for auto-complete nodes)
 
 `SubWorkflowRef`:
 - `id: string`
 - `description: string`
-- `managerNodeId: string` (must reference a node with `kind: "sub-manager"` owned by this sub-workflow)
-- `inputNodeId: string` (must reference a node with `kind: "input"`)
-- `outputNodeId: string` (must reference a node with `kind: "output"`)
-- `nodeIds: string[]` (all node ids owned by this sub-workflow, including `managerNodeId`, `inputNodeId`, `outputNodeId`)
+- `definitionType: "inline" | "workflow-ref"`
+- `managerNodeId?: string` (required for `inline`; must reference a node with `kind: "sub-oyakata-manager"` owned by this sub-workflow)
+- `inputNodeId?: string` (required for `inline`; must reference a node with `kind: "input"`)
+- `outputNodeId?: string` (required for `inline`; must reference a node with `kind: "output"`)
+- `nodeIds?: string[]` (required for `inline`; all node ids owned by this sub-workflow, including `managerNodeId`, `inputNodeId`, `outputNodeId`)
+- `workflowId?: string` (required for `workflow-ref`; stable id of the referenced child workflow)
 - `inputSources: SubWorkflowInputSource[]`
 - `block?: { type: "plain" | "branch-block" | "loop-body"; loopId?: string }`
 
@@ -127,6 +131,18 @@ Block semantics:
 - `when: string` (expression name or `always`)
 - `priority?: number` (optional metadata only; fan-out still applies)
 
+`NodeGroup`:
+- `id: string`
+- `executionMode: "concurrent"`
+- `members: NodeGroupMember[]`
+- `completionPolicy?: "all" | "any"`
+- `maxParallelism?: number`
+- `failurePolicy?: "fail-fast" | "wait-all"`
+
+`NodeGroupMember`:
+- `{ type: "node"; nodeId: string }`
+- `{ type: "sub-workflow"; subWorkflowId: string }`
+
 `LoopRule`:
 - `id: string`
 - `judgeNodeId: string` (must reference a node with `kind: "loop-judge"`)
@@ -140,14 +156,17 @@ Block semantics:
 | Field | Type | Required | Notes |
 |------|------|----------|-------|
 | `id` | string | Yes | Must match workflow node id |
+| `nodeType` | string | No | `agent` or `command`; default `agent` |
 | `executionBackend` | string | No | Canonical execution interface identifier such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, or `official/anthropic-sdk` |
 | `model` | string | Yes | Provider or backend-specific model name such as `gpt-5` or `claude-sonnet-4-5` |
 | `promptTemplate` | string | Yes* | Render template; may be resolved from `promptTemplateFile` during workflow load |
 | `promptTemplateFile` | string | No | Workflow-relative path to a prompt source file such as `prompts/<node-id>.md` |
 | `variables` | object | Yes | Template bindings |
+| `command` | object | No | Required when `nodeType = "command"` |
 | `argumentsTemplate` | object | No | Structured arguments skeleton to pass to skill/tool adapters |
 | `argumentBindings` | array of `ArgumentBinding` | No | Runtime mapping rules for complex input assembly |
 | `templateEngine` | string | No | Default `mustache`; logic-heavy engines are out of scope |
+| `runtimeIsolation` | object | No | Host or Podman execution contract |
 | `timeoutMs` | number | No | Overrides workflow default timeout |
 
 `*` Authoring rule:
@@ -162,6 +181,7 @@ Legacy read-compatible aliases:
 Legacy compatibility mode:
 - If `executionBackend` is omitted and `model` is `tacogips/codex-agent` or `tacogips/claude-code-agent`, the runtime derives the backend from `model`.
 - This read path remains supported for existing workflows, but new templates and edited payloads should write explicit `executionBackend`.
+- If `nodeType` is omitted, loaders normalize it to `agent`.
 
 `ArgumentBinding`:
 - `targetPath: string` (JSON pointer-like path in `argumentsTemplate`)
@@ -169,6 +189,24 @@ Legacy compatibility mode:
 - `sourceRef?: OutputRef | string` (required for output-based sources)
 - `sourcePath?: string` (JSON path in resolved source payload)
 - `required?: boolean`
+
+`CommandExecution`:
+- `scriptPath: string` (workflow-relative path; must remain inside the workflow directory)
+- `argvTemplate?: string[]`
+- `envTemplate?: Record<string, string>`
+- `workingDirectory?: string`
+
+`RuntimeIsolation`:
+- `mode: "host" | "podman"`
+- `image?: string` (required for `podman`)
+- `workspaceMountMode?: "none" | "read-only" | "read-write"`
+- `extraMounts?: RuntimeIsolationMount[]`
+- `futureAgentIsolationReserved?: boolean`
+
+`RuntimeIsolationMount`:
+- `hostPath: string`
+- `containerPath: string`
+- `readOnly?: boolean`
 
 ### workflow-vis.json
 
@@ -213,12 +251,14 @@ These are normalized in memory after file loading and validation.
 
 - `workflowId: string`
 - `description: string`
+- `workflowType: "single" | "orchestrate"`
 - `defaults: RuntimeDefaults`
 - `managerNodeId: NodeId`
 - `subWorkflows: Map<SubWorkflowId, SubWorkflow>`
+- `nodeGroups: Map<string, NodeGroup>`
 - `subWorkflowConversations: Map<ConversationId, SubWorkflowConversation>`
 - `nodes: Map<NodeId, WorkflowNode>`
-- `adjacency: Map<NodeId, WorkflowEdge[]>`
+- `adjacency: Map<string, WorkflowEdge[]>`
 - `loops: Map<LoopId, LoopRule>`
 - `branchMode: "fan-out"`
 - `executionArtifactsRoot: string` (resolved: `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}`)
@@ -231,12 +271,15 @@ These are normalized in memory after file loading and validation.
 ### WorkflowNode
 
 - `id: NodeId`
-- `kind: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-manager" | "input" | "output"`
+- `kind: "task" | "branch-judge" | "loop-judge" | "root-manager" | "sub-oyakata-manager" | "input" | "output"`
+- `nodeType: "agent" | "command"`
 - `executionBackend?: "codex-agent" | "claude-code-agent" | "official/openai-sdk" | "official/anthropic-sdk"`
 - `model: string`
 - `promptTemplate: string`
 - `promptTemplateFile?: string`
 - `variables: Record<string, unknown>`
+- `command?: CommandExecution`
+- `runtimeIsolation: RuntimeIsolation`
 - `timeoutMs: number` (effective timeout after default merge)
 - `completion: CompletionRule | null` (null means auto-complete)
 
@@ -249,11 +292,22 @@ Prompt-source invariants:
 
 - `id: SubWorkflowId`
 - `description: string`
-- `managerNodeId: NodeId`
-- `inputNodeId: NodeId`
-- `outputNodeId: NodeId`
-- `nodeIds: NodeId[]`
+- `definitionType: "inline" | "workflow-ref"`
+- `managerNodeId?: NodeId`
+- `inputNodeId?: NodeId`
+- `outputNodeId?: NodeId`
+- `nodeIds?: NodeId[]`
+- `workflowId?: WorkflowId`
 - `inputSources: SubWorkflowInputSource[]`
+
+### NodeGroup
+
+- `id: string`
+- `executionMode: "concurrent"`
+- `members: NodeGroupMember[]`
+- `completionPolicy: "all" | "any"`
+- `maxParallelism: number | null`
+- `failurePolicy: "fail-fast" | "wait-all"`
 
 ### SubWorkflowConversation
 
@@ -285,6 +339,7 @@ Prompt-source invariants:
 - `fromSubWorkflowId?: SubWorkflowId`
 - `toSubWorkflowId?: SubWorkflowId`
 - `routingScope: "parent-to-sub-workflow" | "cross-sub-workflow" | "intra-sub-workflow"`
+- parent/child callable workflow handoff is represented as boundary delivery between execution-local mailbox roots, not by exposing one global mailbox tree across workflows
 - `sourceNodeExecId: string`
 - `payloadRef: OutputRef`
 - `deliveryKind: "edge-transition" | "loop-back" | "manual-rerun" | "conversation-turn"`
@@ -366,18 +421,20 @@ Prompt-source invariants:
 - Every executed node must persist artifacts in `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}`.
 - Every artifact directory must include `input.json`, `output.json`, and `meta.json`.
 - `managerNodeId` must reference exactly one node with `kind: "root-manager"` (oyakata manager).
-- Every `subWorkflows[]` entry must reference existing `sub-manager`/`input`/`output` nodes.
-- Every `subWorkflows[].nodeIds[]` entry must reference an existing node id.
-- Every `subWorkflows[]` manager/input/output node id must be included in `subWorkflows[].nodeIds[]`.
-- No node id may belong to more than one `subWorkflows[].nodeIds[]`.
-- Every sub-workflow boundary delivery must terminate at the recipient sub-workflow `managerNodeId`.
+- `workflowType` defaults to `orchestrate`; `single` and `orchestrate` are the only valid authored values.
+- Every `inline subWorkflows[]` entry must reference existing `sub-oyakata-manager`/`input`/`output` nodes.
+- Every `inline subWorkflows[].nodeIds[]` entry must reference an existing node id.
+- Every `inline subWorkflows[]` manager/input/output node id must be included in `subWorkflows[].nodeIds[]`.
+- No node id may belong to more than one `inline subWorkflows[].nodeIds[]`.
+- Every `workflow-ref subWorkflows[]` entry must reference an existing workflow definition by `workflowId`.
+- Every sub-workflow boundary delivery must terminate at the recipient sub-workflow manager boundary.
 - Every `Communication` must belong to exactly one `workflowExecutionId`.
 - Every `Communication.communicationId` must be unique within one `workflowExecutionId`.
 - Every `DeliveryAttempt.deliveryAttemptId` must be unique within one `Communication`.
 - Every `AgentSessionRef` tuple (`allocatorNodeId`, `agentSessionId`) must be unique within one `workflowExecutionId`.
 - Every `Communication` must reference exactly one sender node and one recipient node.
 - Worker nodes must not write mailbox transport artifacts directly; only managers may materialize `Communication` and `DeliveryAttempt` records.
-- Every cross-sub-workflow communication must target recipient `subWorkflows[].managerNodeId`, not a leaf node.
+- Every cross-sub-workflow communication must target the recipient sub-workflow manager boundary, not a leaf node.
 - `SubWorkflowInputSource.type = "workflow-output"` requires `workflowId`.
 - `SubWorkflowInputSource.type = "node-output"` requires `nodeId`.
 - `SubWorkflowInputSource.type = "sub-workflow-output"` requires `subWorkflowId`.
@@ -391,7 +448,7 @@ Prompt-source invariants:
 - If `ConversationPolicy.turnPolicy = "score-priority"`, `convergencePolicy` must be present.
 - If `ConversationPolicy.parallelBranches.enabled = true`, `mergePolicy` must be present.
 - `ConversationBudgetPolicy.maxTokens` and `maxCostUsd` (if present) must be positive.
-- Every edge endpoint must be declared in `nodes`.
+- Every edge endpoint must resolve to a node id, sub-workflow id, or node-group id declared in the same workflow.
 - Every `loops[].judgeNodeId` must reference an existing node with kind `loop-judge`.
 - Every `loops[].maxIterations` (if present) must be a positive integer.
 - Effective loop max iterations must exist for every loop (loop-local or global default).
@@ -399,6 +456,13 @@ Prompt-source invariants:
 - Branch mode is always fan-out.
 - Effective timeout exists for every executable node (node override or default).
 - Loop execution must be bounded (explicit `loops` config or global default).
+- `nodeType` defaults to `agent`; `agent` and `command` are the only valid authored values.
+- `command` nodes must define `command.scriptPath`.
+- `command.scriptPath` and `command.workingDirectory` must remain inside the workflow directory.
+- `runtimeIsolation.mode = "podman"` currently requires `nodeType = "command"`.
+- Every `nodeGroups[]` entry with `executionMode = "concurrent"` must have at least two members.
+- Every `nodeGroups[].members[]` entry must reference an existing node id or sub-workflow id.
+- Every `single` workflow must keep orchestration local to the root manager and must not depend on `nodeGroups` or inline child execution scopes for its main path.
 - `templateEngine` must be `mustache` when specified.
 - `argumentsTemplate` with `argumentBindings` must produce valid JSON object before adapter invocation.
 
@@ -414,7 +478,9 @@ Before approving a workflow model:
 - No unintended dead-end nodes.
 - Fan-out branches are intentional and bounded downstream.
 - `managerNodeId` exists and is `kind: "root-manager"` controlling all sub-workflow starts.
-- Each sub-workflow has valid manager, input, and output boundary nodes, and a complete `nodeIds` membership list.
+- Each inline sub-workflow has valid manager, input, and output boundary nodes, and a complete `nodeIds` membership list.
+- Each workflow-ref sub-workflow points to the intended child `workflowId`, and the child `workflowType` matches the expected behavior (`single` vs `orchestrate`).
+- Concurrent node groups are explicit where same-step fan-out is intended.
 - Conversation participants map to existing sub-workflows and expected dialog topology.
 - Conversation policy is explicit for turn-taking, memory, tools, convergence, branching, and budget.
 - For subgroup pipelines (e.g. subgroup1->subgroup2->subgroup3->subgroup4), order and loop-back edge targets are explicit and reviewable.
@@ -422,8 +488,11 @@ Before approving a workflow model:
 
 3. Node runtime quality
 - `executionBackend` and `model` are not conflated in newly authored nodes.
+- `nodeType` correctly distinguishes agent execution from command execution.
 - `promptTemplate` is understandable and deterministic.
 - `variables` do not contain missing placeholders.
+- Command nodes receive only the intended inbox-derived argv/env values.
+- Podman-isolated nodes mount only the intended mailbox/workspace surfaces.
 - Output handoff to downstream nodes is traceable via execution artifact references.
 
 4. Safety controls

@@ -1,8 +1,10 @@
-import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { runCli } from "./cli";
+import { createSessionState } from "./workflow/session";
+import { saveSession } from "./workflow/session-store";
 
 const tempDirs: string[] = [];
 
@@ -85,12 +87,167 @@ async function writeRuntimeVariablesFile(
   return filePath;
 }
 
+async function writeJson(
+  filePath: string,
+  payload: unknown,
+): Promise<void> {
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+async function createCallNodeFixture(
+  workflowRoot: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDirectory = path.join(workflowRoot, workflowName);
+  await mkdir(workflowDirectory, { recursive: true });
+
+  await writeJson(path.join(workflowDirectory, "workflow.json"), {
+    workflowId: workflowName,
+    description: "call node cli fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "oyakata-manager",
+    subWorkflows: [],
+    nodes: [
+      {
+        id: "oyakata-manager",
+        kind: "manager",
+        nodeFile: "node-oyakata-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "writer",
+        kind: "task",
+        nodeFile: "node-writer.json",
+        completion: { type: "none" },
+      },
+    ],
+    edges: [],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
+  await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+    nodes: [
+      { id: "oyakata-manager", order: 0 },
+      { id: "writer", order: 1 },
+    ],
+  });
+  await writeJson(path.join(workflowDirectory, "node-oyakata-manager.json"), {
+    id: "oyakata-manager",
+    model: "tacogips/claude-code-agent",
+    promptTemplate: "manager",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDirectory, "node-writer.json"), {
+    id: "writer",
+    model: "tacogips/codex-agent",
+    promptTemplate: "writer",
+    variables: {},
+    output: {
+      description: "writer output",
+      maxValidationAttempts: 2,
+      jsonSchema: {
+        type: "object",
+        required: ["summary"],
+        properties: {
+          summary: { type: "string" },
+        },
+      },
+    },
+  });
+}
+
 describe("runCli", () => {
   test("returns help for unknown scope", async () => {
     const capture = createIoCapture();
     const code = await runCli(["unknown", "cmd", "target"], capture.io);
     expect(code).toBe(1);
     expect(capture.stdout.join("\n")).toContain("Usage:");
+  });
+
+  test("call-node executes locally with structured manager message input", async () => {
+    const root = await makeTempDir();
+    const workflowName = "call-node-cli";
+    const sessionId = "sess-call-node-cli";
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    const messagePath = path.join(root, "message.json");
+
+    await createCallNodeFixture(root, workflowName);
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName,
+        workflowId: workflowName,
+        initialNodeId: "oyakata-manager",
+        runtimeVariables: {},
+      }),
+      { sessionStoreRoot },
+    );
+    expect(saved.ok).toBe(true);
+
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(
+        {
+          writer: [
+            {
+              provider: "scenario-mock",
+              when: { always: true },
+              payload: { wrong: true },
+            },
+            {
+              provider: "scenario-mock",
+              when: { always: true },
+              payload: { summary: "cli ok" },
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(
+      messagePath,
+      JSON.stringify({ instruction: "review this change" }, null, 2),
+      "utf8",
+    );
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "call-node",
+        workflowName,
+        sessionId,
+        "writer",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionStoreRoot,
+        "--mock-scenario",
+        scenarioPath,
+        "--message-file",
+        messagePath,
+        "--output",
+        "json",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    const payload = JSON.parse(capture.stdout.join("\n")) as {
+      output: { payload: { summary: string } };
+      outputRef: { artifactDir: string };
+    };
+    expect(payload.output.payload.summary).toBe("cli ok");
+
+    const inputJson = JSON.parse(
+      await readFile(path.join(payload.outputRef.artifactDir, "input.json"), "utf8"),
+    ) as { managerMessage?: { instruction?: string } };
+    expect(inputJson.managerMessage?.instruction).toBe("review this change");
   });
 
   test("create -> validate -> inspect roundtrip", async () => {

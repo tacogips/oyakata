@@ -11,6 +11,7 @@ import {
 import { startServe, type StartedServe } from "./server/serve";
 import type { MockNodeScenario } from "./workflow/adapter";
 import { createWorkflowTemplate } from "./workflow/create";
+import { callNode } from "./workflow/call-node";
 import { runWorkflow } from "./workflow/engine";
 import { loadWorkflowFromDisk } from "./workflow/load";
 import { resolveEffectiveRoots } from "./workflow/paths";
@@ -64,6 +65,8 @@ interface ParsedOptions {
   readonly openBrowser: boolean;
   readonly resumeSessionId?: string;
   readonly workflowName?: string;
+  readonly messageJson?: string;
+  readonly messageFile?: string;
 }
 
 interface ParsedArgs {
@@ -178,6 +181,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let openBrowser = false;
   let resumeSessionId: string | undefined;
   let workflowName: string | undefined;
+  let messageJson: string | undefined;
+  let messageFile: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -264,6 +269,12 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       case "--workflow":
         workflowName = readNext();
         break;
+      case "--message-json":
+        messageJson = readNext();
+        break;
+      case "--message-file":
+        messageFile = readNext();
+        break;
       default:
         break;
     }
@@ -292,6 +303,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       openBrowser,
       ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
       ...(workflowName === undefined ? {} : { workflowName }),
+      ...(messageJson === undefined ? {} : { messageJson }),
+      ...(messageFile === undefined ? {} : { messageFile }),
     },
   };
 }
@@ -313,6 +326,9 @@ function printHelp(io: CliIo): void {
   );
   io.stdout(
     "  oyakata gql <graphql-document> [--variables <json|@file>] [--endpoint <url>] [--auth-token <token>]",
+  );
+  io.stdout(
+    "  oyakata call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>] [options]",
   );
 }
 
@@ -354,6 +370,29 @@ async function readGraphqlVariables(
     throw new Error("GraphQL variables must be a JSON object");
   }
   return parsed as Readonly<Record<string, unknown>>;
+}
+
+async function readJsonValueFromFile(filePath: string): Promise<unknown> {
+  const content = await readFile(filePath, "utf8");
+  return JSON.parse(content) as unknown;
+}
+
+async function readCallNodeMessage(
+  parsedOptions: ParsedOptions,
+): Promise<unknown | undefined> {
+  if (
+    parsedOptions.messageJson !== undefined &&
+    parsedOptions.messageFile !== undefined
+  ) {
+    throw new Error("use only one of --message-json or --message-file");
+  }
+  if (parsedOptions.messageJson !== undefined) {
+    return JSON.parse(parsedOptions.messageJson) as unknown;
+  }
+  if (parsedOptions.messageFile !== undefined) {
+    return readJsonValueFromFile(parsedOptions.messageFile);
+  }
+  return undefined;
 }
 
 async function readMockScenario(pathToJson: string): Promise<MockNodeScenario> {
@@ -1071,6 +1110,96 @@ export async function runCli(
       io,
       deps,
     );
+  }
+
+  if (scope === "call-node") {
+    const workflowId = command;
+    const workflowRunId = target;
+    const nodeId = parsed.positionals[3];
+    if (
+      workflowId === undefined ||
+      workflowRunId === undefined ||
+      nodeId === undefined
+    ) {
+      io.stderr("workflow id, workflow run id, and node id are required");
+      io.stderr(
+        "usage: oyakata call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>] [options]",
+      );
+      return 2;
+    }
+    if (graphqlCliTransport !== null) {
+      io.stderr(
+        "call-node currently supports local execution only; omit --endpoint",
+      );
+      return 2;
+    }
+
+    let message: unknown;
+    try {
+      message = await readCallNodeMessage(parsed.options);
+    } catch (error: unknown) {
+      const messageText =
+        error instanceof Error ? error.message : "unknown error";
+      io.stderr(`failed to read call-node message: ${messageText}`);
+      return 1;
+    }
+
+    let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> =
+      {};
+    try {
+      mockScenarioOptions = await readMockScenarioOption(
+        parsed.options.mockScenarioPath,
+      );
+    } catch (error: unknown) {
+      const messageText =
+        error instanceof Error ? error.message : "unknown error";
+      io.stderr(`failed to read --mock-scenario file: ${messageText}`);
+      return 1;
+    }
+
+    const result = await callNode({
+      ...sharedOptions,
+      workflowId,
+      workflowRunId,
+      nodeId,
+      ...mockScenarioOptions,
+      ...(message === undefined ? {} : { message }),
+      ...(parsed.options.defaultTimeoutMs === undefined
+        ? {}
+        : { defaultTimeoutMs: parsed.options.defaultTimeoutMs }),
+      ...(parsed.options.dryRun ? { dryRun: true } : {}),
+    });
+
+    if (!result.ok) {
+      if (parsed.options.output === "json") {
+        emitJson(io, result.error);
+      } else {
+        io.stderr(`call-node failed: ${result.error.message}`);
+        if (result.error.nodeExecution !== undefined) {
+          io.stderr(`nodeExecId: ${result.error.nodeExecution.nodeExecId}`);
+          io.stderr(`status: ${result.error.nodeExecution.status}`);
+        }
+      }
+      return result.error.exitCode;
+    }
+
+    if (parsed.options.output === "json") {
+      emitJson(io, {
+        sessionId: result.value.session.sessionId,
+        nodeId,
+        nodeExecId: result.value.nodeExecution.nodeExecId,
+        status: result.value.nodeExecution.status,
+        output: result.value.output,
+        outputRef: result.value.outputRef,
+        exitCode: result.value.exitCode,
+      });
+    } else {
+      io.stdout(`sessionId: ${result.value.session.sessionId}`);
+      io.stdout(`nodeId: ${nodeId}`);
+      io.stdout(`nodeExecId: ${result.value.nodeExecution.nodeExecId}`);
+      io.stdout(`status: ${result.value.nodeExecution.status}`);
+    }
+    return result.value.exitCode;
   }
 
   if (scope === undefined || command === undefined || target === undefined) {

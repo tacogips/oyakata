@@ -259,7 +259,7 @@ export function addSubWorkflowToBundle(
     id,
   );
   const managerNode = managerCandidates.find(
-    (node) => node.kind === "sub-manager",
+    (node) => node.kind === "sub-oyakata-manager",
   );
   const inputNode =
     inputCandidates.find(
@@ -281,7 +281,7 @@ export function addSubWorkflowToBundle(
     return {
       ok: false,
       error:
-        "Add a dedicated sub-manager node before creating another sub-workflow.",
+        "Add a dedicated sub-oyakata-manager node before creating another sub-workflow.",
     };
   }
 

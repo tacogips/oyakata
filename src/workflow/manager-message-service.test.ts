@@ -376,7 +376,7 @@ describe("manager-message-service", () => {
     expect(replayed).toEqual(result);
   });
 
-  test("rejects replay actions outside the sub-manager owned communication scope", async () => {
+  test("rejects replay actions outside the sub-oyakata-manager owned communication scope", async () => {
     const root = await makeTempDir();
     const { options, session } = await createCompletedWorkflowFixture(root);
     const managerStore = await createManagerSession(

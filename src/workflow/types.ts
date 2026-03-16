@@ -12,7 +12,7 @@ export type NodeKind =
   | "branch-judge"
   | "loop-judge"
   | "root-manager"
-  | "sub-manager"
+  | "sub-oyakata-manager"
   | "manager"
   | "input"
   | "output";

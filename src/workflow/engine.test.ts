@@ -981,7 +981,7 @@ async function createSubWorkflowRuntimeFixture(
       },
       {
         id: "a-manager",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
         nodeFile: "node-a-manager.json",
         completion: { type: "none" },
       },
@@ -999,7 +999,7 @@ async function createSubWorkflowRuntimeFixture(
       },
       {
         id: "b-manager",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
         nodeFile: "node-b-manager.json",
         completion: { type: "none" },
       },
@@ -1343,7 +1343,7 @@ async function createWorkflowOutputDrivenSubWorkflowFixture(
       },
       {
         id: "review-manager",
-        kind: "sub-manager",
+        kind: "sub-oyakata-manager",
         nodeFile: "node-review-manager.json",
         completion: { type: "none" },
       },
@@ -5087,7 +5087,7 @@ describe("runWorkflow", () => {
     expect(bInputExecutions).toHaveLength(2);
   });
 
-  test("sub-manager forwards its own output to the child input", async () => {
+  test("sub-oyakata-manager forwards its own output to the child input", async () => {
     const root = await makeTempDir();
     const workflowName = "subworkflow-manager-forwarding";
     await createSubWorkflowRuntimeFixture(root, workflowName);
@@ -5157,7 +5157,7 @@ describe("runWorkflow", () => {
     expect(inputJson.arguments.routed.marker).toBe("from-b-manager");
   });
 
-  test("sub-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
+  test("sub-oyakata-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
     const root = await makeTempDir();
     const workflowName = "subworkflow-manager-no-forward";
     await createSubWorkflowRuntimeFixture(root, workflowName);

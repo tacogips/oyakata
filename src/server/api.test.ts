@@ -351,7 +351,7 @@ describe("handleApiRequest", () => {
     expect(detectFrontendMode({}, fakeModuleUrl)).toBe("solid-dist");
   });
 
-  test("rejects a legacy Svelte entrypoint instead of silently defaulting", async () => {
+  test("rejects a legacy frontend entrypoint instead of silently defaulting", async () => {
     const root = await makeTempDir();
     const uiSourceRoot = path.join(root, "ui", "src");
     await mkdir(uiSourceRoot, { recursive: true });
@@ -362,7 +362,7 @@ describe("handleApiRequest", () => {
     ).href;
     expect(() =>
       detectFrontendMode({ frontendModeModuleUrl: fakeModuleUrl }),
-    ).toThrow(/legacy Svelte entrypoint/i);
+    ).toThrow(/legacy frontend entrypoint/i);
 
     const res = await handleApiRequest(
       new Request("http://localhost/api/ui-config"),
@@ -376,7 +376,7 @@ describe("handleApiRequest", () => {
 
     expect(res.status).toBe(500);
     await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringMatching(/legacy Svelte entrypoint/i),
+      error: expect.stringMatching(/legacy frontend entrypoint/i),
     });
   });
 
@@ -430,7 +430,7 @@ describe("handleApiRequest", () => {
     });
   });
 
-  test("uses an explicit frontend override even when a legacy Svelte entrypoint is present", async () => {
+  test("uses an explicit frontend override even when a legacy frontend entrypoint is present", async () => {
     const root = await makeTempDir();
     const uiSourceRoot = path.join(root, "ui", "src");
     await mkdir(uiSourceRoot, { recursive: true });
