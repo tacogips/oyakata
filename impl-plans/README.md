@@ -94,6 +94,7 @@ impl-plans/
 | `graphql-cli-execution-transport`            | 2026-03-15 | `design-graphql-manager-control-plane`, `command`                                                 |
 | `graphql-browser-execution-session-migration` | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                            |
 | `graphql-browser-workflow-definition-migration` | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                           |
+| `graphql-library-rest-surface-simplification` | 2026-03-16 | `design-graphql-manager-control-plane`, `architecture`, `command`                               |
 | `runtime-artifact-atomic-write-collision-safety` | 2026-03-15 | `architecture`, `design-graphql-manager-control-plane`                                           |
 | `tui-resume-runtime-variable-merge`           | 2026-03-15 | `design-tui`, `command`                                                                            |
 

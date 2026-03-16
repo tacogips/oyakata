@@ -10,7 +10,7 @@ import {
   hashManagerAuthToken,
 } from "../workflow/manager-session-store";
 import { handleApiRequest } from "./api";
-import { handleGraphqlRequest } from "./graphql";
+import { executeGraphqlDocument, handleGraphqlRequest } from "./graphql";
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -105,7 +105,7 @@ async function createManagerSession(root: string, workflowExecutionId: string) {
     createdAt: "2026-03-15T00:00:00.000Z",
     updatedAt: "2026-03-15T00:00:00.000Z",
     authTokenHash: hashManagerAuthToken("secret"),
-    authTokenExpiresAt: "2026-03-16T00:00:00.000Z",
+    authTokenExpiresAt: "2099-03-16T00:00:00.000Z",
   });
 }
 
@@ -767,6 +767,48 @@ describe("GraphQL HTTP transport", () => {
             "managerSessionId is required for manager-scoped GraphQL operations",
         },
       ],
+    });
+  });
+
+  test("preserves direct in-process manager auth context for executeGraphqlDocument", async () => {
+    const root = await makeTempDir();
+    const { options, session } = await createCompletedWorkflowFixture(root);
+    await createManagerSession(root, session.sessionId);
+
+    const result = await executeGraphqlDocument(
+      `
+        mutation SendMessage($input: SendManagerMessageInput!) {
+          sendManagerMessage(input: $input) {
+            accepted
+            managerSessionId
+            queuedNodeIds
+          }
+        }
+      `,
+      {
+        ...options,
+        authToken: "secret",
+        managerSessionId: "mgrsess-000001",
+      },
+      {
+        variables: {
+          input: {
+            workflowId: "demo",
+            workflowExecutionId: session.sessionId,
+            message: "Retry the workflow input node.",
+            actions: [{ type: "retry-node", nodeId: "workflow-input" }],
+            idempotencyKey: "idem-direct-context-auth",
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      sendManagerMessage: {
+        accepted: true,
+        managerSessionId: "mgrsess-000001",
+        queuedNodeIds: ["workflow-input"],
+      },
     });
   });
 

@@ -29,8 +29,9 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 - `serve [workflow-name]`
   - Start local HTTP server for browser-based workflow editing and execution.
   - If `workflow-name` is omitted, server starts in workflow selection mode.
-  - Serves the built browser frontend from `ui/dist/`, keeps the current local editor REST API during migration, and adds the GraphQL control plane.
-  - Exposes the canonical GraphQL control-plane endpoint at `/graphql` for execution, communication, and manager-control operations.
+  - Serves the built browser frontend from `ui/dist/` and the canonical GraphQL control plane.
+  - Exposes `/graphql` for workflow-definition, execution, communication, and manager-control operations.
+  - Keeps `/api/ui-config` as a small browser bootstrap/config endpoint; workflow/session REST routes are not served.
   - Returns an explicit UI-unavailable response when the built frontend bundle is missing.
 - `tui`
   - Start interactive terminal UI for workflow selection and execution.
@@ -125,7 +126,7 @@ Compatibility rule:
 - domain parameters should be modeled in GraphQL inputs,
 - `oyakata gql` is the thin generic GraphQL client now, and legacy execution commands may opt into GraphQL transport with `--endpoint` while the rest of the CLI migrates incrementally,
 - local-only debug flags such as `--mock-scenario` are not forwarded when a legacy command is executed remotely through GraphQL,
-- existing REST endpoints remain supported until the browser/editor surfaces migrate.
+- browser/editor workflow surfaces should use GraphQL; `/api/ui-config` remains only as bootstrap metadata rather than a parallel workflow/session transport.
 
 Supporting design: `design-docs/specs/design-graphql-manager-control-plane.md`.
 

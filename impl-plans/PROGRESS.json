@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-03-15T14:35:00Z",
+  "lastUpdated": "2026-03-16T09:05:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -64,7 +64,9 @@
     "61": { "status": "COMPLETED" },
     "62": { "status": "COMPLETED" },
     "63": { "status": "COMPLETED" },
-    "64": { "status": "COMPLETED" }
+    "64": { "status": "COMPLETED" },
+    "65": { "status": "COMPLETED" },
+    "66": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -1518,6 +1520,27 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": ["TASK-001", "TASK-002", "TASK-003"]
+        }
+      }
+    },
+    "graphql-library-rest-surface-simplification": {
+      "phase": 66,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["graphql-manager-control-plane-surface:TASK-001"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-002"]
         }
       }
     }

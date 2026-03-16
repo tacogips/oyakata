@@ -72,7 +72,46 @@ const WORKFLOW_EXECUTION_SESSION_QUERY = `
   query WorkflowExecution($workflowExecutionId: String!) {
     workflowExecution(workflowExecutionId: $workflowExecutionId) {
       workflowExecutionId
-      session
+      session {
+        sessionId
+        workflowName
+        workflowId
+        status
+        startedAt
+        endedAt
+        queue
+        currentNodeId
+        nodeExecutionCounter
+        nodeExecutionCounts
+        loopIterationCounts
+        restartCounts
+        restartEvents
+        transitions {
+          from
+          to
+          when
+        }
+        nodeExecutions {
+          nodeId
+          nodeExecId
+          status
+          artifactDir
+          startedAt
+          endedAt
+          attempt
+          outputAttemptCount
+          outputValidationErrors
+          backendSessionId
+          backendSessionMode
+          restartedFromNodeExecId
+        }
+        communicationCounter
+        communications
+        conversationTurns
+        nodeBackendSessions
+        runtimeVariables
+        lastError
+      }
     }
   }
 `;

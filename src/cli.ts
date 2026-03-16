@@ -564,7 +564,7 @@ async function fetchRemoteWorkflowRunSummary(
             workflowName
             workflowId
             transitions {
-              at
+              when
             }
           }
           nodeExecutions {

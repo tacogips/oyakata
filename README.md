@@ -246,7 +246,8 @@ Runtime SQLite behavior:
   - Non-interactive terminal: promptless fallback mode is used; `workflow-name` is required.
   - Resume: `--resume-session` resumes an existing session directly.
 - Web UI: `oyakata serve`, then open `http://127.0.0.1:43173/`
-  - Choose workflow, input prompt, start async execution, and watch session/node progress by polling session state.
+  - Choose workflow, input prompt, start async execution, and watch session/node progress by polling the GraphQL control plane.
+  - The served browser app uses `/graphql` for workflow-definition, execution, and session flows. The only remaining `/api/*` browser bootstrap endpoint is `/api/ui-config`.
 - GraphQL control plane: `oyakata gql "<graphql-document>"`
   - Sends GraphQL requests to `http://127.0.0.1:43173/graphql` by default.
   - Uses `--variables '{"key":"value"}'` or `--variables @vars.json` for GraphQL variables.
