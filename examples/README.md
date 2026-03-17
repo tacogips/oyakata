@@ -38,6 +38,36 @@ bun run src/main.ts workflow run claude-oyakata-codex-coding \
   --output json
 ```
 
+### `node-combinations-showcase`
+
+Validation-oriented reference bundle for the newer node authoring surface:
+
+- sibling plain sub-workflows show the current fan-out/concurrent-style pattern
+- a loop-body sub-workflow shows the current repeated-iteration pattern used in
+  place of a first-class `foreach` field
+- one task uses `nodeType: "command"`
+- one task uses `nodeType: "container"`
+- workflow-relative support assets are included for the command script and
+  container build context
+
+Important current limitation:
+
+- this bundle is meant for `validate` and `inspect`
+- `command` and `container` nodes are still rejected by `workflow run` in the
+  current runtime, so this example is intentionally not documented as runnable
+
+Validate it:
+
+```bash
+bun run src/main.ts workflow validate node-combinations-showcase --workflow-root ./examples
+```
+
+Inspect it:
+
+```bash
+bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root ./examples --output json
+```
+
 ### `claude-oyakata-claude-worker`
 
 Reference workflow for the case where a regular task node also uses

@@ -97,6 +97,7 @@ impl-plans/
 | `graphql-library-rest-surface-simplification` | 2026-03-16 | `design-graphql-manager-control-plane`, `architecture`, `command`                               |
 | `runtime-artifact-atomic-write-collision-safety` | 2026-03-15 | `architecture`, `design-graphql-manager-control-plane`                                           |
 | `tui-resume-runtime-variable-merge`           | 2026-03-15 | `design-tui`, `command`                                                                            |
+| `example-node-combination-showcase`           | 2026-03-17 | `design-workflow-json`, `design-container-runtime-contract`, `architecture`                      |
 
 ## Phase Dependencies
 
@@ -165,6 +166,10 @@ impl-plans/
 | 61    | COMPLETED   | Phase 60   |
 | 62    | COMPLETED | Phase 61   |
 | 63    | COMPLETED | Phase 62 |
+| 64    | COMPLETED | Phase 63 |
+| 65    | COMPLETED | Phase 64 |
+| 66    | COMPLETED | Phase 65 |
+| 67    | COMPLETED | Phase 66 |
 
 ### Phase to Plans Mapping
 
@@ -232,6 +237,10 @@ PHASE_TO_PLANS = {
   60: ["impl-plans/graphql-manager-http-transport-context-hardening.md"],
   61: ["impl-plans/graphql-cli-execution-transport.md"],
   62: ["impl-plans/graphql-browser-execution-session-migration.md"],
-  63: ["impl-plans/graphql-browser-workflow-definition-migration.md"]
+  63: ["impl-plans/graphql-browser-workflow-definition-migration.md"],
+  64: ["impl-plans/graphql-workflow-execution-overview.md"],
+  65: ["impl-plans/manager-driven-call-node-runtime.md"],
+  66: ["impl-plans/graphql-library-rest-surface-simplification.md"],
+  67: ["impl-plans/example-node-combination-showcase.md"]
 }
 ```

@@ -292,16 +292,18 @@ Communication routing scopes:
 - `intra-sub-workflow`
 - `cross-sub-workflow`
 
-## Example Bundle
+## Example Bundles
 
-The repository includes a runnable reference workflow:
+The repository includes multiple reference bundles under `examples/`.
+
+Runnable mixed-backend reference:
 
 - `examples/claude-oyakata-codex-coding/workflow.json`
 - `examples/claude-oyakata-codex-coding/workflow-vis.json`
 - `examples/claude-oyakata-codex-coding/node-*.json`
 - `examples/claude-oyakata-codex-coding/mock-scenario.json`
 
-This example shows the recommended split:
+This bundle shows the recommended split:
 
 - manager nodes on `claude-code-agent`
 - coding work on `codex-agent`
@@ -327,6 +329,39 @@ bun run src/main.ts workflow run claude-oyakata-codex-coding \
   --workflow-root ./examples \
   --mock-scenario ./examples/claude-oyakata-codex-coding/mock-scenario.json \
   --output json
+```
+
+Validation-oriented node-authoring showcase:
+
+- `examples/node-combinations-showcase/workflow.json`
+- `examples/node-combinations-showcase/workflow-vis.json`
+- `examples/node-combinations-showcase/node-*.json`
+- `examples/node-combinations-showcase/prompts/*.md`
+
+This bundle keeps the graph small while showing:
+
+- sibling plain sub-workflows as the current fan-out/concurrent-style pattern
+- a `loop-body` sub-workflow as the current repeated-iteration pattern used in
+  place of a first-class `foreach` field
+- one `command` node payload
+- one `container` node payload with workflow-level `containerRuntime`
+
+Current limitation:
+
+- `command` and `container` nodes are authorable and validatable
+- `runWorkflow()` still rejects them explicitly, so this showcase is intended
+  for `workflow validate` and `workflow inspect`, not for end-to-end execution
+
+Validate it:
+
+```bash
+bun run src/main.ts workflow validate node-combinations-showcase --workflow-root ./examples
+```
+
+Inspect it:
+
+```bash
+bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root ./examples --output json
 ```
 
 ## Interfaces

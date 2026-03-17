@@ -1,0 +1,281 @@
+{
+  "workflowId": "node-combinations-showcase",
+  "description": "Compact reference bundle showing current fan-out, loop-body iteration, command-node, and container-node authoring in one place.",
+  "defaults": {
+    "maxLoopIterations": 3,
+    "nodeTimeoutMs": 120000,
+    "containerRuntime": {
+      "runnerKind": "podman"
+    }
+  },
+  "prompts": {
+    "oyakataPromptTemplate": "Coordinate {{workflowId}} as a compact structure showcase. Treat sibling plain sub-workflows as the current fan-out pattern, and treat the loop-body sub-workflow as the current repeated-iteration pattern.",
+    "workerSystemPromptTemplate": "Work only on the current node responsibility and return concise workflow JSON-oriented output."
+  },
+  "managerNodeId": "oyakata-manager",
+  "subWorkflows": [
+    {
+      "id": "command-lane",
+      "description": "Plain sub-workflow lane that shows command node authoring. Together with container-lane it forms the current fan-out/concurrent-style example.",
+      "managerNodeId": "command-manager",
+      "inputNodeId": "command-input",
+      "outputNodeId": "command-output",
+      "nodeIds": [
+        "command-manager",
+        "command-input",
+        "command-worker",
+        "command-output"
+      ],
+      "inputSources": [
+        {
+          "type": "human-input"
+        }
+      ],
+      "block": {
+        "type": "plain"
+      }
+    },
+    {
+      "id": "container-lane",
+      "description": "Plain sub-workflow lane that shows container node authoring in parallel with the command lane.",
+      "managerNodeId": "container-manager",
+      "inputNodeId": "container-input",
+      "outputNodeId": "container-output",
+      "nodeIds": [
+        "container-manager",
+        "container-input",
+        "container-worker",
+        "container-output"
+      ],
+      "inputSources": [
+        {
+          "type": "human-input"
+        }
+      ],
+      "block": {
+        "type": "plain"
+      }
+    },
+    {
+      "id": "foreach-loop",
+      "description": "Loop-body sub-workflow that demonstrates the current repeated-iteration pattern used in place of a first-class foreach field.",
+      "managerNodeId": "foreach-manager",
+      "inputNodeId": "foreach-input",
+      "outputNodeId": "foreach-output",
+      "nodeIds": [
+        "foreach-manager",
+        "foreach-input",
+        "foreach-worker",
+        "foreach-judge",
+        "foreach-output"
+      ],
+      "inputSources": [
+        {
+          "type": "human-input"
+        }
+      ],
+      "block": {
+        "type": "loop-body",
+        "loopId": "item-loop"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "oyakata-manager",
+      "kind": "root-manager",
+      "nodeFile": "node-oyakata-manager.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "command-manager",
+      "kind": "sub-oyakata-manager",
+      "nodeFile": "node-command-manager.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "command-input",
+      "kind": "input",
+      "nodeFile": "node-command-input.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "command-worker",
+      "kind": "task",
+      "nodeFile": "node-command-worker.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "command-output",
+      "kind": "output",
+      "nodeFile": "node-command-output.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "container-manager",
+      "kind": "sub-oyakata-manager",
+      "nodeFile": "node-container-manager.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "container-input",
+      "kind": "input",
+      "nodeFile": "node-container-input.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "container-worker",
+      "kind": "task",
+      "nodeFile": "node-container-worker.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "container-output",
+      "kind": "output",
+      "nodeFile": "node-container-output.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "foreach-manager",
+      "kind": "sub-oyakata-manager",
+      "nodeFile": "node-foreach-manager.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "foreach-input",
+      "kind": "input",
+      "nodeFile": "node-foreach-input.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "foreach-worker",
+      "kind": "task",
+      "nodeFile": "node-foreach-worker.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "foreach-judge",
+      "kind": "loop-judge",
+      "nodeFile": "node-foreach-judge.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "foreach-output",
+      "kind": "output",
+      "nodeFile": "node-foreach-output.json",
+      "completion": {
+        "type": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "oyakata-manager",
+      "to": "command-manager",
+      "when": "always"
+    },
+    {
+      "from": "oyakata-manager",
+      "to": "container-manager",
+      "when": "always"
+    },
+    {
+      "from": "oyakata-manager",
+      "to": "foreach-manager",
+      "when": "always"
+    },
+    {
+      "from": "command-manager",
+      "to": "command-input",
+      "when": "always"
+    },
+    {
+      "from": "command-input",
+      "to": "command-worker",
+      "when": "always"
+    },
+    {
+      "from": "command-worker",
+      "to": "command-output",
+      "when": "always"
+    },
+    {
+      "from": "container-manager",
+      "to": "container-input",
+      "when": "always"
+    },
+    {
+      "from": "container-input",
+      "to": "container-worker",
+      "when": "always"
+    },
+    {
+      "from": "container-worker",
+      "to": "container-output",
+      "when": "always"
+    },
+    {
+      "from": "foreach-manager",
+      "to": "foreach-input",
+      "when": "always"
+    },
+    {
+      "from": "foreach-input",
+      "to": "foreach-worker",
+      "when": "always"
+    },
+    {
+      "from": "foreach-worker",
+      "to": "foreach-judge",
+      "when": "always"
+    },
+    {
+      "from": "foreach-judge",
+      "to": "foreach-manager",
+      "when": "continue_items"
+    },
+    {
+      "from": "foreach-judge",
+      "to": "foreach-output",
+      "when": "foreach_done"
+    }
+  ],
+  "loops": [
+    {
+      "id": "item-loop",
+      "judgeNodeId": "foreach-judge",
+      "continueWhen": "continue_items",
+      "exitWhen": "foreach_done",
+      "maxIterations": 3
+    }
+  ],
+  "branching": {
+    "mode": "fan-out"
+  }
+}
