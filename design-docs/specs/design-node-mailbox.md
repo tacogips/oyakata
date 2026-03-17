@@ -13,7 +13,7 @@ Design goals:
 - clear separation between sender output production and manager-mediated delivery
 
 The manager that owns the recipient scope is the only actor allowed to write recipient inboxes.
-Worker nodes do not read canonical cross-node mailbox directories directly; they consume manager-materialized `input.json` and write their own execution outputs. Container executions may receive a runtime-prepared node-local mailbox view, but that view must not grant direct write access to canonical routed communication artifacts.
+Worker nodes do not read canonical cross-node mailbox directories directly; they consume runtime-materialized execution-local inbox data and write execution-local outputs. Container executions may receive a runtime-prepared node-local mailbox view, but that view must not grant direct write access to canonical routed communication artifacts.
 
 Role taxonomy:
 - `manager node` (control-plane role): orchestrates routing, reads mailbox entries addressed to itself, and writes mailbox artifacts for its owned scope
@@ -262,15 +262,22 @@ Write permissions by component:
 
 This ownership rule is mandatory for auditability and to prevent accidental peer-to-peer coupling between worker nodes.
 
-Container-node mailbox view:
+Execution-local worker mailbox view:
 
-- When a `container` node executes, the runtime must mount:
-  - host node-execution inbox view -> `/mailbox/inbox` (read-only)
-  - host node-execution outbox staging directory -> `/mailbox/outbox` (read-write)
+- Before any worker execution, the runtime must compile one execution-local
+  worker mailbox contract under the node artifact directory.
+- That worker mailbox contract is described in
+  `design-docs/specs/design-node-execution-inbox-contract.md`.
+- Future `command` and `container` executors should expose that same mailbox
+  contract on disk and set `OYAKATA_MAILBOX_DIR`.
 - Any worker-visible file attachments for that node execution must appear only
-  under the `/mailbox/inbox` tree; v1 does not add a second input-file mount.
-- Those bind mounts are execution-scoped worker I/O surfaces, not the authoritative routed-communication store under `communications/{communicationId}/`.
-- Runtime-owned validation/publication still decides when data written through `/mailbox/outbox` becomes accepted node output or downstream mailbox traffic.
+  under the execution-local inbox files directory; they are not read from
+  canonical `communications/...` paths.
+- Those worker-visible mailbox paths are execution-scoped I/O surfaces, not the
+  authoritative routed-communication store under `communications/{communicationId}/`.
+- Runtime-owned validation/publication still decides when data written through
+  the execution-local outbox becomes accepted node output or downstream mailbox
+  traffic.
 
 ## Delivery Flow
 
@@ -358,18 +365,19 @@ Normative transition guards:
 
 ## Input Resolution Policy
 
-Mailbox delivery does not replace the existing node `input.json` contract.
+Mailbox delivery does not replace the existing node execution contract.
 
 Rules:
-- recipient node execution still receives a resolved `input.json` in its normal node artifact directory
+- recipient node execution still receives a resolved root `input.json` in its normal node artifact directory
+- recipient node execution also receives an execution-local worker mailbox contract under `mailbox/`
 - mailbox inbox files are upstream transport artifacts
 - `input.json` must record which mailbox items were consumed, for example through `upstreamCommunications`
 - worker nodes must not discover work by reading canonical communications mailbox directories directly
 - manager nodes may read mailbox files addressed to themselves because they are the owning managers for their routing scope
-- mailbox directories are audit/provenance storage; `input.json` is the worker-facing execution contract
+- canonical mailbox directories are audit/provenance storage; the execution-local worker mailbox contract is the preferred worker-facing execution contract
 - `consumed` means the communication has been durably bound to a specific recipient `nodeExecId`, not merely that an agent process started
-- a `container` node may read `/mailbox/inbox` and write `/mailbox/outbox`, but those paths are node-local execution views prepared by the runtime rather than the shared routed-communication store
-- a `container` node must treat `/mailbox/inbox` as its only worker-visible incoming message surface; it must not assume visibility into sibling or upstream canonical mailbox artifacts
+- a future `container` node may read its execution-local inbox and write its execution-local outbox, but those paths are node-local execution views prepared by the runtime rather than the shared routed-communication store
+- a future `container` node must treat its execution-local inbox as its only worker-visible incoming message surface; it must not assume visibility into sibling or upstream canonical mailbox artifacts
 
 Conceptual example:
 

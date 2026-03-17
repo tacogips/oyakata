@@ -24,6 +24,10 @@ import {
   validateJsonValueAgainstSchema,
   type JsonSchemaValidationError,
 } from "./json-schema";
+import {
+  buildNodeExecutionMailbox,
+  writeNodeExecutionMailboxArtifacts,
+} from "./node-execution-mailbox";
 import { loadWorkflowFromDisk } from "./load";
 import {
   buildAmbientManagerControlPlaneEnvironment,
@@ -476,28 +480,6 @@ function buildCommitMessageTemplate(
   ].join("\n");
 }
 
-function formatManagerMessageForPrompt(message: unknown): string {
-  if (message === undefined) {
-    return "";
-  }
-  if (typeof message === "string") {
-    return message;
-  }
-  return stableJson(message);
-}
-
-function withManagerMessage(basePromptText: string, message: unknown): string {
-  if (message === undefined) {
-    return basePromptText;
-  }
-  return [
-    basePromptText.trimEnd(),
-    "",
-    "Manager inbox message:",
-    formatManagerMessageForPrompt(message),
-  ].join("\n");
-}
-
 class OutputValidator {
   async validate(input: {
     readonly node: NodePayload;
@@ -817,7 +799,7 @@ class ExecutionDispatcher {
         sentAt: turn.sentAt,
       })),
     });
-    const basePromptText = composeExecutionPrompt({
+    const executionMailbox = buildNodeExecutionMailbox({
       workflow,
       nodeRef,
       node: agentNodePayload,
@@ -826,8 +808,48 @@ class ExecutionDispatcher {
       basePromptText: assembled.promptText,
       assembledArguments: assembled.arguments,
       upstreamInputs: [],
+      ...(input.message === undefined
+        ? {}
+        : { managerMessage: input.message }),
     });
-    const promptText = withManagerMessage(basePromptText, input.message);
+    const promptText = composeExecutionPrompt({
+      workflow,
+      nodeRef,
+      node: agentNodePayload,
+      nodePayloads: loaded.value.bundle.nodePayloads,
+      runtimeVariables: session.runtimeVariables,
+      basePromptText: assembled.promptText,
+      assembledArguments: assembled.arguments,
+      upstreamInputs: [],
+      executionMailbox,
+      ...(input.message === undefined
+        ? {}
+        : { managerMessage: input.message }),
+    });
+    try {
+      await writeNodeExecutionMailboxArtifacts(artifactDir, executionMailbox);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "unknown execution mailbox persistence failure";
+      const failedSession: WorkflowSessionState = {
+        ...session,
+        status: "failed",
+        currentNodeId: input.nodeId,
+        endedAt: nowIso(),
+        lastError: `failed to persist execution mailbox at '${input.nodeId}': ${message}`,
+      };
+      const persisted = await saveSession(failedSession, input);
+      return err({
+        session: failedSession,
+        exitCode: 1,
+        message: persisted.ok
+          ? failedSession.lastError ??
+            "failed to persist execution mailbox"
+          : persisted.error.message,
+      });
+    }
     const timeoutMs = resolveTimeoutMs(
       agentNodePayload,
       workflow.defaults.nodeTimeoutMs,
@@ -888,6 +910,7 @@ class ExecutionDispatcher {
       variables: mergedVariables,
       upstreamOutputRefs: [],
       upstreamCommunications: [],
+      executionMailbox,
       outputContract:
         agentNodePayload.output === undefined
           ? undefined
@@ -995,14 +1018,15 @@ class ExecutionDispatcher {
             nodeExecId,
             node: agentNodePayload,
             mergedVariables,
-            promptText: executionPromptText,
-            arguments: assembled.arguments,
-            executionIndex,
-            artifactDir,
-            upstreamCommunicationIds: [],
-            ...(backendSession === undefined ? {} : { backendSession }),
-            ...(ambientManagerContext === undefined
-              ? {}
+              promptText: executionPromptText,
+              arguments: assembled.arguments,
+              executionIndex,
+              artifactDir,
+              upstreamCommunicationIds: [],
+              executionMailbox,
+              ...(backendSession === undefined ? {} : { backendSession }),
+              ...(ambientManagerContext === undefined
+                ? {}
               : { ambientManagerContext }),
             ...(candidatePath === undefined ||
             agentNodePayload.output === undefined

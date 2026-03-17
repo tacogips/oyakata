@@ -98,6 +98,7 @@ impl-plans/
 | `runtime-artifact-atomic-write-collision-safety` | 2026-03-15 | `architecture`, `design-graphql-manager-control-plane`                                           |
 | `tui-resume-runtime-variable-merge`           | 2026-03-15 | `design-tui`, `command`                                                                            |
 | `example-node-combination-showcase`           | 2026-03-17 | `design-workflow-json`, `design-container-runtime-contract`, `architecture`                      |
+| `node-execution-inbox-contract`               | 2026-03-17 | `design-node-execution-inbox-contract`, `design-node-mailbox`, `architecture`                   |
 
 ## Phase Dependencies
 
@@ -170,6 +171,7 @@ impl-plans/
 | 65    | COMPLETED | Phase 64 |
 | 66    | COMPLETED | Phase 65 |
 | 67    | COMPLETED | Phase 66 |
+| 68    | COMPLETED | Phase 67 |
 
 ### Phase to Plans Mapping
 
@@ -241,6 +243,7 @@ PHASE_TO_PLANS = {
   64: ["impl-plans/graphql-workflow-execution-overview.md"],
   65: ["impl-plans/manager-driven-call-node-runtime.md"],
   66: ["impl-plans/graphql-library-rest-surface-simplification.md"],
-  67: ["impl-plans/example-node-combination-showcase.md"]
+  67: ["impl-plans/example-node-combination-showcase.md"],
+  68: ["impl-plans/node-execution-inbox-contract.md"]
 }
 ```

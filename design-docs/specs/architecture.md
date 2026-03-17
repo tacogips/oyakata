@@ -219,8 +219,8 @@ sequenceDiagram
     loop while queue not empty
         E->>S: load current session state
         E->>C: resolve upstream communications
-        E->>E: assemble input and prompt
-        E->>S: persist input.json
+        E->>E: compile execution inbox/outbox contract
+        E->>S: persist input.json and mailbox/inbox/*
         E->>A: execute node
         A-->>E: candidate output
         E->>V: validate candidate output if contract exists
@@ -266,6 +266,13 @@ Delivery kinds:
 
 This mailbox layer is the architectural boundary that lets root workflows, sub-workflows, and external callers use the same handoff model.
 
+Worker nodes do not consume that canonical transport layout directly.
+Before each node execution, the runtime compiles a worker-facing execution
+inbox/outbox contract under the node artifact directory. That contract is the
+stable node-facing ABI across `agent`, future `command`, and future
+`container` execution. See
+`design-docs/specs/design-node-execution-inbox-contract.md`.
+
 ## Output Ownership
 
 The runtime, not the adapter, owns final publication.
@@ -276,6 +283,10 @@ That means:
 - the runtime validates it
 - the runtime writes canonical `output.json`
 - the runtime publishes downstream mailbox artifacts only after acceptance
+
+Workers may target execution-local outbox paths such as
+`mailbox/outbox/output.json`, but those paths are staging surfaces only. They do
+not grant authority over canonical mailbox publication.
 
 This is especially important for nodes that declare `output.jsonSchema`.
 
@@ -329,4 +340,5 @@ Manager sessions are minted per manager-node execution and expire when that node
 
 - `design-docs/specs/design-workflow-json.md`
 - `design-docs/specs/design-data-model.md`
+- `design-docs/specs/design-node-execution-inbox-contract.md`
 - `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`

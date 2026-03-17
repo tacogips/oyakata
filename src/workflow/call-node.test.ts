@@ -4,14 +4,16 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   AdapterExecutionError,
+  DeterministicNodeAdapter,
   type AdapterExecutionInput,
   type NodeAdapter,
 } from "./adapter";
 import { callNode } from "./call-node";
 import { createSessionState } from "./session";
-import { saveSession } from "./session-store";
+import { loadSession, saveSession } from "./session-store";
 
 const tempDirs: string[] = [];
+const deterministicAdapter = new DeterministicNodeAdapter();
 
 async function makeTempDir(): Promise<string> {
   const directory = await mkdtemp(
@@ -196,8 +198,49 @@ describe("callNode", () => {
         path.join(result.value.outputRef.artifactDir, "input.json"),
         "utf8",
       ),
-    ) as { managerMessage?: { instruction?: string } };
+    ) as {
+      managerMessage?: { instruction?: string };
+      executionMailbox?: {
+        readonly meta: {
+          readonly mailboxDirEnvVar: string;
+          readonly paths: {
+            readonly inputPath: string;
+            readonly outputPath: string;
+          };
+        };
+      };
+    };
     expect(inputJson.managerMessage?.instruction).toBe("produce review json");
+    expect(inputJson.executionMailbox).toMatchObject({
+      meta: {
+        mailboxDirEnvVar: "OYAKATA_MAILBOX_DIR",
+        paths: {
+          inputPath: "inbox/input.json",
+          outputPath: "outbox/output.json",
+        },
+      },
+    });
+
+    const mailboxMeta = JSON.parse(
+      await readFile(
+        path.join(result.value.outputRef.artifactDir, "mailbox", "inbox", "meta.json"),
+        "utf8",
+      ),
+    ) as {
+      readonly objective: { readonly instruction: string };
+      readonly paths: { readonly outputPath: string };
+    };
+    const mailboxInput = JSON.parse(
+      await readFile(
+        path.join(result.value.outputRef.artifactDir, "mailbox", "inbox", "input.json"),
+        "utf8",
+      ),
+    ) as {
+      readonly managerMessage?: { readonly instruction?: string };
+    };
+    expect(mailboxMeta.objective.instruction).toBe("write a structured review");
+    expect(mailboxMeta.paths.outputPath).toBe("outbox/output.json");
+    expect(mailboxInput.managerMessage?.instruction).toBe("produce review json");
 
     const firstAttemptDir = path.join(
       result.value.outputRef.artifactDir,
@@ -352,6 +395,65 @@ describe("callNode", () => {
     }
     expect(result.error.message).toContain("terminal session");
     expect(result.error.message).toContain("completed");
+  });
+
+  test("fails deterministically when execution mailbox artifacts cannot be persisted", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-node-mailbox-write-failure";
+    const sessionId = "sess-call-node-mailbox-write-failure";
+
+    await createCallNodeFixture(root, workflowName);
+    await createCallNodeSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    const blockedMailboxPath = path.join(
+      artifactsRoot,
+      workflowName,
+      "executions",
+      sessionId,
+      "nodes",
+      "writer",
+      "exec-000001",
+      "mailbox",
+    );
+    await mkdir(path.dirname(blockedMailboxPath), { recursive: true });
+    await writeFile(blockedMailboxPath, "blocked", "utf8");
+
+    const result = await callNode(
+      {
+        workflowRoot: root,
+        artifactRoot: artifactsRoot,
+        sessionStoreRoot,
+        workflowId: workflowName,
+        workflowRunId: sessionId,
+        nodeId: "writer",
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.exitCode).toBe(1);
+    expect(result.error.message).toContain(
+      "failed to persist execution mailbox",
+    );
+
+    const persisted = await loadSession(sessionId, { sessionStoreRoot });
+    expect(persisted.ok).toBe(true);
+    if (!persisted.ok) {
+      return;
+    }
+    expect(persisted.value.status).toBe("failed");
+    expect(persisted.value.lastError).toContain(
+      "failed to persist execution mailbox",
+    );
   });
 
   test("rejects podman-isolated nodes until Podman execution is implemented", async () => {

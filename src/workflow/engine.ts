@@ -23,6 +23,10 @@ import {
   validateJsonValueAgainstSchema,
   type JsonSchemaValidationError,
 } from "./json-schema";
+import {
+  buildNodeExecutionMailbox,
+  writeNodeExecutionMailboxArtifacts,
+} from "./node-execution-mailbox";
 import { composeExecutionPrompt } from "./prompt-composition";
 import { parseManagerControlPayload } from "./manager-control";
 import { err, ok, type Result } from "./result";
@@ -1599,6 +1603,9 @@ export async function runWorkflow(
 
       let assembledPromptText: string;
       let assembledArguments: Readonly<Record<string, unknown>> | null;
+      let executionMailbox:
+        | ReturnType<typeof buildNodeExecutionMailbox>
+        | undefined;
       try {
         const assembled = assembleNodeInput({
           runtimeVariables: session.runtimeVariables,
@@ -1609,6 +1616,16 @@ export async function runWorkflow(
           upstream: upstreamBindingInputs,
           transcript: transcriptInput,
         });
+        executionMailbox = buildNodeExecutionMailbox({
+          workflow,
+          nodeRef,
+          node: agentNodePayload,
+          nodePayloads: nodeMap,
+          runtimeVariables: session.runtimeVariables,
+          basePromptText: assembled.promptText,
+          assembledArguments: assembled.arguments,
+          upstreamInputs,
+        });
         assembledPromptText = composeExecutionPrompt({
           workflow,
           nodeRef,
@@ -1618,6 +1635,7 @@ export async function runWorkflow(
           basePromptText: assembled.promptText,
           assembledArguments: assembled.arguments,
           upstreamInputs,
+          executionMailbox,
         });
         assembledArguments = assembled.arguments;
       } catch (error: unknown) {
@@ -1637,6 +1655,44 @@ export async function runWorkflow(
         return err({
           exitCode: 3,
           message: failed.lastError ?? "input assembly failed",
+        });
+      }
+      if (executionMailbox === undefined) {
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt: nowIso(),
+          lastError: `input assembly failed at '${nodeId}': execution mailbox was not created`,
+        };
+        await saveSession(failed, options);
+        return err({
+          exitCode: 3,
+          message: failed.lastError ?? "execution mailbox creation failed",
+        });
+      }
+
+      try {
+        await writeNodeExecutionMailboxArtifacts(artifactDir, executionMailbox);
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "unknown execution mailbox persistence failure";
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt: nowIso(),
+          lastError: `failed to persist execution mailbox at '${nodeId}': ${message}`,
+        };
+        await saveSession(failed, options);
+        return err({
+          exitCode: 1,
+          message:
+            failed.lastError ?? "execution mailbox persistence failed",
         });
       }
 
@@ -1661,6 +1717,7 @@ export async function runWorkflow(
         variables: mergedVariables,
         upstreamOutputRefs,
         upstreamCommunications: upstreamCommunicationIds,
+        executionMailbox,
         restartAttempt,
         outputContract:
           agentNodePayload.output === undefined
@@ -1869,6 +1926,7 @@ export async function runWorkflow(
                 executionIndex: nextCount,
                 artifactDir,
                 upstreamCommunicationIds,
+                executionMailbox,
                 ...(backendSession === undefined ? {} : { backendSession }),
                 ...(ambientManagerContext === undefined
                   ? {}

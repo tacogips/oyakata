@@ -1436,6 +1436,15 @@ describe("runWorkflow", () => {
       sessionId: string;
       workflowExecutionId: string;
       promptText: string;
+      executionMailbox?: {
+        readonly meta: {
+          readonly mailboxDirEnvVar: string;
+          readonly paths: {
+            readonly inputPath: string;
+            readonly outputPath: string;
+          };
+        };
+      };
       upstreamOutputRefs: readonly {
         fromNodeId: string;
         workflowId: string;
@@ -1446,6 +1455,15 @@ describe("runWorkflow", () => {
     expect(inputJson.sessionId).toBe(result.value.session.sessionId);
     expect(inputJson.workflowExecutionId).toBe(result.value.session.sessionId);
     expect(inputJson.promptText).toContain("B");
+    expect(inputJson.executionMailbox).toMatchObject({
+      meta: {
+        mailboxDirEnvVar: "OYAKATA_MAILBOX_DIR",
+        paths: {
+          inputPath: "inbox/input.json",
+          outputPath: "outbox/output.json",
+        },
+      },
+    });
     expect(inputJson.upstreamOutputRefs.length).toBe(1);
     expect(inputJson.upstreamOutputRefs[0]?.fromNodeId).toBe("oyakata-manager");
     expect(inputJson.upstreamOutputRefs[0]?.workflowId).toBe("linear");
@@ -1453,6 +1471,29 @@ describe("runWorkflow", () => {
       result.value.session.sessionId,
     );
     expect(inputJson.upstreamCommunications).toEqual(["comm-000001"]);
+
+    const mailboxMetaRaw = await readFile(
+      path.join(step1Exec.artifactDir, "mailbox", "inbox", "meta.json"),
+      "utf8",
+    );
+    const mailboxInputRaw = await readFile(
+      path.join(step1Exec.artifactDir, "mailbox", "inbox", "input.json"),
+      "utf8",
+    );
+    const mailboxMeta = JSON.parse(mailboxMetaRaw) as {
+      readonly mailboxDirEnvVar: string;
+      readonly paths: {
+        readonly inputPath: string;
+        readonly outputPath: string;
+      };
+    };
+    const mailboxInput = JSON.parse(mailboxInputRaw) as {
+      readonly upstream: readonly { communicationId: string }[];
+    };
+    expect(mailboxMeta.mailboxDirEnvVar).toBe("OYAKATA_MAILBOX_DIR");
+    expect(mailboxMeta.paths.inputPath).toBe("inbox/input.json");
+    expect(mailboxMeta.paths.outputPath).toBe("outbox/output.json");
+    expect(mailboxInput.upstream[0]?.communicationId).toBe("comm-000001");
 
     const communicationMessageRaw = await readFile(
       path.join(
@@ -4445,6 +4486,59 @@ describe("runWorkflow", () => {
       );
       expect(result.error.message).toContain("failed writing session file");
     }
+  });
+
+  test("fails deterministically when execution mailbox artifacts cannot be persisted", async () => {
+    const root = await makeTempDir();
+    const workflowName = "mailbox-write-failure";
+    const sessionId = "sess-mailbox-write-failure";
+    const artifactRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    await createWorkflowFixture(root, workflowName, false);
+
+    const blockedMailboxPath = path.join(
+      artifactRoot,
+      workflowName,
+      "executions",
+      sessionId,
+      "nodes",
+      "oyakata-manager",
+      "exec-000001",
+      "mailbox",
+    );
+    await mkdir(path.dirname(blockedMailboxPath), { recursive: true });
+    await writeFile(blockedMailboxPath, "blocked", "utf8");
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot,
+        sessionStoreRoot,
+        sessionId,
+        runtimeVariables: { topic: "B" },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.exitCode).toBe(1);
+    expect(result.error.message).toContain(
+      "failed to persist execution mailbox",
+    );
+
+    const persisted = await loadSession(sessionId, { sessionStoreRoot });
+    expect(persisted.ok).toBe(true);
+    if (!persisted.ok) {
+      return;
+    }
+    expect(persisted.value.status).toBe("failed");
+    expect(persisted.value.lastError).toContain(
+      "failed to persist execution mailbox",
+    );
   });
 
   test("uses loop semantics to force exit when max loop iterations are reached", async () => {

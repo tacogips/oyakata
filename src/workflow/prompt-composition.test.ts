@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { buildNodeExecutionMailbox } from "./node-execution-mailbox";
 import { composeExecutionPrompt } from "./prompt-composition";
 import type { NodePayload, WorkflowJson, WorkflowNodeRef } from "./types";
 
@@ -188,7 +189,31 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain("Current sub-workflow scope:");
     expect(prompt).toContain("- Sub-workflow: main");
     expect(prompt).toContain(
-      "- Owned nodes: main-oyakata, workflow-input, implement, workflow-output",
+      "- Owned nodes: main-oyakata, workflow-input, workflow-output, implement",
+    );
+  });
+
+  test("includes sub-workflow boundary nodes even when nodeIds omits them", () => {
+    const workflow = makeWorkflow();
+    const prompt = composeExecutionPrompt({
+      workflow: {
+        ...workflow,
+        subWorkflows: workflow.subWorkflows.map((entry) => ({
+          ...entry,
+          nodeIds: ["implement"],
+        })),
+      },
+      nodeRef: makeNodeRef(),
+      node: makeNode(),
+      nodePayloads: makeNodePayloads(),
+      runtimeVariables: { topic: "release" },
+      basePromptText: "Implement the release step.",
+      assembledArguments: null,
+      upstreamInputs: [],
+    });
+
+    expect(prompt).toContain(
+      "- Owned nodes: main-oyakata, workflow-input, workflow-output, implement",
     );
   });
 
@@ -361,5 +386,35 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain(
       "If inboxCount=1 latestSender=oyakata-manager, prefer oyakata gql.",
     );
+  });
+
+  test("applies managerMessage even when a prebuilt execution mailbox is provided", () => {
+    const workflow = makeWorkflow();
+    const executionMailbox = buildNodeExecutionMailbox({
+      workflow,
+      nodeRef: makeNodeRef(),
+      node: makeNode(),
+      nodePayloads: makeNodePayloads(),
+      runtimeVariables: { topic: "release" },
+      basePromptText: "Implement the release step.",
+      assembledArguments: null,
+      upstreamInputs: [],
+    });
+
+    const prompt = composeExecutionPrompt({
+      workflow,
+      nodeRef: makeNodeRef(),
+      node: makeNode(),
+      nodePayloads: makeNodePayloads(),
+      runtimeVariables: { topic: "release" },
+      basePromptText: "Implement the release step.",
+      assembledArguments: null,
+      upstreamInputs: [],
+      executionMailbox,
+      managerMessage: { instruction: "Use the hotfix branch." },
+    });
+
+    expect(prompt).toContain("Manager inbox message:");
+    expect(prompt).toContain('"instruction": "Use the hotfix branch."');
   });
 });

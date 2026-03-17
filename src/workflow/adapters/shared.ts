@@ -40,6 +40,9 @@ export function buildRemoteAgentRequestBody(
     executionIndex: input.executionIndex,
     ...(input.output === undefined ? { artifactDir: input.artifactDir } : {}),
     upstreamCommunicationIds: input.upstreamCommunicationIds,
+    ...(input.executionMailbox === undefined
+      ? {}
+      : { executionMailbox: input.executionMailbox }),
     ...(input.backendSession === undefined
       ? {}
       : { backendSession: input.backendSession }),
@@ -63,6 +66,35 @@ export function normalizeAdapterFailure(
   );
 }
 
+function waitForRetryDelay(
+  retryDelayMs: number,
+  signal: AbortSignal,
+): Promise<void> {
+  if (retryDelayMs <= 0) {
+    return Promise.resolve();
+  }
+  if (signal.aborted) {
+    return Promise.reject(
+      new AdapterExecutionError("timeout", "adapter retry delay aborted"),
+    );
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, retryDelayMs);
+
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+      reject(new AdapterExecutionError("timeout", "adapter retry delay aborted"));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function executeWithRetry<T>(input: {
   readonly maxAttempts: number;
   readonly retryDelayMs: number;
@@ -82,11 +114,7 @@ export async function executeWithRetry<T>(input: {
       if (!shouldRetry) {
         throw normalized;
       }
-      if (input.retryDelayMs > 0) {
-        await new Promise<void>((resolve) =>
-          setTimeout(resolve, input.retryDelayMs),
-        );
-      }
+      await waitForRetryDelay(input.retryDelayMs, input.signal);
     }
   }
 }

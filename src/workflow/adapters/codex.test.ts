@@ -25,6 +25,43 @@ const baseInput: AdapterExecutionInput = {
   executionIndex: 1,
   artifactDir: "/tmp/node-1/exec-1",
   upstreamCommunicationIds: ["comm-1"],
+  executionMailbox: {
+    meta: {
+      protocolVersion: 1,
+      mailboxDirEnvVar: "OYAKATA_MAILBOX_DIR",
+      node: {
+        workflowId: "wf",
+        workflowDescription: "demo workflow",
+        nodeId: "node-1",
+        nodeKind: "task",
+      },
+      objective: {
+        reason: "Do the work.",
+        expectedReturn: "Return JSON.",
+        instruction: "test",
+      },
+      paths: {
+        inputPath: "inbox/input.json",
+        inputFilesDir: "inbox/files",
+        outputPath: "outbox/output.json",
+        outputFilesDir: "outbox/files",
+      },
+      input: {
+        kind: "json",
+        upstreamSources: [],
+      },
+      output: {
+        kind: "json",
+        required: true,
+        path: "outbox/output.json",
+        filesDirectory: "outbox/files",
+      },
+    },
+    input: {
+      arguments: { key: "value" },
+      upstream: [],
+    },
+  },
 };
 
 const baseContext: AdapterExecutionContext = {
@@ -78,6 +115,15 @@ describe("CodexAgentAdapter", () => {
     expect(body["workflowExecutionId"]).toBe("sess-1");
     expect(body["nodeExecId"]).toBe("exec-1");
     expect(body["artifactDir"]).toBe("/tmp/node-1/exec-1");
+    expect(body["executionMailbox"]).toMatchObject({
+      meta: {
+        mailboxDirEnvVar: "OYAKATA_MAILBOX_DIR",
+        paths: {
+          inputPath: "inbox/input.json",
+          outputPath: "outbox/output.json",
+        },
+      },
+    });
   });
 
   test("passes backend session hints through the provider contract", async () => {

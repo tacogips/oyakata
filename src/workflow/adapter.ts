@@ -1,4 +1,5 @@
 import type { AmbientManagerControlPlaneEnvironment } from "./manager-session-store";
+import type { NodeExecutionMailbox } from "./node-execution-mailbox";
 import type { AgentNodePayload, JsonObject } from "./types";
 
 export type AdapterFailureCode =
@@ -33,6 +34,7 @@ export interface AdapterExecutionInput {
   readonly executionIndex: number;
   readonly artifactDir: string;
   readonly upstreamCommunicationIds: readonly string[];
+  readonly executionMailbox?: NodeExecutionMailbox;
   readonly backendSession?: AdapterBackendSessionInput;
   readonly ambientManagerContext?: AdapterAmbientManagerContext;
   readonly output?: AdapterOutputContractInput;
