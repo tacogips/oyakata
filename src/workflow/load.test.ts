@@ -422,6 +422,33 @@ describe("loadWorkflowFromDisk", () => {
     ).toBe("Coordinate via prompt file {{workflowId}}\n");
   });
 
+  test("loads the claude worker example with an explicit claude-code-agent task node", async () => {
+    const artifactRoot = path.join(await makeTempDir(), "artifacts");
+    const result = await loadWorkflowFromDisk("claude-oyakata-claude-worker", {
+      workflowRoot: path.resolve(process.cwd(), "examples"),
+      artifactRoot,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(
+      result.value.bundle.workflow.nodes.find((node) => node.id === "claude-task")
+        ?.kind,
+    ).toBe("task");
+    expect(
+      result.value.bundle.nodePayloads["claude-task"]?.executionBackend,
+    ).toBe("claude-code-agent");
+    expect(result.value.bundle.nodePayloads["claude-task"]?.model).toBe(
+      "claude-haiku-4-5",
+    );
+    expect(
+      result.value.bundle.nodePayloads["claude-task"]?.promptTemplate,
+    ).toContain("Use the normalized request");
+  });
+
   test("rejects promptTemplateFile values that target canonical workflow definition files", async () => {
     const root = await makeTempDir();
     const workflowName = "invalid-prompt-file-workflow";

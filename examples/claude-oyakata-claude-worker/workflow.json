@@ -1,0 +1,104 @@
+{
+  "workflowId": "claude-oyakata-claude-worker",
+  "description": "Reference workflow that keeps both oyakata managers and a task node on claude-code-agent.",
+  "defaults": {
+    "maxLoopIterations": 3,
+    "nodeTimeoutMs": 120000
+  },
+  "prompts": {
+    "oyakataPromptTemplate": "Coordinate {{workflowId}} so the claude-code managers hand off one bounded task to a claude-code worker and keep the result concise.",
+    "workerSystemPromptTemplate": "Work only on the current node responsibility and return a concise business JSON payload."
+  },
+  "managerNodeId": "oyakata-manager",
+  "subWorkflows": [
+    {
+      "id": "delivery",
+      "description": "Single delivery lane that turns human input into one claude-code worker task.",
+      "managerNodeId": "main-oyakata",
+      "inputNodeId": "workflow-input",
+      "outputNodeId": "workflow-output",
+      "nodeIds": [
+        "main-oyakata",
+        "workflow-input",
+        "claude-task",
+        "workflow-output"
+      ],
+      "inputSources": [
+        {
+          "type": "human-input"
+        }
+      ],
+      "block": {
+        "type": "plain"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "oyakata-manager",
+      "kind": "root-manager",
+      "nodeFile": "node-oyakata-manager.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "main-oyakata",
+      "kind": "sub-oyakata-manager",
+      "nodeFile": "node-main-oyakata.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "workflow-input",
+      "kind": "input",
+      "nodeFile": "node-workflow-input.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "claude-task",
+      "kind": "task",
+      "nodeFile": "node-claude-task.json",
+      "completion": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "workflow-output",
+      "kind": "output",
+      "nodeFile": "node-workflow-output.json",
+      "completion": {
+        "type": "none"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "oyakata-manager",
+      "to": "main-oyakata",
+      "when": "always"
+    },
+    {
+      "from": "main-oyakata",
+      "to": "workflow-input",
+      "when": "always"
+    },
+    {
+      "from": "workflow-input",
+      "to": "claude-task",
+      "when": "always"
+    },
+    {
+      "from": "claude-task",
+      "to": "workflow-output",
+      "when": "always"
+    }
+  ],
+  "loops": [],
+  "branching": {
+    "mode": "fan-out"
+  }
+}

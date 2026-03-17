@@ -1,304 +1,382 @@
 # oyakata
 
-`oyakata` is a TypeScript project that manages writing sessions through cooperative multi-agent orchestration.
+`oyakata` is a TypeScript/Bun workflow runtime for cooperative multi-agent execution.
 
-## Purpose
+The current implementation executes JSON-defined workflows with:
 
-The system coordinates multiple agent execution backends and controls their collaboration with a JSON workflow definition.
+- queue-based node scheduling
+- mailbox-style communication artifacts between nodes
+- runtime-owned output validation and publication
+- root-manager and sub-workflow-manager control scopes
+- optional conversation rounds between sub-workflows
 
 Primary agent backends:
+
 - `codex-agent`
 - `claude-code-agent`
+- `official/openai-sdk`
+- `official/anthropic-sdk`
 
-## Core Concept: Workflow (JSON)
+## Current Runtime Model
 
-A workflow is the execution contract for session management. It must represent:
-- composition of multiple nodes
-- branch conditions and branch-judge nodes
-- loop conditions and loop-judge nodes
-- branch bodies and loop bodies modeled as sub-workflow scopes when they span multiple nodes
-- per-node completion conditions
-- graph connectivity between nodes
-- execution timeout policy (global default and per-node override)
-- optional workflow-level prompt policy for `oyakata` and worker prompt composition
+The source of truth is the implementation under `src/workflow/`.
 
-Runtime execution inputs for each executable node are separated into node files:
-- `executionBackend`
-- `model`
-- `promptTemplate`
-- optional `promptTemplateFile` for workflow-local `.md`/text prompt sources
-- `variables`
-- optional `output` contract:
-  - `description`: human guidance for the expected business payload
-  - `jsonSchema`: optional JSON Schema subset enforced by the runtime against the candidate payload
-  - `maxValidationAttempts`: optional retry budget for malformed/schema-invalid candidate output
-  - publication model: the LLM/backend proposes only the business JSON object; the runtime validates it, writes final `output.json`, and publishes mailbox output only after acceptance
+The current runtime is not a purely manager-driven `call-node` orchestrator. The main `workflow run` path uses a persisted session with a deduplicated execution queue, transition communications, and runtime-owned artifact publication. Manager nodes still matter, but they operate inside that queue-based engine rather than replacing it.
 
-## Workflow Directory Layout
+## Workflow Bundle
 
-Workflows are created under `.oyakata/` in subdirectories.
+Workflows live under `<workflow-root>/<workflow-name>/`.
 
-Example:
+Typical layout:
 
 ```text
 .oyakata/
-  writing-session/
+  my-workflow/
     workflow.json
     workflow-vis.json
-    node-draft.json
-    node-review.json
+    node-oyakata-manager.json
+    node-main-oyakata.json
+    node-workflow-input.json
+    node-workflow-output.json
+    prompts/
+      oyakata-manager.md
+      main-oyakata.md
+      workflow-input.md
+      workflow-output.md
 ```
 
-Required files:
-- `workflow.json`: workflow structure and metadata (must include `description` for workflow purpose; may include `prompts.oyakataPromptTemplate` and `prompts.workerSystemPromptTemplate`)
-- `workflow-vis.json`: browser visualization state for vertical flow rendering (node `order`; `indent/color` are derived from graph semantics)
-- `node-{id}.json`: executable node payload (`executionBackend`, `model`, `promptTemplate`, `variables`, optional `output` contract)
-- prompt authoring recommendation: keep `workflow.json` / `node-{id}.json` in JSON, but store long prompt bodies in workflow-local files such as `prompts/<node-id>.md` and reference them with `promptTemplateFile`
+Files:
 
-Runtime boundary rule:
-- root `oyakata` input and final workflow output are also exposed through mailbox artifacts, so external-to-root handoff uses the same mailbox model as parent/sub-workflow nesting
+- `workflow.json`: canonical workflow structure and control-flow definition
+- `workflow-vis.json`: browser/editor vertical ordering metadata
+- `node-{id}.json`: per-node execution payload
+- `prompts/*.md`: optional prompt bodies referenced by `promptTemplateFile`
 
-## Project Direction
+Implementation note:
 
-Near-term purpose:
+- `workflow-vis.json` is the canonical editor file, but the loader can synthesize a default vertical order when it is missing.
 
-- `oyakata` exists to execute multi-agent workflows with high confidence.
-- Workflow authors define node roles explicitly, for example `write code`, `review code`, `test`, and `re-review`.
-- The system should guarantee that those roles are executed in the intended order or loop structure written in the workflow.
-- That includes strict sequential execution and explicit repeated loops, for example "run this review/fix cycle at least 10 times".
+## `workflow.json`
 
-Longer-term purpose:
+Current top-level fields:
 
-- `oyakata` should eventually create new workflows by itself.
-- It should then execute those workflows, inspect the results, and create the next workflow again.
-- The long-term goal is a fully autonomous system that decides the next task by itself and eventually sets its own intermediate goals in service of a broader objective.
+- `workflowId`
+- `description`
+- `defaults`
+  - `maxLoopIterations`
+  - `nodeTimeoutMs`
+  - optional `containerRuntime`
+- optional `prompts`
+  - `oyakataPromptTemplate`
+  - `workerSystemPromptTemplate`
+- `managerNodeId`
+- `subWorkflows`
+- optional `subWorkflowConversations`
+- `nodes`
+- `edges`
+- optional `loops`
+- `branching`
+  - currently only `mode: "fan-out"`
 
-## Near-Term Execution Direction
+Fields such as `workflowType`, `nodeGroups`, and workflow-ref child workflows are not part of the current authored schema, even though older docs mentioned them.
 
-The near-term execution model is intentionally simple:
+## Node Kinds
 
-- The `Oyakata Session Driver` keeps the main orchestration AI session.
-- That manager session reads the workflow and decides which node to run next.
-- Each node is treated as a simple worker that reads inbox/input context and writes outbox/output results, even if the node also edits code or other files in the workspace.
-- The manager calls the next node through the `Call-Node API`, for example `oyakata call-node`.
-- Workflow-order adherence is primarily a manager prompt responsibility rather than a separate runtime order-state machine.
-- Timeout, semantic retry, deduplication, and similar policy decisions are owned by the active `Oyakata Session Driver` rather than by a separate runtime planner.
-- The runtime still owns output validation and accepted artifact publication through the `Execution Dispatcher`, `Output Validator`, and `Mailbox Publisher`.
-- The near-term direction does not introduce a separate `Runtime Arbiter` component.
+`workflow.json.nodes[].kind` describes a node's structural role. It is separate from `node-{id}.json.nodeType`, which describes how the node would execute.
 
-Current implementation note:
+Current kinds:
 
-- A first local `oyakata call-node <workflow-id> <workflow-run-id> <node-id>` path is now implemented for existing workflow sessions.
-- That path already includes runtime-owned output validation and repair before accepted artifact publication.
-- The current codebase still contains queue-based execution internals.
-- The direction described below is the intended simplification target for the next iteration of the runtime model.
+- `task`: ordinary work node
+- `branch-judge`: emits booleans used by outgoing branch edges
+- `loop-judge`: emits booleans used by `loops[]`
+- `root-manager`: top-level workflow manager referenced by `workflow.managerNodeId`
+- `sub-oyakata-manager`: manager that owns one sub-workflow boundary
+- `input`: normalizes inbound mailbox/runtime data for a workflow scope
+- `output`: assembles the final payload for a workflow scope
+- `manager`: legacy alias still accepted during transition
 
-## Near-Term Components
+Practical meaning:
 
-- `Workflow Definition`: the JSON workflow that defines node roles, ordering, loops, and conditions
-- `Workflow Run`: one end-to-end execution of a workflow
-- `Oyakata Session Driver`: the long-lived orchestration AI session for a workflow run
-- `Call-Node API`: the dedicated command or API used by the manager to invoke a node
-- `Execution Dispatcher`: runtime-side lifecycle owner for one node call
-- `Node Adapter`: backend bridge such as `codex-agent` or `claude-code-agent`
-- `Output Validator`: runtime-side contract validation for candidate node output
-- `Mailbox Publisher`: runtime-side publication of accepted output artifacts
-- `Node Inbox`: the persisted input/inbox payload the node reads from
-- `Node Outbox`: the persisted output payload the node writes to
-- `Artifact Store`: runtime-owned `input.json`, accepted `output.json`, `meta.json`, validation-attempt artifacts, and related execution artifacts
-- `Runtime DB Index`: optional query/index layer; file artifacts remain source of truth
+- `root-manager` starts the workflow run and can auto-start eligible sub-workflows.
+- `sub-oyakata-manager` owns one sub-workflow's internal routing and may deliver work to its child `input` node.
+- `input` nodes turn mailbox/runtime input into clean scope-local payloads.
+- `output` nodes publish the result of a root workflow or sub-workflow boundary.
+- `branch-judge` and `loop-judge` are ordinary executed nodes whose outputs drive control flow.
 
-## Near-Term Sequence
+## `node-{id}.json`
 
-The sequence below shows the intended manager-driven flow for the next simplified execution model.
+Current node payload fields:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User / Caller
-    participant W as Workflow Definition
-    participant O as Oyakata Session Driver
-    participant C as Call-Node API
-    participant E as Execution Dispatcher
-    participant A as Node Adapter
-    participant N as Worker Node Session
-    participant V as Output Validator
-    participant M as Mailbox Publisher
-    participant D as Runtime DB Index
+- `id`
+- optional `nodeType`: `agent` | `command` | `container` (`agent` by default)
+- optional `executionBackend`
+- optional `model`
+- optional `sessionPolicy`
+  - `mode: "new" | "reuse"`
+- optional `promptTemplate`
+- optional `promptTemplateFile`
+- `variables`
+- optional `command`
+- optional `container`
+- optional `durability`
+- optional `argumentsTemplate`
+- optional `argumentBindings`
+- optional `templateEngine`
+- optional `timeoutMs`
+- optional `output`
 
-    U->>O: start workflow with purpose / human input
-    O->>W: read workflow structure and current run state
+Execution status today:
 
-    loop until workflow completes
-        O->>O: decide next node from workflow order, loop rules, and prior outputs
-        O->>C: call-node(workflowId, workflowRunId, nodeId, inbox message)
-        C->>E: authenticate manager scope and dispatch node call
+- `agent` nodes are the only executable node type in the main runtime.
+- `command` and `container` shapes are validated at schema level, but `runWorkflow()` currently fails those nodes explicitly instead of executing them.
+- when `promptTemplateFile` is present, the loader resolves it and injects the file contents into the effective `promptTemplate`.
 
-        loop until output accepted or retry budget exhausted
-            E->>A: execute or resume node session
-            A->>N: run node
-            N-->>A: candidate output
-            A-->>E: candidate output
-            E->>V: validate candidate output
+## Output Contracts
 
-            alt output valid
-                V-->>E: accepted
-                E->>M: publish accepted output artifacts
-                M->>D: index execution(best effort)
-                M-->>E: output refs and published result
-            else output invalid and retry remains
-                V-->>E: validation errors
-                E->>A: continue same node session with repair request
-            else output invalid and retry exhausted
-                V-->>E: terminal validation failure
-            end
-        end
+`node.output` lets the runtime validate publishable business output.
 
-        E-->>C: accepted output summary or failure
-        C-->>O: return output summary, refs, and status
-        O->>O: decide continue / retry / next node / loop exit
-    end
+Supported fields:
 
-    O-->>U: final workflow result
-```
+- `description`
+- `jsonSchema`
+- `maxValidationAttempts`
 
-## Deterministic Mock Workflow Example
+Runtime behavior:
 
-This repository now includes a ready-to-run deterministic example:
+1. The adapter proposes either inline JSON payload or a reserved candidate file path.
+2. The runtime validates the candidate object.
+3. Only after validation succeeds does the runtime write canonical `output.json`.
+4. Only the runtime publishes mailbox output artifacts for downstream nodes.
+5. Invalid contract output can be retried within the same node execution attempt budget.
 
-- `.oyakata/software-auto-pipeline/workflow.json`
-- `.oyakata/software-auto-pipeline/workflow-vis.json`
-- `.oyakata/software-auto-pipeline/node-*.json`
-- `.oyakata/software-auto-pipeline/mock-scenario.json`
+## Branch, Loop, and Completion Semantics
 
-The workflow covers:
-- design
-- design discussion
-- implementation
-- security check
-- code review
-- test
-- test review
+Branch expressions and loop expressions are evaluated from node output using:
 
-`mock-scenario.json` pins deterministic per-node outputs for the CLI execution backends.
-The sample `test-review` node returns `needs_rework` on first execution and `approved` on second execution to demonstrate looped rework.
+- identifiers such as `needs_review`
+- `always`, `never`, `true`, `false`
+- `!`, `&&`, `||`, and parentheses
 
-Run example:
+Lookup order:
+
+- first `output.when.<name>`
+- then top-level `output.<name> === true`
+
+Completion rules:
+
+- `none`
+- `checklist` with `config.required`
+- `score-threshold` with `config.threshold`
+- `validator-result` with optional `config.resultField`
+
+Loop rules:
+
+- `judgeNodeId`
+- `continueWhen`
+- `exitWhen`
+- optional `maxIterations`
+- optional `backoffMs` in schema, although the current engine does not sleep on loop rules directly
+
+When a `loop-judge` runs, the engine resolves `continue` or `exit` using the loop rule and falls back to other matched edges only when neither loop condition applies.
+
+## Sub-Workflows
+
+`subWorkflows[]` is the current structural boundary model. Each sub-workflow declares:
+
+- `id`
+- `description`
+- `managerNodeId`
+- `inputNodeId`
+- `outputNodeId`
+- `nodeIds`
+- `inputSources`
+- optional `block`
+  - `type: "plain" | "branch-block" | "loop-body"`
+  - optional `loopId` for loop bodies
+
+Current behavior:
+
+- `plain` sub-workflows can be auto-started by the root manager when their `inputSources` are satisfied.
+- `branch-block` sub-workflows are structural branch bodies and must be entered from a `branch-judge`.
+- `loop-body` sub-workflows are structural loop bodies and must align with a `loops[].id`.
+- cross-scope edges must target the recipient manager boundary, not arbitrary internal child nodes.
+
+Supported `inputSources[].type` values:
+
+- `human-input`
+- `workflow-output`
+- `node-output`
+- `sub-workflow-output`
+
+## Conversation Rounds
+
+`subWorkflowConversations[]` lets the runtime relay outputs between sub-workflow managers after manager-node execution.
+
+Current implementation behavior:
+
+- participants are listed by sub-workflow id
+- turn order is round-robin by participant order
+- the runtime sends at most one new turn per conversation-round evaluation
+- a new turn is emitted only when the sender has a newer succeeded `outputNodeId` result that has not already been sent
+- `stopWhen` is evaluated against a small runtime context such as `turns_exhausted`
+
+## Execution Sequence
+
+This is the current `workflow run` sequence in `src/workflow/engine.ts`.
+
+1. The loader resolves `workflow.json`, `workflow-vis.json`, all `node-{id}.json` files, and any `promptTemplateFile` references.
+2. A session is created with the initial queue entry set to `workflow.managerNodeId`.
+3. If `runtimeVariables.humanInput` is present, the runtime writes an external-mailbox input artifact and delivers it to the root manager as the first communication.
+4. The engine pops the next node id from the queue, loads upstream communications for that node, assembles input bindings, and composes the final prompt text.
+5. The runtime writes `input.json` before execution.
+6. Manager nodes receive a scoped manager session and ambient GraphQL control-plane environment for that node execution only.
+7. The adapter executes the node with timeout handling and optional backend-session reuse.
+8. If the node declares an output contract, the runtime validates candidate output, records retry artifacts, and retries invalid output when attempts remain.
+9. The runtime writes `output.json`, `meta.json`, `handoff.json`, and `commit-message.txt`, and indexes the execution in SQLite on a best-effort basis.
+10. Completion rules are checked. Failure here terminates the workflow run.
+11. Upstream communications consumed by the node are marked as consumed.
+12. All matched outgoing edges publish mailbox communications for their recipients.
+13. If the node is a manager, the runtime may:
+    - auto-start eligible sub-workflows
+    - deliver payloads to child input nodes
+    - honor validated `managerControl.actions`
+    - generate conversation-turn deliveries
+14. The queue is rebuilt from:
+    - remaining queued nodes
+    - matched edge targets
+    - manager-planned child inputs
+    - conversation-planned manager nodes
+    - manager-requested retry targets
+15. The queue is deduplicated and the updated session is persisted.
+16. When the queue becomes empty, the session is marked `completed` and the latest succeeded root-scope `output` node is published to the external workflow-output mailbox.
+
+Failure and retry behavior:
+
+- timed-out nodes can be restarted automatically as "stuck" retries
+- invalid output-contract payloads can be retried within `maxValidationAttempts`
+- failed completion rules or failed manager-control validation terminate the session
+
+## Mailbox and Runtime Artifacts
+
+Default runtime roots:
+
+- workflow definitions: `.oyakata/`
+- runtime data root: `.oyakata-datas/`
+- execution artifacts: `.oyakata-datas/workflow/`
+- session store: `.oyakata-datas/sessions/`
+- runtime DB: `.oyakata-datas/oyakata.db`
+
+Per-node execution artifacts:
+
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{nodeId}/{nodeExecId}/input.json`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{nodeId}/{nodeExecId}/output.json`
+- `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{nodeId}/{nodeExecId}/meta.json`
+- optional `output-attempts/`
+- `handoff.json`
+- `commit-message.txt`
+
+Per-communication artifacts:
+
+- `message.json`
+- `outbox/<fromNodeId>/message.json`
+- `outbox/<fromNodeId>/output.json`
+- `inbox/<toNodeId>/message.json`
+- `attempts/<deliveryAttemptId>/attempt.json`
+- `attempts/<deliveryAttemptId>/receipt.json`
+- `meta.json`
+
+Communication routing scopes:
+
+- `external-mailbox`
+- `parent-to-sub-workflow`
+- `intra-sub-workflow`
+- `cross-sub-workflow`
+
+## Example Bundle
+
+The repository includes a runnable reference workflow:
+
+- `examples/claude-oyakata-codex-coding/workflow.json`
+- `examples/claude-oyakata-codex-coding/workflow-vis.json`
+- `examples/claude-oyakata-codex-coding/node-*.json`
+- `examples/claude-oyakata-codex-coding/mock-scenario.json`
+
+This example shows the recommended split:
+
+- manager nodes on `claude-code-agent`
+- coding work on `codex-agent`
+- prompt bodies stored in `prompts/*.md`
+- mailbox-driven handoff between `input`, `task`, and `output` nodes
+
+Validate it:
 
 ```bash
-bun run src/main.ts workflow run software-auto-pipeline \
-  --workflow-root ./.oyakata \
-  --mock-scenario ./.oyakata/software-auto-pipeline/mock-scenario.json \
+bun run src/main.ts workflow validate claude-oyakata-codex-coding --workflow-root ./examples
+```
+
+Inspect it:
+
+```bash
+bun run src/main.ts workflow inspect claude-oyakata-codex-coding --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run claude-oyakata-codex-coding \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/claude-oyakata-codex-coding/mock-scenario.json \
   --output json
 ```
-
-Progress / resume / rerun commands:
-
-```bash
-# Pause after a few steps
-bun run src/main.ts workflow run software-auto-pipeline --workflow-root ./.oyakata --max-steps 3 --output json
-
-# Inspect progress
-bun run src/main.ts session progress <session-id> --output json
-
-# Resume paused session
-bun run src/main.ts session resume <session-id>
-
-# Re-run from a specific node (creates a new session)
-bun run src/main.ts session rerun <session-id> implement --output json
-```
-
-## Git Policy
-
-Default policy for version control:
-- Track workflow definitions in Git:
-  - `.oyakata/<workflow-name>/workflow.json`
-  - `.oyakata/<workflow-name>/workflow-vis.json`
-  - `.oyakata/<workflow-name>/node-*.json`
-- Do not track runtime execution outputs in Git:
-  - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/input.json`
-  - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/output.json`
-  - `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/meta.json`
-  - dynamic session/progress files under `.oyakata-datas/`
-
-Default runtime paths:
-- persistent artifact root: `.oyakata-datas/workflow/`
-- dynamic operational state root: `.oyakata-datas/` (for example session store files)
-- runtime SQLite index: `.oyakata-datas/oyakata.db`
-
-The repository `.gitignore` enforces this for `.oyakata-datas/`.
-If you use a custom `--artifact-root` or `OYAKATA_ARTIFACT_ROOT`, add that path to your local/project ignore rules.
-
-Runtime SQLite behavior:
-- File artifacts remain source-of-truth for full node payload files.
-- SQLite stores queryable runtime index data for:
-  - session snapshots
-  - node input/output hashes and payload JSON
-  - node execution logs
 
 ## Interfaces
 
-- Direct node call: `oyakata call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>]`
-  - Local-only in the current implementation.
-  - Loads an existing workflow session, executes one node directly, validates candidate output, retries invalid output in the same node session when possible, and publishes accepted artifacts.
-- TUI: `oyakata tui [workflow-name] [--workflow <name>] [--resume-session <session-id>]`
-  - Interactive terminal: select workflow (if omitted), input prompt, execute, and watch per-node progress.
-  - Non-interactive terminal: promptless fallback mode is used; `workflow-name` is required.
-  - Resume: `--resume-session` resumes an existing session directly.
-- Web UI: `oyakata serve`, then open `http://127.0.0.1:43173/`
-  - Choose workflow, input prompt, start async execution, and watch session/node progress by polling the GraphQL control plane.
-  - The served browser app uses `/graphql` for workflow-definition, execution, and session flows. The only remaining `/api/*` browser bootstrap endpoint is `/api/ui-config`.
-- GraphQL control plane: `oyakata gql "<graphql-document>"`
-  - Sends GraphQL requests to `http://127.0.0.1:43173/graphql` by default.
-  - Uses `--variables '{"key":"value"}'` or `--variables @vars.json` for GraphQL variables.
-  - Uses `OYAKATA_MANAGER_AUTH_TOKEN` automatically for bearer auth unless `--auth-token` or `--auth-token-env` overrides it.
-  - For manager-scoped calls, forwards `OYAKATA_MANAGER_SESSION_ID` to `/graphql` so manager mutations can omit `managerSessionId` from the GraphQL input.
-  - The HTTP server does not inherit manager auth or scope from its own ambient `OYAKATA_MANAGER_*` environment; manager-scoped HTTP calls must supply transport metadata explicitly.
-  - The HTTP server also does not trust in-process auth/session fallback fields for `/graphql`; only the request `Authorization` header and `X-Oyakata-Manager-Session-Id` header can establish manager scope there.
+- `oyakata workflow run <workflow-name>`
+  - queue-based workflow execution
+- `oyakata session progress <session-id>`
+  - inspect persisted session state
+- `oyakata session resume <session-id>`
+  - resume a paused session
+- `oyakata session rerun <session-id> <node-id>`
+  - start a new session from a chosen node
+- `oyakata call-node <workflow-id> <workflow-run-id> <node-id>`
+  - local direct node execution path for an existing workflow run
+- `oyakata serve`
+  - browser UI + local GraphQL control plane
+- `oyakata gql "<document>"`
+  - GraphQL client for local manager/control-plane operations
+- `oyakata tui`
+  - terminal UI over the same workflow runtime
 
-Example:
+## GraphQL and Browser UI
 
-```bash
-bun run src/main.ts gql \
-  'query ($workflowName: String!) { workflow(workflowName: $workflowName) { workflowId managerNodeId } }' \
-  --variables '{"workflowName":"software-auto-pipeline"}' \
-  --output json
-```
+The local server serves the browser app and exposes `/graphql`.
 
-Workflow execution overview by run ID:
+Important transport rules:
 
-```bash
-bun run src/main.ts gql \
-  'query ($workflowExecutionId: String!) { workflowExecutionOverview(workflowExecutionId: $workflowExecutionId, firstCommunications: 50, recentLogLimit: 10) { workflowExecutionId workflowId workflowName status nodes { nodeId nodeExecId backendSessionId backendSessionMode output } communications { totalCount items { record { communicationId fromNodeId toNodeId status } artifactSnapshot { outboxOutputRaw inboxMessageJson } } } } }' \
-  --variables '{"workflowExecutionId":"sess-20260315T000000Z-example"}' \
-  --output json
-```
+- `oyakata gql` forwards `OYAKATA_MANAGER_SESSION_ID` as `X-Oyakata-Manager-Session-Id`
+- manager auth is established from HTTP transport metadata, not from the server process environment
+- `/api/ui-config` remains a small bootstrap endpoint for the browser, while workflow/session domain operations use GraphQL
 
-Frontend verification:
-- The browser frontend lives under `ui/` and is verified separately from the root TypeScript program.
-- The current checked-in frontend is SolidJS.
-- `bun run ui:framework` reports the active checked-in frontend entrypoint and any local workspace blockers for the verified UI toolchain.
-- `bun run typecheck:ui` detects the active frontend entrypoint and runs the matching framework-aware verification path.
-- `bun run test:ui` runs UI unit tests non-interactively through Vitest and does not rely on the interactive Vitest UI server.
-- `bun run test:ui:interactive` is the opt-in interactive Vitest UI path and uses the same repository-local Node/package guards as the other UI tooling commands.
-- Run `bun run check:ui` for the UI typecheck plus bundle verification.
-- Run `bun run typecheck` to verify both server and UI projects together.
-- `bun run build:ui` now emits `ui/dist/frontend-mode.json` so `/api/ui-config` reports the frontend contract of the actually served assets instead of inferring it only from source entrypoints.
-- Repository UI tooling commands resolve the package root from their checked-in script location rather than the caller's current working directory, so framework detection, `package.json`, and `node_modules` stay aligned.
+Frontend tooling:
+
+- `bun run ui:framework`
+- `bun run typecheck:ui`
+- `bun run test:ui`
+- `bun run check:ui`
+- `bun run build:ui`
 
 ## Library API
 
-`oyakata` can be called as a library from external applications.
-
 Primary exports from `src/lib.ts`:
+
 - `inspectWorkflow(workflowName, options)`
 - `executeWorkflow({ workflowName, ...options })`
-- `resumeWorkflow({ sessionId, ...options })` (`sessionId` is the current public API name for workflow-run scope; design docs call this `workflowExecutionId`)
-- `rerunWorkflow({ sourceSessionId, fromNodeId, ...options })` (`sourceSessionId` is the current public API compatibility name for prior `workflowExecutionId`)
-- `getSession(sessionId, options)` (`sessionId` compatibility alias for `workflowExecutionId`)
-- `listSessions(options)` (runtime SQLite-backed summaries)
-- `getRuntimeSessionView(sessionId, options)` (session + node executions + node logs; `sessionId` is workflow-run scope)
-- low-level exports: `runWorkflow`, `runCli`, `startServe`, `handleApiRequest`, `loadWorkflowFromDisk`
+- `resumeWorkflow({ sessionId, ...options })`
+- `rerunWorkflow({ sourceSessionId, fromNodeId, ...options })`
+- `getSession(sessionId, options)`
+- `listSessions(options)`
+- `getRuntimeSessionView(sessionId, options)`
 
 Minimal example:
 
@@ -306,51 +384,33 @@ Minimal example:
 import { executeWorkflow, getRuntimeSessionView } from "oyakata";
 
 const run = await executeWorkflow({
-  workflowName: "software-auto-pipeline",
-  workflowRoot: "./.oyakata",
+  workflowName: "claude-oyakata-codex-coding",
+  workflowRoot: "./examples",
   artifactRoot: "./.oyakata-datas/workflow",
-  runtimeVariables: { prompt: "Implement feature X" },
+  runtimeVariables: { humanInput: "Implement the requested change" },
 });
 
-const runtime = await getRuntimeSessionView(run.sessionId, { cwd: process.cwd() });
-console.log(runtime.session.status, runtime.nodeExecutions.length, runtime.nodeLogs.length);
+const runtime = await getRuntimeSessionView(run.sessionId, {
+  cwd: process.cwd(),
+});
+
+console.log(
+  runtime.session.status,
+  runtime.nodeExecutions.length,
+  runtime.nodeLogs.length,
+);
 ```
-
-`workflow.json` represents control-flow only:
-- graph connectivity between nodes
-- completion criteria
-- branch/loop expressions and routing
-- structural block typing for canonical branch-block and loop-body sub-workflows
-- workflow defaults (global loop limit and default node timeout)
-- references to each `node-{id}.json`
-
-Branch behavior:
-- when multiple branch conditions match, all matched branches execute (fan-out)
-- when a branch body spans multiple nodes, the canonical pattern is a `subWorkflow` with `block.type = "branch-block"` entered from a `branch-judge` edge to that sub-workflow manager
-
-Loop behavior:
-- loop-local limits may be omitted and then use workflow-level global default
-- when a loop body spans multiple nodes, the canonical pattern is a `subWorkflow` with `block.type = "loop-body"` and a matching `loops[].id`; the loop `continueWhen` edge should re-enter the loop-body manager
-
-Completion behavior:
-- completion can be optional for some nodes (auto-complete / no-success-judgment nodes)
-
-Initial defaults:
-- `defaults.maxLoopIterations = 3`
-- `defaults.nodeTimeoutMs = 120000`
 
 ## Design Documents
 
 - `design-docs/specs/architecture.md`
 - `design-docs/specs/command.md`
-- `design-docs/specs/notes.md`
 - `design-docs/specs/design-workflow-json.md`
 - `design-docs/specs/design-data-model.md`
 - `design-docs/specs/design-tui.md`
-- `design-docs/qa.md`
 
 ## Development Environment
 
-- Runtime: Bun
-- Language: TypeScript (strict mode)
-- Environment: Nix flakes + direnv
+- runtime: Bun
+- language: TypeScript with strict configuration
+- optional environment tooling: Nix flakes + direnv
