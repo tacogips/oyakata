@@ -91,7 +91,7 @@
     },
     {
       "id": "command-manager",
-      "kind": "sub-divedra-manager",
+      "kind": "subworkflow-manager",
       "nodeFile": "node-command-manager.json",
       "completion": {
         "type": "none"
@@ -123,7 +123,7 @@
     },
     {
       "id": "container-manager",
-      "kind": "sub-divedra-manager",
+      "kind": "subworkflow-manager",
       "nodeFile": "node-container-manager.json",
       "completion": {
         "type": "none"
@@ -155,7 +155,7 @@
     },
     {
       "id": "foreach-manager",
-      "kind": "sub-divedra-manager",
+      "kind": "subworkflow-manager",
       "nodeFile": "node-foreach-manager.json",
       "completion": {
         "type": "none"

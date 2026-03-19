@@ -1,6 +1,6 @@
 # Manager Kind Simplification Implementation Plan
 
-**Status**: Planning
+**Status**: Completed
 **Design Reference**: design-docs/specs/design-manager-kind-simplification.md, design-docs/specs/design-workflow-json.md#workflownoderef
 **Created**: 2026-03-18
 **Last Updated**: 2026-03-18
@@ -36,7 +36,7 @@ Refactor the authored workflow schema so manager structure is expressed with `ro
 
 #### `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/create.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 export type NodeKind =
@@ -59,18 +59,18 @@ function normalizeNodeKind(value: unknown): NodeKind | undefined;
 ```
 
 **Checklist**:
-- [ ] Replace `sub-divedra-manager` with `subworkflow-manager` in shared types
-- [ ] Remove authored compatibility aliases for `manager` and `sub-manager`
-- [ ] Require `workflow.managerNodeId` to target `root-manager`
-- [ ] Require `subWorkflows[].managerNodeId` to target `subworkflow-manager`
-- [ ] Update workflow template generation to emit canonical manager kinds
-- [ ] Update validator/load tests for acceptance and rejection cases
+- [x] Replace `sub-divedra-manager` with `subworkflow-manager` in shared types
+- [x] Remove authored compatibility aliases for `manager` and `sub-manager`
+- [x] Require `workflow.managerNodeId` to target `root-manager`
+- [x] Require `subWorkflows[].managerNodeId` to target `subworkflow-manager`
+- [x] Update workflow template generation to emit canonical manager kinds
+- [x] Update validator/load tests for acceptance and rejection cases
 
 ### 2. Runtime Scope and Mailbox Alignment
 
 #### `src/workflow/engine.ts`, `src/workflow/manager-control.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/prompt-composition.ts`, `src/workflow/call-node.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 interface ManagerControlParseContext {
@@ -88,17 +88,17 @@ export function parseManagerControlActions(
 ```
 
 **Checklist**:
-- [ ] Rename sub-workflow manager branches to `subworkflow-manager`
-- [ ] Keep root manager planning behavior unchanged
-- [ ] Keep sub-workflow child-input forwarding behavior unchanged
-- [ ] Update mailbox/prompt text that currently names `sub-divedra-manager`
-- [ ] Update runtime tests covering manager control and manager planning
+- [x] Rename sub-workflow manager branches to `subworkflow-manager`
+- [x] Keep root manager planning behavior unchanged
+- [x] Keep sub-workflow child-input forwarding behavior unchanged
+- [x] Update mailbox/prompt text that currently names `sub-divedra-manager`
+- [x] Update runtime tests covering manager control and manager planning
 
 ### 3. Editor, Examples, and Fixtures
 
 #### `ui/src/lib/editor-workflow-operations.ts`, `ui/src/lib/editor-field-updates.ts`, `ui/src/lib/editor-mutations.ts`, `examples/**/*.json`, `e2e/**/*.cjs`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 export function syncSubWorkflowNodeKinds(
@@ -115,17 +115,17 @@ export function updateNodeKindValue(
 ```
 
 **Checklist**:
-- [ ] Persist `subworkflow-manager` from editor structural assignment
-- [ ] Update editor validation messages to the new kind name
-- [ ] Update example bundles and created fixture bundles to canonical manager kinds
-- [ ] Update E2E harness fixtures and assertions where kind labels are surfaced
-- [ ] Update UI/editor tests that currently expect `sub-divedra-manager`
+- [x] Persist `subworkflow-manager` from editor structural assignment
+- [x] Update editor validation messages to the new kind name
+- [x] Update example bundles and created fixture bundles to canonical manager kinds
+- [x] Update E2E harness fixtures and assertions where kind labels are surfaced
+- [x] Update UI/editor tests that currently expect `sub-divedra-manager`
 
 ### 4. Verification and Cleanup
 
 #### `src/**/*.test.ts`, `ui/src/**/*.test.ts`, `e2e/**/*.cjs`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 interface VerificationCommandSet {
@@ -137,40 +137,40 @@ interface VerificationCommandSet {
 ```
 
 **Checklist**:
-- [ ] Remove stale authored `sub-divedra-manager` fixtures outside explicit migration tests
-- [ ] Run `bun run typecheck:server`
-- [ ] Run targeted workflow/runtime/editor tests for manager kinds
-- [ ] Run `bun run typecheck:ui`
-- [ ] Run `bun run build:ui`
-- [ ] Run relevant E2E/browser harness verification if UI workflow editing changed
+- [x] Remove stale authored `sub-divedra-manager` fixtures outside explicit migration tests
+- [x] Run `bun run typecheck:server`
+- [x] Run targeted workflow/runtime/editor tests for manager kinds
+- [x] Run `bun run typecheck:ui`
+- [x] Run `bun run build:ui`
+- [x] Run relevant E2E/browser harness verification if UI workflow editing changed
 
 ## Module Status
 
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
-| Shared schema and validation | `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/create.ts` | NOT_STARTED | `bun test src/workflow/validate.test.ts src/workflow/load.test.ts` |
-| Runtime scope and mailbox alignment | `src/workflow/engine.ts`, `src/workflow/manager-control.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/prompt-composition.ts`, `src/workflow/call-node.ts` | NOT_STARTED | `bun test src/workflow/engine.test.ts src/workflow/manager-control.test.ts src/workflow/prompt-composition.test.ts` |
-| Editor, examples, and fixtures | `ui/src/lib/editor-*.ts`, `examples/**/*.json`, `e2e/**/*.cjs` | NOT_STARTED | `bun test ui/src/lib/*.test.ts`, targeted E2E/harness verification |
-| Verification and cleanup | `src/**/*.test.ts`, `ui/src/**/*.test.ts`, `e2e/**/*.cjs` | NOT_STARTED | `bun run typecheck:server`, `bun run typecheck:ui`, `bun run build:ui` |
+| Shared schema and validation | `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/create.ts` | COMPLETED | `bun test src/workflow/validate.test.ts src/workflow/load.test.ts` |
+| Runtime scope and mailbox alignment | `src/workflow/engine.ts`, `src/workflow/manager-control.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/prompt-composition.ts`, `src/workflow/call-node.ts` | COMPLETED | `bun test src/workflow/engine.test.ts src/workflow/manager-control.test.ts src/workflow/prompt-composition.test.ts` |
+| Editor, examples, and fixtures | `ui/src/lib/editor-*.ts`, `examples/**/*.json`, `e2e/**/*.cjs` | COMPLETED | `bun test ui/src/lib/*.test.ts`, targeted E2E/harness verification |
+| Verification and cleanup | `src/**/*.test.ts`, `ui/src/**/*.test.ts`, `e2e/**/*.cjs` | COMPLETED | `bun run typecheck:server`, `bun run typecheck:ui`, `bun run build:ui` |
 
 ## Dependencies
 
 | Feature | Depends On | Status |
 |---------|------------|--------|
-| Shared schema and validation | Existing workflow-core-and-validation baseline | READY |
-| Runtime scope and mailbox alignment | Shared schema and validation | BLOCKED |
-| Editor, examples, and fixtures | Shared schema and validation | BLOCKED |
-| Verification and cleanup | Runtime scope and mailbox alignment, editor/examples updates | BLOCKED |
+| Shared schema and validation | Existing workflow-core-and-validation baseline | COMPLETED |
+| Runtime scope and mailbox alignment | Shared schema and validation | COMPLETED |
+| Editor, examples, and fixtures | Shared schema and validation | COMPLETED |
+| Verification and cleanup | Runtime scope and mailbox alignment, editor/examples updates | COMPLETED |
 
 ## Completion Criteria
 
-- [ ] Authored schema uses `root-manager` and `subworkflow-manager` only
-- [ ] `sub-divedra-manager` is removed from runtime/editor/example authored paths
-- [ ] Root-manager and sub-workflow-manager behavior remains unchanged in tests
-- [ ] Editor-created bundles persist the new canonical manager kinds
-- [ ] Type checking passes
-- [ ] Targeted workflow/runtime/editor tests pass
-- [ ] UI build passes
+- [x] Authored schema uses `root-manager` and `subworkflow-manager` only
+- [x] `sub-divedra-manager` is removed from runtime/editor/example authored paths
+- [x] Root-manager and sub-workflow-manager behavior remains unchanged in tests
+- [x] Editor-created bundles persist the new canonical manager kinds
+- [x] Type checking passes
+- [x] Targeted workflow/runtime/editor tests pass
+- [x] UI build passes
 
 ## Progress Log
 
@@ -179,6 +179,12 @@ interface VerificationCommandSet {
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**: The current runtime genuinely distinguishes root-manager and sub-workflow manager scopes, so the refactor should rename the nested kind to a neutral structural term rather than collapsing both roles into a single authored kind. This plan keeps the semantic split and removes branded/legacy authored aliases.
+
+### Session: 2026-03-18 19:59
+**Tasks Completed**: TASK-001, TASK-002, TASK-003, TASK-004
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Removed authored `manager` and `sub-manager` compatibility, renamed the nested manager kind to `subworkflow-manager` across runtime/editor/examples/tests, and updated the workflow docs to match the canonical schema. Verified with targeted Bun tests, `bun run typecheck:server`, `bun run typecheck:ui`, `bun run build:ui`, and browser verification on `http://127.0.0.1:43173` confirming the editor persists `root-manager`/`subworkflow-manager` and no longer offers `manager` in the manual node-kind picker.
 
 ## Related Plans
 

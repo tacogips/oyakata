@@ -67,8 +67,7 @@ Current `NodeKind`:
 - `branch-judge`
 - `loop-judge`
 - `root-manager`
-- `sub-divedra-manager`
-- `manager`
+- `subworkflow-manager`
 - `input`
 - `output`
 
@@ -172,7 +171,7 @@ Current implementation note:
 Normalization behavior:
 
 - prompt files are resolved into effective `promptTemplate`
-- legacy compatibility aliases may be normalized
+- selected legacy non-manager fields may be normalized during load, but legacy manager kinds are rejected
 - if `workflow-vis.json` is absent, a default ordered `WorkflowVisJson` is synthesized
 
 ## Session Model
@@ -431,7 +430,7 @@ Important current rules:
 - sub-workflow boundaries must be internally consistent and non-overlapping
 - branch/loop block semantics are validated against edges and loops
 - `output` contracts reject unsupported fields
-- `kind: "manager"` and `kind: "sub-manager"` remain legacy-compatible
+- `kind: "root-manager"` and `kind: "subworkflow-manager"` are the canonical manager roles
 
 Important current absences:
 

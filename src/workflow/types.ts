@@ -10,8 +10,7 @@ export type NodeKind =
   | "branch-judge"
   | "loop-judge"
   | "root-manager"
-  | "sub-divedra-manager"
-  | "manager"
+  | "subworkflow-manager"
   | "input"
   | "output";
 

@@ -259,7 +259,7 @@ export function addSubWorkflowToBundle(
     id,
   );
   const managerNode = managerCandidates.find(
-    (node) => node.kind === "sub-divedra-manager",
+    (node) => node.kind === "subworkflow-manager",
   );
   const inputNode =
     inputCandidates.find(
@@ -281,7 +281,7 @@ export function addSubWorkflowToBundle(
     return {
       ok: false,
       error:
-        "Add a dedicated sub-divedra-manager node before creating another sub-workflow.",
+        "Add a dedicated subworkflow-manager node before creating another sub-workflow.",
     };
   }
 

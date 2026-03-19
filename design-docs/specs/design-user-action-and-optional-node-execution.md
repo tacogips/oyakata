@@ -68,7 +68,7 @@ Rules:
 
 - omitted `execution.mode` means `required`
 - `optional` currently requires `decisionBy: "owning-manager"`
-- the owning manager is the root manager for root-scope nodes and the sub-divedra-manager for nodes inside one sub-workflow
+- the owning manager is the root manager for root-scope nodes and the subworkflow-manager for nodes inside one sub-workflow
 
 ### `node-{id}.json`
 
@@ -471,7 +471,7 @@ interface SkipOptionalNodeAction {
 Scope rules mirror the existing manager ownership rules:
 
 - root manager may decide only root-scope optional nodes
-- sub-divedra-manager may decide only optional nodes inside its owned sub-workflow
+- subworkflow-manager may decide only optional nodes inside its owned sub-workflow
 
 GraphQL parity rule:
 

@@ -71,10 +71,9 @@ Responsibilities:
 
 Important validation facts:
 
-- `root-manager`, `sub-divedra-manager`, `input`, and `output` are structural roles enforced by validation
+- `root-manager`, `subworkflow-manager`, `input`, and `output` are structural roles enforced by validation
 - cross-scope edges must target manager boundaries
 - `branching.mode` is currently fixed to `fan-out`
-- legacy `manager` and `sub-manager` values are still accepted and normalized
 
 ### Prompt and Input Assembly
 
@@ -185,10 +184,9 @@ Current structural node kinds:
 - `branch-judge`
 - `loop-judge`
 - `root-manager`
-- `sub-divedra-manager`
+- `subworkflow-manager`
 - `input`
 - `output`
-- `manager` as legacy compatibility
 
 Role split:
 
@@ -202,7 +200,7 @@ Role split:
 Planned extension:
 
 - `user-action` should be added as a new `nodeType`, not a new manager boundary, so human approval/input remains a runtime-owned execution flavor rather than a second structural control-flow system
-- optional node execution should be added as scheduler policy on `workflow.json.nodes[]`, with decisions owned by the already-scoped root manager or sub-divedra-manager
+- optional node execution should be added as scheduler policy on `workflow.json.nodes[]`, with decisions owned by the already-scoped root manager or subworkflow-manager
 - detailed design: `design-docs/specs/design-user-action-and-optional-node-execution.md`
 
 ## Current Execution Flow

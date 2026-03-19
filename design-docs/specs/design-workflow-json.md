@@ -110,22 +110,21 @@ Current `NodeKind` values:
 - `branch-judge`
 - `loop-judge`
 - `root-manager`
-- `sub-divedra-manager`
-- `manager` as legacy compatibility
+- `subworkflow-manager`
 - `input`
 - `output`
 
-Planned simplification:
+Current manager-kind naming:
 
-- the target authored schema is tracked in `design-docs/specs/design-manager-kind-simplification.md`
-- that refactor keeps the root-vs-sub-workflow manager split but renames the nested role to `subworkflow-manager`
-- `design-workflow-json.md` continues to describe the currently implemented schema until that refactor lands
+- the authored schema uses `root-manager` and `subworkflow-manager`
+- legacy manager-kind aliases are rejected by validation
+- the rationale for the rename is documented in `design-docs/specs/design-manager-kind-simplification.md`
 
 Validation rules:
 
-- `workflow.managerNodeId` must reference a node with kind `root-manager` or legacy `manager`
+- `workflow.managerNodeId` must reference a node with kind `root-manager`
 - only the root manager may occupy `workflow.managerNodeId`
-- each sub-workflow boundary must reference `sub-divedra-manager`, `input`, and `output` nodes
+- each sub-workflow boundary must reference `subworkflow-manager`, `input`, and `output` nodes
 
 ## `CompletionRule`
 
@@ -430,8 +429,6 @@ The runtime does not derive execution order from `order`. It is editor-facing me
 
 ## Current Compatibility Notes
 
-- `kind: "manager"` is still accepted as a legacy root-manager value
-- `kind: "sub-manager"` is normalized to `sub-divedra-manager`
 - `subWorkflows[].inputs` is still read and normalized to `inputSources`
 - backend inference from certain legacy `model` strings remains read-compatible, but explicit `executionBackend` is canonical
 

@@ -571,11 +571,7 @@ function outputRefForExecution(
 function isManagerNodeKind(
   kind: WorkflowJson["nodes"][number]["kind"],
 ): boolean {
-  return (
-    kind === "manager" ||
-    kind === "root-manager" ||
-    kind === "sub-divedra-manager"
-  );
+  return kind === "root-manager" || kind === "subworkflow-manager";
 }
 
 function findOwningSubWorkflowByInputNodeId(
@@ -2951,7 +2947,7 @@ export async function runWorkflow(
         }
 
         if (
-          nodeRef.kind !== "sub-divedra-manager" &&
+          nodeRef.kind !== "subworkflow-manager" &&
           (managerControl?.childInputNodeIds.length ?? 0) > 0
         ) {
           nodeStatus = "failed";
@@ -2995,7 +2991,7 @@ export async function runWorkflow(
             communicationCounter: session.communicationCounter,
             communications: session.communications,
             nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control at '${nodeId}': only a sub-divedra-manager can dispatch child input nodes`,
+            lastError: `invalid manager control at '${nodeId}': only a subworkflow-manager can dispatch child input nodes`,
           };
           await saveSession(failed, options);
           return err({
@@ -3494,7 +3490,7 @@ export async function runWorkflow(
         runtimeVariables: currentRuntimeVariables,
       };
       let managerPlannedInputs = isManagerNodeKind(nodeRef.kind)
-        ? nodeRef.kind === "sub-divedra-manager"
+        ? nodeRef.kind === "subworkflow-manager"
           ? [
               ...((managerControl?.overridesChildInputPlanning ?? false)
                 ? (managerControl?.childInputNodeIds ?? [])
@@ -3596,7 +3592,7 @@ export async function runWorkflow(
           ...persistedStarts,
           ...persistedChildInputs,
         ];
-      } else if (nodeRef.kind === "sub-divedra-manager") {
+      } else if (nodeRef.kind === "subworkflow-manager") {
         const forwardedPayloads = [{ payloadRef: outputRef, outputRaw }];
         const persistedChildInputs: CommunicationRecord[] = [];
         for (const inputNodeId of managerPlannedInputs) {
@@ -3610,7 +3606,7 @@ export async function runWorkflow(
               toNodeId: inputNodeId,
               routingScope: "intra-sub-workflow",
               deliveryKind: "edge-transition",
-              transitionWhen: `sub-divedra-manager-input:${inputNodeId}`,
+              transitionWhen: `subworkflow-manager-input:${inputNodeId}`,
               sourceNodeExecId: forwarded.payloadRef.nodeExecId,
               payloadRef: forwarded.payloadRef,
               outputRaw: forwarded.outputRaw,

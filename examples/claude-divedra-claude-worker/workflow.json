@@ -44,7 +44,7 @@
     },
     {
       "id": "main-divedra",
-      "kind": "sub-divedra-manager",
+      "kind": "subworkflow-manager",
       "nodeFile": "node-main-divedra.json",
       "completion": {
         "type": "none"

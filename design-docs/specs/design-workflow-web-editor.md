@@ -173,7 +173,7 @@ Supporting migration refactoring references:
   - `branch-block` colors as a branch scope
   - `loop-body` sub-workflows take precedence over inferred loop intervals
   - typed structural scopes (`loop-body`, then `branch-block`) keep their color precedence even when they contain nested plain groups
-- Reserved structure roles (`root-manager`, `sub-divedra-manager`, `input`, `output`) are derived from workflow manager and sub-workflow boundary configuration, not assigned manually through generic node-kind editing.
+- Reserved structure roles (`root-manager`, `subworkflow-manager`, `input`, `output`) are derived from workflow manager and sub-workflow boundary configuration, not assigned manually through generic node-kind editing.
 - Edge creation/editing is form-driven (source/target/when), not canvas drawing.
 - Validation blocks invalid links (self-loop rules, missing node, duplicate edge policy).
 

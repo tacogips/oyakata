@@ -37,7 +37,7 @@ async function createWorkflowFixture(
     nodes: [
       {
         id: "divedra-manager",
-        kind: "manager",
+        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
         completion: { type: "none" },
       },
@@ -90,7 +90,7 @@ async function createNodeSessionReuseFixture(
     nodes: [
       {
         id: "divedra-manager",
-        kind: "manager",
+        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
         completion: { type: "none" },
       },

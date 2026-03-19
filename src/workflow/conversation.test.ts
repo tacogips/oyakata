@@ -47,7 +47,7 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "a-manager",
         nodeFile: "node-a-manager.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         completion: { type: "none" },
       },
       {
@@ -65,7 +65,7 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "b-manager",
         nodeFile: "node-b-manager.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         completion: { type: "none" },
       },
       {

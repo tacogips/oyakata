@@ -43,7 +43,7 @@ async function createCallNodeFixture(
     nodes: [
       {
         id: "divedra-manager",
-        kind: "manager",
+        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
         completion: { type: "none" },
       },

@@ -27,7 +27,7 @@ function makeWorkflowResponse(): WorkflowResponse {
           {
             id: "manager",
             nodeFile: "node-manager.json",
-            kind: "manager",
+            kind: "root-manager",
             completion: {
               type: "none",
             },

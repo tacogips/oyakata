@@ -26,12 +26,12 @@ impl-plans/
 
 | Plan                         | Status   | Design Reference |
 | ---------------------------- | -------- | ---------------- |
-| `manager-kind-simplification` | Planning | `design-manager-kind-simplification` |
 
 ## Completed Plans
 
 | Plan                                          | Completed  | Design Reference                                                                                    |
 | --------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `manager-kind-simplification`                 | 2026-03-18 | `design-manager-kind-simplification`, `design-workflow-json`                                        |
 | `workflow-core-and-validation`                | 2026-02-23 | `design-data-model`, `design-workflow-json`, `architecture`                                         |
 | `workflow-cli-mvp`                            | 2026-02-23 | `command`, `design-workflow-json`                                                                   |
 | `workflow-execution-and-session`              | 2026-02-24 | `architecture`, `command`                                                                           |

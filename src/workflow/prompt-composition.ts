@@ -28,11 +28,7 @@ const DEFAULT_DIVEDRA_SYSTEM_PROMPT = readFileSync(
 ).trim();
 
 function isManagerNodeKind(kind: NodeKind | undefined): boolean {
-  return (
-    kind === "manager" ||
-    kind === "root-manager" ||
-    kind === "sub-divedra-manager"
-  );
+  return kind === "root-manager" || kind === "subworkflow-manager";
 }
 
 export function composeExecutionPrompt(input: PromptCompositionInput): string {

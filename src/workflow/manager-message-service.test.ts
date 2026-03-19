@@ -132,7 +132,7 @@ async function createOptionalDecisionWorkflowFixture(
         nodes: [
           {
             id: "divedra-manager",
-            kind: "manager",
+            kind: "root-manager",
             nodeFile: "node-divedra-manager.json",
             completion: { type: "none" },
           },
@@ -529,7 +529,7 @@ describe("manager-message-service", () => {
     expect(replayed).toEqual(result);
   });
 
-  test("rejects replay actions outside the sub-divedra-manager owned communication scope", async () => {
+  test("rejects replay actions outside the subworkflow-manager owned communication scope", async () => {
     const root = await makeTempDir();
     const { options, session } = await createCompletedWorkflowFixture(root);
     const managerStore = await createManagerSession(

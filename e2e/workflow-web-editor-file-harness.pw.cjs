@@ -40,7 +40,7 @@ const sampleBundle = {
       {
         id: "main-divedra",
         nodeFile: "node-main-divedra.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         completion: { type: "none" },
       },
       {

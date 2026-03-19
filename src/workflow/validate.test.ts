@@ -19,7 +19,7 @@ function makeValidRaw(): {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -58,6 +58,40 @@ function makeValidRaw(): {
 }
 
 describe("validateWorkflowBundle", () => {
+  function expectInvalidNodeKind(kind: string): void {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      nodes: [
+        {
+          id: "divedra-manager",
+          kind: "root-manager",
+          nodeFile: "node-divedra-manager.json",
+          completion: { type: "none" },
+        },
+        {
+          id: "worker-1",
+          kind,
+          nodeFile: "node-worker-1.json",
+          completion: { type: "none" },
+        },
+      ],
+    };
+
+    const result = validateWorkflowBundleDetailed(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.nodes[1].kind" &&
+          issue.message === "must be a valid node kind",
+      ),
+    ).toBe(true);
+  }
+
   test("accepts canonical valid payload", () => {
     const result = validateWorkflowBundle(makeValidRaw());
     expect(result.ok).toBe(true);
@@ -139,41 +173,16 @@ describe("validateWorkflowBundle", () => {
     ).toBe(true);
   });
 
-  test("normalizes legacy sub-manager node kind to sub-divedra-manager", () => {
-    const raw = makeValidRaw();
-    raw.workflow = {
-      ...(raw.workflow as Record<string, unknown>),
-      nodes: [
-        {
-          id: "divedra-manager",
-          kind: "root-manager",
-          nodeFile: "node-divedra-manager.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "worker-1",
-          kind: "sub-manager",
-          nodeFile: "node-worker-1.json",
-          completion: { type: "none" },
-        },
-      ],
-    };
+  test("rejects legacy sub-manager node kind", () => {
+    expectInvalidNodeKind("sub-manager");
+  });
 
-    const result = validateWorkflowBundleDetailed(raw);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.value.bundle.workflow.nodes[1]?.kind).toBe(
-      "sub-divedra-manager",
-    );
-    expect(
-      result.value.issues.some(
-        (issue) =>
-          issue.path === "workflow.nodes[1].kind" &&
-          issue.message.includes("legacy node kind 'sub-manager' normalized"),
-      ),
-    ).toBe(true);
+  test("rejects legacy manager node kind", () => {
+    expectInvalidNodeKind("manager");
+  });
+
+  test("rejects branded sub-workflow manager node kind", () => {
+    expectInvalidNodeKind("sub-divedra-manager");
   });
 
   test("accepts optional execution policy on workflow nodes", () => {
@@ -183,7 +192,7 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -218,7 +227,7 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -1066,7 +1075,7 @@ describe("validateWorkflowBundle", () => {
         {
           id: "BadID",
           nodeFile: "node-BadID.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
       ],
@@ -1119,7 +1128,7 @@ describe("validateWorkflowBundle", () => {
       .map((entry) => `${entry.path}:${entry.message}`)
       .join("\n");
     expect(messages).toContain(
-      "workflow.managerNodeId:must reference a node with kind 'root-manager' (legacy 'manager' is still accepted during transition)",
+      "workflow.managerNodeId:must reference a node with kind 'root-manager'",
     );
   });
 
@@ -1205,7 +1214,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sub-manager-a",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sub-manager-a.json",
           completion: { type: "none" },
         },
@@ -1317,7 +1326,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sub-manager-a",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sub-manager-a.json",
           completion: { type: "none" },
         },
@@ -1412,7 +1421,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sub-manager-a",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sub-manager-a.json",
           completion: { type: "none" },
         },
@@ -1497,7 +1506,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sub-manager-a",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sub-manager-a.json",
           completion: { type: "none" },
         },
@@ -1567,7 +1576,7 @@ describe("validateWorkflowBundle", () => {
     ).toBe(true);
   });
 
-  test("rejects sub-workflow managerNodeId that does not reference a sub-divedra-manager node", () => {
+  test("rejects sub-workflow managerNodeId that does not reference a subworkflow-manager node", () => {
     const raw = makeValidRaw();
     raw.workflow = {
       workflowId: "demo",
@@ -1594,7 +1603,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "plain-manager-a",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-plain-manager-a.json",
           completion: { type: "none" },
         },
@@ -1660,7 +1669,7 @@ describe("validateWorkflowBundle", () => {
       result.error.some(
         (issue) =>
           issue.path === "workflow.subWorkflows[0].managerNodeId" &&
-          issue.message.includes("kind 'sub-divedra-manager'"),
+          issue.message.includes("kind 'subworkflow-manager'"),
       ),
     ).toBe(true);
   });
@@ -1743,7 +1752,7 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -1755,7 +1764,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sw1-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw1-manager.json",
           completion: { type: "none" },
         },
@@ -1773,7 +1782,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sw2-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw2-manager.json",
           completion: { type: "none" },
         },
@@ -1921,7 +1930,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "loop-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-loop-manager.json",
           completion: { type: "none" },
         },
@@ -2014,7 +2023,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "loop-manager-a",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-loop-manager-a.json",
           completion: { type: "none" },
         },
@@ -2032,7 +2041,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "loop-manager-b",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-loop-manager-b.json",
           completion: { type: "none" },
         },
@@ -2188,7 +2197,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "branch-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-branch-manager.json",
           completion: { type: "none" },
         },
@@ -2290,7 +2299,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "loop-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-loop-manager.json",
           completion: { type: "none" },
         },
@@ -2416,13 +2425,13 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
         {
           id: "a-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-a-manager.json",
           completion: { type: "none" },
         },
@@ -2434,7 +2443,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "a-inner-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-a-inner-manager.json",
           completion: { type: "none" },
         },
@@ -2546,13 +2555,13 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
         {
           id: "a-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-a-manager.json",
           completion: { type: "none" },
         },
@@ -2564,7 +2573,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "b-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-b-manager.json",
           completion: { type: "none" },
         },
@@ -2698,7 +2707,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sw-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw-manager.json",
           completion: { type: "none" },
         },
@@ -2803,7 +2812,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sw-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw-manager.json",
           completion: { type: "none" },
         },
@@ -2902,7 +2911,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "a-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-a-manager.json",
           completion: { type: "none" },
         },
@@ -2920,7 +2929,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "b-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-b-manager.json",
           completion: { type: "none" },
         },
@@ -3036,7 +3045,7 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -3101,7 +3110,7 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -3206,13 +3215,13 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
         {
           id: "group-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-group-manager.json",
           completion: { type: "none" },
         },
@@ -3332,13 +3341,13 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
         {
           id: "sw1-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw1-manager.json",
           completion: { type: "none" },
         },
@@ -3439,13 +3448,13 @@ describe("validateWorkflowBundle", () => {
       nodes: [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
         {
           id: "sw1-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw1-manager.json",
           completion: { type: "none" },
         },
@@ -3463,7 +3472,7 @@ describe("validateWorkflowBundle", () => {
         },
         {
           id: "sw2-manager",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           nodeFile: "node-sw2-manager.json",
           completion: { type: "none" },
         },

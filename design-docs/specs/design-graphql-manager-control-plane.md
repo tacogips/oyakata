@@ -235,7 +235,7 @@ This separation avoids overloading a user- or manager-authored freeform message 
 Manager send must be scope-bound:
 
 - root manager may request root-scope actions and sub-workflow starts
-- sub-divedra-manager may request only actions within its owned sub-workflow
+- subworkflow-manager may request only actions within its owned sub-workflow
 - worker nodes do not get manager-session credentials
 
 Required ambient identity for LLM-triggered CLI use:
@@ -466,11 +466,11 @@ Rules:
 
 - root-manager scope may target only root-scope communications
   - effective root scope means both sender and recipient resolve outside any sub-workflow
-- sub-divedra-manager scope may target only communications that stay entirely within the sub-divedra-manager's owned sub-workflow
+- subworkflow-manager scope may target only communications that stay entirely within the subworkflow-manager's owned sub-workflow
   - effective sub-workflow scope means both sender and recipient resolve to that owned sub-workflow
 - root managers must not replay or retry communications that cross a sub-workflow boundary or operate entirely inside a child sub-workflow
-  - those cases must be handled by re-invoking the sub-workflow or by the owning sub-divedra-manager
-- sub-divedra-managers must not replay or retry parent-to-sub-workflow, cross-sub-workflow, or root-scope communications
+  - those cases must be handled by re-invoking the sub-workflow or by the owning subworkflow-manager
+- subworkflow-managers must not replay or retry parent-to-sub-workflow, cross-sub-workflow, or root-scope communications
 
 Compatibility rule for previously persisted artifacts:
 
@@ -631,7 +631,7 @@ Concrete direction for the next implementation slice:
   - for manager-message-backed deliveries it is the active `managerNodeExecId`
 - keep replay/retry compatibility by reading the existing communication outbox payload first and falling back to `payloadRef.artifactDir/output.json`
 
-With that widened provenance model in place, `deliver-to-child-input` can be accepted for an owning sub-divedra-manager because the mailbox delivery now has durable source artifacts even before the manager node publishes its final node output.
+With that widened provenance model in place, `deliver-to-child-input` can be accepted for an owning subworkflow-manager because the mailbox delivery now has durable source artifacts even before the manager node publishes its final node output.
 
 ### Output Shape
 

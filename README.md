@@ -90,15 +90,14 @@ Current kinds:
 - `branch-judge`: emits booleans used by outgoing branch edges
 - `loop-judge`: emits booleans used by `loops[]`
 - `root-manager`: top-level workflow manager referenced by `workflow.managerNodeId`
-- `sub-divedra-manager`: manager that owns one sub-workflow boundary
+- `subworkflow-manager`: manager that owns one sub-workflow boundary
 - `input`: normalizes inbound mailbox/runtime data for a workflow scope
 - `output`: assembles the final payload for a workflow scope
-- `manager`: legacy alias still accepted during transition
 
 Practical meaning:
 
 - `root-manager` starts the workflow run and can auto-start eligible sub-workflows.
-- `sub-divedra-manager` owns one sub-workflow's internal routing and may deliver work to its child `input` node.
+- `subworkflow-manager` owns one sub-workflow's internal routing and may deliver work to its child `input` node.
 - `input` nodes turn mailbox/runtime input into clean scope-local payloads.
 - `output` nodes publish the result of a root workflow or sub-workflow boundary.
 - `branch-judge` and `loop-judge` are ordinary executed nodes whose outputs drive control flow.

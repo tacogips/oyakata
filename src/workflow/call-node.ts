@@ -120,11 +120,7 @@ function resolveTimeoutMs(
 }
 
 function isManagerNodeKind(kind: NodeKind | undefined): boolean {
-  return (
-    kind === "manager" ||
-    kind === "root-manager" ||
-    kind === "sub-divedra-manager"
-  );
+  return kind === "root-manager" || kind === "subworkflow-manager";
 }
 
 function resolveOutputValidationAttempts(node: NodePayload): number {

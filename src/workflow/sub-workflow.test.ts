@@ -36,13 +36,13 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "divedra-manager",
         nodeFile: "node-divedra-manager.json",
-        kind: "manager",
+        kind: "root-manager",
         completion: { type: "none" },
       },
       {
         id: "a-manager",
         nodeFile: "node-a-manager.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         completion: { type: "none" },
       },
       {
@@ -60,7 +60,7 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "b-manager",
         nodeFile: "node-b-manager.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         completion: { type: "none" },
       },
       {
@@ -157,7 +157,7 @@ describe("planRootManagerSubWorkflowStarts", () => {
         {
           id: "a-manager",
           nodeFile: "node-a-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
       ],
@@ -186,7 +186,7 @@ describe("planRootManagerSubWorkflowStarts", () => {
         {
           id: "a-manager",
           nodeFile: "node-a-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
       ],
@@ -285,7 +285,7 @@ describe("planRootManagerSubWorkflowStarts", () => {
 });
 
 describe("planSubWorkflowChildInputs", () => {
-  test("queues the child input for a sub-divedra-manager that owns a sub-workflow", () => {
+  test("queues the child input for a subworkflow-manager that owns a sub-workflow", () => {
     const workflow = makeWorkflow();
     const session = makeSession();
     const planned = planSubWorkflowChildInputs({
@@ -348,7 +348,7 @@ describe("planSubWorkflowChildInputs", () => {
             artifactDir: "/tmp/a-output/exec-000001",
           },
           deliveryKind: "edge-transition",
-          transitionWhen: "sub-divedra-manager-input:a-input",
+          transitionWhen: "subworkflow-manager-input:a-input",
           status: "delivered",
           deliveryAttemptIds: ["attempt-000001"],
           activeDeliveryAttemptId: "attempt-000001",

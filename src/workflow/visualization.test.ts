@@ -15,7 +15,7 @@ function makeBaseWorkflow(
     nodes: nodes.map((id) => ({
       id,
       nodeFile: `node-${id}.json`,
-      kind: id === "divedra-manager" ? "manager" : "task",
+      kind: id === "divedra-manager" ? "root-manager" : "task",
       completion: { type: "none" },
     })),
     edges,
@@ -67,7 +67,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
@@ -138,13 +138,13 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
           id: "group-manager",
           nodeFile: "node-group-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -223,13 +223,13 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
           id: "branch-manager",
           nodeFile: "node-branch-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -320,13 +320,13 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
           id: "group-manager",
           nodeFile: "node-group-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -436,13 +436,13 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
           id: "loop-manager",
           nodeFile: "node-loop-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -552,13 +552,13 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
           id: "loop-manager",
           nodeFile: "node-loop-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -570,7 +570,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "inner-manager",
           nodeFile: "node-inner-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -716,13 +716,13 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "divedra-manager",
           nodeFile: "node-divedra-manager.json",
-          kind: "manager",
+          kind: "root-manager",
           completion: { type: "none" },
         },
         {
           id: "branch-manager",
           nodeFile: "node-branch-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {
@@ -734,7 +734,7 @@ describe("deriveWorkflowVisualization", () => {
         {
           id: "inner-manager",
           nodeFile: "node-inner-manager.json",
-          kind: "sub-divedra-manager",
+          kind: "subworkflow-manager",
           completion: { type: "none" },
         },
         {

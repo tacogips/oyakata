@@ -39,7 +39,7 @@ function makeWorkflow(): WorkflowJson {
       {
         id: "main-divedra",
         nodeFile: "node-main-divedra.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         completion: { type: "none" },
       },
       {
@@ -241,18 +241,18 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain(
       "expectedReturn=Return the completed release package summary.",
     );
-    expect(prompt).not.toContain("- Child node: main-divedra (sub-divedra-manager)");
+    expect(prompt).not.toContain("- Child node: main-divedra (subworkflow-manager)");
     expect(prompt).not.toContain("- Child node: workflow-input (input)");
     expect(prompt).not.toContain("- Child node: workflow-output (output)");
   });
 
-  test("includes managed child node catalog for a sub-divedra-manager", () => {
+  test("includes managed child node catalog for a subworkflow-manager", () => {
     const prompt = composeExecutionPrompt({
       workflow: makeWorkflow(),
       nodeRef: makeNodeRef({
         id: "main-divedra",
         nodeFile: "node-main-divedra.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
       }),
       node: makeNodePayloads()["main-divedra"] as NodePayload,
       nodePayloads: makeNodePayloads(),
@@ -359,7 +359,7 @@ describe("composeExecutionPrompt", () => {
       nodeRef: makeNodeRef({
         id: "main-divedra",
         nodeFile: "node-main-divedra.json",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
       }),
       node: makeNodePayloads()["main-divedra"] as NodePayload,
       nodePayloads: makeNodePayloads(),

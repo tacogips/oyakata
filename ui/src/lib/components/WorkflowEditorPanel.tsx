@@ -34,7 +34,6 @@ const MANUALLY_ASSIGNABLE_NODE_KINDS: readonly NodeKind[] = [
   "task",
   "branch-judge",
   "loop-judge",
-  "manager",
 ];
 
 export interface WorkflowEditorPanelProps {

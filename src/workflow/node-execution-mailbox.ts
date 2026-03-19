@@ -136,11 +136,7 @@ export interface BuildNodeExecutionMailboxInput {
 }
 
 function isManagerNodeKind(kind: NodeKind | undefined): boolean {
-  return (
-    kind === "manager" ||
-    kind === "root-manager" ||
-    kind === "sub-divedra-manager"
-  );
+  return kind === "root-manager" || kind === "subworkflow-manager";
 }
 
 function getSubWorkflowOwnedNodeIds(
@@ -196,12 +192,10 @@ function buildNodeReason(
   switch (nodeKind) {
     case "root-manager":
       return "Coordinate the overall workflow plan, sub-workflow dispatch, output assessment, and retry decisions.";
-    case "sub-divedra-manager":
+    case "subworkflow-manager":
       return ownedSubWorkflow === undefined
         ? "Coordinate the current sub-workflow scope."
         : `Coordinate sub-workflow '${ownedSubWorkflow.id}' and translate parent mailbox input into child-node work.`;
-    case "manager":
-      return "Coordinate manager-owned routing and control decisions for this workflow scope.";
     case "input":
       return "Convert received mailbox/runtime input into a clean workflow-scoped input payload for downstream work.";
     case "output":
@@ -229,8 +223,7 @@ function buildExpectedReturn(
 
   switch (nodeRef.kind) {
     case "root-manager":
-    case "sub-divedra-manager":
-    case "manager":
+    case "subworkflow-manager":
       return "Return a manager assessment/plan JSON object that records the current state, what was judged, and what should happen next.";
     case "input":
       return "Return normalized input JSON for the owned workflow scope.";

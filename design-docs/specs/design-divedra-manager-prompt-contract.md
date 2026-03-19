@@ -17,7 +17,7 @@ What was missing was the prompt contract that makes the manager LLM explicitly a
 - the workflow structure in its current scope,
 - why each child node/sub-workflow is being asked to act,
 - what value each child is expected to return,
-- how parent/sub-divedra-manager nesting should be interpreted.
+- how parent/subworkflow-manager nesting should be interpreted.
 
 The prior iteration still left one boundary mismatch: the root `divedra` received user input from `runtimeVariables.humanInput` rather than from a mailbox-visible external handoff, and completed workflow output was not published through an external mailbox artifact.
 
@@ -37,7 +37,7 @@ Phase 1 adds prompt-level semantics without replacing the deterministic executio
 - `prompts.divedraPromptTemplate`
 - `prompts.workerSystemPromptTemplate`
 
-The root/sub-divedra-manager execution prompt becomes:
+The root/subworkflow-manager execution prompt becomes:
 
 1. default `divedra system prompt` from a repository markdown asset
 2. workflow-rendered `prompts.divedraPromptTemplate`
@@ -102,9 +102,9 @@ Supported action semantics:
   - root `divedra` only
   - treats a sub-workflow as one child node
   - repeating the same action re-invokes that child sub-workflow as a rerun unit when the manager judges the prior result insufficient
-  - the runtime always delivers the manager output through the owned `sub-divedra-manager` mailbox
+  - the runtime always delivers the manager output through the owned `subworkflow-manager` mailbox
 - `deliver-to-child-input`
-  - `sub-divedra-manager` only
+  - `subworkflow-manager` only
   - forwards the current manager output through mailbox delivery to its owned input node
   - this is the nested "treat parent instruction like user input" handoff point
 - `retry-node`
@@ -117,7 +117,7 @@ Override rule:
 
 - when a manager returns `managerControl.actions`, the runtime treats that manager as authoritative for its manager-owned planning category in that execution:
   - root manager: sub-workflow start planning
-  - sub-divedra-manager: child input forwarding
+  - subworkflow-manager: child input forwarding
 - if `managerControl` is omitted, the existing deterministic fallback planners remain active
 
 ## Remaining Limitation
@@ -134,8 +134,8 @@ The runtime still uses:
 Structural constraints now enforced by validation/runtime:
 
 - every `subWorkflow` must declare `managerNodeId`
-- `managerNodeId` must reference a `sub-divedra-manager`
-- a `sub-divedra-manager` may dispatch only to its owned `inputNodeId`
+- `managerNodeId` must reference a `subworkflow-manager`
+- a `subworkflow-manager` may dispatch only to its owned `inputNodeId`
 - root `divedra` may not use `retry-node` to pierce into nodes owned by a sub-workflow boundary
 
 Manager control is therefore explicit for manager-owned dispatch/retry decisions, but not yet a full replacement for structural workflow semantics.

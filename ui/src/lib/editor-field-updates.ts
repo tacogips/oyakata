@@ -15,7 +15,7 @@ import {
 
 export const RESERVED_STRUCTURE_KINDS = new Set<NodeKind>([
   "root-manager",
-  "sub-divedra-manager",
+  "subworkflow-manager",
   "input",
   "output",
 ]);

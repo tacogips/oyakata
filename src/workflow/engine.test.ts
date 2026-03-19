@@ -787,7 +787,7 @@ async function createWorkflowFixture(
     ? [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -807,7 +807,7 @@ async function createWorkflowFixture(
     : [
         {
           id: "divedra-manager",
-          kind: "manager",
+          kind: "root-manager",
           nodeFile: "node-divedra-manager.json",
           completion: { type: "none" },
         },
@@ -901,7 +901,7 @@ async function createOptionalExecutionFixture(
     nodes: [
       {
         id: "divedra-manager",
-        kind: "manager",
+        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
         completion: { type: "none" },
       },
@@ -974,7 +974,7 @@ async function createUserActionFixture(
     nodes: [
       {
         id: "divedra-manager",
-        kind: "manager",
+        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
         completion: { type: "none" },
       },
@@ -1032,7 +1032,7 @@ async function createNodeSessionReuseFixture(
     nodes: [
       {
         id: "divedra-manager",
-        kind: "manager",
+        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
         completion: { type: "none" },
       },
@@ -1152,7 +1152,7 @@ async function createSubWorkflowRuntimeFixture(
       },
       {
         id: "a-manager",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         nodeFile: "node-a-manager.json",
         completion: { type: "none" },
       },
@@ -1170,7 +1170,7 @@ async function createSubWorkflowRuntimeFixture(
       },
       {
         id: "b-manager",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         nodeFile: "node-b-manager.json",
         completion: { type: "none" },
       },
@@ -1514,7 +1514,7 @@ async function createWorkflowOutputDrivenSubWorkflowFixture(
       },
       {
         id: "review-manager",
-        kind: "sub-divedra-manager",
+        kind: "subworkflow-manager",
         nodeFile: "node-review-manager.json",
         completion: { type: "none" },
       },
@@ -5628,7 +5628,7 @@ describe("runWorkflow", () => {
     expect(bInputExecutions).toHaveLength(2);
   });
 
-  test("sub-divedra-manager forwards its own output to the child input", async () => {
+  test("subworkflow-manager forwards its own output to the child input", async () => {
     const root = await makeTempDir();
     const workflowName = "subworkflow-manager-forwarding";
     await createSubWorkflowRuntimeFixture(root, workflowName);
@@ -5698,7 +5698,7 @@ describe("runWorkflow", () => {
     expect(inputJson.arguments.routed.marker).toBe("from-b-manager");
   });
 
-  test("sub-divedra-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
+  test("subworkflow-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
     const root = await makeTempDir();
     const workflowName = "subworkflow-manager-no-forward";
     await createSubWorkflowRuntimeFixture(root, workflowName);

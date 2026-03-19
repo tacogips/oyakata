@@ -126,13 +126,10 @@ function normalizeNodeKind(value: unknown): NodeKind | undefined {
     case "branch-judge":
     case "loop-judge":
     case "root-manager":
-    case "sub-divedra-manager":
-    case "manager":
+    case "subworkflow-manager":
     case "input":
     case "output":
       return value;
-    case "sub-manager":
-      return "sub-divedra-manager";
     default:
       return undefined;
   }
@@ -924,15 +921,6 @@ function normalizeNodeRef(
       );
     } else {
       kind = normalizedKind;
-      if (typeof kindRaw === "string" && kindRaw !== normalizedKind) {
-        issues.push(
-          makeIssue(
-            "warning",
-            `${path}.kind`,
-            `legacy node kind '${kindRaw}' normalized to '${normalizedKind}'`,
-          ),
-        );
-      }
     }
   }
 
@@ -2732,12 +2720,12 @@ function runSemanticValidation(
   const managerNode = bundle.workflow.nodes.find(
     (node) => node.id === bundle.workflow.managerNodeId,
   );
-  if (managerNode?.kind !== "manager" && managerNode?.kind !== "root-manager") {
+  if (managerNode?.kind !== "root-manager") {
     issues.push(
       makeIssue(
         "error",
         "workflow.managerNodeId",
-        "must reference a node with kind 'root-manager' (legacy 'manager' is still accepted during transition)",
+        "must reference a node with kind 'root-manager'",
       ),
     );
   }
@@ -2903,12 +2891,12 @@ function runSemanticValidation(
       const subManagerNode = bundle.workflow.nodes.find(
         (node) => node.id === subWorkflow.managerNodeId,
       );
-      if (subManagerNode?.kind !== "sub-divedra-manager") {
+      if (subManagerNode?.kind !== "subworkflow-manager") {
         issues.push(
           makeIssue(
             "error",
             `workflow.subWorkflows[${index}].managerNodeId`,
-            "must reference a node with kind 'sub-divedra-manager'",
+            "must reference a node with kind 'subworkflow-manager'",
           ),
         );
       }

@@ -19,7 +19,7 @@ const TEMPLATE_MODEL = "gpt-5-nano";
 
 interface TemplateNodeDefinition {
   readonly id: string;
-  readonly kind: "root-manager" | "sub-divedra-manager" | "input" | "output";
+  readonly kind: "root-manager" | "subworkflow-manager" | "input" | "output";
   readonly prompt: string;
   readonly includeWorkflowId: boolean;
 }
@@ -33,7 +33,7 @@ const TEMPLATE_NODE_DEFINITIONS = [
   },
   {
     id: "main-divedra",
-    kind: "sub-divedra-manager",
+    kind: "subworkflow-manager",
     prompt:
       "Translate the parent divedra instruction into this sub-workflow's child work for {{workflowId}}",
     includeWorkflowId: true,
