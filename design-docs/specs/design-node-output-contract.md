@@ -61,6 +61,30 @@ Rules:
 - the candidate payload is always a top-level JSON object because published `output.payload` remains object-shaped for downstream compatibility, so the root schema must allow `object`.
 - if `jsonSchema` is omitted, retries only repair malformed/non-object candidate submissions; no additional field-level schema validation occurs.
 
+## Canonical Output Shape Rule
+
+Published execution-local and canonical mailbox outputs remain JSON objects even
+when the originating backend is text-oriented.
+
+Rules:
+
+- `outbox/output.json` is always a JSON file
+- published `output.payload` remains a JSON object
+- if a node declares `output.jsonSchema`, the candidate must satisfy that schema
+- if a node does not declare `output.jsonSchema`, the runtime still requires a
+  top-level JSON object business payload
+- text-oriented adapters may accept raw text from a model/backend internally,
+  but they must normalize it to an object before publication
+- the generic fallback wrapper for semantically plain-text business output is
+  `{"text":"..."}`, not `{"data":"..."}`
+
+Rationale:
+
+- `text` is self-describing while `data` is too generic to be a stable contract
+- downstream mapping such as `output.payload.foo` remains object-oriented
+- runtime inspection, GraphQL exposure, and future command/container execution
+  remain consistent
+
 ## Runtime Artifact Model
 
 Each node execution artifact directory keeps the final published output and every candidate attempt:
@@ -133,6 +157,9 @@ Backward compatibility:
 - future adapters may optionally write a candidate JSON file and return its path.
 - candidate-file submission is only valid for nodes that explicitly configure `output`; legacy non-contract nodes must return the payload inline.
 - official text-only SDK adapters must parse contract-enabled model text into a top-level JSON object candidate before returning control to the runtime. For usability, they may accept either bare JSON text or a single fenced JSON block, but they must still reject prose-wrapped or non-object responses.
+- official text-only SDK adapters for non-schema nodes may continue to consume
+  raw text internally, but the published candidate must still be normalized into
+  an object-shaped payload such as `{"text":"..."}` before runtime publication
 - deterministic/mock adapters that simulate repeated responses should key contract retries off the runtime-provided output attempt number rather than only the node execution count.
 - external wrapper adapters that proxy to LLM processes should avoid exposing the final node artifact directory when `output` is configured; the reserved candidate staging path is the only output-write location they need for structured-output publication.
 - in either mode, the runtime remains the only component that publishes final `output.json`.
@@ -257,6 +284,9 @@ When this happens:
 - existing workflows remain valid because `output` is optional
 - existing adapters remain valid because inline payload output remains supported
 - existing downstream logic remains valid because published `output.json` retains the current envelope shape and `payload` remains the business payload field
+- nodes that truly produce plain text can remain schema-less, but their stable
+  published shape must be `output.payload.text` per the canonical output shape
+  rule
 
 ## References
 

@@ -626,4 +626,64 @@ describe("callNode", () => {
     expect(result.error.message).toContain("nodeType='container'");
     expect(result.error.message).toContain("not implemented yet");
   });
+
+  test("normalizes plain-text manager messages in mailbox input artifacts", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-node-plain-message";
+    const sessionId = "sess-call-node-plain-message";
+
+    await createCallNodeFixture(root, workflowName);
+    await createCallNodeSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    class PlainMessageAdapter implements NodeAdapter {
+      async execute(input: AdapterExecutionInput) {
+        return {
+          provider: "plain-message-adapter",
+          model: input.node.model,
+          promptText: input.promptText,
+          completionPassed: true,
+          when: { always: true },
+          payload: { summary: "ok" },
+        };
+      }
+    }
+
+    const result = await callNode(
+      {
+        workflowRoot: root,
+        artifactRoot: artifactsRoot,
+        sessionStoreRoot,
+        workflowId: workflowName,
+        workflowRunId: sessionId,
+        nodeId: "writer",
+        message: "review this change",
+      },
+      new PlainMessageAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const mailboxInput = JSON.parse(
+      await readFile(
+        path.join(result.value.outputRef.artifactDir, "mailbox", "inbox", "input.json"),
+        "utf8",
+      ),
+    ) as {
+      readonly managerMessage?: {
+        readonly payload?: { readonly text?: string };
+      };
+    };
+    expect(mailboxInput.managerMessage?.payload).toEqual({
+      text: "review this change",
+    });
+  });
 });

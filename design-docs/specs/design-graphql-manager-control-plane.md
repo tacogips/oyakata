@@ -87,6 +87,22 @@ Rule:
 - legacy execution commands may gain GraphQL-backed transport one slice at a time; until that migration completes, some local debug-only flags remain local-only and are not forwarded through GraphQL
 - GraphQL is now the canonical execution/communication/manager control surface, including the served browser workflow-definition, execution, and session flows; `/api/ui-config` remains only as bootstrap metadata outside `/graphql`
 
+Argument-shape rule:
+
+- semantically structured inputs should be represented as typed GraphQL input
+  objects, not escaped JSON strings passed through GraphQL `String` fields
+- semantically plain-text inputs should remain plain text at the GraphQL layer
+- if a plain-text GraphQL input later becomes part of node execution input, the
+  runtime normalizes it into canonical JSON before writing execution inbox
+  artifacts
+
+This keeps GraphQL contracts explicit and avoids forcing callers to manually
+double-encode JSON into string arguments.
+
+The runtime normalization contract for plain-text-to-JSON conversion is defined
+in `design-node-execution-inbox-contract.md` (JSON Boundary Rule) and
+`design-node-output-contract.md` (Canonical Output Shape Rule).
+
 Examples:
 
 - workflow execution options such as `runtimeVariables`, `maxSteps`, and `dryRun` belong in GraphQL mutation input

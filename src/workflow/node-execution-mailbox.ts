@@ -1,6 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJsonFile as writeJsonFile } from "../shared/fs";
+import {
+  normalizeManagerMessageForMailbox,
+  normalizePlainTextValue,
+} from "./json-boundary";
 import type {
   JsonObject,
   NodeKind,
@@ -482,7 +486,11 @@ export function buildNodeExecutionMailbox(
       arguments: input.assembledArguments,
       ...(input.runtimeVariables["humanInput"] === undefined
         ? {}
-        : { humanInput: input.runtimeVariables["humanInput"] }),
+        : {
+            humanInput: normalizePlainTextValue(
+              input.runtimeVariables["humanInput"],
+            ),
+          }),
       ...(input.runtimeVariables["workflowOutput"] === undefined
         ? {}
         : { workflowOutput: input.runtimeVariables["workflowOutput"] }),
@@ -492,7 +500,11 @@ export function buildNodeExecutionMailbox(
       upstream: input.upstreamInputs,
       ...(input.managerMessage === undefined
         ? {}
-        : { managerMessage: input.managerMessage }),
+        : {
+            managerMessage: normalizeManagerMessageForMailbox(
+              input.managerMessage,
+            ),
+          }),
     },
   };
 }

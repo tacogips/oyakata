@@ -17,12 +17,13 @@ import {
 } from "./adapter";
 import { DispatchingNodeAdapter } from "./adapters/dispatch";
 import { resolveNodeExecutionBackend } from "./adapters/dispatch";
-import { loadWorkflowFromDisk } from "./load";
 import { assembleNodeInput } from "./input-assembly";
+import { normalizeExternalMailboxBusinessPayload } from "./json-boundary";
 import {
   validateJsonValueAgainstSchema,
   type JsonSchemaValidationError,
 } from "./json-schema";
+import { loadWorkflowFromDisk } from "./load";
 import {
   buildNodeExecutionMailbox,
   writeNodeExecutionMailboxArtifacts,
@@ -987,15 +988,6 @@ function buildCommitMessageTemplate(
     `Output-Hash: sha256:${outputHash}`,
     `Next-Node: ${nextNodeValue}`,
   ].join("\n");
-}
-
-function normalizeExternalMailboxBusinessPayload(
-  value: unknown,
-): Readonly<Record<string, unknown>> {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Readonly<Record<string, unknown>>;
-  }
-  return { value };
 }
 
 interface CreateCommunicationInput {

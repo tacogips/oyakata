@@ -20,6 +20,7 @@ Goals:
 - let node implementations read one metadata file and one input payload file
 - keep canonical mailbox publication, routing, and validation runtime-owned
 - keep host filesystem paths out of container-facing metadata
+- make the worker-facing execution boundary format-stable and machine-readable
 
 ## Execution-Local Layout
 
@@ -46,10 +47,64 @@ Rules:
 - `mailbox/inbox/meta.json` is the primary worker-facing execution contract
 - `mailbox/inbox/input.json` contains the resolved execution-local input payload
 - `mailbox/inbox/files/` contains worker-visible input files for that execution
-- `mailbox/outbox/output.json` is the preferred worker output target path
+- `mailbox/outbox/output.json` is the preferred worker write location for
+  candidate output; after runtime validation and publication, the runtime
+  overwrites this file with the runtime-published envelope so that the
+  execution-local outbox always reflects the final published state
+- for structured-output nodes, the adapter uses a reserved staging path for
+  candidate submission rather than writing directly to `mailbox/outbox/output.json`;
+  the runtime still copies the published envelope to `mailbox/outbox/output.json`
+  after validation
 - `mailbox/outbox/files/` is the preferred worker output-files directory
 - worker-facing mailbox paths are execution-local and must not be treated as the
   canonical routed mailbox store
+- worker-facing `inbox/input.json` and `outbox/output.json` are always JSON
+  files; workers do not need to branch on plain text versus JSON at this ABI
+
+## JSON Boundary Rule
+
+The execution-local inbox/outbox ABI is JSON-only.
+
+Rule:
+
+- plain text may appear at ingress edges such as CLI/user input, GraphQL string
+  fields, or raw backend/model responses
+- the runtime must normalize those values into canonical JSON before writing
+  `mailbox/inbox/input.json`
+- workers may return plain text to an adapter-specific boundary; output
+  normalization rules are defined in `design-node-output-contract.md`
+- workers must not be required to guess whether `inbox/input.json` is text or
+  JSON based on node type, backend, or manager behavior
+
+Input normalization shape:
+
+- `mailbox/inbox/input.json` always retains the top-level resolved-execution
+  structure with fields such as `arguments`, `humanInput`, `upstream`,
+  `runtimeVariables`, and `managerMessage`; plain-text normalization never
+  replaces the whole document
+- normalization applies at the leaf payload position within each field:
+  - `humanInput` value becomes `{"text":"..."}` when the source was plain text
+  - each `upstream[].payload` item becomes `{"text":"..."}` when the upstream
+    node produced semantically plain-text output
+  - `managerMessage.payload` becomes `{"text":"..."}` when the manager message
+    body was plain text
+  - `arguments` and `runtimeVariables` are always structured by definition and
+    are never subject to plain-text wrapping
+- the canonical plain-text wrapper is `{"text":"..."}`, consistent with the
+  output-side canonical shape defined in `design-node-output-contract.md`
+
+Output normalization:
+
+- output normalization rules and the canonical published output shape are defined
+  in `design-node-output-contract.md`; this document does not override those
+  rules
+
+Rationale:
+
+- a fixed JSON ABI keeps `agent`, `command`, and `container` execution aligned
+- runtime validation, replay, and inspection remain uniform
+- future non-agent managers or command-driven managers can rely on the same
+  contract without hidden prompt conventions
 
 ## Path Contract
 
@@ -160,6 +215,10 @@ Rules:
 - the runtime may keep richer audit data in the root `input.json`, but worker
   code should not need that file
 - workers must not read canonical `communications/...` directories directly
+- if an ingress source was semantically plain text, the runtime must normalize
+  it into a `{"text":"..."}` object at the leaf payload position within the
+  relevant field (see JSON Boundary Rule above) rather than emitting a raw text
+  file or replacing the top-level `input.json` document
 
 ## Backend Application
 
@@ -174,6 +233,11 @@ All node types use the same semantic contract:
 - `container`
   - future executor should mount the same mailbox tree and set
     `DIVEDRA_MAILBOX_DIR`
+
+Normalization happens before this backend boundary. A `command` or `container`
+worker should see the same JSON inbox shape as an `agent` worker even if the
+original upstream source was plain text or the eventual backend response is raw
+text.
 
 This keeps worker semantics aligned even if execution mechanisms differ.
 

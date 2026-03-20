@@ -7,6 +7,7 @@ import {
   type AdapterExecutionOutput,
   type NodeAdapter,
 } from "../adapter";
+import { normalizeTextBusinessPayload } from "../json-boundary";
 import {
   executeWithRetry,
   normalizeAdapterFailure,
@@ -50,42 +51,46 @@ function resolveApiKey(config: OpenAiSdkAdapterConfig): string | undefined {
   );
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function extractOpenAiText(response: unknown): string {
-  if (!isRecord(response)) {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    Array.isArray(response)
+  ) {
     return "";
   }
 
-  const outputText = response["output_text"];
+  const outputText = (response as Record<string, unknown>)["output_text"];
   if (typeof outputText === "string") {
     return outputText;
   }
 
-  const output = response["output"];
+  const output = (response as Record<string, unknown>)["output"];
   if (!Array.isArray(output)) {
     return "";
   }
 
   const segments: string[] = [];
   for (const item of output) {
-    if (!isRecord(item)) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
       continue;
     }
-    const content = item["content"];
+    const content = (item as Record<string, unknown>)["content"];
     if (!Array.isArray(content)) {
       continue;
     }
     for (const entry of content) {
-      if (!isRecord(entry)) {
+      if (
+        typeof entry !== "object" ||
+        entry === null ||
+        Array.isArray(entry)
+      ) {
         continue;
       }
-      if (entry["type"] !== "output_text") {
+      if ((entry as Record<string, unknown>)["type"] !== "output_text") {
         continue;
       }
-      const text = entry["text"];
+      const text = (entry as Record<string, unknown>)["text"];
       if (typeof text === "string" && text.length > 0) {
         segments.push(text);
       }
@@ -151,10 +156,7 @@ export class OpenAiSdkAdapter implements NodeAdapter {
         const text = extractOpenAiText(response);
         const payload =
           input.output === undefined
-            ? {
-                text,
-                response: isRecord(response) ? response : {},
-              }
+            ? normalizeTextBusinessPayload(text)
             : parseJsonObjectCandidate(text, "official OpenAI SDK response");
         return {
           provider: "official-openai-sdk",

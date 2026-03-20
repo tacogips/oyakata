@@ -2469,6 +2469,65 @@ describe("runWorkflow", () => {
     expect(mailboxOutputRaw).toBe(sourceOutputRaw);
   });
 
+  test("normalizes plain-text human input to canonical text objects", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "root-human-input-text", false);
+
+    const result = await runWorkflow(
+      "root-human-input-text",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: {
+          topic: "B",
+          humanInput: "ship release B",
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const managerExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "divedra-manager",
+    );
+    expect(managerExec).toBeDefined();
+    if (managerExec === undefined) {
+      return;
+    }
+
+    const mailboxInput = JSON.parse(
+      await readFile(
+        path.join(managerExec.artifactDir, "mailbox", "inbox", "input.json"),
+        "utf8",
+      ),
+    ) as {
+      readonly humanInput?: { readonly text?: string };
+    };
+    expect(mailboxInput.humanInput).toEqual({ text: "ship release B" });
+
+    const externalOutput = JSON.parse(
+      await readFile(
+        path.join(
+          root,
+          "artifacts",
+          "root-human-input-text",
+          "executions",
+          result.value.session.sessionId,
+          "external-mailbox",
+          "input",
+          "output.json",
+        ),
+        "utf8",
+      ),
+    ) as { payload: { text?: string } };
+    expect(externalOutput.payload).toEqual({ text: "ship release B" });
+  });
+
   test("publishes the completed workflow result to an external mailbox", async () => {
     const root = await makeTempDir();
     await createSingleRootOutputFixture(root, "root-mailbox-output");

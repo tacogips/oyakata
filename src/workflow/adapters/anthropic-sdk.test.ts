@@ -50,7 +50,7 @@ describe("AnthropicSdkAdapter", () => {
     const output = await adapter.execute(baseInput, baseContext);
     expect(output.provider).toBe("official-anthropic-sdk");
     expect(output.model).toBe("claude-haiku-4-5");
-    expect(output.payload["text"]).toBe("hello from anthropic");
+    expect(output.payload).toEqual({ text: "hello from anthropic" });
     expect(output.payload["outputAttempt"]).toBeUndefined();
     expect(capturedSignal).toBe(baseContext.signal);
   });

@@ -50,7 +50,7 @@ describe("OpenAiSdkAdapter", () => {
     const output = await adapter.execute(baseInput, baseContext);
     expect(output.provider).toBe("official-openai-sdk");
     expect(output.model).toBe("gpt-5-nano");
-    expect(output.payload["text"]).toBe("hello from openai");
+    expect(output.payload).toEqual({ text: "hello from openai" });
     expect(output.payload["outputAttempt"]).toBeUndefined();
     expect(capturedSignal).toBe(baseContext.signal);
   });

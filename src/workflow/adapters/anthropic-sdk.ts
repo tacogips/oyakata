@@ -7,6 +7,7 @@ import {
   type AdapterExecutionOutput,
   type NodeAdapter,
 } from "../adapter";
+import { normalizeTextBusinessPayload } from "../json-boundary";
 import {
   executeWithRetry,
   normalizeAdapterFailure,
@@ -56,28 +57,32 @@ function resolveApiKey(config: AnthropicSdkAdapterConfig): string | undefined {
   );
 }
 
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function extractAnthropicText(response: unknown): string {
-  if (!isRecord(response)) {
+  if (
+    typeof response !== "object" ||
+    response === null ||
+    Array.isArray(response)
+  ) {
     return "";
   }
-  const content = response["content"];
+  const content = (response as Record<string, unknown>)["content"];
   if (!Array.isArray(content)) {
     return "";
   }
 
   const segments: string[] = [];
   for (const entry of content) {
-    if (!isRecord(entry)) {
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      Array.isArray(entry)
+    ) {
       continue;
     }
-    if (entry["type"] !== "text") {
+    if ((entry as Record<string, unknown>)["type"] !== "text") {
       continue;
     }
-    const text = entry["text"];
+    const text = (entry as Record<string, unknown>)["text"];
     if (typeof text === "string" && text.length > 0) {
       segments.push(text);
     }
@@ -146,10 +151,7 @@ export class AnthropicSdkAdapter implements NodeAdapter {
         const text = extractAnthropicText(response);
         const payload =
           input.output === undefined
-            ? {
-                text,
-                response: isRecord(response) ? response : {},
-              }
+            ? normalizeTextBusinessPayload(text)
             : parseJsonObjectCandidate(text, "official Anthropic SDK response");
         return {
           provider: "official-anthropic-sdk",
