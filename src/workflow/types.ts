@@ -332,10 +332,10 @@ export const DEFAULT_MAX_LOOP_ITERATIONS = 3;
 export const DEFAULT_NODE_TIMEOUT_MS = 120000;
 export const DEFAULT_CONTAINER_RUNNER_KIND: ContainerRunnerKind = "podman";
 export const DEFAULT_WORKFLOW_ROOT = "./.divedra";
-export const DEFAULT_ROOT_DATA_DIR = "./.divedra-datas";
-export const DEFAULT_RUNTIME_ROOT = DEFAULT_ROOT_DATA_DIR;
-export const DEFAULT_ARTIFACT_ROOT = `${DEFAULT_ROOT_DATA_DIR}/workflow`;
-export const DEFAULT_SESSION_STORE_ROOT = `${DEFAULT_ROOT_DATA_DIR}/sessions`;
-export const DEFAULT_ATTACHMENT_ROOT = `${DEFAULT_ROOT_DATA_DIR}/files`;
+
+/** Subdirectories inside the root data directory (`DIVEDRA_ARTIFACT_DIR` / computed default). */
+export const ROOT_DATA_WORKFLOW_SUBDIR = "workflow";
+export const ROOT_DATA_SESSIONS_SUBDIR = "sessions";
+export const ROOT_DATA_FILES_SUBDIR = "files";
 
 export const NODE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}$/;

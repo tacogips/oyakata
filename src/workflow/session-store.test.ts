@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createSessionState } from "./session";
+import { encodeProjectPathForDivedraScope } from "./paths";
 import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
 
 const tempDirs: string[] = [];
@@ -24,13 +25,32 @@ afterEach(async () => {
 });
 
 describe("session-store", () => {
-  test("uses .divedra-datas as default dynamic session store root", async () => {
+  test("uses ~/.divedra/project/<encoded>/divedra-artifact/sessions when unset", async () => {
     const root = await makeTempDir();
-    const resolved = getSessionStoreRoot({ cwd: root });
-    expect(resolved).toBe(path.join(root, ".divedra-datas", "sessions"));
+    const resolved = getSessionStoreRoot({ cwd: root, env: {} });
+    expect(resolved).toBe(
+      path.join(
+        os.homedir(),
+        ".divedra",
+        "project",
+        encodeProjectPathForDivedraScope(root),
+        "divedra-artifact",
+        "sessions",
+      ),
+    );
   });
 
-  test("derives the session store root from DIVEDRA_ROOT_DATA_DIR", async () => {
+  test("derives the session store root from DIVEDRA_ARTIFACT_DIR", async () => {
+    const resolved = getSessionStoreRoot({
+      cwd: "/tmp/project",
+      env: {
+        DIVEDRA_ARTIFACT_DIR: "env-data",
+      },
+    });
+    expect(resolved).toBe("/tmp/project/env-data/sessions");
+  });
+
+  test("derives the session store root from DIVEDRA_ROOT_DATA_DIR (legacy)", async () => {
     const resolved = getSessionStoreRoot({
       cwd: "/tmp/project",
       env: {

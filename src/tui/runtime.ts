@@ -35,9 +35,18 @@ export interface TuiInteractiveScreenAdapter {
 export function selectTuiRuntimeMode(
   input: TuiRuntimeSelectionInput,
 ): TuiRuntimeSelection {
-  if (input.resumeSessionId !== undefined) {
+  if (input.resumeSessionId !== undefined && !input.isInteractiveTerminal) {
     return {
       mode: "fallback",
+      reason: "resume-session",
+      requiresWorkflowArgument: false,
+      allowsWorkflowSelectionPrompt: false,
+    };
+  }
+
+  if (input.resumeSessionId !== undefined) {
+    return {
+      mode: "interactive",
       reason: "resume-session",
       requiresWorkflowArgument: false,
       allowsWorkflowSelectionPrompt: false,

@@ -58,6 +58,8 @@
           shellHook = ''
             export PLAYWRIGHT_BROWSERS_PATH="${playwrightBrowsers}"
             export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+            # Dev-only: fixed root data dir for this checkout (production default is ~/.divedra/project/<cwd-encoded>/divedra-artifact).
+            export DIVEDRA_ARTIFACT_DIR="/tmp/divedra-artifact-dev"
             echo "TypeScript development environment ready"
             echo "Bun version: $(bun --version)"
             echo "TypeScript version: $(tsc --version)"

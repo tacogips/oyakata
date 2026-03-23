@@ -5,6 +5,35 @@ without copying them into `./.divedra`.
 
 ## Available Examples
 
+### `subworkflow-chained-simple`
+
+Minimal runnable reference for **two plain sub-workflows in one bundle**, where the
+second lane lists `inputSources` with `type: "sub-workflow-output"` and
+`subWorkflowId` pointing at the first lane (same pattern as
+`first-four-arithmetic-pipeline`, but all nodes stay on `claude-code-agent` so
+`workflow run` works with the bundled mock scenario).
+
+Validate it:
+
+```bash
+bun run src/main.ts workflow validate subworkflow-chained-simple --workflow-root ./examples
+```
+
+Inspect it:
+
+```bash
+bun run src/main.ts workflow inspect subworkflow-chained-simple --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run subworkflow-chained-simple \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/subworkflow-chained-simple/mock-scenario.json \
+  --output json
+```
+
 ### `claude-divedra-codex-coding`
 
 Recommended mixed-backend reference:

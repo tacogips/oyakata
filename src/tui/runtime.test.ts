@@ -2,9 +2,21 @@ import { describe, expect, test } from "vitest";
 import { selectTuiRuntimeMode } from "./runtime";
 
 describe("selectTuiRuntimeMode", () => {
-  test("selects fallback mode for resume-session", () => {
+  test("selects interactive mode for resume-session on an interactive terminal", () => {
     const result = selectTuiRuntimeMode({
       isInteractiveTerminal: true,
+      resumeSessionId: "session-123",
+    });
+
+    expect(result.mode).toBe("interactive");
+    expect(result.reason).toBe("resume-session");
+    expect(result.requiresWorkflowArgument).toBe(false);
+    expect(result.allowsWorkflowSelectionPrompt).toBe(false);
+  });
+
+  test("selects fallback mode for resume-session on a non-interactive terminal", () => {
+    const result = selectTuiRuntimeMode({
+      isInteractiveTerminal: false,
       resumeSessionId: "session-123",
     });
 

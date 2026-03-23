@@ -48,6 +48,7 @@
     "codex-agent": "github:tacogips/codex-agent#23cd34cbec18ae10b1868ec154c088b6a2f1c8c1",
     "graphql": "16.13.1",
     "graphql-yoga": "5.18.1",
+    "neo-blessed": "0.2.0",
     "openai": "6.27.0"
   },
   "devDependencies": {

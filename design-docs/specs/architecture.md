@@ -32,9 +32,9 @@ The loader resolves prompt files into effective `promptTemplate` text before val
 
 The runtime persists three distinct forms of state:
 
-- workflow session state in `.divedra-datas/sessions/`
-- node and communication artifacts in `.divedra-datas/workflow/`
-- query-oriented runtime index data in `.divedra-datas/divedra.db`
+- workflow session state in `{DIVEDRA_ARTIFACT_DIR}/sessions/` (default: `~/.divedra/project/<cwd-encoded>/divedra-artifact/sessions/`, where `<cwd-encoded>` joins path segments with `__` and normalizes path-hostile characters to `_`)
+- node and communication artifacts in `{DIVEDRA_ARTIFACT_DIR}/workflow/`
+- query-oriented runtime index data in `{DIVEDRA_ARTIFACT_DIR}/divedra.db`
 
 File artifacts remain the authoritative source for execution payloads. SQLite is a best-effort index for inspection and UI queries.
 

@@ -4,7 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createWorkflowTemplate } from "./create";
 import { loadWorkflowFromDisk } from "./load";
-import { resolveAttachmentRoot, resolveEffectiveRoots } from "./paths";
+import {
+  computeDefaultRootDataDir,
+  encodeProjectPathForDivedraScope,
+  resolveAttachmentRoot,
+  resolveEffectiveRoots,
+} from "./paths";
 
 const tempDirs: string[] = [];
 
@@ -32,6 +37,7 @@ afterEach(async () => {
 
 describe("resolveEffectiveRoots", () => {
   test("uses option > env > default priority", () => {
+    const defaultRoot = computeDefaultRootDataDir("/tmp/project");
     const fromEnv = resolveEffectiveRoots({
       env: {
         DIVEDRA_WORKFLOW_ROOT: "env-workflows",
@@ -41,8 +47,8 @@ describe("resolveEffectiveRoots", () => {
     });
     expect(fromEnv.workflowRoot).toBe("/tmp/project/env-workflows");
     expect(fromEnv.artifactRoot).toBe("/tmp/project/env-artifacts");
-    expect(fromEnv.rootDataDir).toBe("/tmp/project/.divedra-datas");
-    expect(fromEnv.attachmentRoot).toBe("/tmp/project/.divedra-datas/files");
+    expect(fromEnv.rootDataDir).toBe(defaultRoot);
+    expect(fromEnv.attachmentRoot).toBe(path.join(defaultRoot, "files"));
 
     const fromOption = resolveEffectiveRoots({
       workflowRoot: "flag-workflows",
@@ -55,13 +61,13 @@ describe("resolveEffectiveRoots", () => {
     });
     expect(fromOption.workflowRoot).toBe("/tmp/project/flag-workflows");
     expect(fromOption.artifactRoot).toBe("/tmp/project/flag-artifacts");
-    expect(fromOption.rootDataDir).toBe("/tmp/project/.divedra-datas");
+    expect(fromOption.rootDataDir).toBe(defaultRoot);
   });
 
-  test("derives artifact and attachment roots from DIVEDRA_ROOT_DATA_DIR", () => {
+  test("derives artifact and attachment roots from DIVEDRA_ARTIFACT_DIR", () => {
     const resolved = resolveEffectiveRoots({
       env: {
-        DIVEDRA_ROOT_DATA_DIR: "env-data",
+        DIVEDRA_ARTIFACT_DIR: "env-data",
       },
       cwd: "/tmp/project",
     });
@@ -72,11 +78,35 @@ describe("resolveEffectiveRoots", () => {
     expect(
       resolveAttachmentRoot({
         env: {
-          DIVEDRA_ROOT_DATA_DIR: "env-data",
+          DIVEDRA_ARTIFACT_DIR: "env-data",
         },
         cwd: "/tmp/project",
       }),
     ).toBe("/tmp/project/env-data/files");
+  });
+
+  test("derives artifact and attachment roots from DIVEDRA_ROOT_DATA_DIR (legacy)", () => {
+    const resolved = resolveEffectiveRoots({
+      env: {
+        DIVEDRA_ROOT_DATA_DIR: "env-data",
+      },
+      cwd: "/tmp/project",
+    });
+
+    expect(resolved.rootDataDir).toBe("/tmp/project/env-data");
+    expect(resolved.artifactRoot).toBe("/tmp/project/env-data/workflow");
+    expect(resolved.attachmentRoot).toBe("/tmp/project/env-data/files");
+  });
+
+  test("DIVEDRA_ARTIFACT_DIR wins over DIVEDRA_ROOT_DATA_DIR", () => {
+    const resolved = resolveEffectiveRoots({
+      env: {
+        DIVEDRA_ARTIFACT_DIR: "artifact-wins",
+        DIVEDRA_ROOT_DATA_DIR: "root-loses",
+      },
+      cwd: "/tmp/project",
+    });
+    expect(resolved.rootDataDir).toBe("/tmp/project/artifact-wins");
   });
 
   test("accepts DIVEDRA_RUNTIME_ROOT as a compatibility alias", () => {
@@ -89,6 +119,85 @@ describe("resolveEffectiveRoots", () => {
 
     expect(resolved.rootDataDir).toBe("/tmp/project/legacy-data");
     expect(resolved.artifactRoot).toBe("/tmp/project/legacy-data/workflow");
+  });
+
+  test("walks up parent directories to find the nearest .divedra project root", async () => {
+    const root = await makeTempDir();
+    const nestedCwd = path.join(root, "packages", "feature", "src");
+    await mkdir(path.join(root, ".divedra"), { recursive: true });
+    await mkdir(nestedCwd, { recursive: true });
+
+    const resolved = resolveEffectiveRoots({
+      cwd: nestedCwd,
+      env: {},
+    });
+
+    expect(resolved.workflowRoot).toBe(path.join(root, ".divedra"));
+    expect(resolved.rootDataDir).toBe(computeDefaultRootDataDir(nestedCwd));
+    expect(resolved.artifactRoot).toBe(
+      path.join(computeDefaultRootDataDir(nestedCwd), "workflow"),
+    );
+  });
+
+  test("falls back to the current directory when no ancestor has .divedra", async () => {
+    const root = await makeTempDir();
+    const nestedCwd = path.join(root, "packages", "feature", "src");
+    await mkdir(nestedCwd, { recursive: true });
+
+    const resolved = resolveEffectiveRoots({
+      cwd: nestedCwd,
+      env: {},
+    });
+
+    expect(resolved.workflowRoot).toBe(path.join(nestedCwd, ".divedra"));
+    expect(resolved.rootDataDir).toBe(computeDefaultRootDataDir(nestedCwd));
+  });
+
+  test("ignores ancestor .divedra entries that are regular files", async () => {
+    const root = await makeTempDir();
+    const nestedCwd = path.join(root, "packages", "feature", "src");
+    await writeText(path.join(root, ".divedra"), "not-a-directory");
+    await mkdir(nestedCwd, { recursive: true });
+
+    const resolved = resolveEffectiveRoots({
+      cwd: nestedCwd,
+      env: {},
+    });
+
+    expect(resolved.workflowRoot).toBe(path.join(nestedCwd, ".divedra"));
+    expect(resolved.rootDataDir).toBe(computeDefaultRootDataDir(nestedCwd));
+  });
+});
+
+describe("project path encoding for default root data dir", () => {
+  test("encodeProjectPathForDivedraScope joins segments with double underscore", () => {
+    if (process.platform !== "win32") {
+      expect(encodeProjectPathForDivedraScope("/tmp/project")).toBe("tmp__project");
+      expect(encodeProjectPathForDivedraScope("/g/gits/tacogips/divedra")).toBe(
+        "g__gits__tacogips__divedra",
+      );
+    }
+    const nested = path.join(os.tmpdir(), "divedra-encode", "nested");
+    expect(encodeProjectPathForDivedraScope(nested)).toMatch(/divedra-encode__nested$/);
+  });
+
+  test("computeDefaultRootDataDir nests under ~/.divedra/project/.../divedra-artifact", () => {
+    const cwd = path.join(os.tmpdir(), "divedra-default-root-test");
+    expect(computeDefaultRootDataDir(cwd)).toBe(
+      path.join(
+        os.homedir(),
+        ".divedra",
+        "project",
+        encodeProjectPathForDivedraScope(cwd),
+        "divedra-artifact",
+      ),
+    );
+  });
+
+  test("encodeProjectPathForDivedraScope normalizes path-hostile characters", () => {
+    expect(encodeProjectPathForDivedraScope("/tmp/project:feature branch")).toBe(
+      "tmp__project_feature_branch",
+    );
   });
 });
 

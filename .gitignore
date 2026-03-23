@@ -59,5 +59,7 @@ impl-plans/.progress.lock
 .divedra-data/**
 .divedra-opt/
 .divedra-opt/**
+.divedra-artifact/
+.divedra-artifact/**
 .divedra-datas/
 .divedra-datas/**

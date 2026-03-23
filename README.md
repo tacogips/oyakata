@@ -260,10 +260,13 @@ Failure and retry behavior:
 Default runtime roots:
 
 - workflow definitions: `.divedra/`
-- runtime data root: `.divedra-datas/`
-- execution artifacts: `.divedra-datas/workflow/`
-- session store: `.divedra-datas/sessions/`
-- runtime DB: `.divedra-datas/divedra.db`
+- root data directory (`DIVEDRA_ARTIFACT_DIR` when set; otherwise computed): `~/.divedra/project/<encoded-absolute-cwd>/divedra-artifact/`
+  - `<encoded-absolute-cwd>` joins path segments with `__` and normalizes path-hostile characters to `_`
+  - execution artifacts: `{root}/workflow/`
+  - session store: `{root}/sessions/`
+  - attachments: `{root}/files/`
+  - runtime DB: `{root}/divedra.db`
+- this repository’s Nix dev shell sets `DIVEDRA_ARTIFACT_DIR=/tmp/divedra-artifact-dev` as a fixed path for local development
 
 Per-node execution artifacts:
 
@@ -382,6 +385,13 @@ bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root 
 - `divedra tui`
   - terminal UI over the same workflow runtime
 
+Go-task shortcuts:
+
+- `task tui`
+- `task tui -- --workflow <name>`
+- `task tui-examples`
+- `task tui-examples -- --workflow claude-divedra-codex-coding`
+
 ## GraphQL and Browser UI
 
 The local server serves the browser app and exposes `/graphql`.
@@ -420,12 +430,13 @@ import { executeWorkflow, getRuntimeSessionView } from "divedra";
 const run = await executeWorkflow({
   workflowName: "claude-divedra-codex-coding",
   workflowRoot: "./examples",
-  artifactRoot: "./.divedra-datas/workflow",
+  env: process.env,
   runtimeVariables: { humanInput: "Implement the requested change" },
 });
 
 const runtime = await getRuntimeSessionView(run.sessionId, {
   cwd: process.cwd(),
+  env: process.env,
 });
 
 console.log(

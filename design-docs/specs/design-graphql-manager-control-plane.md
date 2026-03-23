@@ -156,8 +156,8 @@ The Divedra root data directory is resolved from environment variable or config.
 
 Design direction:
 
-- introduce `DIVEDRA_ROOT_DATA_DIR` as the canonical root-data setting for derived defaults
-- keep `DIVEDRA_RUNTIME_ROOT` as a migration-period compatibility alias behind `DIVEDRA_ROOT_DATA_DIR`
+- introduce `DIVEDRA_ARTIFACT_DIR` as the canonical root-data setting for derived defaults
+- keep `DIVEDRA_ROOT_DATA_DIR` and `DIVEDRA_RUNTIME_ROOT` as migration-period compatibility aliases behind `DIVEDRA_ARTIFACT_DIR`
 - keep explicit per-surface overrides authoritative for migration compatibility
 - `artifactRoot`, session store paths, attachment paths, and future container-mounted work paths may all be derived from that root when more specific overrides are absent
 
@@ -165,14 +165,14 @@ Precedence:
 
 1. explicit CLI flag for that surface
 2. explicit surface-specific environment variable for that surface
-3. derived path from `DIVEDRA_ROOT_DATA_DIR`
+3. derived path from `DIVEDRA_ARTIFACT_DIR`
 4. built-in default
 
 Initial derived defaults:
 
-- artifact root: `{DIVEDRA_ROOT_DATA_DIR}/workflow`
-- session store root: `{DIVEDRA_ROOT_DATA_DIR}/sessions`
-- attachments root: `{DIVEDRA_ROOT_DATA_DIR}/files`
+- artifact root: `{DIVEDRA_ARTIFACT_DIR}/workflow`
+- session store root: `{DIVEDRA_ARTIFACT_DIR}/sessions`
+- attachments root: `{DIVEDRA_ARTIFACT_DIR}/files`
 
 This keeps file references portable between:
 
@@ -597,7 +597,7 @@ Rules:
 When `sendManagerMessage` includes image or file attachments:
 
 - attachments are represented as `DataDirFileRef`
-- the runtime resolves them against `DIVEDRA_ROOT_DATA_DIR`
+- the runtime resolves them against `DIVEDRA_ARTIFACT_DIR`
 - the resolved file must stay inside the configured data root
 - node execution backends must receive the logical attachment content through runtime-prepared inputs, not by being given host absolute paths directly
 

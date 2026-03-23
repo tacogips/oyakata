@@ -81,7 +81,7 @@
 - Resolution order:
   1. CLI `--artifact-root`
   2. `DIVEDRA_ARTIFACT_ROOT`
-  3. `./.divedra-datas/workflow` (default)
+  3. `{DIVEDRA_ARTIFACT_DIR}/workflow` (default derived from `DIVEDRA_ARTIFACT_DIR` or `~/.divedra/project/<cwd-encoded>/divedra-artifact`)
 - Artifact path format remains `{artifact-root}/{workflow_id}/executions/{workflowExecutionId}/nodes/{node}/{node-exec-id}/`.
 
 6. Prompt authoring policy

@@ -97,6 +97,7 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
+    ...(input.rootDataDir === undefined ? {} : { rootDataDir: input.rootDataDir }),
     ...(input.sessionStoreRoot === undefined
       ? {}
       : { sessionStoreRoot: input.sessionStoreRoot }),
@@ -144,6 +145,7 @@ export async function resumeWorkflow(input: ResumeWorkflowInput): Promise<{
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
+    ...(input.rootDataDir === undefined ? {} : { rootDataDir: input.rootDataDir }),
     ...(input.sessionStoreRoot === undefined
       ? {}
       : { sessionStoreRoot: input.sessionStoreRoot }),
@@ -180,6 +182,7 @@ export async function rerunWorkflow(input: RerunWorkflowInput): Promise<{
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
+    ...(input.rootDataDir === undefined ? {} : { rootDataDir: input.rootDataDir }),
     ...(input.sessionStoreRoot === undefined
       ? {}
       : { sessionStoreRoot: input.sessionStoreRoot }),

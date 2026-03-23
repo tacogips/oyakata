@@ -12,14 +12,24 @@ import { startServe, type StartedServe } from "./server/serve";
 import type { MockNodeScenario } from "./workflow/adapter";
 import { createWorkflowTemplate } from "./workflow/create";
 import { callNode } from "./workflow/call-node";
-import { runWorkflow } from "./workflow/engine";
+import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import { loadWorkflowFromDisk } from "./workflow/load";
 import { resolveEffectiveRoots } from "./workflow/paths";
-import { createSessionId } from "./workflow/session";
+import { createSessionId, type WorkflowSessionState } from "./workflow/session";
 import { buildInspectionSummary } from "./workflow/inspect";
 import { loadSession } from "./workflow/session-store";
 import { selectTuiRuntimeMode } from "./tui/runtime";
-import { renderNeoBlessedWorkflowSelector } from "./tui/neo-blessed-screen";
+import {
+  type NeoBlessedWorkflowActionResult,
+  renderNeoBlessedWorkflowSelector,
+  runNeoBlessedWorkflowApp,
+} from "./tui/neo-blessed-screen";
+import {
+  listRuntimeNodeExecutions,
+  listRuntimeNodeLogs,
+  listRuntimeSessions,
+} from "./workflow/runtime-db";
+import { createManagerSessionStore } from "./workflow/manager-session-store";
 
 export interface CliIo {
   readonly stdout: (line: string) => void;
@@ -42,6 +52,8 @@ export interface CliDependencies {
   readonly waitForServeShutdown?: (started: StartedServe) => Promise<void>;
   readonly fetchImpl?: typeof fetch;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly renderNeoBlessedWorkflowSelector?: typeof renderNeoBlessedWorkflowSelector;
+  readonly runNeoBlessedWorkflowApp?: typeof runNeoBlessedWorkflowApp;
 }
 
 interface ParsedOptions {
@@ -417,6 +429,58 @@ async function readMockScenarioOption(
   };
 }
 
+export function shouldFallbackFromNeoBlessedError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const normalized = error.message.toLowerCase();
+  return (
+    normalized.includes("cannot find package 'neo-blessed'") ||
+    normalized.includes('cannot find module "neo-blessed"') ||
+    normalized.includes("cannot find module 'neo-blessed'") ||
+    normalized.includes("neo-blessed textarea/textbox widget is unavailable")
+  );
+}
+
+export function resolveTuiStartupSelection(input: {
+  readonly requestedWorkflowName?: string;
+  readonly resumeSession?: Pick<
+    WorkflowSessionState,
+    "sessionId" | "workflowName"
+  >;
+}):
+  | {
+      readonly ok: true;
+      readonly initialSessionId?: string;
+      readonly initialWorkflowName?: string;
+    }
+  | { readonly ok: false; readonly message: string } {
+  if (input.resumeSession === undefined) {
+    return {
+      ok: true,
+      ...(input.requestedWorkflowName === undefined
+        ? {}
+        : { initialWorkflowName: input.requestedWorkflowName }),
+    };
+  }
+  if (
+    input.requestedWorkflowName !== undefined &&
+    input.requestedWorkflowName !== input.resumeSession.workflowName
+  ) {
+    return {
+      ok: false,
+      message:
+        `resume session '${input.resumeSession.sessionId}' belongs to workflow ` +
+        `'${input.resumeSession.workflowName}', not '${input.requestedWorkflowName}'`,
+    };
+  }
+  return {
+    ok: true,
+    initialSessionId: input.resumeSession.sessionId,
+    initialWorkflowName: input.resumeSession.workflowName,
+  };
+}
+
 function emitJson(io: CliIo, payload: unknown): void {
   io.stdout(JSON.stringify(payload, null, 2));
 }
@@ -437,30 +501,21 @@ function requireObjectField(
   return value;
 }
 
-function requireStringField(
-  value: unknown,
-  label: string,
-): string {
+function requireStringField(value: unknown, label: string): string {
   if (typeof value !== "string") {
     throw new Error(`${label} must be a string`);
   }
   return value;
 }
 
-function requireNumberField(
-  value: unknown,
-  label: string,
-): number {
+function requireNumberField(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${label} must be a finite number`);
   }
   return value;
 }
 
-function requireArrayField(
-  value: unknown,
-  label: string,
-): readonly unknown[] {
+function requireArrayField(value: unknown, label: string): readonly unknown[] {
   if (!Array.isArray(value)) {
     throw new Error(`${label} must be an array`);
   }
@@ -503,9 +558,7 @@ function readGraphqlExecutionPayload(
   response: GraphqlClientResponse,
 ): Readonly<Record<string, unknown>> {
   if (response.errors !== undefined && response.errors.length > 0) {
-    throw new Error(
-      response.errors.map((entry) => entry.message).join("; "),
-    );
+    throw new Error(response.errors.map((entry) => entry.message).join("; "));
   }
   if (!isJsonObjectRecord(response.data)) {
     throw new Error("GraphQL response data must be a JSON object");
@@ -535,7 +588,9 @@ async function executeCliGraphqlOperation(args: {
   return readGraphqlExecutionPayload(response);
 }
 
-function buildRemoteExecutionInput(parsedOptions: ParsedOptions): Readonly<Record<string, unknown>> {
+function buildRemoteExecutionInput(
+  parsedOptions: ParsedOptions,
+): Readonly<Record<string, unknown>> {
   return {
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
     ...(parsedOptions.maxSteps === undefined
@@ -624,6 +679,26 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function buildLocalWorkflowRunOverrides(
+  parsedOptions: ParsedOptions,
+): Pick<
+  WorkflowRunOptions,
+  "defaultTimeoutMs" | "dryRun" | "maxLoopIterations" | "maxSteps"
+> {
+  return {
+    ...(parsedOptions.maxSteps === undefined
+      ? {}
+      : { maxSteps: parsedOptions.maxSteps }),
+    ...(parsedOptions.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: parsedOptions.maxLoopIterations }),
+    ...(parsedOptions.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
+    ...(parsedOptions.dryRun ? { dryRun: true } : {}),
+  };
+}
+
 async function listWorkflowNames(options: {
   workflowRoot?: string;
   artifactRoot?: string;
@@ -695,16 +770,7 @@ async function runTui(
       runtimeVariables,
       ...(mockScenario === undefined ? {} : { mockScenario }),
       ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
-      ...(parsedOptions.maxSteps === undefined
-        ? {}
-        : { maxSteps: parsedOptions.maxSteps }),
-      ...(parsedOptions.maxLoopIterations === undefined
-        ? {}
-        : { maxLoopIterations: parsedOptions.maxLoopIterations }),
-      ...(parsedOptions.defaultTimeoutMs === undefined
-        ? {}
-        : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
-      ...(parsedOptions.dryRun ? { dryRun: true } : {}),
+      ...buildLocalWorkflowRunOverrides(parsedOptions),
     });
 
     let terminal = false;
@@ -744,6 +810,66 @@ async function runTui(
     return result.value.exitCode;
   };
 
+  const resolveTuiMockScenario = async (
+    workflowName: string,
+  ): Promise<MockNodeScenario | undefined> => {
+    if (parsedOptions.mockScenarioPath !== undefined) {
+      return readMockScenario(parsedOptions.mockScenarioPath);
+    }
+    const loaded = await loadWorkflowFromDisk(workflowName, sharedOptions);
+    if (!loaded.ok) {
+      throw new Error(loaded.error.message);
+    }
+    const defaultScenarioPath = path.join(
+      loaded.value.workflowDirectory,
+      "mock-scenario.json",
+    );
+    try {
+      await stat(defaultScenarioPath);
+      return readMockScenario(defaultScenarioPath);
+    } catch {
+      return undefined;
+    }
+  };
+  const runLocalTuiWorkflow = async (input: {
+    readonly workflowName: string;
+    readonly runtimeVariables: Readonly<Record<string, unknown>>;
+    readonly rerunFromNodeId?: string;
+    readonly rerunFromSessionId?: string;
+    readonly resumeSessionId?: string;
+    readonly sessionId?: string;
+  }): Promise<NeoBlessedWorkflowActionResult> => {
+    const mockScenario = await resolveTuiMockScenario(input.workflowName);
+    const result = await runWorkflow(input.workflowName, {
+      ...sharedOptions,
+      ...buildLocalWorkflowRunOverrides(parsedOptions),
+      ...(mockScenario === undefined ? {} : { mockScenario }),
+      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
+      ...(input.resumeSessionId === undefined
+        ? {}
+        : { resumeSessionId: input.resumeSessionId }),
+      ...(input.rerunFromSessionId === undefined
+        ? {}
+        : { rerunFromSessionId: input.rerunFromSessionId }),
+      ...(input.rerunFromNodeId === undefined
+        ? {}
+        : { rerunFromNodeId: input.rerunFromNodeId }),
+      runtimeVariables: input.runtimeVariables,
+    });
+    if (!result.ok) {
+      throw new Error(result.error.message);
+    }
+    return {
+      sessionId: result.value.session.sessionId,
+      status: result.value.session.status,
+      exitCode: result.value.exitCode,
+    };
+  };
+  const renderNeoBlessedWorkflowSelectorImpl =
+    deps.renderNeoBlessedWorkflowSelector ?? renderNeoBlessedWorkflowSelector;
+  const runNeoBlessedWorkflowAppImpl =
+    deps.runNeoBlessedWorkflowApp ?? runNeoBlessedWorkflowApp;
+
   try {
     const runtimeSelection = selectTuiRuntimeMode({
       isInteractiveTerminal: deps.isInteractiveTerminal(),
@@ -754,40 +880,69 @@ async function runTui(
           }),
     });
 
+    let resumeSession: WorkflowSessionState | undefined;
     if (parsedOptions.resumeSessionId !== undefined) {
-      const session = await loadSession(
+      const loadedResumeSession = await loadSession(
         parsedOptions.resumeSessionId,
         sharedOptions,
       );
-      if (!session.ok) {
-        io.stderr(`failed to load resume session: ${session.error.message}`);
+      if (!loadedResumeSession.ok) {
+        io.stderr(
+          `failed to load resume session: ${loadedResumeSession.error.message}`,
+        );
         return 1;
       }
-      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> =
-        {};
+      resumeSession = loadedResumeSession.value;
+    }
+
+    const startupSelection = resolveTuiStartupSelection({
+      ...(workflowNameOrUndefined === undefined
+        ? {}
+        : { requestedWorkflowName: workflowNameOrUndefined }),
+      ...(resumeSession === undefined ? {} : { resumeSession }),
+    });
+    if (!startupSelection.ok) {
+      io.stderr(startupSelection.message);
+      return 2;
+    }
+
+    const runResumeSessionFallback = async (): Promise<number> => {
+      if (resumeSession === undefined) {
+        throw new Error("resume session fallback requested without a session");
+      }
       try {
-        mockScenarioOptions = await readMockScenarioOption(
-          parsedOptions.mockScenarioPath,
+        return runAndReportProgress(
+          resumeSession.workflowName,
+          {
+            ...resumeSession.runtimeVariables,
+            ...optionRuntimeVariables,
+            resumedFromSessionId: resumeSession.sessionId,
+          },
+          await resolveTuiMockScenario(resumeSession.workflowName),
+          resumeSession.sessionId,
         );
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "unknown error";
-        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        io.stderr(`failed to resolve mock scenario: ${message}`);
         return 1;
       }
-      return runAndReportProgress(
-        session.value.workflowName,
-        {
-          ...session.value.runtimeVariables,
-          ...optionRuntimeVariables,
-          resumedFromSessionId: session.value.sessionId,
-        },
-        mockScenarioOptions.mockScenario,
-        session.value.sessionId,
-      );
+    };
+
+    if (resumeSession !== undefined && runtimeSelection.mode === "fallback") {
+      return runResumeSessionFallback();
     }
 
     const workflowNames = await listWorkflowNames(sharedOptions);
+    if (
+      resumeSession !== undefined &&
+      !workflowNames.includes(resumeSession.workflowName)
+    ) {
+      io.stderr(
+        `workflow '${resumeSession.workflowName}' for resume session is unavailable in workflow root; falling back to direct resume flow`,
+      );
+      return runResumeSessionFallback();
+    }
     if (workflowNames.length === 0) {
       io.stderr("no workflows found");
       return 1;
@@ -810,8 +965,13 @@ async function runTui(
         return 1;
       }
       let mockScenario: MockNodeScenario | undefined;
-      if (parsedOptions.mockScenarioPath !== undefined) {
-        mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
+      try {
+        mockScenario = await resolveTuiMockScenario(workflowNameOrUndefined);
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to resolve mock scenario: ${message}`);
+        return 1;
       }
       io.stdout("using promptless fallback mode");
       return runAndReportProgress(
@@ -822,119 +982,233 @@ async function runTui(
       );
     }
 
-    let workflowName = workflowNameOrUndefined;
-    if (
-      workflowName === undefined &&
-      runtimeSelection.allowsWorkflowSelectionPrompt
-    ) {
-      try {
-        const selected = await renderNeoBlessedWorkflowSelector({
-          workflowNames,
-          refreshWorkflowNames: async () => listWorkflowNames(sharedOptions),
-          io,
-        });
-        if (selected.type === "quit") {
-          io.stdout("tui cancelled");
-          return 130;
-        }
-        workflowName = selected.workflowName;
-      } catch {
-        io.stderr(
-          "neo-blessed selector unavailable; falling back to readline workflow selection",
-        );
-      }
-    }
-
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
     try {
-      if (workflowName === undefined) {
-        io.stdout("Select workflow:");
-        workflowNames.forEach((name, index) => {
-          io.stdout(`  ${String(index + 1)}. ${name}`);
-        });
-        const selectedRaw = await rl.question("Workflow number: ");
-        const selectedIndex = Number(selectedRaw);
-        if (
-          !Number.isFinite(selectedIndex) ||
-          selectedIndex < 1 ||
-          selectedIndex > workflowNames.length
-        ) {
-          io.stderr("invalid workflow selection");
-          return 2;
-        }
-        workflowName = workflowNames[selectedIndex - 1];
-      }
-
-      if (workflowName === undefined || !workflowNames.includes(workflowName)) {
-        io.stderr(`workflow not found: ${workflowName ?? "(empty)"}`);
-        return 1;
-      }
-
-      const userPrompt = await rl.question("Prompt: ");
-      const customVariablesRaw = await rl.question(
-        "Additional runtime variables JSON (optional): ",
-      );
-      let runtimeVariables: Readonly<Record<string, unknown>> = {
-        ...optionRuntimeVariables,
-        userPrompt,
-        prompt: userPrompt,
-      };
-      if (customVariablesRaw.trim().length > 0) {
-        const parsed = JSON.parse(customVariablesRaw) as unknown;
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          Array.isArray(parsed)
-        ) {
-          io.stderr("additional runtime variables must be a JSON object");
-          return 2;
-        }
-        runtimeVariables = {
-          ...runtimeVariables,
-          ...(parsed as Record<string, unknown>),
-        };
-      }
-
-      let mockScenario: MockNodeScenario | undefined;
-      if (parsedOptions.mockScenarioPath !== undefined) {
-        mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
-      } else {
-        const loaded = await loadWorkflowFromDisk(workflowName, sharedOptions);
-        if (!loaded.ok) {
-          io.stderr(loaded.error.message);
-          return loaded.error.code === "VALIDATION" ||
-            loaded.error.code === "INVALID_WORKFLOW_NAME"
-            ? 2
-            : 1;
-        }
-        const defaultScenarioPath = path.join(
-          loaded.value.workflowDirectory,
-          "mock-scenario.json",
-        );
-        try {
-          await stat(defaultScenarioPath);
-          const useScenarioAnswer = await rl.question(
-            `Use mock scenario file at ${defaultScenarioPath}? [Y/n]: `,
+      return await runNeoBlessedWorkflowAppImpl({
+        ...(startupSelection.initialWorkflowName === undefined
+          ? {}
+          : { initialWorkflowName: startupSelection.initialWorkflowName }),
+        ...(startupSelection.initialSessionId === undefined
+          ? {}
+          : { initialSessionId: startupSelection.initialSessionId }),
+        io,
+        workflowNames,
+        refreshWorkflowNames: async () => listWorkflowNames(sharedOptions),
+        loadWorkflowDefinition: async (workflowName) => {
+          const loaded = await loadWorkflowFromDisk(
+            workflowName,
+            sharedOptions,
           );
-          if (useScenarioAnswer.trim().toLowerCase() !== "n") {
-            mockScenario = await readMockScenario(defaultScenarioPath);
+          if (!loaded.ok) {
+            throw new Error(loaded.error.message);
           }
-        } catch {
-          // default scenario does not exist
+          return loaded.value;
+        },
+        listWorkflowSessions: async (workflowName) =>
+          (await listRuntimeSessions(sharedOptions)).filter(
+            (session) => session.workflowName === workflowName,
+          ),
+        loadRuntimeSessionView: async (sessionId) => {
+          const loaded = await loadSession(sessionId, sharedOptions);
+          if (!loaded.ok) {
+            throw new Error(loaded.error.message);
+          }
+          const [nodeExecutions, nodeLogs] = await Promise.all([
+            listRuntimeNodeExecutions(sessionId, sharedOptions),
+            listRuntimeNodeLogs(sessionId, sharedOptions),
+          ]);
+          return {
+            session: loaded.value,
+            nodeExecutions,
+            nodeLogs,
+          };
+        },
+        loadManagerSessionMessages: async (managerSessionId) =>
+          createManagerSessionStore(sharedOptions).listMessages(
+            managerSessionId,
+          ),
+        executeWorkflow: async ({ workflowName, runtimeVariables }) => {
+          return runLocalTuiWorkflow({
+            workflowName,
+            sessionId: createSessionId(),
+            runtimeVariables: {
+              ...optionRuntimeVariables,
+              ...runtimeVariables,
+            },
+          });
+        },
+        rerunWorkflow: async ({
+          sourceSessionId,
+          fromNodeId,
+          runtimeVariables,
+        }) => {
+          const source = await loadSession(sourceSessionId, sharedOptions);
+          if (!source.ok) {
+            throw new Error(source.error.message);
+          }
+          return runLocalTuiWorkflow({
+            workflowName: source.value.workflowName,
+            rerunFromSessionId: source.value.sessionId,
+            rerunFromNodeId: fromNodeId,
+            runtimeVariables: {
+              ...optionRuntimeVariables,
+              ...runtimeVariables,
+            },
+          });
+        },
+        resumeWorkflow: async (sessionId) => {
+          const session = await loadSession(sessionId, sharedOptions);
+          if (!session.ok) {
+            throw new Error(session.error.message);
+          }
+          return runLocalTuiWorkflow({
+            workflowName: session.value.workflowName,
+            resumeSessionId: session.value.sessionId,
+            runtimeVariables: optionRuntimeVariables,
+          });
+        },
+      });
+    } catch (error: unknown) {
+      if (!shouldFallbackFromNeoBlessedError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "unknown error";
+      io.stderr(
+        `neo-blessed TUI unavailable (${message}); falling back to readline workflow selection`,
+      );
+      if (resumeSession !== undefined) {
+        io.stderr(
+          `resume session '${resumeSession.sessionId}' will use direct resume fallback`,
+        );
+        return runResumeSessionFallback();
+      }
+      let workflowName = startupSelection.initialWorkflowName;
+      if (
+        workflowName === undefined &&
+        runtimeSelection.allowsWorkflowSelectionPrompt
+      ) {
+        try {
+          const selected = await renderNeoBlessedWorkflowSelectorImpl({
+            workflowNames,
+            refreshWorkflowNames: async () => listWorkflowNames(sharedOptions),
+            io,
+          });
+          if (selected.type === "quit") {
+            io.stdout("tui cancelled");
+            return 130;
+          }
+          workflowName = selected.workflowName;
+        } catch (selectorError: unknown) {
+          if (!shouldFallbackFromNeoBlessedError(selectorError)) {
+            throw selectorError;
+          }
+          const selectorMessage =
+            selectorError instanceof Error
+              ? selectorError.message
+              : "unknown error";
+          io.stderr(
+            `neo-blessed selector unavailable (${selectorMessage}); falling back to readline workflow selection`,
+          );
         }
       }
 
-      return runAndReportProgress(
-        workflowName,
-        runtimeVariables,
-        mockScenario,
-        undefined,
-      );
-    } finally {
-      rl.close();
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+      try {
+        if (workflowName === undefined) {
+          io.stdout("Select workflow:");
+          workflowNames.forEach((name, index) => {
+            io.stdout(`  ${String(index + 1)}. ${name}`);
+          });
+          const selectedRaw = await rl.question("Workflow number: ");
+          const selectedIndex = Number(selectedRaw);
+          if (
+            !Number.isFinite(selectedIndex) ||
+            selectedIndex < 1 ||
+            selectedIndex > workflowNames.length
+          ) {
+            io.stderr("invalid workflow selection");
+            return 2;
+          }
+          workflowName = workflowNames[selectedIndex - 1];
+        }
+
+        if (
+          workflowName === undefined ||
+          !workflowNames.includes(workflowName)
+        ) {
+          io.stderr(`workflow not found: ${workflowName ?? "(empty)"}`);
+          return 1;
+        }
+
+        const userPrompt = await rl.question("Prompt: ");
+        const customVariablesRaw = await rl.question(
+          "Additional runtime variables JSON (optional): ",
+        );
+        let runtimeVariables: Readonly<Record<string, unknown>> = {
+          ...optionRuntimeVariables,
+          humanInput: userPrompt,
+          userPrompt,
+          prompt: userPrompt,
+        };
+        if (customVariablesRaw.trim().length > 0) {
+          const parsed = JSON.parse(customVariablesRaw) as unknown;
+          if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            Array.isArray(parsed)
+          ) {
+            io.stderr("additional runtime variables must be a JSON object");
+            return 2;
+          }
+          runtimeVariables = {
+            ...runtimeVariables,
+            ...(parsed as Record<string, unknown>),
+          };
+        }
+
+        let mockScenario: MockNodeScenario | undefined;
+        if (parsedOptions.mockScenarioPath !== undefined) {
+          mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
+        } else {
+          const loaded = await loadWorkflowFromDisk(
+            workflowName,
+            sharedOptions,
+          );
+          if (!loaded.ok) {
+            io.stderr(loaded.error.message);
+            return loaded.error.code === "VALIDATION" ||
+              loaded.error.code === "INVALID_WORKFLOW_NAME"
+              ? 2
+              : 1;
+          }
+          const defaultScenarioPath = path.join(
+            loaded.value.workflowDirectory,
+            "mock-scenario.json",
+          );
+          try {
+            await stat(defaultScenarioPath);
+            const useScenarioAnswer = await rl.question(
+              `Use mock scenario file at ${defaultScenarioPath}? [Y/n]: `,
+            );
+            if (useScenarioAnswer.trim().toLowerCase() !== "n") {
+              mockScenario = await readMockScenario(defaultScenarioPath);
+            }
+          } catch {
+            // default scenario does not exist
+          }
+        }
+
+        return runAndReportProgress(
+          workflowName,
+          runtimeVariables,
+          mockScenario,
+          undefined,
+        );
+      } finally {
+        rl.close();
+      }
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
@@ -1144,8 +1418,7 @@ export async function runCli(
       return 1;
     }
 
-    let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> =
-      {};
+    let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
     try {
       mockScenarioOptions = await readMockScenarioOption(
         parsed.options.mockScenarioPath,

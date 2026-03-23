@@ -8,7 +8,7 @@ import {
 } from "./session";
 import { resolveRootDataDir } from "./paths";
 import { saveSessionSnapshotToRuntimeDb } from "./runtime-db";
-import { type LoadOptions } from "./types";
+import { ROOT_DATA_SESSIONS_SUBDIR, type LoadOptions } from "./types";
 
 export interface SessionStoreOptions extends LoadOptions {
   readonly sessionStoreRoot?: string;
@@ -34,7 +34,7 @@ function resolveSessionStoreRoot(options: SessionStoreOptions = {}): string {
       : path.resolve(options.cwd ?? process.cwd(), envRoot);
   }
 
-  return path.join(resolveRootDataDir(options), "sessions");
+  return path.join(resolveRootDataDir(options), ROOT_DATA_SESSIONS_SUBDIR);
 }
 
 function sessionFilePath(sessionStoreRoot: string, sessionId: string): string {

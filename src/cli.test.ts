@@ -1,8 +1,19 @@
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { runCli } from "./cli";
+import {
+  resolveTuiStartupSelection,
+  runCli,
+  shouldFallbackFromNeoBlessedError,
+} from "./cli";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
 
@@ -87,10 +98,7 @@ async function writeRuntimeVariablesFile(
   return filePath;
 }
 
-async function writeJson(
-  filePath: string,
-  payload: unknown,
-): Promise<void> {
+async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
@@ -157,6 +165,60 @@ async function createCallNodeFixture(
 }
 
 describe("runCli", () => {
+  test("resolveTuiStartupSelection aligns interactive resume with the session workflow", () => {
+    expect(
+      resolveTuiStartupSelection({
+        requestedWorkflowName: "demo",
+        resumeSession: {
+          sessionId: "session-123",
+          workflowName: "demo",
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      initialSessionId: "session-123",
+      initialWorkflowName: "demo",
+    });
+  });
+
+  test("resolveTuiStartupSelection rejects conflicting workflow and resume-session inputs", () => {
+    expect(
+      resolveTuiStartupSelection({
+        requestedWorkflowName: "other",
+        resumeSession: {
+          sessionId: "session-123",
+          workflowName: "demo",
+        },
+      }),
+    ).toEqual({
+      ok: false,
+      message:
+        "resume session 'session-123' belongs to workflow 'demo', not 'other'",
+    });
+  });
+
+  test("shouldFallbackFromNeoBlessedError only matches neo-blessed availability failures", () => {
+    expect(
+      shouldFallbackFromNeoBlessedError(
+        new Error("Cannot find package 'neo-blessed' imported from src/tui"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromNeoBlessedError(
+        new Error("neo-blessed textarea/textbox widget is unavailable"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromNeoBlessedError(
+        new Error("neo-blessed screen render failed after app startup"),
+      ),
+    ).toBe(false);
+    expect(
+      shouldFallbackFromNeoBlessedError(new Error("workflow load failed")),
+    ).toBe(false);
+    expect(shouldFallbackFromNeoBlessedError("neo-blessed")).toBe(false);
+  });
+
   test("returns help for unknown scope", async () => {
     const capture = createIoCapture();
     const code = await runCli(["unknown", "cmd", "target"], capture.io);
@@ -245,7 +307,10 @@ describe("runCli", () => {
     expect(payload.output.payload.summary).toBe("cli ok");
 
     const inputJson = JSON.parse(
-      await readFile(path.join(payload.outputRef.artifactDir, "input.json"), "utf8"),
+      await readFile(
+        path.join(payload.outputRef.artifactDir, "input.json"),
+        "utf8",
+      ),
     ) as { managerMessage?: { instruction?: string } };
     expect(inputJson.managerMessage?.instruction).toBe("review this change");
   });
@@ -537,9 +602,11 @@ describe("runCli", () => {
         isInteractiveTerminal: () => true,
         fetchImpl: async (input, init) => {
           requestedUrl = String(input);
-          requestedAuthorization = new Headers(init?.headers).get("authorization") ?? "";
+          requestedAuthorization =
+            new Headers(init?.headers).get("authorization") ?? "";
           requestedManagerSessionId =
-            new Headers(init?.headers).get("x-divedra-manager-session-id") ?? "";
+            new Headers(init?.headers).get("x-divedra-manager-session-id") ??
+            "";
           requestedBody = typeof init?.body === "string" ? init.body : "";
           return createJsonResponse({
             data: {
@@ -646,7 +713,10 @@ describe("runCli", () => {
                   workflowId: "demo",
                   transitions: [{ at: "2026-03-15T00:00:00.000Z" }],
                 },
-                nodeExecutions: [{ nodeExecId: "exec-1" }, { nodeExecId: "exec-2" }],
+                nodeExecutions: [
+                  { nodeExecId: "exec-1" },
+                  { nodeExecId: "exec-2" },
+                ],
               },
             },
           });
@@ -1198,6 +1268,210 @@ describe("runCli", () => {
     expect(resumeCode).toBe(1);
     expect(resumeCapture.stderr.join("\n")).not.toContain("no workflows found");
     expect(resumeCapture.stderr.join("\n")).toContain("run failed:");
+  });
+
+  test("interactive tui resume-session falls back to direct resume when neo-blessed is unavailable", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
+      "utf8",
+    );
+
+    expect(
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
+    ).toBe(0);
+
+    const firstRunCapture = createIoCapture();
+    expect(
+      await runCli(
+        [
+          "tui",
+          "demo",
+          "--workflow-root",
+          root,
+          "--artifact-root",
+          artifactsRoot,
+          "--session-store",
+          sessionsRoot,
+          "--mock-scenario",
+          scenarioPath,
+          "--variables",
+          variablesPath,
+          "--max-steps",
+          "1",
+        ],
+        firstRunCapture.io,
+        {
+          startServe: async () => ({
+            host: "127.0.0.1",
+            port: 7777,
+            stop: () => {},
+          }),
+          openBrowserUrl: async () => {},
+          isInteractiveTerminal: () => false,
+        },
+      ),
+    ).toBe(4);
+
+    const sessionId = firstRunCapture.stdout
+      .find((line) => line.startsWith("sessionId: "))
+      ?.replace("sessionId: ", "");
+    expect(sessionId).toBeDefined();
+
+    const resumeCapture = createIoCapture();
+    const resumeCode = await runCli(
+      [
+        "tui",
+        "--resume-session",
+        sessionId ?? "",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
+      ],
+      resumeCapture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        runNeoBlessedWorkflowApp: async () => {
+          throw new Error(
+            "Cannot find package 'neo-blessed' imported from src/tui",
+          );
+        },
+      },
+    );
+
+    expect(resumeCode).toBe(0);
+    expect(resumeCapture.stderr.join("\n")).toContain(
+      "falling back to readline workflow selection",
+    );
+    expect(resumeCapture.stderr.join("\n")).toContain(
+      "will use direct resume fallback",
+    );
+    expect(resumeCapture.stdout.join("\n")).toContain("Resuming session");
+    expect(resumeCapture.stdout.join("\n")).toContain("status: completed");
+  });
+
+  test("interactive tui resume-session fallback still uses workflow-local mock-scenario.json", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    const workflowScenarioPath = path.join(root, "demo", "mock-scenario.json");
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
+      "utf8",
+    );
+
+    expect(
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
+    ).toBe(0);
+    await writeJson(workflowScenarioPath, makeDefaultTemplateScenario());
+
+    const firstRunCapture = createIoCapture();
+    expect(
+      await runCli(
+        [
+          "tui",
+          "demo",
+          "--workflow-root",
+          root,
+          "--artifact-root",
+          artifactsRoot,
+          "--session-store",
+          sessionsRoot,
+          "--mock-scenario",
+          scenarioPath,
+          "--variables",
+          variablesPath,
+          "--max-steps",
+          "1",
+        ],
+        firstRunCapture.io,
+        {
+          startServe: async () => ({
+            host: "127.0.0.1",
+            port: 7777,
+            stop: () => {},
+          }),
+          openBrowserUrl: async () => {},
+          isInteractiveTerminal: () => false,
+        },
+      ),
+    ).toBe(4);
+
+    const sessionId = firstRunCapture.stdout
+      .find((line) => line.startsWith("sessionId: "))
+      ?.replace("sessionId: ", "");
+    expect(sessionId).toBeDefined();
+
+    const resumeCapture = createIoCapture();
+    const resumeCode = await runCli(
+      [
+        "tui",
+        "--resume-session",
+        sessionId ?? "",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+      ],
+      resumeCapture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
+        openBrowserUrl: async () => {},
+        isInteractiveTerminal: () => true,
+        runNeoBlessedWorkflowApp: async () => {
+          throw new Error(
+            "Cannot find package 'neo-blessed' imported from src/tui",
+          );
+        },
+      },
+    );
+
+    expect(resumeCode).toBe(0);
+    expect(resumeCapture.stdout.join("\n")).toContain("Resuming session");
+    expect(resumeCapture.stdout.join("\n")).toContain("status: completed");
   });
 
   test("tui supports --workflow option in non-interactive mode", async () => {
