@@ -14,59 +14,17 @@ import type {
   RuntimeSessionSummary,
 } from "../workflow/runtime-db";
 import type { ArgumentBinding, NodePayload } from "../workflow/types";
-
-interface BlessedNode {
-  key: (
-    keys: string | readonly string[],
-    handler: () => void | Promise<void>,
-  ) => void;
-}
-
-interface BlessedElement extends BlessedNode {
-  focus?: () => void;
-  hide?: () => void;
-  setContent?: (content: string) => void;
-  setLabel?: (label: string) => void;
-  show?: () => void;
-}
-
-interface BlessedScreen extends BlessedElement {
-  append: (node: BlessedNode) => void;
-  destroy: () => void;
-  render: () => void;
-}
-
-interface BlessedBox extends BlessedElement {
-  getScroll?: () => number;
-  scrollTo?: (offset: number) => void;
-}
-
-interface BlessedList extends BlessedBox {
-  clearItems?: () => void;
-  down: (step: number) => void;
-  getItemIndex: (item: unknown) => number;
-  move?: (offset: number) => void;
-  select: (index: number) => void;
-  selected?: unknown;
-  setItems: (items: readonly string[]) => void;
-  up: (step: number) => void;
-}
-
-interface BlessedTextarea extends BlessedBox {
-  getValue: () => string;
-  readInput: (
-    callback: (error: unknown, value?: string) => void,
-  ) => void | Promise<void>;
-  setValue: (value: string) => void;
-}
-
-interface BlessedFactory {
-  box: (options: Record<string, unknown>) => BlessedBox;
-  list: (options: Record<string, unknown>) => BlessedList;
-  screen: (options: Record<string, unknown>) => BlessedScreen;
-  textarea?: (options: Record<string, unknown>) => BlessedTextarea;
-  textbox?: (options: Record<string, unknown>) => BlessedTextarea;
-}
+import {
+  BoxRenderable,
+  createCliRenderer,
+  KeyEvent,
+  ScrollBoxRenderable,
+  SelectRenderable,
+  SelectRenderableEvents,
+  TextareaRenderable,
+  TextRenderable,
+  type SelectOption,
+} from "@opentui/core";
 
 interface RuntimeSessionView {
   readonly session: WorkflowSessionState;
@@ -81,18 +39,18 @@ export interface TuiWorkflowInputDetection {
   readonly reason: string;
 }
 
-export interface NeoBlessedWorkflowSelection {
+export interface OpenTuiWorkflowSelection {
   readonly type: "selected" | "quit";
   readonly workflowName?: string;
 }
 
-export interface NeoBlessedWorkflowActionResult {
+export interface OpenTuiWorkflowActionResult {
   readonly exitCode: number;
   readonly sessionId: string;
   readonly status: WorkflowSessionState["status"];
 }
 
-export interface NeoBlessedWorkflowAppOptions {
+export interface OpenTuiWorkflowAppOptions {
   readonly initialWorkflowName?: string;
   readonly initialSessionId?: string;
   readonly io: CliIo;
@@ -111,19 +69,20 @@ export interface NeoBlessedWorkflowAppOptions {
   readonly executeWorkflow: (input: {
     readonly workflowName: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
-  }) => Promise<NeoBlessedWorkflowActionResult>;
+  }) => Promise<OpenTuiWorkflowActionResult>;
   readonly rerunWorkflow: (input: {
     readonly sourceSessionId: string;
     readonly fromNodeId: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
-  }) => Promise<NeoBlessedWorkflowActionResult>;
+  }) => Promise<OpenTuiWorkflowActionResult>;
   readonly resumeWorkflow: (
     sessionId: string,
-  ) => Promise<NeoBlessedWorkflowActionResult>;
+  ) => Promise<OpenTuiWorkflowActionResult>;
 }
 
 type FocusPane = "input" | "nodes" | "sessions" | "workflows";
 type DetailMode = "inbox" | "manager" | "outbox" | "session-logs" | "summary";
+type ShortcutKeyEvent = Pick<KeyEvent, "ctrl" | "meta" | "name" | "shift">;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -150,24 +109,19 @@ function summarizeLines(value: string | null, maxLength = 600): string {
   return truncate(value.trim().length === 0 ? "(empty)" : value.trim(), maxLength);
 }
 
-function getSelectedIndex(list: BlessedList): number {
-  return list.getItemIndex(list.selected ?? null);
-}
-
 function selectBoundedIndex(
-  list: BlessedList,
+  list: SelectRenderable,
   index: number,
   total: number,
 ): number {
   if (total <= 0) {
-    list.select(0);
+    list.setSelectedIndex(0);
     return -1;
   }
   const bounded = Math.max(0, Math.min(index, total - 1));
-  list.select(bounded);
+  list.setSelectedIndex(bounded);
   return bounded;
 }
-
 export function resolveSelectedWorkflowName(
   selectedIndex: number,
   workflowNames: readonly string[],
@@ -390,41 +344,66 @@ function resolveManagerSessionId(
   return `mgrsess-${execution.nodeExecId}`;
 }
 
-function buildWorkflowItems(
+const EMPTY_SELECT = "__opentui_empty__";
+
+function workflowNamesToSelectOptions(
   workflowNames: readonly string[],
-  selectedWorkflowName: string | undefined,
-): readonly string[] {
-  return workflowNames.length === 0
-    ? ["(no workflows found)"]
-    : workflowNames.map((workflowName) =>
-        workflowName === selectedWorkflowName ? `> ${workflowName}` : workflowName,
-      );
+): SelectOption[] {
+  if (workflowNames.length === 0) {
+    return [
+      { name: "(no workflows found)", description: "", value: EMPTY_SELECT },
+    ];
+  }
+  return workflowNames.map((name) => ({
+    name,
+    description: "",
+    value: name,
+  }));
 }
 
-function buildSessionItems(
+function buildSessionSelectOptions(
   sessions: readonly RuntimeSessionSummary[],
-): readonly string[] {
-  return sessions.length === 0
-    ? ["(no sessions for workflow)"]
-    : sessions.map((session) => {
-        const tail = session.sessionId.slice(-10);
-        return `${session.status.padEnd(9)} ${tail} ${session.startedAt}`;
-      });
+): SelectOption[] {
+  if (sessions.length === 0) {
+    return [
+      {
+        name: "(no sessions for workflow)",
+        description: "",
+        value: EMPTY_SELECT,
+      },
+    ];
+  }
+  return sessions.map((session) => {
+    const tail = session.sessionId.slice(-10);
+    return {
+      name: `${session.status.padEnd(9)} ${tail} ${session.startedAt}`,
+      description: "",
+      value: session.sessionId,
+    };
+  });
 }
 
-function buildNodeItems(
+function buildNodeSelectOptions(
   workflow: LoadedWorkflow | undefined,
   session: WorkflowSessionState | undefined,
-): readonly string[] {
+): SelectOption[] {
   if (workflow === undefined || session === undefined) {
-    return ["(no node executions)"];
+    return [
+      { name: "(no node executions)", description: "", value: EMPTY_SELECT },
+    ];
   }
   if (session.nodeExecutions.length === 0) {
-    return ["(no node executions)"];
+    return [
+      { name: "(no node executions)", description: "", value: EMPTY_SELECT },
+    ];
   }
   return session.nodeExecutions.map((execution) => {
     const kind = resolveNodeKind(workflow.bundle.workflow, execution.nodeId);
-    return `${execution.status.padEnd(10)} ${execution.nodeId} [${kind}] ${execution.nodeExecId}`;
+    return {
+      name: `${execution.status.padEnd(10)} ${execution.nodeId} [${kind}] ${execution.nodeExecId}`,
+      description: "",
+      value: execution.nodeExecId,
+    };
   });
 }
 
@@ -623,268 +602,294 @@ async function buildDetailContent(input: {
   ].join("\n");
 }
 
-async function loadBlessedFactory(): Promise<BlessedFactory> {
-  const dynamicImport = new Function(
-    "moduleName",
-    "return import(moduleName);",
-  ) as (moduleName: string) => Promise<unknown>;
-  const module = (await dynamicImport("neo-blessed")) as BlessedFactory;
-  return module;
+const selectJkBindings = [
+  { name: "j", action: "move-down" as const },
+  { name: "k", action: "move-up" as const },
+];
+
+export function isOpenTuiRefreshKey(key: ShortcutKeyEvent): boolean {
+  return key.name === "r" && key.shift && !key.ctrl && !key.meta;
 }
 
-export async function renderNeoBlessedWorkflowSelector(options: {
+export async function renderOpenTuiWorkflowSelector(options: {
   workflowNames: readonly string[];
   refreshWorkflowNames: () => Promise<readonly string[]>;
   io: CliIo;
-}): Promise<NeoBlessedWorkflowSelection> {
-  const blessed = await loadBlessedFactory();
-  const screen = blessed.screen({
-    smartCSR: true,
-    title: "divedra tui",
+}): Promise<OpenTuiWorkflowSelection> {
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    useAlternateScreen: true,
   });
 
-  const left = blessed.box({
-    parent: screen,
-    label: " Workflows ",
-    border: "line",
-    width: "30%",
-    height: "70%",
-    left: 0,
-    top: 0,
-  });
-
-  blessed.box({
-    parent: screen,
-    label: " Timeline ",
-    border: "line",
-    width: "40%",
-    height: "70%",
-    left: "30%",
-    top: 0,
-    content: "Execution timeline will appear after run starts.",
-  });
-
-  blessed.box({
-    parent: screen,
-    label: " Details ",
-    border: "line",
-    width: "30%",
-    height: "70%",
-    left: "70%",
-    top: 0,
-    content: "Select workflow with j/k and press enter.",
-  });
-
-  blessed.box({
-    parent: screen,
-    label: " Logs / Keys ",
-    border: "line",
+  const root = new BoxRenderable(renderer, {
+    flexDirection: "column",
     width: "100%",
-    height: "30%",
-    left: 0,
-    top: "70%",
-    content: "j/k: move  enter: select  r: refresh  q: quit",
+    height: "100%",
   });
 
-  const list = blessed.list({
-    parent: left,
-    keys: true,
-    vi: true,
-    mouse: true,
-    width: "100%-2",
-    height: "100%-2",
-    top: 1,
-    left: 1,
-    border: "line",
-    items: [],
+  const topRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    flexGrow: 7,
+    width: "100%",
   });
 
-  const updateWorkflows = (names: readonly string[]): void => {
-    list.setItems(names.length > 0 ? names : ["(no workflows found)"]);
-    list.select(0);
-    screen.render();
-  };
+  const workflowPane = new BoxRenderable(renderer, {
+    flexGrow: 3,
+    height: "100%",
+    border: true,
+    title: " Workflows ",
+    flexDirection: "column",
+  });
+  const workflowSelect = new SelectRenderable(renderer, {
+    id: "sel-workflow",
+    showDescription: false,
+    flexGrow: 1,
+    width: "100%",
+    height: "100%",
+    keyBindings: selectJkBindings,
+  });
+  workflowPane.add(workflowSelect);
+
+  const timelineBox = new BoxRenderable(renderer, {
+    border: true,
+    title: " Timeline ",
+    flexGrow: 4,
+    height: "100%",
+  });
+  timelineBox.add(
+    new TextRenderable(renderer, {
+      flexGrow: 1,
+      content: "Execution timeline will appear after run starts.",
+    }),
+  );
+
+  const detailsBox = new BoxRenderable(renderer, {
+    border: true,
+    title: " Details ",
+    flexGrow: 3,
+    height: "100%",
+  });
+  detailsBox.add(
+    new TextRenderable(renderer, {
+      flexGrow: 1,
+      content: "Select workflow with j/k and press enter.",
+    }),
+  );
+
+  topRow.add(workflowPane);
+  topRow.add(timelineBox);
+  topRow.add(detailsBox);
+
+  const bottomRow = new BoxRenderable(renderer, {
+    border: true,
+    title: " Logs / Keys ",
+    flexGrow: 3,
+    width: "100%",
+  });
+  bottomRow.add(
+    new TextRenderable(renderer, {
+      content: "j/k: move  enter: select  r: refresh  q: quit",
+    }),
+  );
+
+  root.add(topRow);
+  root.add(bottomRow);
+  renderer.root.add(root);
 
   let workflowNames = [...options.workflowNames];
-  updateWorkflows(workflowNames);
-  list.focus?.();
-
-  const complete = (
-    result: NeoBlessedWorkflowSelection,
-  ): NeoBlessedWorkflowSelection => {
-    screen.destroy();
-    return result;
+  const updateWorkflows = (names: readonly string[]): void => {
+    workflowNames = [...names];
+    workflowSelect.options = workflowNamesToSelectOptions(workflowNames);
+    workflowSelect.setSelectedIndex(0);
+    renderer.requestRender();
   };
+  updateWorkflows(workflowNames);
 
-  return await new Promise<NeoBlessedWorkflowSelection>((resolve) => {
-    screen.key(["q", "C-c"], () => {
-      resolve(complete({ type: "quit" }));
-    });
+  renderer.start();
+  renderer.focusRenderable(workflowSelect);
 
-    screen.key(["j"], () => {
-      list.down(1);
-      screen.render();
-    });
+  return await new Promise<OpenTuiWorkflowSelection>((resolve) => {
+    const complete = (result: OpenTuiWorkflowSelection): void => {
+      renderer.keyInput.removeListener("keypress", onKey);
+      renderer.destroy();
+      resolve(result);
+    };
 
-    screen.key(["k"], () => {
-      list.up(1);
-      screen.render();
-    });
-
-    screen.key(["r"], async () => {
-      try {
-        workflowNames = [...(await options.refreshWorkflowNames())];
-        updateWorkflows(workflowNames);
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error ? error.message : "unknown error";
-        options.io.stderr(`tui refresh failed: ${message}`);
-      }
-    });
-
-    screen.key(["enter"], () => {
-      const selectedIndex = list.getItemIndex(list.selected ?? null);
-      const selectedWorkflowName = resolveSelectedWorkflowName(
-        selectedIndex,
-        workflowNames,
-      );
-      if (selectedWorkflowName === undefined) {
+    workflowSelect.on(SelectRenderableEvents.ITEM_SELECTED, (_idx, opt) => {
+      const v = opt?.value;
+      if (v === undefined || v === EMPTY_SELECT) {
         return;
       }
-      resolve(
-        complete({ type: "selected", workflowName: selectedWorkflowName }),
-      );
+      complete({ type: "selected", workflowName: String(v) });
     });
 
-    screen.render();
+    const onKey = (key: KeyEvent): void => {
+      if (key.eventType !== "press") {
+        return;
+      }
+      if (key.name === "q" && !key.ctrl && !key.meta) {
+        key.preventDefault();
+        complete({ type: "quit" });
+        return;
+      }
+      if (key.name === "c" && key.ctrl) {
+        key.preventDefault();
+        complete({ type: "quit" });
+        return;
+      }
+      if (key.name === "r" && !key.ctrl && !key.meta) {
+        key.preventDefault();
+        void (async () => {
+          try {
+            updateWorkflows(await options.refreshWorkflowNames());
+          } catch (error: unknown) {
+            const message =
+              error instanceof Error ? error.message : "unknown error";
+            options.io.stderr(`tui refresh failed: ${message}`);
+          }
+        })();
+      }
+    };
+
+    renderer.keyInput.prependListener("keypress", onKey);
+    renderer.requestRender();
   });
 }
 
-export async function runNeoBlessedWorkflowApp(
-  options: NeoBlessedWorkflowAppOptions,
+export async function runOpenTuiWorkflowApp(
+  options: OpenTuiWorkflowAppOptions,
 ): Promise<number> {
-  const blessed = await loadBlessedFactory();
-  const createInput =
-    blessed.textarea ??
-    blessed.textbox ??
-    (() => {
-      throw new Error("neo-blessed textarea/textbox widget is unavailable");
-    });
-
-  const screen = blessed.screen({
-    smartCSR: true,
-    title: "divedra tui",
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+    useAlternateScreen: true,
   });
 
-  const workflowPane = blessed.box({
-    parent: screen,
-    label: " Workflows ",
-    border: "line",
-    width: "20%",
-    height: "58%",
-    left: 0,
-    top: 0,
-  });
-  const sessionPane = blessed.box({
-    parent: screen,
-    label: " Sessions ",
-    border: "line",
-    width: "28%",
-    height: "58%",
-    left: "20%",
-    top: 0,
-  });
-  const nodePane = blessed.box({
-    parent: screen,
-    label: " Nodes ",
-    border: "line",
-    width: "22%",
-    height: "58%",
-    left: "48%",
-    top: 0,
-  });
-  const detailPane = blessed.box({
-    parent: screen,
-    label: " Details ",
-    border: "line",
-    width: "30%",
-    height: "58%",
-    left: "70%",
-    top: 0,
-    scrollable: true,
-    alwaysScroll: true,
-    keys: true,
-    vi: true,
-    mouse: true,
-  });
-  const inputPane = blessed.box({
-    parent: screen,
-    label: " Input ",
-    border: "line",
+  const root = new BoxRenderable(renderer, {
+    flexDirection: "column",
     width: "100%",
-    height: "26%",
-    left: 0,
-    top: "58%",
-  });
-  const helpPane = blessed.box({
-    parent: screen,
-    label: " Status / Keys ",
-    border: "line",
-    width: "100%",
-    height: "16%",
-    left: 0,
-    top: "84%",
+    height: "100%",
   });
 
-  const workflowList = blessed.list({
-    parent: workflowPane,
-    keys: true,
-    vi: true,
-    mouse: true,
-    width: "100%-2",
-    height: "100%-2",
-    top: 1,
-    left: 1,
-    items: [],
+  const mainRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    flexGrow: 58,
+    width: "100%",
   });
-  const sessionList = blessed.list({
-    parent: sessionPane,
-    keys: true,
-    vi: true,
-    mouse: true,
-    width: "100%-2",
-    height: "100%-2",
-    top: 1,
-    left: 1,
-    items: [],
+
+  const workflowPane = new BoxRenderable(renderer, {
+    flexGrow: 20,
+    height: "100%",
+    border: true,
+    title: " Workflows ",
+    flexDirection: "column",
   });
-  const nodeList = blessed.list({
-    parent: nodePane,
-    keys: true,
-    vi: true,
-    mouse: true,
-    width: "100%-2",
-    height: "100%-2",
-    top: 1,
-    left: 1,
-    items: [],
+  const workflowSelect = new SelectRenderable(renderer, {
+    id: "wf-select",
+    showDescription: false,
+    flexGrow: 1,
+    width: "100%",
+    height: "100%",
+    keyBindings: selectJkBindings,
   });
-  const inputEditor = createInput({
-    parent: inputPane,
-    keys: true,
-    vi: true,
-    mouse: true,
-    inputOnFocus: false,
-    width: "100%-2",
-    height: "100%-2",
-    top: 1,
-    left: 1,
-    border: "line",
-    scrollbar: {
-      ch: " ",
-      inverse: true,
-    },
+  workflowPane.add(workflowSelect);
+
+  const sessionPane = new BoxRenderable(renderer, {
+    flexGrow: 28,
+    height: "100%",
+    border: true,
+    title: " Sessions ",
+    flexDirection: "column",
   });
+  const sessionSelect = new SelectRenderable(renderer, {
+    id: "sess-select",
+    showDescription: false,
+    flexGrow: 1,
+    width: "100%",
+    height: "100%",
+    keyBindings: selectJkBindings,
+  });
+  sessionPane.add(sessionSelect);
+
+  const nodePane = new BoxRenderable(renderer, {
+    flexGrow: 22,
+    height: "100%",
+    border: true,
+    title: " Nodes ",
+    flexDirection: "column",
+  });
+  const nodeSelect = new SelectRenderable(renderer, {
+    id: "node-select",
+    showDescription: false,
+    flexGrow: 1,
+    width: "100%",
+    height: "100%",
+    keyBindings: selectJkBindings,
+  });
+  nodePane.add(nodeSelect);
+
+  const detailScroll = new ScrollBoxRenderable(renderer, {
+    id: "detail-scroll",
+    flexGrow: 30,
+    height: "100%",
+    border: true,
+    title: " Details ",
+    scrollY: true,
+  });
+  const detailText = new TextRenderable(renderer, {
+    id: "detail-text",
+    flexGrow: 1,
+    width: "100%",
+    content: "",
+  });
+  detailScroll.content.add(detailText);
+
+  mainRow.add(workflowPane);
+  mainRow.add(sessionPane);
+  mainRow.add(nodePane);
+  mainRow.add(detailScroll);
+
+  const inputRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    flexGrow: 26,
+    width: "100%",
+  });
+
+  const inputShell = new BoxRenderable(renderer, {
+    id: "input-shell",
+    border: true,
+    title: " Input ",
+    flexGrow: 1,
+    height: "100%",
+    focusable: true,
+  });
+
+  const inputTextarea = new TextareaRenderable(renderer, {
+    id: "input-editor",
+    flexGrow: 1,
+    width: "100%",
+    wrapMode: "char",
+  });
+
+  inputShell.add(inputTextarea);
+  inputRow.add(inputShell);
+
+  const helpBox = new BoxRenderable(renderer, {
+    border: true,
+    title: " Status / Keys ",
+    flexGrow: 16,
+    width: "100%",
+  });
+  const helpText = new TextRenderable(renderer, {
+    id: "help-text",
+    flexGrow: 1,
+    content: "",
+  });
+  helpBox.add(helpText);
+
+  root.add(mainRow);
+  root.add(inputRow);
+  root.add(helpBox);
+  renderer.root.add(root);
 
   let workflowNames = [...options.workflowNames];
   let loadedWorkflow: LoadedWorkflow | undefined;
@@ -901,23 +906,33 @@ export async function runNeoBlessedWorkflowApp(
   let editingInput = false;
   let lastStatus = "Loading TUI state...";
 
-  const selectedWorkflowName = (): string | undefined =>
-    resolveSelectedWorkflowName(getSelectedIndex(workflowList), workflowNames);
+  const selectedWorkflowName = (): string | undefined => {
+    const opt = workflowSelect.getSelectedOption();
+    if (opt === null || opt.value === EMPTY_SELECT) {
+      return undefined;
+    }
+    return String(opt.value);
+  };
 
   const selectedSessionSummary = (): RuntimeSessionSummary | undefined => {
-    const index = getSelectedIndex(sessionList);
-    return index < 0 ? undefined : workflowSessions[index];
+    const opt = sessionSelect.getSelectedOption();
+    if (opt === null || opt.value === EMPTY_SELECT) {
+      return undefined;
+    }
+    return workflowSessions.find((s) => s.sessionId === opt.value);
   };
 
   const selectedNodeExecution = (): NodeExecutionRecord | undefined => {
     if (runtimeSessionView === undefined) {
       return undefined;
     }
-    const index = getSelectedIndex(nodeList);
-    if (index < 0) {
+    const opt = nodeSelect.getSelectedOption();
+    if (opt === null || opt.value === EMPTY_SELECT) {
       return undefined;
     }
-    return runtimeSessionView.session.nodeExecutions[index];
+    return runtimeSessionView.session.nodeExecutions.find(
+      (e) => e.nodeExecId === opt.value,
+    );
   };
 
   const selectedManagerSessionId = (): string | undefined => {
@@ -930,45 +945,48 @@ export async function runNeoBlessedWorkflowApp(
 
   const setStatus = (message: string): void => {
     lastStatus = message;
-    helpPane.setContent?.(
-      [
-        message,
-        "",
-        `Focus=${focusPane}  Detail=${detailMode}  InputMode=${workflowInputDetection.mode}  Editing=${String(
-          editingInput,
-        )}  Busy=${String(busy)}`,
-        "tab: focus  enter: load selection  e: edit input  f: format JSON  m: toggle input mode",
-        "n: run workflow  r: rerun selected node  u: resume selected session  i/o/g/a: inbox/outbox/logs/manager  R: refresh  q: quit",
-      ].join("\n"),
-    );
+    helpText.content = [
+      message,
+      "",
+      `Focus=${focusPane}  Detail=${detailMode}  InputMode=${workflowInputDetection.mode}  Editing=${String(
+        editingInput,
+      )}  Busy=${String(busy)}`,
+      "tab: focus  enter: load selection  e: edit input  f: format JSON  m: toggle input mode",
+      "n: run workflow  r: rerun selected node  u: resume selected session  i/o/g/a: inbox/outbox/logs/manager  R: refresh  q: quit",
+    ].join("\n");
   };
 
   const render = async (): Promise<void> => {
-    workflowList.setItems(
-      buildWorkflowItems(workflowNames, loadedWorkflow?.workflowName),
-    );
+    workflowSelect.options = workflowNamesToSelectOptions(workflowNames);
     selectBoundedIndex(
-      workflowList,
+      workflowSelect,
       workflowNames.findIndex((name) => name === loadedWorkflow?.workflowName),
       workflowNames.length,
     );
 
-    sessionList.setItems(buildSessionItems(workflowSessions));
+    sessionSelect.options = buildSessionSelectOptions(workflowSessions);
     if (workflowSessions.length === 0) {
-      sessionList.select(0);
+      sessionSelect.setSelectedIndex(0);
     } else if (runtimeSessionView !== undefined) {
       selectBoundedIndex(
-        sessionList,
+        sessionSelect,
         workflowSessions.findIndex(
-          (session) => session.sessionId === runtimeSessionView?.session.sessionId,
+          (session) =>
+            session.sessionId === runtimeSessionView?.session.sessionId,
         ),
         workflowSessions.length,
       );
     }
 
-    nodeList.setItems(buildNodeItems(loadedWorkflow, runtimeSessionView?.session));
-    if (runtimeSessionView === undefined || runtimeSessionView.session.nodeExecutions.length === 0) {
-      nodeList.select(0);
+    nodeSelect.options = buildNodeSelectOptions(
+      loadedWorkflow,
+      runtimeSessionView?.session,
+    );
+    if (
+      runtimeSessionView === undefined ||
+      runtimeSessionView.session.nodeExecutions.length === 0
+    ) {
+      nodeSelect.setSelectedIndex(0);
     } else {
       const currentNode = selectedNodeExecution();
       const selectedIndex =
@@ -978,7 +996,7 @@ export async function runNeoBlessedWorkflowApp(
               (entry) => entry.nodeExecId === currentNode.nodeExecId,
             );
       selectBoundedIndex(
-        nodeList,
+        nodeSelect,
         selectedIndex < 0
           ? runtimeSessionView.session.nodeExecutions.length - 1
           : selectedIndex,
@@ -986,38 +1004,37 @@ export async function runNeoBlessedWorkflowApp(
       );
     }
 
-    inputPane.setLabel?.(
-      ` Input (${workflowInputDetection.mode}) `,
-    );
-    detailPane.setContent?.(
-      await buildDetailContent({
-        detailMode,
-        inputDetection: workflowInputDetection,
-        loadedWorkflow,
-        managerMessages,
-        runtimeSessionView,
-        selectedNodeExecution: selectedNodeExecution(),
-      }),
-    );
-    detailPane.scrollTo?.(0);
+    inputShell.title = ` Input (${workflowInputDetection.mode}) `;
+
+    detailText.content = await buildDetailContent({
+      detailMode,
+      inputDetection: workflowInputDetection,
+      loadedWorkflow,
+      managerMessages,
+      runtimeSessionView,
+      selectedNodeExecution: selectedNodeExecution(),
+    });
+    detailScroll.scrollTop = 0;
 
     setStatus(lastStatus);
-    screen.render();
+    renderer.requestRender();
   };
 
-  const setFocus = (nextFocusPane: FocusPane): void => {
+  const applyFocus = (nextFocusPane: FocusPane): void => {
     focusPane = nextFocusPane;
     if (focusPane === "workflows") {
-      workflowList.focus?.();
+      renderer.focusRenderable(workflowSelect);
     } else if (focusPane === "sessions") {
-      sessionList.focus?.();
+      renderer.focusRenderable(sessionSelect);
     } else if (focusPane === "nodes") {
-      nodeList.focus?.();
+      renderer.focusRenderable(nodeSelect);
+    } else if (editingInput) {
+      renderer.focusRenderable(inputTextarea);
     } else {
-      inputEditor.focus?.();
+      renderer.focusRenderable(inputShell);
     }
     setStatus(lastStatus);
-    screen.render();
+    renderer.requestRender();
   };
 
   const withBusy = async (
@@ -1029,7 +1046,7 @@ export async function runNeoBlessedWorkflowApp(
     }
     busy = true;
     setStatus(`${label}...`);
-    screen.render();
+    renderer.requestRender();
     try {
       await action();
     } catch (error: unknown) {
@@ -1062,7 +1079,7 @@ export async function runNeoBlessedWorkflowApp(
     runtimeSessionView = await options.loadRuntimeSessionView(sessionId);
     const nodeExecutionCount = runtimeSessionView.session.nodeExecutions.length;
     const nextIndex = Math.max(0, nodeExecutionCount - 1);
-    selectBoundedIndex(nodeList, nextIndex, nodeExecutionCount);
+    selectBoundedIndex(nodeSelect, nextIndex, nodeExecutionCount);
     await refreshManagerMessages();
   };
 
@@ -1079,7 +1096,7 @@ export async function runNeoBlessedWorkflowApp(
         mode: "text",
         reason: "defaulted because no workflow is selected",
       };
-      inputEditor.setValue("");
+      inputTextarea.setText("");
       return;
     }
 
@@ -1090,14 +1107,14 @@ export async function runNeoBlessedWorkflowApp(
       preferredSessionId ?? workflowSessions[0]?.sessionId ?? undefined;
     await refreshSessionView(targetSessionId);
     if (runtimeSessionView !== undefined) {
-      inputEditor.setValue(
+      inputTextarea.setText(
         deriveEditorTextFromRuntimeVariables(
           runtimeSessionView.session.runtimeVariables,
           workflowInputDetection.mode,
         ),
       );
     } else {
-      inputEditor.setValue(
+      inputTextarea.setText(
         workflowInputDetection.mode === "json" ? "{}" : "",
       );
     }
@@ -1111,7 +1128,7 @@ export async function runNeoBlessedWorkflowApp(
         : workflowNames[0];
     await refreshWorkflow(initialWorkflowName, options.initialSessionId);
   });
-  setFocus(options.initialSessionId === undefined ? "workflows" : "sessions");
+  applyFocus(options.initialSessionId === undefined ? "workflows" : "sessions");
   if (options.initialSessionId !== undefined) {
     setStatus(
       `Loaded resume session ${options.initialSessionId}. Press u to resume or inspect the session first.`,
@@ -1127,7 +1144,7 @@ export async function runNeoBlessedWorkflowApp(
       return;
     }
     const runtimeVariables = buildTuiRuntimeVariables({
-      editorText: inputEditor.getValue(),
+      editorText: inputTextarea.plainText,
       mode: workflowInputDetection.mode,
       purpose: "run",
     });
@@ -1157,12 +1174,12 @@ export async function runNeoBlessedWorkflowApp(
     const runtimeVariables = buildTuiRuntimeVariables(
       managerSessionId === undefined
         ? {
-            editorText: inputEditor.getValue(),
+            editorText: inputTextarea.plainText,
             mode: workflowInputDetection.mode,
             purpose: "rerun",
           }
         : {
-            editorText: inputEditor.getValue(),
+            editorText: inputTextarea.plainText,
             managerSessionId,
             mode: workflowInputDetection.mode,
             purpose: "rerun",
@@ -1236,7 +1253,7 @@ export async function runNeoBlessedWorkflowApp(
       await withBusy("Loading session", async () => {
         await refreshSessionView(selectedSessionSummary()?.sessionId);
         if (runtimeSessionView !== undefined) {
-          inputEditor.setValue(
+          inputTextarea.setText(
             deriveEditorTextFromRuntimeVariables(
               runtimeSessionView.session.runtimeVariables,
               workflowInputDetection.mode,
@@ -1259,28 +1276,22 @@ export async function runNeoBlessedWorkflowApp(
       return;
     }
     editingInput = true;
-    inputEditor.focus?.();
+    applyFocus("input");
     setStatus(
       workflowInputDetection.mode === "json"
-        ? "Editing JSON input. Press escape/enter according to your terminal widget binding to finish."
-        : "Editing text input. Press escape/enter according to your terminal widget binding to finish.",
+        ? "Editing JSON input. Press escape to finish."
+        : "Editing text input. Press escape to finish.",
     );
-    screen.render();
-    inputEditor.readInput((error, value) => {
-      editingInput = false;
-      if (error instanceof Error) {
-        setStatus(`Input edit failed: ${error.message}`);
-      } else {
-        inputEditor.setValue(value ?? inputEditor.getValue());
-        setStatus("Input updated");
-      }
-      void render();
-    });
+    renderer.requestRender();
   };
 
   const moveFocusedList = async (delta: number): Promise<void> => {
     if (focusPane === "workflows") {
-      (delta < 0 ? workflowList.up(1) : workflowList.down(1));
+      if (delta < 0) {
+        workflowSelect.moveUp(1);
+      } else {
+        workflowSelect.moveDown(1);
+      }
       await withBusy("Switching workflow", async () => {
         await refreshWorkflow(selectedWorkflowName());
         setStatus(
@@ -1292,11 +1303,15 @@ export async function runNeoBlessedWorkflowApp(
       return;
     }
     if (focusPane === "sessions") {
-      (delta < 0 ? sessionList.up(1) : sessionList.down(1));
+      if (delta < 0) {
+        sessionSelect.moveUp(1);
+      } else {
+        sessionSelect.moveDown(1);
+      }
       await withBusy("Switching session", async () => {
         await refreshSessionView(selectedSessionSummary()?.sessionId);
         if (runtimeSessionView !== undefined) {
-          inputEditor.setValue(
+          inputTextarea.setText(
             deriveEditorTextFromRuntimeVariables(
               runtimeSessionView.session.runtimeVariables,
               workflowInputDetection.mode,
@@ -1308,7 +1323,11 @@ export async function runNeoBlessedWorkflowApp(
       return;
     }
     if (focusPane === "nodes") {
-      (delta < 0 ? nodeList.up(1) : nodeList.down(1));
+      if (delta < 0) {
+        nodeSelect.moveUp(1);
+      } else {
+        nodeSelect.moveDown(1);
+      }
       await withBusy("Switching node", async () => {
         await refreshManagerMessages();
         const execution = selectedNodeExecution();
@@ -1320,178 +1339,212 @@ export async function runNeoBlessedWorkflowApp(
       });
       return;
     }
-    inputEditor.focus?.();
-    screen.render();
+    applyFocus("input");
   };
+
+  renderer.start();
 
   return await new Promise<number>((resolve) => {
     const complete = (exitCode: number): void => {
-      screen.destroy();
+      renderer.keyInput.removeListener("keypress", onKey);
+      renderer.destroy();
       resolve(exitCode);
     };
 
-    screen.key(["q"], () => {
-      complete(0);
-    });
-    screen.key(["C-c"], () => {
-      complete(130);
-    });
-    screen.key(["tab"], () => {
-      if (editingInput) {
+    const onKey = (key: KeyEvent): void => {
+      if (key.eventType !== "press") {
         return;
       }
-      const nextFocus: Readonly<Record<FocusPane, FocusPane>> = {
-        workflows: "sessions",
-        sessions: "nodes",
-        nodes: "input",
-        input: "workflows",
-      };
-      setFocus(nextFocus[focusPane]);
-    });
-    screen.key(["S-tab"], () => {
-      if (editingInput) {
-        return;
-      }
-      const previousFocus: Readonly<Record<FocusPane, FocusPane>> = {
-        workflows: "input",
-        sessions: "workflows",
-        nodes: "sessions",
-        input: "nodes",
-      };
-      setFocus(previousFocus[focusPane]);
-    });
-    screen.key(["j", "down"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void moveFocusedList(1);
-    });
-    screen.key(["k", "up"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void moveFocusedList(-1);
-    });
-    screen.key(["enter"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void loadFocusedSelection();
-    });
-    screen.key(["n"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void runWorkflowAction();
-    });
-    screen.key(["r"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void rerunWorkflowAction();
-    });
-    screen.key(["u"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void resumeWorkflowAction();
-    });
-    screen.key(["R"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void refreshAll();
-    });
-    screen.key(["e"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      void loadFocusedSelection();
-    });
-    screen.key(["m"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      const previousMode = workflowInputDetection.mode;
-      const nextMode: TuiWorkflowInputMode =
-        previousMode === "json" ? "text" : "json";
-      try {
-        const parsedValue = parseTuiEditorValue(
-          inputEditor.getValue(),
-          previousMode,
-        );
-        workflowInputDetection = {
-          mode: nextMode,
-          reason: "manually toggled inside the TUI",
-        };
-        inputEditor.setValue(formatEditorValue(parsedValue, nextMode));
-        setStatus(`Input mode switched to ${workflowInputDetection.mode}`);
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown error";
-        setStatus(`Input mode toggle failed: ${message}`);
-      }
-      void render();
-    });
-    screen.key(["f"], () => {
-      if (editingInput || busy) {
-        return;
-      }
-      if (workflowInputDetection.mode !== "json") {
-        setStatus("JSON formatting is only available when input mode is json");
+
+      if (key.name === "escape" && editingInput && focusPane === "input") {
+        key.preventDefault();
+        editingInput = false;
+        applyFocus("input");
+        setStatus("Input edit finished");
         void render();
         return;
       }
-      try {
-        inputEditor.setValue(formatJsonEditorText(inputEditor.getValue()));
-        setStatus("Formatted JSON input");
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown error";
-        setStatus(`JSON formatting failed: ${message}`);
+
+      if (key.name === "return" && focusPane === "input" && !editingInput) {
+        if (renderer.currentFocusedRenderable === inputShell) {
+          key.preventDefault();
+          void loadFocusedSelection();
+          return;
+        }
       }
-      void render();
-    });
-    screen.key(["i"], () => {
-      if (editingInput || busy) {
+
+      if (busy) {
         return;
       }
-      detailMode = "inbox";
-      setStatus("Showing node inbox view");
-      void render();
-    });
-    screen.key(["o"], () => {
-      if (editingInput || busy) {
+
+      if (editingInput && renderer.currentFocusedRenderable === inputTextarea) {
         return;
       }
-      detailMode = "outbox";
-      setStatus("Showing node outbox view");
-      void render();
-    });
-    screen.key(["g"], () => {
-      if (editingInput || busy) {
+
+      if (key.name === "q" && !key.ctrl && !key.meta) {
+        key.preventDefault();
+        complete(0);
         return;
       }
-      detailMode = "session-logs";
-      setStatus("Showing workflow execution logs");
-      void render();
-    });
-    screen.key(["a"], () => {
-      if (editingInput || busy) {
+      if (key.name === "c" && key.ctrl) {
+        key.preventDefault();
+        complete(130);
         return;
       }
-      detailMode = "manager";
-      void withBusy("Loading manager session", async () => {
-        await refreshManagerMessages();
-        setStatus("Showing manager-session messages");
-      });
-    });
-    screen.key(["s"], () => {
-      if (editingInput || busy) {
+
+      if (key.name === "tab") {
+        if (editingInput) {
+          return;
+        }
+        if (key.shift) {
+          const previousFocus: Readonly<Record<FocusPane, FocusPane>> = {
+            workflows: "input",
+            sessions: "workflows",
+            nodes: "sessions",
+            input: "nodes",
+          };
+          applyFocus(previousFocus[focusPane]);
+        } else {
+          const nextFocus: Readonly<Record<FocusPane, FocusPane>> = {
+            workflows: "sessions",
+            sessions: "nodes",
+            nodes: "input",
+            input: "workflows",
+          };
+          applyFocus(nextFocus[focusPane]);
+        }
+        key.preventDefault();
         return;
       }
-      detailMode = "summary";
-      setStatus("Showing node summary");
-      void render();
-    });
+
+      if (key.name === "down" || (key.name === "j" && !key.ctrl)) {
+        if (focusPane === "input" && !editingInput) {
+          return;
+        }
+        key.preventDefault();
+        void moveFocusedList(1);
+        return;
+      }
+      if (key.name === "up" || (key.name === "k" && !key.ctrl)) {
+        if (focusPane === "input" && !editingInput) {
+          return;
+        }
+        key.preventDefault();
+        void moveFocusedList(-1);
+        return;
+      }
+
+      if (key.name === "return") {
+        key.preventDefault();
+        void loadFocusedSelection();
+        return;
+      }
+
+      if (key.name === "n" && !key.ctrl) {
+        key.preventDefault();
+        void runWorkflowAction();
+        return;
+      }
+      if (isOpenTuiRefreshKey(key)) {
+        key.preventDefault();
+        void refreshAll();
+        return;
+      }
+      if (key.name === "r" && !key.ctrl) {
+        key.preventDefault();
+        void rerunWorkflowAction();
+        return;
+      }
+      if (key.name === "u" && !key.ctrl) {
+        key.preventDefault();
+        void resumeWorkflowAction();
+        return;
+      }
+      if (key.name === "e" && !key.ctrl) {
+        key.preventDefault();
+        void loadFocusedSelection();
+        return;
+      }
+      if (key.name === "m" && !key.ctrl) {
+        key.preventDefault();
+        const previousMode = workflowInputDetection.mode;
+        const nextMode: TuiWorkflowInputMode =
+          previousMode === "json" ? "text" : "json";
+        try {
+          const parsedValue = parseTuiEditorValue(
+            inputTextarea.plainText,
+            previousMode,
+          );
+          workflowInputDetection = {
+            mode: nextMode,
+            reason: "manually toggled inside the TUI",
+          };
+          inputTextarea.setText(formatEditorValue(parsedValue, nextMode));
+          setStatus(`Input mode switched to ${workflowInputDetection.mode}`);
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          setStatus(`Input mode toggle failed: ${message}`);
+        }
+        void render();
+        return;
+      }
+      if (key.name === "f" && !key.ctrl) {
+        key.preventDefault();
+        if (workflowInputDetection.mode !== "json") {
+          setStatus("JSON formatting is only available when input mode is json");
+          void render();
+          return;
+        }
+        try {
+          inputTextarea.setText(formatJsonEditorText(inputTextarea.plainText));
+          setStatus("Formatted JSON input");
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          setStatus(`JSON formatting failed: ${message}`);
+        }
+        void render();
+        return;
+      }
+      if (key.name === "i" && !key.ctrl) {
+        key.preventDefault();
+        detailMode = "inbox";
+        setStatus("Showing node inbox view");
+        void render();
+        return;
+      }
+      if (key.name === "o" && !key.ctrl) {
+        key.preventDefault();
+        detailMode = "outbox";
+        setStatus("Showing node outbox view");
+        void render();
+        return;
+      }
+      if (key.name === "g" && !key.ctrl) {
+        key.preventDefault();
+        detailMode = "session-logs";
+        setStatus("Showing workflow execution logs");
+        void render();
+        return;
+      }
+      if (key.name === "a" && !key.ctrl) {
+        key.preventDefault();
+        detailMode = "manager";
+        void withBusy("Loading manager session", async () => {
+          await refreshManagerMessages();
+          setStatus("Showing manager-session messages");
+        });
+        return;
+      }
+      if (key.name === "s" && !key.ctrl) {
+        key.preventDefault();
+        detailMode = "summary";
+        setStatus("Showing node summary");
+        void render();
+        return;
+      }
+    };
+
+    renderer.keyInput.prependListener("keypress", onKey);
 
     void render();
   });

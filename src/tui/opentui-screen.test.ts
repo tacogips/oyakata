@@ -6,8 +6,9 @@ import {
   deriveEditorTextFromRuntimeVariables,
   detectWorkflowInputMode,
   formatJsonEditorText,
+  isOpenTuiRefreshKey,
   resolveSelectedWorkflowName,
-} from "./neo-blessed-screen";
+} from "./opentui-screen";
 
 function makeLoadedWorkflow(inputNodePayload: NodePayload): LoadedWorkflow {
   return {
@@ -204,5 +205,45 @@ describe("formatJsonEditorText", () => {
     expect(formatJsonEditorText("{\"a\":1,\"b\":[2]}")).toBe(
       '{\n  "a": 1,\n  "b": [\n    2\n  ]\n}',
     );
+  });
+});
+
+describe("isOpenTuiRefreshKey", () => {
+  test("matches shifted r without control/meta modifiers", () => {
+    expect(
+      isOpenTuiRefreshKey({
+        name: "r",
+        shift: true,
+        ctrl: false,
+        meta: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects plain r and modified variants", () => {
+    expect(
+      isOpenTuiRefreshKey({
+        name: "r",
+        shift: false,
+        ctrl: false,
+        meta: false,
+      }),
+    ).toBe(false);
+    expect(
+      isOpenTuiRefreshKey({
+        name: "r",
+        shift: true,
+        ctrl: true,
+        meta: false,
+      }),
+    ).toBe(false);
+    expect(
+      isOpenTuiRefreshKey({
+        name: "r",
+        shift: true,
+        ctrl: false,
+        meta: true,
+      }),
+    ).toBe(false);
   });
 });

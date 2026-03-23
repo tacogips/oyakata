@@ -12,7 +12,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   resolveTuiStartupSelection,
   runCli,
-  shouldFallbackFromNeoBlessedError,
+  shouldFallbackFromOpenTuiError,
 } from "./cli";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
@@ -197,26 +197,39 @@ describe("runCli", () => {
     });
   });
 
-  test("shouldFallbackFromNeoBlessedError only matches neo-blessed availability failures", () => {
+  test("shouldFallbackFromOpenTuiError only matches @opentui/core availability failures", () => {
     expect(
-      shouldFallbackFromNeoBlessedError(
-        new Error("Cannot find package 'neo-blessed' imported from src/tui"),
+      shouldFallbackFromOpenTuiError(
+        new Error("Cannot find package '@opentui/core' imported from src/tui"),
       ),
     ).toBe(true);
     expect(
-      shouldFallbackFromNeoBlessedError(
-        new Error("neo-blessed textarea/textbox widget is unavailable"),
+      shouldFallbackFromOpenTuiError(
+        new Error('cannot find module "@opentui/core"'),
       ),
     ).toBe(true);
     expect(
-      shouldFallbackFromNeoBlessedError(
-        new Error("neo-blessed screen render failed after app startup"),
+      shouldFallbackFromOpenTuiError(
+        new Error("Cannot find module '@opentui/core'"),
       ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromOpenTuiError(
+        new Error("Cannot find package '@opentui/core-linux-x64'"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromOpenTuiError(
+        new Error('Cannot find module "@opentui/core-darwin-arm64"'),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromOpenTuiError(new Error("workflow load failed")),
     ).toBe(false);
     expect(
-      shouldFallbackFromNeoBlessedError(new Error("workflow load failed")),
+      shouldFallbackFromOpenTuiError(new Error("OpenTUI screen render failed")),
     ).toBe(false);
-    expect(shouldFallbackFromNeoBlessedError("neo-blessed")).toBe(false);
+    expect(shouldFallbackFromOpenTuiError("@opentui/core")).toBe(false);
   });
 
   test("returns help for unknown scope", async () => {
@@ -1270,7 +1283,7 @@ describe("runCli", () => {
     expect(resumeCapture.stderr.join("\n")).toContain("run failed:");
   });
 
-  test("interactive tui resume-session falls back to direct resume when neo-blessed is unavailable", async () => {
+  test("interactive tui resume-session falls back to direct resume when OpenTUI is unavailable", async () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionsRoot = path.join(root, "sessions");
@@ -1356,9 +1369,9 @@ describe("runCli", () => {
         }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
-        runNeoBlessedWorkflowApp: async () => {
+        runOpenTuiWorkflowApp: async () => {
           throw new Error(
-            "Cannot find package 'neo-blessed' imported from src/tui",
+            "Cannot find package '@opentui/core' imported from src/tui",
           );
         },
       },
@@ -1461,9 +1474,9 @@ describe("runCli", () => {
         }),
         openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
-        runNeoBlessedWorkflowApp: async () => {
+        runOpenTuiWorkflowApp: async () => {
           throw new Error(
-            "Cannot find package 'neo-blessed' imported from src/tui",
+            "Cannot find package '@opentui/core' imported from src/tui",
           );
         },
       },

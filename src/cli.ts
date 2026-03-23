@@ -20,10 +20,10 @@ import { buildInspectionSummary } from "./workflow/inspect";
 import { loadSession } from "./workflow/session-store";
 import { selectTuiRuntimeMode } from "./tui/runtime";
 import {
-  type NeoBlessedWorkflowActionResult,
-  renderNeoBlessedWorkflowSelector,
-  runNeoBlessedWorkflowApp,
-} from "./tui/neo-blessed-screen";
+  type OpenTuiWorkflowActionResult,
+  renderOpenTuiWorkflowSelector,
+  runOpenTuiWorkflowApp,
+} from "./tui/opentui-screen";
 import {
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
@@ -52,8 +52,8 @@ export interface CliDependencies {
   readonly waitForServeShutdown?: (started: StartedServe) => Promise<void>;
   readonly fetchImpl?: typeof fetch;
   readonly env?: Readonly<Record<string, string | undefined>>;
-  readonly renderNeoBlessedWorkflowSelector?: typeof renderNeoBlessedWorkflowSelector;
-  readonly runNeoBlessedWorkflowApp?: typeof runNeoBlessedWorkflowApp;
+  readonly renderOpenTuiWorkflowSelector?: typeof renderOpenTuiWorkflowSelector;
+  readonly runOpenTuiWorkflowApp?: typeof runOpenTuiWorkflowApp;
 }
 
 interface ParsedOptions {
@@ -429,16 +429,12 @@ async function readMockScenarioOption(
   };
 }
 
-export function shouldFallbackFromNeoBlessedError(error: unknown): boolean {
+export function shouldFallbackFromOpenTuiError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
   }
-  const normalized = error.message.toLowerCase();
-  return (
-    normalized.includes("cannot find package 'neo-blessed'") ||
-    normalized.includes('cannot find module "neo-blessed"') ||
-    normalized.includes("cannot find module 'neo-blessed'") ||
-    normalized.includes("neo-blessed textarea/textbox widget is unavailable")
+  return /cannot find (?:package|module) ['"]@opentui\/core(?:-[^'"]+)?['"]/i.test(
+    error.message,
   );
 }
 
@@ -838,7 +834,7 @@ async function runTui(
     readonly rerunFromSessionId?: string;
     readonly resumeSessionId?: string;
     readonly sessionId?: string;
-  }): Promise<NeoBlessedWorkflowActionResult> => {
+  }): Promise<OpenTuiWorkflowActionResult> => {
     const mockScenario = await resolveTuiMockScenario(input.workflowName);
     const result = await runWorkflow(input.workflowName, {
       ...sharedOptions,
@@ -865,10 +861,10 @@ async function runTui(
       exitCode: result.value.exitCode,
     };
   };
-  const renderNeoBlessedWorkflowSelectorImpl =
-    deps.renderNeoBlessedWorkflowSelector ?? renderNeoBlessedWorkflowSelector;
-  const runNeoBlessedWorkflowAppImpl =
-    deps.runNeoBlessedWorkflowApp ?? runNeoBlessedWorkflowApp;
+  const renderOpenTuiWorkflowSelectorImpl =
+    deps.renderOpenTuiWorkflowSelector ?? renderOpenTuiWorkflowSelector;
+  const runOpenTuiWorkflowAppImpl =
+    deps.runOpenTuiWorkflowApp ?? runOpenTuiWorkflowApp;
 
   try {
     const runtimeSelection = selectTuiRuntimeMode({
@@ -983,7 +979,7 @@ async function runTui(
     }
 
     try {
-      return await runNeoBlessedWorkflowAppImpl({
+      return await runOpenTuiWorkflowAppImpl({
         ...(startupSelection.initialWorkflowName === undefined
           ? {}
           : { initialWorkflowName: startupSelection.initialWorkflowName }),
@@ -1068,12 +1064,12 @@ async function runTui(
         },
       });
     } catch (error: unknown) {
-      if (!shouldFallbackFromNeoBlessedError(error)) {
+      if (!shouldFallbackFromOpenTuiError(error)) {
         throw error;
       }
       const message = error instanceof Error ? error.message : "unknown error";
       io.stderr(
-        `neo-blessed TUI unavailable (${message}); falling back to readline workflow selection`,
+        `OpenTUI unavailable (${message}); falling back to readline workflow selection`,
       );
       if (resumeSession !== undefined) {
         io.stderr(
@@ -1087,7 +1083,7 @@ async function runTui(
         runtimeSelection.allowsWorkflowSelectionPrompt
       ) {
         try {
-          const selected = await renderNeoBlessedWorkflowSelectorImpl({
+          const selected = await renderOpenTuiWorkflowSelectorImpl({
             workflowNames,
             refreshWorkflowNames: async () => listWorkflowNames(sharedOptions),
             io,
@@ -1098,7 +1094,7 @@ async function runTui(
           }
           workflowName = selected.workflowName;
         } catch (selectorError: unknown) {
-          if (!shouldFallbackFromNeoBlessedError(selectorError)) {
+          if (!shouldFallbackFromOpenTuiError(selectorError)) {
             throw selectorError;
           }
           const selectorMessage =
@@ -1106,7 +1102,7 @@ async function runTui(
               ? selectorError.message
               : "unknown error";
           io.stderr(
-            `neo-blessed selector unavailable (${selectorMessage}); falling back to readline workflow selection`,
+            `OpenTUI selector unavailable (${selectorMessage}); falling back to readline workflow selection`,
           );
         }
       }
