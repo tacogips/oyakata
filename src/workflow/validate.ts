@@ -2363,6 +2363,29 @@ function normalizeNodePayload(
     issues.push(makeIssue("error", `${path}.variables`, "must be an object"));
   }
 
+  const descriptionRaw = payload["description"];
+  const description =
+    typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0
+      ? descriptionRaw
+      : undefined;
+  if (descriptionRaw !== undefined && typeof descriptionRaw !== "string") {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.description`,
+        "must be a non-empty string when provided",
+      ),
+    );
+  } else if (typeof descriptionRaw === "string" && description === undefined) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.description`,
+        "must be a non-empty string when provided",
+      ),
+    );
+  }
+
   const timeoutRaw = payload["timeoutMs"];
   let timeoutMs: number | undefined;
   if (timeoutRaw !== undefined) {
@@ -2627,6 +2650,7 @@ function normalizeNodePayload(
 
   return {
     id,
+    ...(description === undefined ? {} : { description }),
     ...(nodeType === "agent" ? {} : { nodeType }),
     ...(model === undefined ? {} : { model }),
     ...(executionBackend === undefined ? {} : { executionBackend }),

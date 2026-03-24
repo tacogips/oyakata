@@ -986,6 +986,50 @@ describe("validateWorkflowBundle", () => {
     });
   });
 
+  test("accepts node-level descriptions", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      description: "Summarize the diff and propose the next action.",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.description).toBe(
+      "Summarize the diff and propose the next action.",
+    );
+  });
+
+  test("rejects empty node-level descriptions", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      description: "   ",
+      model: "tacogips/claude-code-agent",
+      promptTemplate: "worker",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.description" &&
+          issue.message.includes("non-empty string"),
+      ),
+    ).toBe(true);
+  });
+
   test("accepts node output contract with supported JSON Schema subset", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {

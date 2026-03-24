@@ -206,6 +206,20 @@ interface TuiWorkflowInputDetection {
 
 ## Progress Log
 
+### Session: 2026-03-24 12:10 JST
+
+**Tasks Completed**: Selector-to-detail TUI redesign follow-up
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Reworked the interactive OpenTUI flow to match the updated design spec instead of opening directly into the all-pane browser. The initial screen is now a workflow selector with a dedicated preview pane plus `/`-triggered filter popup, and `enter` or `ctrl-m` transitions into a separate workflow-detail screen that shows sessions, nodes, details, and input/status controls. Added filter-helper regression coverage and re-ran the CLI/TUI regression slice with strict server typecheck.
+
+### Session: 2026-03-24 10:40 JST
+
+**Tasks Completed**: Post-implementation JSON input UX follow-up
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Tightened the workflow-browser TUI JSON editor behavior so the input panel now exposes JSON syntax state directly in the status area and input-panel title, and invalid JSON is rejected before run/rerun actions dispatch. Added regression coverage for text-mode, empty-buffer, valid-JSON, and invalid-JSON syntax-state reporting without disturbing the existing workflow/session/node browser flow.
+
 ### Session: 2026-03-23 17:24 JST
 
 **Tasks Completed**: TASK-001, TASK-002, TASK-003

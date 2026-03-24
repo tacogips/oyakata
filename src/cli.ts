@@ -1,5 +1,4 @@
 import { readdir, stat } from "node:fs/promises";
-import { spawn } from "node:child_process";
 import readline from "node:readline/promises";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -21,6 +20,7 @@ import { loadSession } from "./workflow/session-store";
 import { selectTuiRuntimeMode } from "./tui/runtime";
 import {
   type OpenTuiWorkflowActionResult,
+  type OpenTuiWorkflowExecutionHandle,
   renderOpenTuiWorkflowSelector,
   runOpenTuiWorkflowApp,
 } from "./tui/opentui-screen";
@@ -47,7 +47,6 @@ export interface CliDependencies {
     noExec?: boolean;
     fixedWorkflowName?: string;
   }) => Promise<StartedServe>;
-  readonly openBrowserUrl: (url: string) => Promise<void>;
   readonly isInteractiveTerminal: () => boolean;
   readonly waitForServeShutdown?: (started: StartedServe) => Promise<void>;
   readonly fetchImpl?: typeof fetch;
@@ -74,7 +73,6 @@ interface ParsedOptions {
   readonly authTokenEnv?: string;
   readonly readOnly: boolean;
   readonly noExec: boolean;
-  readonly openBrowser: boolean;
   readonly resumeSessionId?: string;
   readonly workflowName?: string;
   readonly messageJson?: string;
@@ -107,37 +105,6 @@ const DEFAULT_IO: CliIo = {
 
 const DEFAULT_DEPS: CliDependencies = {
   startServe,
-  openBrowserUrl: async (url: string) => {
-    const command =
-      process.platform === "darwin"
-        ? "open"
-        : process.platform === "win32"
-          ? "cmd"
-          : "xdg-open";
-    const args =
-      process.platform === "darwin"
-        ? [url]
-        : process.platform === "win32"
-          ? ["/c", "start", "", url]
-          : [url];
-
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(command, args, {
-        stdio: "ignore",
-        windowsHide: true,
-      });
-      child.once("error", reject);
-      child.once("close", (code, signal) => {
-        if (code === 0) {
-          resolve();
-          return;
-        }
-        const codeOrSignal =
-          signal === null ? `exit code ${String(code)}` : `signal ${signal}`;
-        reject(new Error(`${command} failed with ${codeOrSignal}`));
-      });
-    });
-  },
   isInteractiveTerminal: () =>
     process.stdin.isTTY === true && process.stdout.isTTY === true,
   waitForServeShutdown: async (_started: StartedServe) => {
@@ -190,7 +157,6 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let authTokenEnv: string | undefined;
   let readOnly = false;
   let noExec = false;
-  let openBrowser = false;
   let resumeSessionId: string | undefined;
   let workflowName: string | undefined;
   let messageJson: string | undefined;
@@ -272,9 +238,6 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       case "--no-exec":
         noExec = true;
         break;
-      case "--open":
-        openBrowser = true;
-        break;
       case "--resume-session":
         resumeSessionId = readNext();
         break;
@@ -312,7 +275,6 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(authTokenEnv === undefined ? {} : { authTokenEnv }),
       readOnly,
       noExec,
-      openBrowser,
       ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
       ...(workflowName === undefined ? {} : { workflowName }),
       ...(messageJson === undefined ? {} : { messageJson }),
@@ -334,7 +296,7 @@ function printHelp(io: CliIo): void {
     "  divedra tui [workflow-name] [--workflow <name>] [--resume-session <id>] [--variables <path>] [--mock-scenario <path>] [--max-steps <n>]",
   );
   io.stdout(
-    "  divedra serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec] [--open]",
+    "  divedra serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]",
   );
   io.stdout(
     "  divedra gql <graphql-document> [--variables <json|@file>] [--endpoint <url>] [--auth-token <token>]",
@@ -861,6 +823,16 @@ async function runTui(
       exitCode: result.value.exitCode,
     };
   };
+  const startLocalTuiWorkflow = async (input: {
+    readonly workflowName: string;
+    readonly runtimeVariables: Readonly<Record<string, unknown>>;
+    readonly sessionId: string;
+  }): Promise<OpenTuiWorkflowExecutionHandle> => {
+    return {
+      sessionId: input.sessionId,
+      completion: runLocalTuiWorkflow(input),
+    };
+  };
   const renderOpenTuiWorkflowSelectorImpl =
     deps.renderOpenTuiWorkflowSelector ?? renderOpenTuiWorkflowSelector;
   const runOpenTuiWorkflowAppImpl =
@@ -1023,7 +995,7 @@ async function runTui(
             managerSessionId,
           ),
         executeWorkflow: async ({ workflowName, runtimeVariables }) => {
-          return runLocalTuiWorkflow({
+          return startLocalTuiWorkflow({
             workflowName,
             sessionId: createSessionId(),
             runtimeVariables: {
@@ -1331,17 +1303,6 @@ export async function runCli(
         io.stdout(
           `serve listening on http://${started.host}:${String(started.port)}`,
         );
-      }
-
-      if (parsed.options.openBrowser) {
-        const url = `http://${started.host}:${String(started.port)}`;
-        try {
-          await deps.openBrowserUrl(url);
-        } catch (error: unknown) {
-          const message =
-            error instanceof Error ? error.message : "unknown error";
-          io.stderr(`failed to open browser: ${message}`);
-        }
       }
       const waitForServeShutdown =
         deps.waitForServeShutdown ?? DEFAULT_DEPS.waitForServeShutdown;

@@ -253,6 +253,7 @@ export interface UserActionNodeConfig {
 
 export interface NodePayload {
   readonly id: string;
+  readonly description?: string;
   readonly nodeType?: NodeType;
   readonly model?: string;
   readonly executionBackend?: NodeExecutionBackend;

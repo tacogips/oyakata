@@ -38,6 +38,24 @@ Notes:
 - `workflow-vis.json` is canonical for editor ordering but can be synthesized by the loader when missing.
 - runtime execution artifacts are written outside the workflow-definition directory under the configured artifact root.
 
+## `node-{id}.json`
+
+Node payload files may now include a canonical node-level description:
+
+- `id: string`
+- optional `description: string`
+- other node payload fields described below
+
+`description` is intended to capture the node's authored purpose in a short human-readable sentence. It is distinct from:
+
+- workflow-level `description`
+- sub-workflow `description`
+- `output.description`, which describes the expected output contract rather than the node's overall role
+
+Validation rules:
+
+- when provided, `description` must be a non-empty string
+
 ## `workflow.json`
 
 Current authored shape:

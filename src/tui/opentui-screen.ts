@@ -14,15 +14,25 @@ import type {
   RuntimeSessionSummary,
 } from "../workflow/runtime-db";
 import type { ArgumentBinding, NodePayload } from "../workflow/types";
+import { deriveWorkflowVisualization } from "../workflow/visualization";
 import {
   BoxRenderable,
+  bold,
+  brightCyan,
+  brightGreen,
+  brightMagenta,
+  brightWhite,
+  brightYellow,
   createCliRenderer,
+  dim,
   KeyEvent,
   ScrollBoxRenderable,
   SelectRenderable,
   SelectRenderableEvents,
+  StyledText,
   TextareaRenderable,
   TextRenderable,
+  t,
   type SelectOption,
 } from "@opentui/core";
 
@@ -39,6 +49,13 @@ export interface TuiWorkflowInputDetection {
   readonly reason: string;
 }
 
+export interface TuiWorkflowInputSyntax {
+  readonly column?: number;
+  readonly line?: number;
+  readonly status: "not-applicable" | "valid" | "valid-empty" | "invalid";
+  readonly summary: string;
+}
+
 export interface OpenTuiWorkflowSelection {
   readonly type: "selected" | "quit";
   readonly workflowName?: string;
@@ -48,6 +65,11 @@ export interface OpenTuiWorkflowActionResult {
   readonly exitCode: number;
   readonly sessionId: string;
   readonly status: WorkflowSessionState["status"];
+}
+
+export interface OpenTuiWorkflowExecutionHandle {
+  readonly sessionId: string;
+  readonly completion: Promise<OpenTuiWorkflowActionResult>;
 }
 
 export interface OpenTuiWorkflowAppOptions {
@@ -69,7 +91,7 @@ export interface OpenTuiWorkflowAppOptions {
   readonly executeWorkflow: (input: {
     readonly workflowName: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
-  }) => Promise<OpenTuiWorkflowActionResult>;
+  }) => Promise<OpenTuiWorkflowExecutionHandle>;
   readonly rerunWorkflow: (input: {
     readonly sourceSessionId: string;
     readonly fromNodeId: string;
@@ -80,9 +102,28 @@ export interface OpenTuiWorkflowAppOptions {
   ) => Promise<OpenTuiWorkflowActionResult>;
 }
 
+interface OpenTuiPaneWidthSpec {
+  readonly minWidth: number;
+  readonly width: `${number}%`;
+}
+
+export const OPEN_TUI_SELECTOR_PANE_LAYOUT = {
+  details: { width: "35%", minWidth: 0 },
+  timeline: { width: "35%", minWidth: 0 },
+  workflows: { width: "30%", minWidth: 20 },
+} as const satisfies Readonly<Record<string, OpenTuiPaneWidthSpec>>;
+
+export const OPEN_TUI_MAIN_PANE_LAYOUT = {
+  details: { width: "30%", minWidth: 0 },
+  nodes: { width: "22%", minWidth: 18 },
+  sessions: { width: "28%", minWidth: 18 },
+  workflows: { width: "20%", minWidth: 16 },
+} as const satisfies Readonly<Record<string, OpenTuiPaneWidthSpec>>;
+
 type FocusPane = "input" | "nodes" | "sessions" | "workflows";
 type DetailMode = "inbox" | "manager" | "outbox" | "session-logs" | "summary";
 type ShortcutKeyEvent = Pick<KeyEvent, "ctrl" | "meta" | "name" | "shift">;
+type ScreenMode = "history" | "run" | "workspace";
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -130,6 +171,23 @@ export function resolveSelectedWorkflowName(
     return undefined;
   }
   return workflowNames[selectedIndex];
+}
+
+function normalizeWorkflowFilterText(value: string): string {
+  return value.replace(/\r?\n/g, "").trim();
+}
+
+export function filterWorkflowNames(
+  workflowNames: readonly string[],
+  filterText: string,
+): readonly string[] {
+  const normalizedFilter = normalizeWorkflowFilterText(filterText).toLowerCase();
+  if (normalizedFilter.length === 0) {
+    return [...workflowNames];
+  }
+  return workflowNames.filter((name) =>
+    name.toLowerCase().includes(normalizedFilter),
+  );
 }
 
 function looksLikeStructuredHumanInputBinding(binding: ArgumentBinding): boolean {
@@ -326,6 +384,61 @@ export function formatJsonEditorText(editorText: string): string {
   return JSON.stringify(JSON.parse(trimmed) as unknown, null, 2);
 }
 
+function extractJsonParseLocation(
+  message: string,
+): Readonly<{ column?: number; line?: number }> {
+  const matched = /line\s+(\d+)\s+column\s+(\d+)/i.exec(message);
+  if (matched === null) {
+    return {};
+  }
+  const [, lineText, columnText] = matched;
+  const line = Number(lineText);
+  const column = Number(columnText);
+  return {
+    ...(Number.isFinite(line) ? { line } : {}),
+    ...(Number.isFinite(column) ? { column } : {}),
+  };
+}
+
+export function describeTuiWorkflowInputSyntax(
+  editorText: string,
+  mode: TuiWorkflowInputMode,
+): TuiWorkflowInputSyntax {
+  if (mode === "text") {
+    return {
+      status: "not-applicable",
+      summary: "plain text",
+    };
+  }
+
+  const trimmed = editorText.trim();
+  if (trimmed.length === 0) {
+    return {
+      status: "valid-empty",
+      summary: "empty buffer -> {}",
+    };
+  }
+
+  try {
+    JSON.parse(trimmed) as unknown;
+    return {
+      status: "valid",
+      summary: "valid JSON",
+    };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "invalid JSON";
+    const location = extractJsonParseLocation(message);
+    return {
+      status: "invalid",
+      summary:
+        location.line === undefined || location.column === undefined
+          ? `invalid JSON: ${message}`
+          : `invalid JSON at line ${String(location.line)}, column ${String(location.column)}`,
+      ...location,
+    };
+  }
+}
+
 function resolveNodeKind(
   workflow: LoadedWorkflow["bundle"]["workflow"],
   nodeId: string,
@@ -359,6 +472,98 @@ function workflowNamesToSelectOptions(
     description: "",
     value: name,
   }));
+}
+
+function summarizePromptHelp(promptTemplate: string | undefined): string | undefined {
+  if (promptTemplate === undefined) {
+    return undefined;
+  }
+  const normalized = promptTemplate
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return normalized === undefined ? undefined : truncate(normalized, 120);
+}
+
+function summarizeNodeType(
+  kind: string,
+  payload: NodePayload | undefined,
+): string {
+  const nodeType = payload?.nodeType ?? "agent";
+  return `${kind}/${nodeType}`;
+}
+
+function buildWorkflowNodePreview(
+  loaded: LoadedWorkflow,
+): StyledText {
+  const derivedNodes = deriveWorkflowVisualization({
+    workflow: loaded.bundle.workflow,
+    workflowVis: loaded.bundle.workflowVis,
+  });
+  const nodeRefById = new Map(
+    loaded.bundle.workflow.nodes.map((node) => [node.id, node] as const),
+  );
+  const subWorkflowByNodeId = new Map<string, string>();
+  loaded.bundle.workflow.subWorkflows.forEach((subWorkflow) => {
+    subWorkflow.nodeIds.forEach((nodeId) => {
+      subWorkflowByNodeId.set(nodeId, subWorkflow.description);
+    });
+  });
+  const chunks: StyledText["chunks"] = [];
+
+  const append = (value: StyledText): void => {
+    chunks.push(...value.chunks);
+  };
+
+  const nodeTitle = (nodeId: string, kind: string) => {
+    if (kind === "root-manager") {
+      return brightMagenta(bold(nodeId));
+    }
+    if (kind === "subworkflow-manager") {
+      return brightCyan(bold(nodeId));
+    }
+    if (kind === "input") {
+      return brightGreen(bold(nodeId));
+    }
+    if (kind === "output") {
+      return brightYellow(bold(nodeId));
+    }
+    return brightWhite(bold(nodeId));
+  };
+
+  derivedNodes.forEach((entry, index) => {
+    const nodeRef = nodeRefById.get(entry.id);
+    const payload =
+      nodeRef === undefined
+        ? undefined
+        : loaded.bundle.nodePayloads[nodeRef.nodeFile];
+    const indent = "  ".repeat(entry.indent);
+    const kind = nodeRef?.kind ?? "task";
+    const details = [
+      `type: ${summarizeNodeType(kind, payload)}`,
+      ...(payload?.executionBackend === undefined
+        ? []
+        : [`backend: ${payload.executionBackend}`]),
+      ...(payload?.model === undefined ? [] : [`model: ${payload.model}`]),
+    ].join("  ");
+    const purpose =
+      payload?.description ??
+      payload?.output?.description ??
+      subWorkflowByNodeId.get(entry.id) ??
+      summarizePromptHelp(payload?.promptTemplate);
+
+    append(t`${dim(`${indent}----------------------------------------\n`)}`);
+    append(t`${indent}${nodeTitle(entry.id, kind)}\n`);
+    append(t`${dim(`${indent}${details}\n`)}`);
+    if (purpose !== undefined) {
+      append(t`${indent}${brightWhite("purpose:")} ${purpose}\n`);
+    }
+    if (index === derivedNodes.length - 1) {
+      append(t`${dim(`${indent}----------------------------------------`)}`);
+    }
+  });
+
+  return new StyledText(chunks);
 }
 
 function buildSessionSelectOptions(
@@ -602,6 +807,123 @@ async function buildDetailContent(input: {
   ].join("\n");
 }
 
+function buildWorkflowSummaryPreview(
+  loadedWorkflow: LoadedWorkflow | undefined,
+): StyledText {
+  if (loadedWorkflow === undefined) {
+    return t`${dim("Loading workflow detail...")}`;
+  }
+
+  const chunks: StyledText["chunks"] = [];
+  const append = (value: StyledText): void => {
+    chunks.push(...value.chunks);
+  };
+
+  append(
+    t`${brightWhite("Workflow:")} ${bold(loadedWorkflow.workflowName)}\n${brightWhite(
+      "Description:",
+    )} ${loadedWorkflow.bundle.workflow.description}\n${dim(
+      `Workflow ID: ${loadedWorkflow.bundle.workflow.workflowId}  Nodes: ${String(
+        loadedWorkflow.bundle.workflow.nodes.length,
+      )}  Sub-workflows: ${String(
+        loadedWorkflow.bundle.workflow.subWorkflows.length,
+      )}`,
+    )}\n\n`,
+  );
+  append(t`${brightWhite(bold("Node Structure"))}\n`);
+  append(buildWorkflowNodePreview(loadedWorkflow));
+  return new StyledText(chunks);
+}
+
+function resolveWorkflowFinalResult(
+  runtimeSessionView: RuntimeSessionView | undefined,
+): unknown {
+  const workflowOutput = runtimeSessionView?.session.runtimeVariables["workflowOutput"];
+  if (workflowOutput !== undefined) {
+    return workflowOutput;
+  }
+  const latestOutput = runtimeSessionView?.nodeExecutions.at(-1)?.outputJson;
+  if (latestOutput === undefined || latestOutput.length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(latestOutput) as unknown;
+  } catch {
+    return latestOutput;
+  }
+}
+
+export function buildWorkflowRunStatusContent(input: {
+  readonly completionResult?: OpenTuiWorkflowActionResult;
+  readonly loadedWorkflow: LoadedWorkflow | undefined;
+  readonly runtimeSessionView: RuntimeSessionView | undefined;
+  readonly sessionId?: string;
+  readonly statusError?: string;
+}): string {
+  if (input.loadedWorkflow === undefined) {
+    return "Select a workflow before starting a run.";
+  }
+
+  if (input.runtimeSessionView === undefined) {
+    return [
+      `Workflow: ${input.loadedWorkflow.workflowName}`,
+      `Input mode: ${detectWorkflowInputMode(input.loadedWorkflow).mode}`,
+      `Pending session: ${input.sessionId ?? "(not started)"}`,
+      input.statusError ?? "No run started yet.",
+      "Press enter or ctrl-m from the input area to review and confirm the launch.",
+    ].join("\n");
+  }
+
+  const session = input.runtimeSessionView.session;
+  const finalResult = resolveWorkflowFinalResult(input.runtimeSessionView);
+
+  return [
+    `Workflow: ${session.workflowName}`,
+    `Session: ${session.sessionId} status=${session.status}`,
+    `Current node: ${session.currentNodeId ?? "-"}`,
+    `Queue: ${session.queue.join(",") || "-"}`,
+    `Node executions: ${String(session.nodeExecutions.length)}`,
+    ...(session.lastError === undefined ? [] : [`Last error: ${session.lastError}`]),
+    ...(input.statusError === undefined
+      ? []
+      : [`Status refresh note: ${input.statusError}`]),
+    ...(input.completionResult === undefined
+      ? []
+      : [
+          `Completion: exitCode=${String(
+            input.completionResult.exitCode,
+          )} status=${input.completionResult.status}`,
+        ]),
+    "",
+    "Recent logs:",
+    formatLogEntries(input.runtimeSessionView.nodeLogs, 18),
+    ...(finalResult === undefined
+      ? []
+      : ["", "Final result:", compactJson(finalResult, 4_000)]),
+  ].join("\n");
+}
+
+function buildRunConfirmationContent(input: {
+  readonly inputMode: TuiWorkflowInputMode;
+  readonly inputSyntax: TuiWorkflowInputSyntax;
+  readonly workflowName: string;
+  readonly editorText: string;
+}): string {
+  return [
+    `Start workflow '${input.workflowName}'?`,
+    `Input mode: ${input.inputMode}`,
+    `Input syntax: ${input.inputSyntax.summary}`,
+    "",
+    "Preview:",
+    truncate(
+      input.editorText.trim().length === 0 ? "{}" : input.editorText.trim(),
+      1_600,
+    ),
+    "",
+    "Press enter or ctrl-m to confirm. Esc cancels.",
+  ].join("\n");
+}
+
 const selectJkBindings = [
   { name: "j", action: "move-down" as const },
   { name: "k", action: "move-up" as const },
@@ -609,6 +931,14 @@ const selectJkBindings = [
 
 export function isOpenTuiRefreshKey(key: ShortcutKeyEvent): boolean {
   return key.name === "r" && key.shift && !key.ctrl && !key.meta;
+}
+
+export function isOpenTuiHelpKey(key: ShortcutKeyEvent): boolean {
+  return (
+    !key.ctrl &&
+    !key.meta &&
+    ((key.name === "?" && !key.shift) || (key.name === "/" && key.shift))
+  );
 }
 
 export async function renderOpenTuiWorkflowSelector(options: {
@@ -634,7 +964,8 @@ export async function renderOpenTuiWorkflowSelector(options: {
   });
 
   const workflowPane = new BoxRenderable(renderer, {
-    flexGrow: 3,
+    width: OPEN_TUI_SELECTOR_PANE_LAYOUT.workflows.width,
+    minWidth: OPEN_TUI_SELECTOR_PANE_LAYOUT.workflows.minWidth,
     height: "100%",
     border: true,
     title: " Workflows ",
@@ -653,7 +984,8 @@ export async function renderOpenTuiWorkflowSelector(options: {
   const timelineBox = new BoxRenderable(renderer, {
     border: true,
     title: " Timeline ",
-    flexGrow: 4,
+    width: OPEN_TUI_SELECTOR_PANE_LAYOUT.timeline.width,
+    minWidth: OPEN_TUI_SELECTOR_PANE_LAYOUT.timeline.minWidth,
     height: "100%",
   });
   timelineBox.add(
@@ -666,7 +998,8 @@ export async function renderOpenTuiWorkflowSelector(options: {
   const detailsBox = new BoxRenderable(renderer, {
     border: true,
     title: " Details ",
-    flexGrow: 3,
+    width: OPEN_TUI_SELECTOR_PANE_LAYOUT.details.width,
+    minWidth: OPEN_TUI_SELECTOR_PANE_LAYOUT.details.minWidth,
     height: "100%",
   });
   detailsBox.add(
@@ -770,14 +1103,14 @@ export async function runOpenTuiWorkflowApp(
     height: "100%",
   });
 
-  const mainRow = new BoxRenderable(renderer, {
+  const selectorRow = new BoxRenderable(renderer, {
     flexDirection: "row",
-    flexGrow: 58,
+    flexGrow: 1,
     width: "100%",
   });
-
   const workflowPane = new BoxRenderable(renderer, {
-    flexGrow: 20,
+    width: "40%",
+    minWidth: 20,
     height: "100%",
     border: true,
     title: " Workflows ",
@@ -792,9 +1125,38 @@ export async function runOpenTuiWorkflowApp(
     keyBindings: selectJkBindings,
   });
   workflowPane.add(workflowSelect);
+  const selectorPreviewScroll = new ScrollBoxRenderable(renderer, {
+    id: "selector-preview-scroll",
+    width: "60%",
+    minWidth: 20,
+    height: "100%",
+    border: true,
+    title: " Workflow Preview ",
+    scrollY: true,
+  });
+  const selectorPreviewText = new TextRenderable(renderer, {
+    id: "selector-preview-text",
+    flexGrow: 1,
+    width: "100%",
+    content: "",
+  });
+  selectorPreviewScroll.content.add(selectorPreviewText);
+  selectorRow.add(workflowPane);
+  selectorRow.add(selectorPreviewScroll);
 
+  const historyScreen = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    flexGrow: 1,
+    width: "100%",
+  });
+  const historyTopRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    flexGrow: 18,
+    width: "100%",
+  });
   const sessionPane = new BoxRenderable(renderer, {
-    flexGrow: 28,
+    width: "52%",
+    minWidth: 18,
     height: "100%",
     border: true,
     title: " Sessions ",
@@ -809,9 +1171,9 @@ export async function runOpenTuiWorkflowApp(
     keyBindings: selectJkBindings,
   });
   sessionPane.add(sessionSelect);
-
   const nodePane = new BoxRenderable(renderer, {
-    flexGrow: 22,
+    width: "48%",
+    minWidth: 18,
     height: "100%",
     border: true,
     title: " Nodes ",
@@ -826,11 +1188,13 @@ export async function runOpenTuiWorkflowApp(
     keyBindings: selectJkBindings,
   });
   nodePane.add(nodeSelect);
-
+  historyTopRow.add(sessionPane);
+  historyTopRow.add(nodePane);
   const detailScroll = new ScrollBoxRenderable(renderer, {
     id: "detail-scroll",
+    width: "100%",
+    minWidth: 0,
     flexGrow: 30,
-    height: "100%",
     border: true,
     title: " Details ",
     scrollY: true,
@@ -842,18 +1206,54 @@ export async function runOpenTuiWorkflowApp(
     content: "",
   });
   detailScroll.content.add(detailText);
+  historyScreen.add(historyTopRow);
+  historyScreen.add(detailScroll);
 
-  mainRow.add(workflowPane);
-  mainRow.add(sessionPane);
-  mainRow.add(nodePane);
-  mainRow.add(detailScroll);
+  const runTopRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    flexGrow: 1,
+    width: "100%",
+  });
+  const runWorkflowPane = new ScrollBoxRenderable(renderer, {
+    id: "run-workflow-scroll",
+    width: "50%",
+    minWidth: 24,
+    height: "100%",
+    border: true,
+    title: " Workflow Detail ",
+    scrollY: true,
+  });
+  const runWorkflowText = new TextRenderable(renderer, {
+    id: "run-workflow-text",
+    flexGrow: 1,
+    width: "100%",
+    content: "",
+  });
+  runWorkflowPane.content.add(runWorkflowText);
+  const runStatusPane = new ScrollBoxRenderable(renderer, {
+    id: "run-status-scroll",
+    width: "50%",
+    minWidth: 24,
+    height: "100%",
+    border: true,
+    title: " Execution Status ",
+    scrollY: true,
+  });
+  const runStatusText = new TextRenderable(renderer, {
+    id: "run-status-text",
+    flexGrow: 1,
+    width: "100%",
+    content: "",
+  });
+  runStatusPane.content.add(runStatusText);
+  runTopRow.add(runWorkflowPane);
+  runTopRow.add(runStatusPane);
 
   const inputRow = new BoxRenderable(renderer, {
     flexDirection: "row",
-    flexGrow: 26,
+    flexGrow: 20,
     width: "100%",
   });
-
   const inputShell = new BoxRenderable(renderer, {
     id: "input-shell",
     border: true,
@@ -862,37 +1262,104 @@ export async function runOpenTuiWorkflowApp(
     height: "100%",
     focusable: true,
   });
-
   const inputTextarea = new TextareaRenderable(renderer, {
     id: "input-editor",
     flexGrow: 1,
     width: "100%",
     wrapMode: "char",
   });
-
   inputShell.add(inputTextarea);
   inputRow.add(inputShell);
 
-  const helpBox = new BoxRenderable(renderer, {
+  const helpPopup = new BoxRenderable(renderer, {
+    id: "help-popup",
     border: true,
-    title: " Status / Keys ",
-    flexGrow: 16,
-    width: "100%",
+    title: " Help ",
+    width: "70%",
+    minWidth: 32,
+    height: "60%",
+    position: "absolute",
+    top: "20%",
+    left: "15%",
+    zIndex: 20,
+    padding: 1,
+    visible: false,
+    flexDirection: "column",
+    focusable: true,
   });
   const helpText = new TextRenderable(renderer, {
     id: "help-text",
     flexGrow: 1,
+    width: "100%",
     content: "",
   });
-  helpBox.add(helpText);
+  helpPopup.add(helpText);
 
-  root.add(mainRow);
+  const filterPopup = new BoxRenderable(renderer, {
+    id: "workflow-filter-popup",
+    border: true,
+    title: " Filter Workflows ",
+    width: "60%",
+    minWidth: 24,
+    height: 7,
+    position: "absolute",
+    top: "25%",
+    left: "20%",
+    zIndex: 20,
+    flexDirection: "column",
+    padding: 1,
+    visible: false,
+  });
+  const filterHintText = new TextRenderable(renderer, {
+    id: "workflow-filter-hint",
+    content: "Type a substring and press enter/ctrl-m to apply. Esc cancels.",
+  });
+  const filterTextarea = new TextareaRenderable(renderer, {
+    id: "workflow-filter-input",
+    flexGrow: 1,
+    width: "100%",
+    wrapMode: "char",
+  });
+  filterPopup.add(filterHintText);
+  filterPopup.add(filterTextarea);
+
+  const confirmPopup = new BoxRenderable(renderer, {
+    id: "run-confirm-popup",
+    border: true,
+    title: " Confirm Run ",
+    width: "70%",
+    minWidth: 32,
+    height: "55%",
+    position: "absolute",
+    top: "22%",
+    left: "15%",
+    zIndex: 22,
+    padding: 1,
+    visible: false,
+    flexDirection: "column",
+    focusable: true,
+  });
+  const confirmText = new TextRenderable(renderer, {
+    id: "run-confirm-text",
+    flexGrow: 1,
+    width: "100%",
+    content: "",
+  });
+  confirmPopup.add(confirmText);
+
+  root.add(selectorRow);
+  root.add(historyScreen);
+  root.add(runTopRow);
   root.add(inputRow);
-  root.add(helpBox);
+  root.add(filterPopup);
+  root.add(helpPopup);
+  root.add(confirmPopup);
   renderer.root.add(root);
 
   let workflowNames = [...options.workflowNames];
+  let filteredWorkflowNames = [...workflowNames];
   let loadedWorkflow: LoadedWorkflow | undefined;
+  let selectorPreviewWorkflow: LoadedWorkflow | undefined;
   let workflowInputDetection: TuiWorkflowInputDetection = {
     mode: "text",
     reason: "defaulted before loading a workflow",
@@ -900,38 +1367,68 @@ export async function runOpenTuiWorkflowApp(
   let workflowSessions: readonly RuntimeSessionSummary[] = [];
   let runtimeSessionView: RuntimeSessionView | undefined;
   let managerMessages: readonly ManagerMessageRecord[] = [];
-  let focusPane: FocusPane = "workflows";
+  let focusPane: FocusPane =
+    options.initialWorkflowName === undefined && options.initialSessionId === undefined
+      ? "workflows"
+      : "sessions";
   let detailMode: DetailMode = "summary";
+  let screenMode: ScreenMode =
+    options.initialWorkflowName === undefined && options.initialSessionId === undefined
+      ? "workspace"
+      : "history";
   let busy = false;
-  let editingInput = false;
-  let lastStatus = "Loading TUI state...";
+  let editingInput: boolean = false;
+  let filterPopupOpen = false;
+  let helpPopupOpen = false;
+  let confirmPopupOpen = false;
+  let workflowFilterText = "";
+  let workflowFilterTextBeforePopup = "";
+  let workflowSelectionBeforePopup: string | undefined;
+  let pendingRunRuntimeVariables: Readonly<Record<string, unknown>> | undefined;
+  let runSessionView: RuntimeSessionView | undefined;
+  let runExecutionResult: OpenTuiWorkflowActionResult | undefined;
+  let runPendingSessionId: string | undefined;
+  let runStatusError: string | undefined;
+  let runPollTimer: ReturnType<typeof setInterval> | undefined;
+  let runPollInFlight = false;
+  let isClosed = false;
+  let lastStatus =
+    screenMode === "workspace"
+      ? "Select a workflow, then open history with enter/l or start a new run with ctrl-m."
+      : "Loading TUI state...";
+
+  const isEnterKey = (key: KeyEvent): boolean => key.name === "return";
+  const isCtrlMKey = (key: KeyEvent): boolean =>
+    key.name === "m" && key.ctrl && !key.meta;
+  const isConfirmKey = (key: KeyEvent): boolean =>
+    isEnterKey(key) || isCtrlMKey(key);
 
   const selectedWorkflowName = (): string | undefined => {
-    const opt = workflowSelect.getSelectedOption();
-    if (opt === null || opt.value === EMPTY_SELECT) {
+    const option = workflowSelect.getSelectedOption();
+    if (option === null || option.value === EMPTY_SELECT) {
       return undefined;
     }
-    return String(opt.value);
+    return String(option.value);
   };
 
   const selectedSessionSummary = (): RuntimeSessionSummary | undefined => {
-    const opt = sessionSelect.getSelectedOption();
-    if (opt === null || opt.value === EMPTY_SELECT) {
+    const option = sessionSelect.getSelectedOption();
+    if (option === null || option.value === EMPTY_SELECT) {
       return undefined;
     }
-    return workflowSessions.find((s) => s.sessionId === opt.value);
+    return workflowSessions.find((session) => session.sessionId === option.value);
   };
 
   const selectedNodeExecution = (): NodeExecutionRecord | undefined => {
     if (runtimeSessionView === undefined) {
       return undefined;
     }
-    const opt = nodeSelect.getSelectedOption();
-    if (opt === null || opt.value === EMPTY_SELECT) {
+    const option = nodeSelect.getSelectedOption();
+    if (option === null || option.value === EMPTY_SELECT) {
       return undefined;
     }
     return runtimeSessionView.session.nodeExecutions.find(
-      (e) => e.nodeExecId === opt.value,
+      (execution) => execution.nodeExecId === option.value,
     );
   };
 
@@ -943,26 +1440,138 @@ export async function runOpenTuiWorkflowApp(
     return resolveManagerSessionId(loadedWorkflow.bundle.workflow, execution);
   };
 
+  const buildWorkflowSelectorPreview = (): StyledText => {
+    const selected = selectedWorkflowName();
+    if (selected === undefined) {
+      return t`${
+        workflowFilterText.length === 0
+          ? "No workflow is selected."
+          : `No workflows match filter '${workflowFilterText}'.`
+      }`;
+    }
+    const previewWorkflow =
+      selectorPreviewWorkflow?.workflowName === selected
+        ? selectorPreviewWorkflow
+        : loadedWorkflow?.workflowName === selected
+          ? loadedWorkflow
+          : undefined;
+    const chunks: StyledText["chunks"] = [];
+    chunks.push(
+      ...t`${brightWhite("Workflow:")} ${bold(selected)}\n${dim(
+        `Filter: ${workflowFilterText.length === 0 ? "(none)" : workflowFilterText}  Matches: ${String(filteredWorkflowNames.length)}/${String(workflowNames.length)}`,
+      )}\n\n`.chunks,
+    );
+    chunks.push(...buildWorkflowSummaryPreview(previewWorkflow).chunks);
+    return new StyledText(chunks);
+  };
+
+  const syncFilteredWorkflowNames = (
+    preferredWorkflowName: string | undefined,
+  ): void => {
+    filteredWorkflowNames = [
+      ...filterWorkflowNames(workflowNames, workflowFilterText),
+    ];
+    workflowSelect.options =
+      filteredWorkflowNames.length === 0
+        ? [
+            {
+              name:
+                workflowFilterText.length === 0
+                  ? "(no workflows found)"
+                  : "(no workflows match filter)",
+              description: "",
+              value: EMPTY_SELECT,
+            },
+          ]
+        : workflowNamesToSelectOptions(filteredWorkflowNames);
+    if (filteredWorkflowNames.length === 0) {
+      workflowSelect.setSelectedIndex(0);
+      return;
+    }
+    const nextIndex = filteredWorkflowNames.findIndex(
+      (workflowName) => workflowName === preferredWorkflowName,
+    );
+    selectBoundedIndex(
+      workflowSelect,
+      nextIndex >= 0 ? nextIndex : 0,
+      filteredWorkflowNames.length,
+    );
+  };
+
   const setStatus = (message: string): void => {
     lastStatus = message;
+    const inputSyntax = describeTuiWorkflowInputSyntax(
+      inputTextarea.plainText,
+      workflowInputDetection.mode,
+    );
+    if (screenMode === "workspace") {
+      helpText.content = [
+        message,
+        "",
+        `Screen=workspace  Filter=${workflowFilterText.length === 0 ? "(none)" : workflowFilterText}  Matches=${String(
+          filteredWorkflowNames.length,
+        )}/${String(workflowNames.length)}  Busy=${String(busy)}`,
+        "j/k: move  /: filter  enter or l: history  ctrl-m: new run  R: refresh  ?: help  q: quit",
+        "",
+        "Press q to close this popup.",
+      ].join("\n");
+      return;
+    }
+    if (screenMode === "run") {
+      helpText.content = [
+        message,
+        "",
+        `Screen=run  Workflow=${loadedWorkflow?.workflowName ?? "-"}  InputMode=${workflowInputDetection.mode}  InputSyntax=${inputSyntax.summary}  Busy=${String(
+          busy,
+        )}`,
+        "Type into the input editor. enter/ctrl-m: confirm run  f: format JSON  m: toggle input mode",
+        "l: open history  h: workspace  R: refresh status  ?: help  q: quit",
+        "",
+        "Press q to close this popup.",
+      ].join("\n");
+      return;
+    }
     helpText.content = [
       message,
       "",
-      `Focus=${focusPane}  Detail=${detailMode}  InputMode=${workflowInputDetection.mode}  Editing=${String(
+      `Screen=history  Focus=${focusPane}  Detail=${detailMode}  InputMode=${workflowInputDetection.mode}  Editing=${String(
         editingInput,
       )}  Busy=${String(busy)}`,
-      "tab: focus  enter: load selection  e: edit input  f: format JSON  m: toggle input mode",
-      "n: run workflow  r: rerun selected node  u: resume selected session  i/o/g/a: inbox/outbox/logs/manager  R: refresh  q: quit",
+      `Input syntax=${inputSyntax.summary}`,
+      "tab: focus  enter/ctrl-m: load selection  e: edit input  f: format JSON  m: toggle input mode",
+      "n: open new-run screen  r: rerun selected node  u: resume selected session  i/o/g/a/s: change detail view",
+      "h: workspace  R: refresh  ?: help  q: quit",
+      "",
+      "Press q to close this popup.",
     ].join("\n");
   };
 
   const render = async (): Promise<void> => {
-    workflowSelect.options = workflowNamesToSelectOptions(workflowNames);
-    selectBoundedIndex(
-      workflowSelect,
-      workflowNames.findIndex((name) => name === loadedWorkflow?.workflowName),
-      workflowNames.length,
+    syncFilteredWorkflowNames(
+      screenMode === "workspace"
+        ? selectedWorkflowName()
+        : loadedWorkflow?.workflowName ?? selectedWorkflowName(),
     );
+
+    selectorRow.visible = screenMode === "workspace";
+    historyScreen.visible = screenMode === "history";
+    runTopRow.visible = screenMode === "run";
+    inputRow.visible = screenMode === "history" || screenMode === "run";
+    filterPopup.visible = filterPopupOpen;
+    helpPopup.visible = helpPopupOpen;
+    confirmPopup.visible = confirmPopupOpen;
+
+    selectorPreviewText.content = buildWorkflowSelectorPreview();
+    runWorkflowText.content = buildWorkflowSummaryPreview(loadedWorkflow);
+    runStatusText.content = buildWorkflowRunStatusContent({
+      loadedWorkflow,
+      runtimeSessionView: runSessionView,
+      ...(runExecutionResult === undefined
+        ? {}
+        : { completionResult: runExecutionResult }),
+      ...(runPendingSessionId === undefined ? {} : { sessionId: runPendingSessionId }),
+      ...(runStatusError === undefined ? {} : { statusError: runStatusError }),
+    });
 
     sessionSelect.options = buildSessionSelectOptions(workflowSessions);
     if (workflowSessions.length === 0) {
@@ -971,8 +1580,7 @@ export async function runOpenTuiWorkflowApp(
       selectBoundedIndex(
         sessionSelect,
         workflowSessions.findIndex(
-          (session) =>
-            session.sessionId === runtimeSessionView?.session.sessionId,
+          (session) => session.sessionId === runtimeSessionView?.session.sessionId,
         ),
         workflowSessions.length,
       );
@@ -988,12 +1596,12 @@ export async function runOpenTuiWorkflowApp(
     ) {
       nodeSelect.setSelectedIndex(0);
     } else {
-      const currentNode = selectedNodeExecution();
+      const selectedExecution = selectedNodeExecution();
       const selectedIndex =
-        currentNode === undefined
+        selectedExecution === undefined
           ? runtimeSessionView.session.nodeExecutions.length - 1
           : runtimeSessionView.session.nodeExecutions.findIndex(
-              (entry) => entry.nodeExecId === currentNode.nodeExecId,
+              (entry) => entry.nodeExecId === selectedExecution.nodeExecId,
             );
       selectBoundedIndex(
         nodeSelect,
@@ -1004,17 +1612,32 @@ export async function runOpenTuiWorkflowApp(
       );
     }
 
-    inputShell.title = ` Input (${workflowInputDetection.mode}) `;
+    const inputSyntax = describeTuiWorkflowInputSyntax(
+      inputTextarea.plainText,
+      workflowInputDetection.mode,
+    );
+    const syntaxSuffix =
+      workflowInputDetection.mode === "json"
+        ? `, ${inputSyntax.status === "invalid" ? "syntax error" : "syntax ok"}`
+        : "";
+    inputShell.title =
+      screenMode === "run"
+        ? ` Run Input (${workflowInputDetection.mode}${syntaxSuffix}) `
+        : ` Input (${workflowInputDetection.mode}${syntaxSuffix}) `;
 
-    detailText.content = await buildDetailContent({
-      detailMode,
-      inputDetection: workflowInputDetection,
-      loadedWorkflow,
-      managerMessages,
-      runtimeSessionView,
-      selectedNodeExecution: selectedNodeExecution(),
-    });
-    detailScroll.scrollTop = 0;
+    if (screenMode === "history") {
+      detailText.content = await buildDetailContent({
+        detailMode,
+        inputDetection: workflowInputDetection,
+        loadedWorkflow,
+        managerMessages,
+        runtimeSessionView,
+        selectedNodeExecution: selectedNodeExecution(),
+      });
+      detailScroll.scrollTop = 0;
+    } else {
+      detailText.content = "";
+    }
 
     setStatus(lastStatus);
     renderer.requestRender();
@@ -1022,8 +1645,16 @@ export async function runOpenTuiWorkflowApp(
 
   const applyFocus = (nextFocusPane: FocusPane): void => {
     focusPane = nextFocusPane;
-    if (focusPane === "workflows") {
+    if (filterPopupOpen) {
+      renderer.focusRenderable(filterTextarea);
+    } else if (helpPopupOpen) {
+      renderer.focusRenderable(helpPopup);
+    } else if (confirmPopupOpen) {
+      renderer.focusRenderable(confirmPopup);
+    } else if (screenMode === "workspace") {
       renderer.focusRenderable(workflowSelect);
+    } else if (screenMode === "run") {
+      renderer.focusRenderable(inputTextarea);
     } else if (focusPane === "sessions") {
       renderer.focusRenderable(sessionSelect);
     } else if (focusPane === "nodes") {
@@ -1033,7 +1664,6 @@ export async function runOpenTuiWorkflowApp(
     } else {
       renderer.focusRenderable(inputShell);
     }
-    setStatus(lastStatus);
     renderer.requestRender();
   };
 
@@ -1059,6 +1689,13 @@ export async function runOpenTuiWorkflowApp(
     }
   };
 
+  const clearRunPolling = (): void => {
+    if (runPollTimer !== undefined) {
+      clearInterval(runPollTimer);
+      runPollTimer = undefined;
+    }
+  };
+
   const refreshManagerMessages = async (): Promise<void> => {
     const managerSessionId = selectedManagerSessionId();
     if (managerSessionId === undefined) {
@@ -1066,6 +1703,23 @@ export async function runOpenTuiWorkflowApp(
       return;
     }
     managerMessages = await options.loadManagerSessionMessages(managerSessionId);
+  };
+
+  const refreshSelectorPreviewWorkflow = async (
+    workflowName: string | undefined,
+  ): Promise<void> => {
+    if (workflowName === undefined) {
+      selectorPreviewWorkflow = undefined;
+      return;
+    }
+    if (loadedWorkflow?.workflowName === workflowName) {
+      selectorPreviewWorkflow = loadedWorkflow;
+      return;
+    }
+    if (selectorPreviewWorkflow?.workflowName === workflowName) {
+      return;
+    }
+    selectorPreviewWorkflow = await options.loadWorkflowDefinition(workflowName);
   };
 
   const refreshSessionView = async (
@@ -1078,8 +1732,11 @@ export async function runOpenTuiWorkflowApp(
     }
     runtimeSessionView = await options.loadRuntimeSessionView(sessionId);
     const nodeExecutionCount = runtimeSessionView.session.nodeExecutions.length;
-    const nextIndex = Math.max(0, nodeExecutionCount - 1);
-    selectBoundedIndex(nodeSelect, nextIndex, nodeExecutionCount);
+    selectBoundedIndex(
+      nodeSelect,
+      Math.max(0, nodeExecutionCount - 1),
+      nodeExecutionCount,
+    );
     await refreshManagerMessages();
   };
 
@@ -1089,6 +1746,7 @@ export async function runOpenTuiWorkflowApp(
   ): Promise<void> => {
     if (workflowName === undefined) {
       loadedWorkflow = undefined;
+      selectorPreviewWorkflow = undefined;
       workflowSessions = [];
       runtimeSessionView = undefined;
       managerMessages = [];
@@ -1101,6 +1759,7 @@ export async function runOpenTuiWorkflowApp(
     }
 
     loadedWorkflow = await options.loadWorkflowDefinition(workflowName);
+    selectorPreviewWorkflow = loadedWorkflow;
     workflowInputDetection = detectWorkflowInputMode(loadedWorkflow);
     workflowSessions = await options.listWorkflowSessions(workflowName);
     const targetSessionId =
@@ -1114,52 +1773,275 @@ export async function runOpenTuiWorkflowApp(
         ),
       );
     } else {
-      inputTextarea.setText(
-        workflowInputDetection.mode === "json" ? "{}" : "",
-      );
+      inputTextarea.setText(workflowInputDetection.mode === "json" ? "{}" : "");
     }
   };
 
-  await withBusy("Loading workflow state", async () => {
-    const initialWorkflowName =
-      options.initialWorkflowName !== undefined &&
-      workflowNames.includes(options.initialWorkflowName)
-        ? options.initialWorkflowName
-        : workflowNames[0];
-    await refreshWorkflow(initialWorkflowName, options.initialSessionId);
-  });
-  applyFocus(options.initialSessionId === undefined ? "workflows" : "sessions");
-  if (options.initialSessionId !== undefined) {
-    setStatus(
-      `Loaded resume session ${options.initialSessionId}. Press u to resume or inspect the session first.`,
-    );
-    await render();
-  }
+  const openFilterPopup = (): void => {
+    workflowFilterTextBeforePopup = workflowFilterText;
+    workflowSelectionBeforePopup = selectedWorkflowName();
+    filterTextarea.setText(workflowFilterText);
+    filterPopupOpen = true;
+    helpPopupOpen = false;
+    confirmPopupOpen = false;
+    setStatus("Editing workflow filter");
+    applyFocus("workflows");
+  };
 
-  const runWorkflowAction = async (): Promise<void> => {
+  const closeFilterPopup = async (mode: "apply" | "cancel"): Promise<void> => {
+    workflowFilterText =
+      mode === "apply"
+        ? normalizeWorkflowFilterText(filterTextarea.plainText)
+        : workflowFilterTextBeforePopup;
+    filterTextarea.setText(workflowFilterText);
+    filterPopupOpen = false;
+    syncFilteredWorkflowNames(workflowSelectionBeforePopup);
+    setStatus(
+      workflowFilterText.length === 0
+        ? "Workflow filter cleared"
+        : `Workflow filter set to '${workflowFilterText}'`,
+    );
+    await withBusy("Loading workflow preview", async () => {
+      await refreshSelectorPreviewWorkflow(selectedWorkflowName());
+    });
+    applyFocus("workflows");
+  };
+
+  const openHelpPopup = async (): Promise<void> => {
+    helpPopupOpen = true;
+    filterPopupOpen = false;
+    confirmPopupOpen = false;
+    setStatus("Help");
+    await render();
+    applyFocus(focusPane);
+  };
+
+  const closeHelpPopup = async (): Promise<void> => {
+    helpPopupOpen = false;
+    await render();
+    applyFocus(focusPane);
+  };
+
+  const closeConfirmPopup = async (): Promise<void> => {
+    confirmPopupOpen = false;
+    pendingRunRuntimeVariables = undefined;
+    await render();
+    applyFocus("input");
+  };
+
+  const pollRunSessionView = async (): Promise<void> => {
+    if (runPendingSessionId === undefined || runPollInFlight || isClosed) {
+      return;
+    }
+    runPollInFlight = true;
+    try {
+      runSessionView = await options.loadRuntimeSessionView(runPendingSessionId);
+      runStatusError = undefined;
+    } catch (error: unknown) {
+      runStatusError =
+        error instanceof Error ? error.message : "unknown status refresh error";
+    } finally {
+      runPollInFlight = false;
+      await render();
+      if (
+        runExecutionResult !== undefined &&
+        runSessionView?.session.status !== "running"
+      ) {
+        clearRunPolling();
+      }
+    }
+  };
+
+  const startRunPolling = (): void => {
+    clearRunPolling();
+    void pollRunSessionView();
+    runPollTimer = setInterval(() => {
+      void pollRunSessionView();
+    }, 800);
+  };
+
+  const resetRunState = (): void => {
+    clearRunPolling();
+    runSessionView = undefined;
+    runExecutionResult = undefined;
+    runPendingSessionId = undefined;
+    runStatusError = undefined;
+    pendingRunRuntimeVariables = undefined;
+  };
+
+  const switchInputMode = async (): Promise<void> => {
+    const previousMode = workflowInputDetection.mode;
+    const nextMode: TuiWorkflowInputMode =
+      previousMode === "json" ? "text" : "json";
+    try {
+      const parsedValue = parseTuiEditorValue(
+        inputTextarea.plainText,
+        previousMode,
+      );
+      workflowInputDetection = {
+        mode: nextMode,
+        reason: "manually toggled inside the TUI",
+      };
+      inputTextarea.setText(formatEditorValue(parsedValue, nextMode));
+      setStatus(`Input mode switched to ${workflowInputDetection.mode}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      setStatus(`Input mode toggle failed: ${message}`);
+    }
+    await render();
+  };
+
+  const formatJsonInput = async (): Promise<void> => {
+    if (workflowInputDetection.mode !== "json") {
+      setStatus("JSON formatting is only available when input mode is json");
+      await render();
+      return;
+    }
+    try {
+      inputTextarea.setText(formatJsonEditorText(inputTextarea.plainText));
+      setStatus("Formatted JSON input");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      setStatus(`JSON formatting failed: ${message}`);
+    }
+    await render();
+  };
+
+  const openWorkspaceScreen = async (): Promise<void> => {
+    screenMode = "workspace";
+    editingInput = false;
+    confirmPopupOpen = false;
+    filterPopupOpen = false;
+    helpPopupOpen = false;
+    setStatus("Returned to workspace");
+    await render();
+    applyFocus("workflows");
+  };
+
+  const openHistoryScreenAction = async (
+    workflowName: string | undefined,
+    preferredSessionId?: string,
+  ): Promise<void> => {
+    if (workflowName === undefined) {
+      setStatus("Select a workflow before opening history");
+      await render();
+      return;
+    }
+    await withBusy(`Loading workflow '${workflowName}'`, async () => {
+      await refreshWorkflow(workflowName, preferredSessionId);
+      screenMode = "history";
+      detailMode = "summary";
+      editingInput = false;
+      setStatus(`Opened history for '${workflowName}'`);
+    });
+    applyFocus("sessions");
+  };
+
+  const openRunScreenAction = async (): Promise<void> => {
     const workflowName = selectedWorkflowName();
+    if (workflowName === undefined) {
+      setStatus("Select a workflow before opening a new run");
+      await render();
+      return;
+    }
+    await withBusy(`Loading workflow '${workflowName}'`, async () => {
+      await refreshWorkflow(workflowName);
+      resetRunState();
+      screenMode = "run";
+      editingInput = true;
+      inputTextarea.setText(workflowInputDetection.mode === "json" ? "{}" : "");
+      setStatus(`Opened new run for '${workflowName}'`);
+    });
+    applyFocus("input");
+  };
+
+  const openRunConfirmation = async (): Promise<void> => {
+    const workflowName = loadedWorkflow?.workflowName ?? selectedWorkflowName();
     if (workflowName === undefined) {
       setStatus("Select a workflow before starting a run");
       await render();
       return;
     }
-    const runtimeVariables = buildTuiRuntimeVariables({
-      editorText: inputTextarea.plainText,
-      mode: workflowInputDetection.mode,
-      purpose: "run",
-    });
-    await withBusy(`Running workflow '${workflowName}'`, async () => {
-      const result = await options.executeWorkflow({
-        workflowName,
-        runtimeVariables,
+    try {
+      pendingRunRuntimeVariables = buildTuiRuntimeVariables({
+        editorText: inputTextarea.plainText,
+        mode: workflowInputDetection.mode,
+        purpose: "run",
       });
-      await refreshWorkflow(workflowName, result.sessionId);
-      setStatus(
-        `Run finished: ${result.sessionId} status=${result.status} exitCode=${String(
-          result.exitCode,
-        )}`,
-      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      setStatus(`Cannot run workflow: ${message}`);
+      await render();
+      return;
+    }
+    confirmText.content = buildRunConfirmationContent({
+      inputMode: workflowInputDetection.mode,
+      inputSyntax: describeTuiWorkflowInputSyntax(
+        inputTextarea.plainText,
+        workflowInputDetection.mode,
+      ),
+      workflowName,
+      editorText: inputTextarea.plainText,
     });
+    confirmPopupOpen = true;
+    helpPopupOpen = false;
+    filterPopupOpen = false;
+    setStatus(`Confirm new run for '${workflowName}'`);
+    await render();
+    applyFocus("input");
+  };
+
+  const confirmRunAction = async (): Promise<void> => {
+    const workflowName = loadedWorkflow?.workflowName;
+    if (workflowName === undefined || pendingRunRuntimeVariables === undefined) {
+      setStatus("Run confirmation is unavailable");
+      await render();
+      return;
+    }
+    if (busy) {
+      return;
+    }
+    busy = true;
+    setStatus(`Starting workflow '${workflowName}'...`);
+    await render();
+    try {
+      resetRunState();
+      const handle = await options.executeWorkflow({
+        workflowName,
+        runtimeVariables: pendingRunRuntimeVariables,
+      });
+      runPendingSessionId = handle.sessionId;
+      confirmPopupOpen = false;
+      setStatus(`Run started: ${handle.sessionId}`);
+      startRunPolling();
+      void handle.completion
+        .then(async (result) => {
+          runExecutionResult = result;
+          workflowSessions = await options.listWorkflowSessions(workflowName);
+          await pollRunSessionView();
+          setStatus(
+            `Run finished: ${result.sessionId} status=${result.status} exitCode=${String(
+              result.exitCode,
+            )}`,
+          );
+        })
+        .catch(async (error: unknown) => {
+          runStatusError =
+            error instanceof Error ? error.message : "unknown workflow error";
+          setStatus(`Run failed: ${runStatusError}`);
+          clearRunPolling();
+          await render();
+        });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      runStatusError = message;
+      setStatus(`Failed to start workflow: ${message}`);
+    } finally {
+      busy = false;
+      pendingRunRuntimeVariables = undefined;
+      await render();
+      applyFocus("input");
+    }
   };
 
   const rerunWorkflowAction = async (): Promise<void> => {
@@ -1171,20 +2053,28 @@ export async function runOpenTuiWorkflowApp(
       return;
     }
     const managerSessionId = selectedManagerSessionId();
-    const runtimeVariables = buildTuiRuntimeVariables(
-      managerSessionId === undefined
-        ? {
-            editorText: inputTextarea.plainText,
-            mode: workflowInputDetection.mode,
-            purpose: "rerun",
-          }
-        : {
-            editorText: inputTextarea.plainText,
-            managerSessionId,
-            mode: workflowInputDetection.mode,
-            purpose: "rerun",
-          },
-    );
+    let runtimeVariables: Readonly<Record<string, unknown>>;
+    try {
+      runtimeVariables = buildTuiRuntimeVariables(
+        managerSessionId === undefined
+          ? {
+              editorText: inputTextarea.plainText,
+              mode: workflowInputDetection.mode,
+              purpose: "rerun",
+            }
+          : {
+              editorText: inputTextarea.plainText,
+              managerSessionId,
+              mode: workflowInputDetection.mode,
+              purpose: "rerun",
+            },
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      setStatus(`Cannot rerun workflow: ${message}`);
+      await render();
+      return;
+    }
     await withBusy(
       `Rerunning '${execution.nodeId}' from ${session.sessionId}`,
       async () => {
@@ -1222,33 +2112,47 @@ export async function runOpenTuiWorkflowApp(
   };
 
   const refreshAll = async (): Promise<void> => {
-    await withBusy("Refreshing TUI data", async () => {
-      workflowNames = [...(await options.refreshWorkflowNames())];
-      const preferredWorkflow =
-        loadedWorkflow?.workflowName !== undefined &&
-        workflowNames.includes(loadedWorkflow.workflowName)
-          ? loadedWorkflow.workflowName
-          : workflowNames[0];
-      await refreshWorkflow(
-        preferredWorkflow,
-        runtimeSessionView?.session.sessionId,
-      );
-      setStatus("TUI state refreshed");
-    });
+    await withBusy(
+      screenMode === "workspace" ? "Refreshing workflow list" : "Refreshing TUI data",
+      async () => {
+        workflowNames = [...(await options.refreshWorkflowNames())];
+        if (screenMode === "workspace") {
+          syncFilteredWorkflowNames(
+            workflowSelectionBeforePopup ?? selectedWorkflowName(),
+          );
+          await refreshSelectorPreviewWorkflow(selectedWorkflowName());
+          setStatus("Workflow list refreshed");
+          return;
+        }
+        if (screenMode === "run") {
+          if (loadedWorkflow !== undefined) {
+            loadedWorkflow = await options.loadWorkflowDefinition(
+              loadedWorkflow.workflowName,
+            );
+            selectorPreviewWorkflow = loadedWorkflow;
+            workflowSessions = await options.listWorkflowSessions(
+              loadedWorkflow.workflowName,
+            );
+          }
+          await pollRunSessionView();
+          setStatus("Run screen refreshed");
+          return;
+        }
+        const preferredWorkflow =
+          loadedWorkflow?.workflowName !== undefined &&
+          workflowNames.includes(loadedWorkflow.workflowName)
+            ? loadedWorkflow.workflowName
+            : workflowNames[0];
+        await refreshWorkflow(
+          preferredWorkflow,
+          runtimeSessionView?.session.sessionId,
+        );
+        setStatus("TUI state refreshed");
+      },
+    );
   };
 
-  const loadFocusedSelection = async (): Promise<void> => {
-    if (focusPane === "workflows") {
-      await withBusy("Loading workflow", async () => {
-        await refreshWorkflow(selectedWorkflowName());
-        setStatus(
-          loadedWorkflow === undefined
-            ? "No workflow selected"
-            : `Loaded workflow '${loadedWorkflow.workflowName}'`,
-        );
-      });
-      return;
-    }
+  const loadHistoryFocusedSelection = async (): Promise<void> => {
     if (focusPane === "sessions") {
       await withBusy("Loading session", async () => {
         await refreshSessionView(selectedSessionSummary()?.sessionId);
@@ -1267,10 +2171,11 @@ export async function runOpenTuiWorkflowApp(
     if (focusPane === "nodes") {
       await withBusy("Loading node details", async () => {
         await refreshManagerMessages();
+        const execution = selectedNodeExecution();
         setStatus(
-          selectedNodeExecution() === undefined
+          execution === undefined
             ? "No node execution selected"
-            : `Loaded node ${selectedNodeExecution()?.nodeId} details`,
+            : `Loaded node ${execution.nodeId} details`,
         );
       });
       return;
@@ -1286,22 +2191,27 @@ export async function runOpenTuiWorkflowApp(
   };
 
   const moveFocusedList = async (delta: number): Promise<void> => {
-    if (focusPane === "workflows") {
+    if (screenMode === "workspace" || focusPane === "workflows") {
       if (delta < 0) {
         workflowSelect.moveUp(1);
       } else {
         workflowSelect.moveDown(1);
       }
-      await withBusy("Switching workflow", async () => {
-        await refreshWorkflow(selectedWorkflowName());
-        setStatus(
-          selectedWorkflowName() === undefined
-            ? "No workflow selected"
-            : `Selected workflow '${selectedWorkflowName()}'`,
-        );
-      });
+      if (screenMode === "workspace") {
+        await withBusy("Loading workflow preview", async () => {
+          await refreshSelectorPreviewWorkflow(selectedWorkflowName());
+          setStatus(
+            selectedWorkflowName() === undefined
+              ? "No workflow selected"
+              : `Selected workflow '${selectedWorkflowName()}'`,
+          );
+        });
+        return;
+      }
+      await render();
       return;
     }
+
     if (focusPane === "sessions") {
       if (delta < 0) {
         sessionSelect.moveUp(1);
@@ -1322,6 +2232,7 @@ export async function runOpenTuiWorkflowApp(
       });
       return;
     }
+
     if (focusPane === "nodes") {
       if (delta < 0) {
         nodeSelect.moveUp(1);
@@ -1339,13 +2250,42 @@ export async function runOpenTuiWorkflowApp(
       });
       return;
     }
+
     applyFocus("input");
   };
+
+  syncFilteredWorkflowNames(options.initialWorkflowName);
+
+  if (screenMode === "history") {
+    await withBusy("Loading workflow state", async () => {
+      const initialWorkflowName =
+        options.initialWorkflowName !== undefined &&
+        workflowNames.includes(options.initialWorkflowName)
+          ? options.initialWorkflowName
+          : workflowNames[0];
+      await refreshWorkflow(initialWorkflowName, options.initialSessionId);
+    });
+    applyFocus("sessions");
+    if (options.initialSessionId !== undefined) {
+      setStatus(
+        `Loaded resume session ${options.initialSessionId}. Press u to resume or inspect the session first.`,
+      );
+      await render();
+    }
+  } else {
+    await withBusy("Loading workflow preview", async () => {
+      await refreshSelectorPreviewWorkflow(selectedWorkflowName());
+    });
+    applyFocus("workflows");
+    await render();
+  }
 
   renderer.start();
 
   return await new Promise<number>((resolve) => {
     const complete = (exitCode: number): void => {
+      isClosed = true;
+      clearRunPolling();
       renderer.keyInput.removeListener("keypress", onKey);
       renderer.destroy();
       resolve(exitCode);
@@ -1353,6 +2293,166 @@ export async function runOpenTuiWorkflowApp(
 
     const onKey = (key: KeyEvent): void => {
       if (key.eventType !== "press") {
+        return;
+      }
+
+      if (filterPopupOpen) {
+        if (key.name === "escape") {
+          key.preventDefault();
+          void closeFilterPopup("cancel");
+          return;
+        }
+        if (isConfirmKey(key)) {
+          key.preventDefault();
+          void closeFilterPopup("apply");
+          return;
+        }
+        if (key.name === "c" && key.ctrl) {
+          key.preventDefault();
+          complete(130);
+          return;
+        }
+        if (renderer.currentFocusedRenderable === filterTextarea) {
+          queueMicrotask(() => {
+            workflowFilterText = normalizeWorkflowFilterText(
+              filterTextarea.plainText,
+            );
+            syncFilteredWorkflowNames(workflowSelectionBeforePopup);
+            setStatus(
+              `Filtering workflows (${String(filteredWorkflowNames.length)}/${String(
+                workflowNames.length,
+              )} matches)`,
+            );
+            void render();
+          });
+        }
+        return;
+      }
+
+      if (helpPopupOpen) {
+        if (
+          (key.name === "q" && !key.ctrl && !key.meta) ||
+          key.name === "escape"
+        ) {
+          key.preventDefault();
+          void closeHelpPopup();
+          return;
+        }
+        if (key.name === "c" && key.ctrl) {
+          key.preventDefault();
+          complete(130);
+        }
+        return;
+      }
+
+      if (confirmPopupOpen) {
+        if (
+          (key.name === "q" && !key.ctrl && !key.meta) ||
+          key.name === "escape"
+        ) {
+          key.preventDefault();
+          void closeConfirmPopup();
+          return;
+        }
+        if (isConfirmKey(key)) {
+          key.preventDefault();
+          void confirmRunAction();
+          return;
+        }
+        if (key.name === "c" && key.ctrl) {
+          key.preventDefault();
+          complete(130);
+        }
+        return;
+      }
+
+      if (key.name === "q" && !key.ctrl && !key.meta) {
+        key.preventDefault();
+        complete(0);
+        return;
+      }
+      if (isOpenTuiHelpKey(key)) {
+        key.preventDefault();
+        void openHelpPopup();
+        return;
+      }
+      if (key.name === "c" && key.ctrl) {
+        key.preventDefault();
+        complete(130);
+        return;
+      }
+
+      if (busy) {
+        return;
+      }
+
+      if (screenMode === "workspace") {
+        if (key.name === "/" && !key.ctrl && !key.meta) {
+          key.preventDefault();
+          openFilterPopup();
+          return;
+        }
+        if (isOpenTuiRefreshKey(key)) {
+          key.preventDefault();
+          void refreshAll();
+          return;
+        }
+        if (key.name === "down" || (key.name === "j" && !key.ctrl)) {
+          key.preventDefault();
+          void moveFocusedList(1);
+          return;
+        }
+        if (key.name === "up" || (key.name === "k" && !key.ctrl)) {
+          key.preventDefault();
+          void moveFocusedList(-1);
+          return;
+        }
+        if ((key.name === "l" && !key.ctrl) || isEnterKey(key)) {
+          key.preventDefault();
+          void openHistoryScreenAction(selectedWorkflowName());
+          return;
+        }
+        if (isCtrlMKey(key)) {
+          key.preventDefault();
+          void openRunScreenAction();
+        }
+        return;
+      }
+
+      if (screenMode === "run") {
+        if (isOpenTuiRefreshKey(key)) {
+          key.preventDefault();
+          void refreshAll();
+          return;
+        }
+        if (key.name === "h" && !key.ctrl) {
+          key.preventDefault();
+          void openWorkspaceScreen();
+          return;
+        }
+        if (key.name === "l" && !key.ctrl) {
+          key.preventDefault();
+          void openHistoryScreenAction(
+            loadedWorkflow?.workflowName,
+            runPendingSessionId ?? runSessionView?.session.sessionId,
+          );
+          return;
+        }
+        if (key.name === "m" && !key.ctrl) {
+          key.preventDefault();
+          void switchInputMode();
+          return;
+        }
+        if (key.name === "f" && !key.ctrl) {
+          key.preventDefault();
+          void formatJsonInput();
+          return;
+        }
+        if (isConfirmKey(key)) {
+          key.preventDefault();
+          void openRunConfirmation();
+          return;
+        }
         return;
       }
 
@@ -1365,41 +2465,16 @@ export async function runOpenTuiWorkflowApp(
         return;
       }
 
-      if (key.name === "return" && focusPane === "input" && !editingInput) {
-        if (renderer.currentFocusedRenderable === inputShell) {
-          key.preventDefault();
-          void loadFocusedSelection();
-          return;
-        }
-      }
-
-      if (busy) {
-        return;
-      }
-
       if (editingInput && renderer.currentFocusedRenderable === inputTextarea) {
         return;
       }
 
-      if (key.name === "q" && !key.ctrl && !key.meta) {
+      if (key.name === "tab" && !editingInput) {
         key.preventDefault();
-        complete(0);
-        return;
-      }
-      if (key.name === "c" && key.ctrl) {
-        key.preventDefault();
-        complete(130);
-        return;
-      }
-
-      if (key.name === "tab") {
-        if (editingInput) {
-          return;
-        }
         if (key.shift) {
           const previousFocus: Readonly<Record<FocusPane, FocusPane>> = {
             workflows: "input",
-            sessions: "workflows",
+            sessions: "input",
             nodes: "sessions",
             input: "nodes",
           };
@@ -1409,11 +2484,10 @@ export async function runOpenTuiWorkflowApp(
             workflows: "sessions",
             sessions: "nodes",
             nodes: "input",
-            input: "workflows",
+            input: "sessions",
           };
           applyFocus(nextFocus[focusPane]);
         }
-        key.preventDefault();
         return;
       }
 
@@ -1434,20 +2508,20 @@ export async function runOpenTuiWorkflowApp(
         return;
       }
 
-      if (key.name === "return") {
+      if (isEnterKey(key) || isCtrlMKey(key)) {
         key.preventDefault();
-        void loadFocusedSelection();
+        void loadHistoryFocusedSelection();
         return;
       }
 
-      if (key.name === "n" && !key.ctrl) {
-        key.preventDefault();
-        void runWorkflowAction();
-        return;
-      }
       if (isOpenTuiRefreshKey(key)) {
         key.preventDefault();
         void refreshAll();
+        return;
+      }
+      if (key.name === "n" && !key.ctrl) {
+        key.preventDefault();
+        void openRunScreenAction();
         return;
       }
       if (key.name === "r" && !key.ctrl) {
@@ -1460,49 +2534,24 @@ export async function runOpenTuiWorkflowApp(
         void resumeWorkflowAction();
         return;
       }
+      if (key.name === "h" && !key.ctrl) {
+        key.preventDefault();
+        void openWorkspaceScreen();
+        return;
+      }
       if (key.name === "e" && !key.ctrl) {
         key.preventDefault();
-        void loadFocusedSelection();
+        void loadHistoryFocusedSelection();
         return;
       }
       if (key.name === "m" && !key.ctrl) {
         key.preventDefault();
-        const previousMode = workflowInputDetection.mode;
-        const nextMode: TuiWorkflowInputMode =
-          previousMode === "json" ? "text" : "json";
-        try {
-          const parsedValue = parseTuiEditorValue(
-            inputTextarea.plainText,
-            previousMode,
-          );
-          workflowInputDetection = {
-            mode: nextMode,
-            reason: "manually toggled inside the TUI",
-          };
-          inputTextarea.setText(formatEditorValue(parsedValue, nextMode));
-          setStatus(`Input mode switched to ${workflowInputDetection.mode}`);
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          setStatus(`Input mode toggle failed: ${message}`);
-        }
-        void render();
+        void switchInputMode();
         return;
       }
       if (key.name === "f" && !key.ctrl) {
         key.preventDefault();
-        if (workflowInputDetection.mode !== "json") {
-          setStatus("JSON formatting is only available when input mode is json");
-          void render();
-          return;
-        }
-        try {
-          inputTextarea.setText(formatJsonEditorText(inputTextarea.plainText));
-          setStatus("Formatted JSON input");
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : "unknown error";
-          setStatus(`JSON formatting failed: ${message}`);
-        }
-        void render();
+        void formatJsonInput();
         return;
       }
       if (key.name === "i" && !key.ctrl) {
@@ -1540,12 +2589,10 @@ export async function runOpenTuiWorkflowApp(
         detailMode = "summary";
         setStatus("Showing node summary");
         void render();
-        return;
       }
     };
 
     renderer.keyInput.prependListener("keypress", onKey);
-
     void render();
   });
 }

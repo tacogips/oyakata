@@ -691,6 +691,58 @@ describe("loadWorkflowFromDisk", () => {
     ).toBe("Coordinate via prompt file {{workflowId}}\n");
   });
 
+  test("loads node-level descriptions from node payload files", async () => {
+    const root = await makeTempDir();
+    const workflowName = "node-description-workflow";
+    const workflowDirectory = path.join(root, workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      description: "sample",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "divedra-manager",
+      subWorkflows: [],
+      nodes: [
+        {
+          id: "divedra-manager",
+          kind: "root-manager",
+          nodeFile: "node-divedra-manager.json",
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+
+    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+      nodes: [{ id: "divedra-manager", order: 0 }],
+    });
+
+    await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
+      id: "divedra-manager",
+      description: "Coordinate the workflow and route work to downstream lanes.",
+      model: "tacogips/codex-agent",
+      promptTemplate: "manager",
+      variables: {},
+    });
+
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.bundle.nodePayloads["divedra-manager"]?.description).toBe(
+      "Coordinate the workflow and route work to downstream lanes.",
+    );
+  });
+
   test("loads the claude worker example with an explicit claude-code-agent task node", async () => {
     const artifactRoot = path.join(await makeTempDir(), "artifacts");
     const result = await loadWorkflowFromDisk("claude-divedra-claude-worker", {

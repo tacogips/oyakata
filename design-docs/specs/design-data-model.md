@@ -112,6 +112,7 @@ Current `NodeKind`:
 Current fields:
 
 - `id`
+- optional `description`
 - optional `nodeType`
 - optional `model`
 - optional `executionBackend`

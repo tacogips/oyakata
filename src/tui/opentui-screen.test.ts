@@ -2,10 +2,16 @@ import { describe, expect, test } from "vitest";
 import type { LoadedWorkflow } from "../workflow/load";
 import type { NodePayload } from "../workflow/types";
 import {
+  OPEN_TUI_MAIN_PANE_LAYOUT,
+  OPEN_TUI_SELECTOR_PANE_LAYOUT,
+  buildWorkflowRunStatusContent,
   buildTuiRuntimeVariables,
+  describeTuiWorkflowInputSyntax,
   deriveEditorTextFromRuntimeVariables,
   detectWorkflowInputMode,
+  filterWorkflowNames,
   formatJsonEditorText,
+  isOpenTuiHelpKey,
   isOpenTuiRefreshKey,
   resolveSelectedWorkflowName,
 } from "./opentui-screen";
@@ -135,6 +141,21 @@ describe("detectWorkflowInputMode", () => {
   });
 });
 
+describe("filterWorkflowNames", () => {
+  test("returns all workflows when the filter is empty", () => {
+    expect(filterWorkflowNames(["alpha", "beta"], "")).toEqual([
+      "alpha",
+      "beta",
+    ]);
+  });
+
+  test("matches workflow names by case-insensitive substring", () => {
+    expect(
+      filterWorkflowNames(["Alpha", "beta", "release-flow"], "LEA"),
+    ).toEqual(["release-flow"]);
+  });
+});
+
 describe("buildTuiRuntimeVariables", () => {
   test("builds text-oriented runtime variables for workflow execution", () => {
     expect(
@@ -208,6 +229,35 @@ describe("formatJsonEditorText", () => {
   });
 });
 
+describe("describeTuiWorkflowInputSyntax", () => {
+  test("treats text mode as non-json input", () => {
+    expect(describeTuiWorkflowInputSyntax("hello", "text")).toEqual({
+      status: "not-applicable",
+      summary: "plain text",
+    });
+  });
+
+  test("accepts an empty json editor buffer as an empty object", () => {
+    expect(describeTuiWorkflowInputSyntax("   ", "json")).toEqual({
+      status: "valid-empty",
+      summary: "empty buffer -> {}",
+    });
+  });
+
+  test("reports valid json input", () => {
+    expect(describeTuiWorkflowInputSyntax("{\"request\":\"hello\"}", "json")).toEqual({
+      status: "valid",
+      summary: "valid JSON",
+    });
+  });
+
+  test("reports invalid json input with location context when available", () => {
+    const syntax = describeTuiWorkflowInputSyntax("{\"request\":}", "json");
+    expect(syntax.status).toBe("invalid");
+    expect(syntax.summary).toContain("invalid JSON");
+  });
+});
+
 describe("isOpenTuiRefreshKey", () => {
   test("matches shifted r without control/meta modifiers", () => {
     expect(
@@ -245,5 +295,161 @@ describe("isOpenTuiRefreshKey", () => {
         meta: true,
       }),
     ).toBe(false);
+  });
+});
+
+describe("isOpenTuiHelpKey", () => {
+  test("matches question-mark help key variants", () => {
+    expect(
+      isOpenTuiHelpKey({
+        name: "?",
+        shift: false,
+        ctrl: false,
+        meta: false,
+      }),
+    ).toBe(true);
+    expect(
+      isOpenTuiHelpKey({
+        name: "/",
+        shift: true,
+        ctrl: false,
+        meta: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects modified or plain slash keys", () => {
+    expect(
+      isOpenTuiHelpKey({
+        name: "/",
+        shift: false,
+        ctrl: false,
+        meta: false,
+      }),
+    ).toBe(false);
+    expect(
+      isOpenTuiHelpKey({
+        name: "?",
+        shift: false,
+        ctrl: true,
+        meta: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("OpenTui pane layout", () => {
+  test("uses explicit selector pane widths that sum to the full row", () => {
+    expect(OPEN_TUI_SELECTOR_PANE_LAYOUT.workflows.width).toBe("30%");
+    expect(OPEN_TUI_SELECTOR_PANE_LAYOUT.timeline.width).toBe("35%");
+    expect(OPEN_TUI_SELECTOR_PANE_LAYOUT.details.width).toBe("35%");
+    expect(OPEN_TUI_SELECTOR_PANE_LAYOUT.workflows.minWidth).toBeGreaterThan(2);
+  });
+
+  test("uses explicit main pane widths with non-collapsing minima for navigation panes", () => {
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.workflows.width).toBe("20%");
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.sessions.width).toBe("28%");
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.nodes.width).toBe("22%");
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.details.width).toBe("30%");
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.workflows.minWidth).toBeGreaterThan(2);
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.sessions.minWidth).toBeGreaterThan(2);
+    expect(OPEN_TUI_MAIN_PANE_LAYOUT.nodes.minWidth).toBeGreaterThan(2);
+  });
+});
+
+describe("buildWorkflowRunStatusContent", () => {
+  test("shows a pre-launch hint before any session exists", () => {
+    const loaded = makeLoadedWorkflow({
+      id: "workflow-input",
+      model: "input-model",
+      promptTemplate: "Read free text",
+      variables: {},
+    });
+
+    expect(
+      buildWorkflowRunStatusContent({
+        loadedWorkflow: loaded,
+        runtimeSessionView: undefined,
+      }),
+    ).toContain("No run started yet.");
+  });
+
+  test("shows running state and final workflow output when available", () => {
+    const loaded = makeLoadedWorkflow({
+      id: "workflow-input",
+      model: "input-model",
+      promptTemplate: "Read free text",
+      variables: {},
+    });
+
+    expect(
+      buildWorkflowRunStatusContent({
+        loadedWorkflow: loaded,
+        runtimeSessionView: {
+          session: {
+            sessionId: "sess-demo",
+            workflowName: "demo",
+            workflowId: "demo",
+            status: "completed",
+            startedAt: "2026-03-24T00:00:00.000Z",
+            endedAt: "2026-03-24T00:01:00.000Z",
+            queue: [],
+            currentNodeId: "workflow-output",
+            nodeExecutionCounter: 1,
+            nodeExecutionCounts: { "workflow-output": 1 },
+            transitions: [],
+            nodeExecutions: [
+              {
+                nodeId: "workflow-output",
+                nodeExecId: "exec-1",
+                status: "succeeded",
+                artifactDir: "/tmp/demo",
+                startedAt: "2026-03-24T00:00:10.000Z",
+                endedAt: "2026-03-24T00:00:20.000Z",
+              },
+            ],
+            communicationCounter: 0,
+            communications: [],
+            runtimeVariables: {
+              workflowOutput: { summary: "done" },
+            },
+          },
+          nodeExecutions: [
+            {
+              sessionId: "sess-demo",
+              nodeExecId: "exec-1",
+              nodeId: "workflow-output",
+              status: "succeeded",
+              artifactDir: "/tmp/demo",
+              startedAt: "2026-03-24T00:00:10.000Z",
+              endedAt: "2026-03-24T00:00:20.000Z",
+              attempt: null,
+              outputAttemptCount: null,
+              outputValidationErrors: null,
+              backendSessionMode: null,
+              backendSessionId: null,
+              restartedFromNodeExecId: null,
+              inputHash: "in",
+              outputHash: "out",
+              inputJson: "{}",
+              outputJson: "{\"summary\":\"done\"}",
+              createdAt: "2026-03-24T00:00:20.000Z",
+            },
+          ],
+          nodeLogs: [
+            {
+              id: 1,
+              sessionId: "sess-demo",
+              nodeExecId: "exec-1",
+              nodeId: "workflow-output",
+              level: "info",
+              message: "completed",
+              payloadJson: null,
+              at: "2026-03-24T00:00:20.000Z",
+            },
+          ],
+        },
+      }),
+    ).toContain("Final result:");
   });
 });
