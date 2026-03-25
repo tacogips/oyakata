@@ -132,7 +132,7 @@ No new field is added to `workflow.json` unless:
 
 ### Phase 5: UI Alignment
 
-- Rename current web UI as runner if editor remains absent.
+- Keep naming aligned with the shipped terminal/runtime surfaces; do not assume a separate web UI exists.
 - Add real graph editor milestones only when runtime parity exists.
 
 ## Acceptance Criteria

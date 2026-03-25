@@ -24,14 +24,19 @@ impl-plans/
 
 ## Active Plans
 
-| Plan                        | Status      | Design Reference                     |
-| --------------------------- | ----------- | ------------------------------------ |
-| `workflow-role-unification` | In Progress | `design-unified-workflow-role-model` |
+| Plan                          | Status      | Design Reference                     |
+| ----------------------------- | ----------- | ------------------------------------ |
+| `workflow-role-unification`   | In Progress | `design-unified-workflow-role-model` |
 
 ## Completed Plans
 
 | Plan                                               | Completed  | Design Reference                                                                                    |
 | -------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `root-data-dir-project-root-scoping`               | 2026-03-26 | `command`, `architecture`                                                                           |
+| `tui-solid-runtime-fallback-hardening`             | 2026-03-26 | `design-tui`, `architecture`                                                                        |
+| `tui-opentui-solid-migration`                      | 2026-03-26 | `design-tui`, `command`                                                                             |
+| `tui-workflow-browser-and-json-input`              | 2026-03-26 | `design-tui`                                                                                        |
+| `remove-web-ui`                                   | 2026-03-24 | `command`                                                                                           |
 | `manager-kind-simplification`                      | 2026-03-18 | `design-manager-kind-simplification`, `design-workflow-json`                                        |
 | `workflow-core-and-validation`                     | 2026-02-23 | `design-data-model`, `design-workflow-json`, `architecture`                                         |
 | `workflow-cli-mvp`                                 | 2026-02-23 | `command`, `design-workflow-json`                                                                   |
@@ -177,6 +182,7 @@ impl-plans/
 | 69    | COMPLETED   | Phase 68   |
 | 70    | COMPLETED   | Phase 69   |
 | 71    | IN_PROGRESS | Phase 70   |
+| 72    | COMPLETED   | Phase 71   |
 
 ### Phase to Plans Mapping
 
@@ -252,6 +258,7 @@ PHASE_TO_PLANS = {
   68: ["impl-plans/node-execution-inbox-contract.md"],
   69: ["impl-plans/user-action-and-optional-node-execution.md"],
   70: ["impl-plans/manager-kind-simplification.md"],
-  71: ["impl-plans/workflow-role-unification.md"]
+  71: ["impl-plans/workflow-role-unification.md", "impl-plans/tui-workflow-browser-and-json-input.md"],
+  72: ["impl-plans/completed/tui-opentui-solid-migration.md", "impl-plans/completed/tui-solid-runtime-fallback-hardening.md", "impl-plans/completed/remove-web-ui.md", "impl-plans/completed/root-data-dir-project-root-scoping.md"]
 }
 ```

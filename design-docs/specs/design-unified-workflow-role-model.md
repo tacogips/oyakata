@@ -188,9 +188,9 @@ The replacement direction is:
 - workflow invocation is an explicit spawn/join operation
 - called workflow input/output is handled by call contracts and runtime artifacts, not by special boundary nodes
 
-## Editor and Template Implications
+## Authoring and Template Implications
 
-The browser editor and template generator should move to:
+Workflow authoring tools and template generators should move to:
 
 - node role picker: `manager` or `worker`
 - separate control selector for branch/loop judges

@@ -5,15 +5,7 @@ import type {
 } from "../workflow/types";
 import type { DerivedVisNode } from "../workflow/visualization";
 
-export type FrontendMode = "solid-dist";
 export type SessionStatus = WorkflowSessionState["status"];
-
-export interface UiConfigResponse {
-  readonly fixedWorkflowName: string | null;
-  readonly readOnly: boolean;
-  readonly noExec: boolean;
-  readonly frontend: FrontendMode;
-}
 
 export interface WorkflowListResponse {
   readonly workflows: readonly string[];

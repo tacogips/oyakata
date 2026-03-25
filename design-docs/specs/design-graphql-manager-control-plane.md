@@ -85,7 +85,7 @@ Rule:
 - CLI flags are retained only for transport/bootstrap concerns such as endpoint selection, auth token, output format, and local debug overrides.
 - `divedra gql` supports GraphQL variables through a single `--variables` option that accepts inline JSON or a file reference syntax such as `@path/to/variables.json`
 - legacy execution commands may gain GraphQL-backed transport one slice at a time; until that migration completes, some local debug-only flags remain local-only and are not forwarded through GraphQL
-- GraphQL is now the canonical execution/communication/manager control surface, including the served browser workflow-definition, execution, and session flows; `/api/ui-config` remains only as bootstrap metadata outside `/graphql`
+- GraphQL is now the canonical execution/communication/manager control surface for served workflow-definition, execution, and session operations; no separate bootstrap REST endpoint remains in the current implementation
 
 Argument-shape rule:
 
@@ -730,9 +730,9 @@ But their implementation direction changes:
 Added responsibilities:
 
 - expose `/graphql`
+- expose `/healthz`
 - expose optional GraphQL schema/introspection in local development mode
-- keep `/api/ui-config` as a small browser bootstrap/config endpoint outside GraphQL
-- avoid reintroducing parallel browser workflow/session REST endpoints now that the browser UI already uses GraphQL queries/mutations
+- avoid reintroducing parallel workflow/session REST endpoints beside GraphQL
 - allow the generic `divedra gql` CLI client to target the same local endpoint
 
 ## Data Model Extensions

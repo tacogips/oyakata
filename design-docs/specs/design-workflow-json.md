@@ -63,6 +63,7 @@ Current authored shape:
 ```json
 {
   "workflowId": "example",
+  "description": "Example workflow definition showing the authored top-level fields.",
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000

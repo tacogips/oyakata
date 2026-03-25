@@ -14,102 +14,116 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Create `<workflow-root>/<name>/` with `workflow.json`, `workflow-vis.json`, and template `node-{id}.json`.
 - `workflow validate <name>`
   - Validate `<workflow-root>/<name>/` structure and semantic constraints.
-- `workflow run <name>`
-  - Execute `<workflow-root>/<name>/workflow.json` and referenced `node-{id}.json` files.
 - `workflow inspect <name>`
   - Print normalized node graph, fan-out branch rules, loop defaults, timeout defaults, and node file references.
+- `workflow run <name>`
+  - Execute `<workflow-root>/<name>/workflow.json` and referenced `node-{id}.json` files.
+- `session progress <session-id>`
+  - Show queue, execution counts, and per-node restart/execution summary.
 - `session status <session-id>`
-  - Show current node, branch state, and loop counters.
+  - Show the persisted workflow-session snapshot.
 - `session resume <session-id>`
   - Continue an interrupted session from persisted state.
+- `session rerun <session-id> <node-id>`
+  - Start a new run from a chosen node in an existing session.
+- `call-node <workflow-id> <workflow-run-id> <node-id>`
+  - Execute one node directly against an existing run context for local debugging.
 - `gql <graphql-document>`
   - Execute a GraphQL query or mutation against the canonical control-plane endpoint.
   - Manager-node LLM/tool use should call GraphQL mutations such as `sendManagerMessage` through this command rather than dedicated domain subcommands.
   - When `DIVEDRA_MANAGER_SESSION_ID` is present, the CLI forwards it to `/graphql` with `X-Divedra-Manager-Session-Id` so manager-scoped mutations do not need to repeat it in GraphQL variables.
 - `serve [workflow-name]`
-  - Start local HTTP server for browser-based workflow editing and execution.
-  - If `workflow-name` is omitted, server starts in workflow selection mode.
-  - Serves the built browser frontend from `ui/dist/` and the canonical GraphQL control plane.
+  - Start the local HTTP control plane.
+  - If `workflow-name` is provided, workflow-definition access is constrained to that workflow.
   - Exposes `/graphql` for workflow-definition, execution, communication, and manager-control operations.
-  - Keeps `/api/ui-config` as a small browser bootstrap/config endpoint; workflow/session REST routes are not served.
-  - Returns an explicit UI-unavailable response when the built frontend bundle is missing.
+  - Exposes `/healthz` for liveness checks.
+  - Does not serve browser assets or workflow/session REST routes.
 - `tui`
   - Start interactive terminal UI for workflow selection and execution.
-  - Supports selecting a workflow from `<workflow-root>`.
+  - Interactive OpenTUI mode opens the unified workspace/history/run app directly; workflow selection happens inside that workspace screen.
   - Supports runtime user input for human-input nodes during execution.
 
 ### Flags and Options
 
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `--variables` | string | none | For legacy execution commands: JSON file supplying runtime prompt variables. For `divedra gql`: inline GraphQL variables JSON or `@path/to/variables.json` |
-| `--workflow-root` | string (path) | nearest ancestor `./.divedra` | Root directory containing workflow definitions |
-| `--artifact-root` | string (path) | derived from `DIVEDRA_ARTIFACT_DIR` (see env) / `{root}/workflow` | Root directory for execution artifacts |
-| `--workflow` | string | none | Workflow name for direct TUI launch (skip workflow chooser) |
-| `--resume-session` | string | none | Session id to preselect for interactive TUI resume/inspection, or to resume immediately in non-interactive fallback mode |
-| `--tui-log-level` | string | `info` | Log verbosity in TUI panel (`error`, `warn`, `info`, `debug`) |
-| `--max-steps` | number | none | Hard cap on node executions per run |
-| `--max-loop-iterations` | number | `3` | Override loop budget for safety |
-| `--default-timeout-ms` | number | `120000` | Override default node timeout for this run |
-| `--output` | string | `text` | Output format (`text` or `json`) for CLI-rendered GraphQL results |
-| `--dry-run` | boolean | `false` | Validate and simulate transitions without agent execution |
-| `--endpoint` | string | local serve endpoint | GraphQL endpoint used by CLI commands |
-| `--auth-token` | string | none | Explicit auth token for GraphQL manager/control-plane requests |
-| `--auth-token-env` | string | `DIVEDRA_MANAGER_AUTH_TOKEN` | Environment variable used to resolve GraphQL auth token |
-| `--host` | string | `127.0.0.1` | Bind address for `serve` |
-| `--port` | number | `43173` | Listen port for `serve` |
-| `--open` | boolean | `false` | Open browser automatically after `serve` starts |
-| `--read-only` | boolean | `false` | Disable write/update operations in `serve` mode |
-| `--no-exec` | boolean | `false` | Disable workflow execution endpoints in `serve` mode |
+| Flag                    | Type          | Default                                                           | Description                                                                                                                                                |
+| ----------------------- | ------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--variables`           | string        | none                                                              | For legacy execution commands: JSON file supplying runtime prompt variables. For `divedra gql`: inline GraphQL variables JSON or `@path/to/variables.json` |
+| `--workflow-root`       | string (path) | nearest ancestor `./.divedra`                                     | Root directory containing workflow definitions                                                                                                             |
+| `--artifact-root`       | string (path) | derived from `DIVEDRA_ARTIFACT_DIR` (see env) / `{root}/workflow` | Root directory for execution artifacts                                                                                                                     |
+| `--session-store`       | string (path) | derived from `DIVEDRA_SESSION_STORE` / `{root}/sessions`          | Root directory for persisted workflow sessions                                                                                                             |
+| `--workflow`            | string        | none                                                              | Workflow name for direct TUI launch (skip workflow chooser)                                                                                                |
+| `--resume-session`      | string        | none                                                              | Session id to preselect for interactive TUI resume/inspection, or to resume immediately in non-interactive fallback mode                                   |
+| `--mock-scenario`       | string (path) | none                                                              | Deterministic node-output fixture map for local execution/testing paths                                                                                    |
+| `--max-steps`           | number        | none                                                              | Hard cap on node executions per run                                                                                                                        |
+| `--max-loop-iterations` | number        | none                                                              | Override loop budget for safety                                                                                                                            |
+| `--default-timeout-ms`  | number        | none                                                              | Override default node timeout for this run                                                                                                                 |
+| `--output`              | string        | `text`                                                            | Output format (`text` or `json`) for CLI-rendered GraphQL results                                                                                          |
+| `--dry-run`             | boolean       | `false`                                                           | Validate and simulate transitions without agent execution                                                                                                  |
+| `--endpoint`            | string        | local serve endpoint                                              | GraphQL endpoint used by CLI commands                                                                                                                      |
+| `--auth-token`          | string        | none                                                              | Explicit auth token for GraphQL manager/control-plane requests                                                                                             |
+| `--auth-token-env`      | string        | `DIVEDRA_MANAGER_AUTH_TOKEN`                                      | Environment variable used to resolve GraphQL auth token                                                                                                    |
+| `--message-json`        | string        | none                                                              | Inline JSON payload for `call-node`                                                                                                                        |
+| `--message-file`        | string (path) | none                                                              | JSON payload file for `call-node`                                                                                                                          |
+| `--host`                | string        | `127.0.0.1`                                                       | Bind address for `serve`                                                                                                                                   |
+| `--port`                | number        | `43173`                                                           | Listen port for `serve`                                                                                                                                    |
+| `--read-only`           | boolean       | `false`                                                           | Disable write/update operations in `serve` mode                                                                                                            |
+| `--no-exec`             | boolean       | `false`                                                           | Compatibility flag parsed by `serve`; current GraphQL schema does not yet enforce execution blocking from this flag                                        |
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DIVEDRA_DEFAULT_MODEL` | No | none | Default model used only by create/template flows; runtime still requires explicit node `model` |
-| `DIVEDRA_ARTIFACT_ROOT` | No | derived from `DIVEDRA_ARTIFACT_DIR` / `{root}/workflow` | Overrides only the workflow artifact tree root (`.../workflow`) |
-| `DIVEDRA_WORKFLOW_ROOT` | No | nearest ancestor `./.divedra` | Default workflow definition root directory |
-| `DIVEDRA_TUI_LOG_LEVEL` | No | `info` | Default TUI log panel verbosity |
-| `DIVEDRA_SESSION_STORE` | No | local file store | Session state backend selector |
-| `DIVEDRA_LOG_LEVEL` | No | `info` | Runtime logging level |
-| `DIVEDRA_SERVE_HOST` | No | `127.0.0.1` | Default bind address for `serve` |
-| `DIVEDRA_SERVE_PORT` | No | `43173` | Default listen port for `serve` |
-| `DIVEDRA_ARTIFACT_DIR` | No | `~/.divedra/project/<encoded-project-root>/divedra-artifact` | Canonical root data directory: sessions, `workflow/`, `files/`, `divedra.db`; when no explicit root is set, `divedra` first walks upward to find the nearest ancestor containing `.divedra` and uses that project root for default scoping |
-| `DIVEDRA_ROOT_DATA_DIR` | No | (unused if `DIVEDRA_ARTIFACT_DIR` set) | Legacy alias for `DIVEDRA_ARTIFACT_DIR` |
-| `DIVEDRA_RUNTIME_ROOT` | No | compatibility alias | Legacy alias for `DIVEDRA_ARTIFACT_DIR` |
-| `DIVEDRA_GRAPHQL_ENDPOINT` | No | local serve endpoint | Default GraphQL endpoint for CLI manager/control-plane commands |
-| `DIVEDRA_MANAGER_AUTH_TOKEN` | No | none | Manager-session auth token for `divedra gql` and GraphQL control-plane mutations |
-| `DIVEDRA_MANAGER_SESSION_ID` | No | none | Ambient manager session id forwarded by `divedra gql` to `/graphql` for manager-scoped requests |
-| `DIVEDRA_WORKFLOW_ID` | No | none | Ambient workflow id for manager tool environments |
-| `DIVEDRA_WORKFLOW_EXECUTION_ID` | No | none | Ambient workflow execution id for manager tool environments |
-| `DIVEDRA_MANAGER_NODE_ID` | No | none | Ambient manager node id for manager tool environments |
-| `DIVEDRA_MANAGER_NODE_EXEC_ID` | No | none | Ambient manager node execution id for manager tool environments |
+| Variable                        | Required | Default                                                      | Description                                                                                                                                                                                                                                |
+| ------------------------------- | -------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DIVEDRA_ARTIFACT_ROOT`         | No       | derived from `DIVEDRA_ARTIFACT_DIR` / `{root}/workflow`      | Overrides only the workflow artifact tree root (`.../workflow`)                                                                                                                                                                            |
+| `DIVEDRA_WORKFLOW_ROOT`         | No       | nearest ancestor `./.divedra`                                | Default workflow definition root directory                                                                                                                                                                                                 |
+| `DIVEDRA_SESSION_STORE`         | No       | local file store                                             | Session state backend selector                                                                                                                                                                                                             |
+| `DIVEDRA_SERVE_HOST`            | No       | `127.0.0.1`                                                  | Default bind address for `serve`                                                                                                                                                                                                           |
+| `DIVEDRA_SERVE_PORT`            | No       | `43173`                                                      | Default listen port for `serve`                                                                                                                                                                                                            |
+| `DIVEDRA_ARTIFACT_DIR`          | No       | `~/.divedra/project/<encoded-project-root>/divedra-artifact` | Canonical root data directory: sessions, `workflow/`, `files/`, `divedra.db`; when no explicit root is set, `divedra` first walks upward to find the nearest ancestor containing `.divedra` and uses that project root for default scoping |
+| `DIVEDRA_ROOT_DATA_DIR`         | No       | (unused if `DIVEDRA_ARTIFACT_DIR` set)                       | Legacy alias for `DIVEDRA_ARTIFACT_DIR`                                                                                                                                                                                                    |
+| `DIVEDRA_RUNTIME_ROOT`          | No       | compatibility alias                                          | Legacy alias for `DIVEDRA_ARTIFACT_DIR`                                                                                                                                                                                                    |
+| `DIVEDRA_GRAPHQL_ENDPOINT`      | No       | local serve endpoint                                         | Default GraphQL endpoint for CLI manager/control-plane commands                                                                                                                                                                            |
+| `DIVEDRA_MANAGER_AUTH_TOKEN`    | No       | none                                                         | Manager-session auth token for `divedra gql` and GraphQL control-plane mutations                                                                                                                                                           |
+| `DIVEDRA_MANAGER_SESSION_ID`    | No       | none                                                         | Ambient manager session id forwarded by `divedra gql` to `/graphql` for manager-scoped requests                                                                                                                                            |
+| `DIVEDRA_WORKFLOW_ID`           | No       | none                                                         | Ambient workflow id for manager tool environments                                                                                                                                                                                          |
+| `DIVEDRA_WORKFLOW_EXECUTION_ID` | No       | none                                                         | Ambient workflow execution id for manager tool environments                                                                                                                                                                                |
+| `DIVEDRA_MANAGER_NODE_ID`       | No       | none                                                         | Ambient manager node id for manager tool environments                                                                                                                                                                                      |
+| `DIVEDRA_MANAGER_NODE_EXEC_ID`  | No       | none                                                         | Ambient manager node execution id for manager tool environments                                                                                                                                                                            |
 
 Workflow root resolution order:
+
 1. `--workflow-root`
 2. `DIVEDRA_WORKFLOW_ROOT`
 3. nearest ancestor `./.divedra` discovered by walking upward from `cwd`
 4. fallback to `cwd/.divedra` when no ancestor contains `.divedra`
 
 Artifact root resolution order:
+
 1. `--artifact-root`
 2. `DIVEDRA_ARTIFACT_ROOT`
 3. `DIVEDRA_ARTIFACT_DIR/workflow` (or legacy `DIVEDRA_ROOT_DATA_DIR` / `DIVEDRA_RUNTIME_ROOT`)
-4. computed default: `{resolved DIVEDRA_ARTIFACT_DIR}/workflow` where `DIVEDRA_ARTIFACT_DIR` defaults to `~/.divedra/project/<cwd-encoded>/divedra-artifact`
+4. computed default: `{resolved DIVEDRA_ARTIFACT_DIR}/workflow` where `DIVEDRA_ARTIFACT_DIR` defaults to `~/.divedra/project/<encoded-project-root>/divedra-artifact`
    - the encoded project root is the nearest ancestor containing `.divedra`, otherwise the current working directory
 
+Runtime-root co-location rule:
+
+1. when `--artifact-root` and/or `--session-store` are supplied, `divedra` infers `rootDataDir` from those explicit roots when they provide an unambiguous parent directory
+2. that inferred root keeps `divedra.db` and sibling default roots aligned with the explicit storage tree instead of an unrelated ambient `DIVEDRA_ARTIFACT_DIR`
+
 Session store root resolution order:
+
 1. `--session-store`
 2. `DIVEDRA_SESSION_STORE`
 3. `{resolved DIVEDRA_ARTIFACT_DIR}/sessions`
 4. existing runtime default
 
 GraphQL control-plane resolution order:
+
 1. `--endpoint`
 2. `DIVEDRA_GRAPHQL_ENDPOINT`
 3. local `divedra serve` default (`http://127.0.0.1:43173/graphql`)
 
 Data-root file reference rule:
+
 1. GraphQL file/image parameters use data-root-relative paths, not host absolute paths
 2. Those paths are resolved under `DIVEDRA_ARTIFACT_DIR`
 3. `sendManagerMessage.attachments` must stay within `files/{workflowId}/{workflowExecutionId}/...`
@@ -129,19 +143,19 @@ Compatibility rule:
 - domain parameters should be modeled in GraphQL inputs,
 - `divedra gql` is the thin generic GraphQL client now, and legacy execution commands may opt into GraphQL transport with `--endpoint` while the rest of the CLI migrates incrementally,
 - local-only debug flags such as `--mock-scenario` are not forwarded when a legacy command is executed remotely through GraphQL,
-- browser/editor workflow surfaces should use GraphQL; `/api/ui-config` remains only as bootstrap metadata rather than a parallel workflow/session transport.
+- workflow tooling should use GraphQL rather than parallel REST transports.
 
 Supporting design: `design-docs/specs/design-graphql-manager-control-plane.md`.
 
 ### Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | General error |
-| 2 | Invalid workflow directory or JSON |
-| 3 | Completion condition not met and no fallback path |
-| 4 | Loop limit exceeded |
-| 5 | Agent backend invocation error |
-| 6 | Node execution timeout |
-| 7 | HTTP server startup failure (port bind, config, or static asset error) |
+| Code | Meaning                                           |
+| ---- | ------------------------------------------------- |
+| 0    | Success                                           |
+| 1    | General error                                     |
+| 2    | Invalid workflow directory or JSON                |
+| 3    | Completion condition not met and no fallback path |
+| 4    | Loop limit exceeded                               |
+| 5    | Agent backend invocation error                    |
+| 6    | Node execution timeout                            |
+| 7    | HTTP server startup failure                       |

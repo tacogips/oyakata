@@ -21,6 +21,25 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function makeRuntimeDbOptions(
+  root: string,
+  sessionId?: string,
+): {
+  readonly artifactRoot: string;
+  readonly cwd: string;
+  readonly rootDataDir: string;
+  readonly sessionId?: string;
+  readonly workflowRoot: string;
+} {
+  return {
+    workflowRoot: root,
+    artifactRoot: path.join(root, "artifacts"),
+    rootDataDir: path.join(root, "runtime-data"),
+    cwd: root,
+    ...(sessionId === undefined ? {} : { sessionId }),
+  };
+}
+
 async function createWorkflowFixture(
   root: string,
   workflowName: string,
@@ -211,11 +230,7 @@ describe("runtime-db", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "sqlite-index");
 
-    const options = {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      cwd: root,
-    };
+    const options = makeRuntimeDbOptions(root);
 
     const mockScenario = {
       "divedra-manager": {
@@ -283,12 +298,10 @@ describe("runtime-db", () => {
       },
     );
 
-    const options = {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      cwd: root,
-      sessionId: "sess-sqlite-output-contract",
-    };
+    const options = makeRuntimeDbOptions(
+      root,
+      "sess-sqlite-output-contract",
+    );
 
     const mockScenario = {
       "divedra-manager": {
@@ -361,12 +374,10 @@ describe("runtime-db", () => {
     const root = await makeTempDir();
     await createNodeSessionReuseFixture(root, "sqlite-node-session-reuse");
 
-    const options = {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      cwd: root,
-      sessionId: "sess-sqlite-node-session-reuse",
-    };
+    const options = makeRuntimeDbOptions(
+      root,
+      "sess-sqlite-node-session-reuse",
+    );
 
     const result = await runWorkflow(
       "sqlite-node-session-reuse",
@@ -437,12 +448,10 @@ describe("runtime-db", () => {
       },
     );
 
-    const options = {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      cwd: root,
-      sessionId: "sess-sqlite-output-contract-migration",
-    };
+    const options = makeRuntimeDbOptions(
+      root,
+      "sess-sqlite-output-contract-migration",
+    );
 
     const dbPath = resolveRuntimeDbPath(options);
     await mkdir(path.dirname(dbPath), { recursive: true });

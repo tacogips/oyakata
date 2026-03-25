@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-03-23T10:50:00Z",
+  "lastUpdated": "2026-03-26T11:10:00Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -71,7 +71,8 @@
     "68": { "status": "COMPLETED" },
     "69": { "status": "COMPLETED" },
     "70": { "status": "COMPLETED" },
-    "71": { "status": "COMPLETED" }
+    "71": { "status": "IN_PROGRESS" },
+    "72": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-core-and-validation": {
@@ -1651,7 +1652,7 @@
           "deps": []
         },
         "TASK-002": {
-          "status": "Not Started",
+          "status": "In Progress",
           "parallelizable": false,
           "deps": ["TASK-001"]
         },
@@ -1664,6 +1665,95 @@
           "status": "Not Started",
           "parallelizable": false,
           "deps": ["TASK-002", "TASK-003"]
+        }
+      }
+    },
+    "tui-opentui-solid-migration": {
+      "phase": 72,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-002"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-002"]
+        },
+        "TASK-006": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-004", "TASK-005"]
+        }
+      }
+    },
+    "tui-solid-runtime-fallback-hardening": {
+      "phase": 72,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["tui-opentui-solid-migration:TASK-006"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        }
+      }
+    },
+    "remove-web-ui": {
+      "phase": 72,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002"]
+        }
+      }
+    },
+    "root-data-dir-project-root-scoping": {
+      "phase": 72,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
         }
       }
     },

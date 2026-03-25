@@ -44,13 +44,8 @@ tasks:
     cmds:
       - bun run test
 
-  test-e2e:
-    desc: Run Playwright E2E tests
-    cmds:
-      - bun run test:e2e
-
   test-all:
-    desc: Run unit and Playwright E2E tests
+    desc: Run all automated tests
     cmds:
       - bun run test:all
 
@@ -64,35 +59,15 @@ tasks:
     cmds:
       - vitest run --reporter=verbose
 
-  test-ui:
-    desc: Run UI unit tests non-interactively
-    cmds:
-      - bun run test:ui
-
-  test-ui-interactive:
-    desc: Run the interactive Vitest UI server (opt-in)
-    cmds:
-      - bun run test:ui:interactive
-
   typecheck:
-    desc: Run server and UI TypeScript type checking
+    desc: Run TypeScript type checking
     cmds:
       - bun run typecheck
 
   typecheck-server:
-    desc: Run server TypeScript type checking
+    desc: Run TypeScript type checking
     cmds:
       - bun run typecheck:server
-
-  typecheck-ui:
-    desc: Run framework-aware UI type checking
-    cmds:
-      - bun run typecheck:ui
-
-  check-ui:
-    desc: Run framework-aware UI verification and production build
-    cmds:
-      - bun run check:ui
 
   fmt:
     desc: Format code with prettier
@@ -120,4 +95,4 @@ tasks:
     cmds:
       - task: fmt-check
       - task: typecheck
-      - task: test-all
+      - task: test

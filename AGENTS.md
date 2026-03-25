@@ -149,10 +149,11 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 
 - `workflow.json` (purpose via `description`, graph/control-flow)
 - `workflow.json` (purpose via `description`, graph/control-flow, global defaults)
-- `workflow-vis.json` (browser visualization state for vertical ordering such as node `order`; `indent`/`color` are derived)
+- `workflow-vis.json` (visualization ordering state for nodes such as `order`; `indent`/`color` are derived)
 - `node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate` or `promptTemplateFile`, `variables`, optional `timeoutMs`)
 
 ## Development Environment
+
 - **Language**: TypeScript
 - **Runtime**: Bun
 - **Build Tool**: Bun (with go-task for automation)
@@ -160,6 +161,7 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 - **Development Shell**: Run `nix develop` or use direnv to activate
 
 ## Project Structure
+
 ```
 .
 ├── flake.nix          # Nix flake configuration for TypeScript/Bun development
@@ -169,7 +171,7 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 ├── AGENTS.md          # Agent operation and workflow rules
 ├── README.md          # Project overview and workflow model summary
 ├── examples/          # Reference workflows runnable with --workflow-root ./examples
-├── .divedra/          # Workflow definitions and browser visualization state
+├── .divedra/          # Workflow definitions and visualization state
 ├── design-docs/       # Architecture and command design docs
 ├── src/               # Source code
 │   ├── main.ts        # Entry point
@@ -195,13 +197,12 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
   prompts rather than embedding large multiline prompt bodies directly in JSON.
 
 ## Development Tools Available
+
 - `bun` - JavaScript/TypeScript runtime and package manager
 - `tsc` - TypeScript compiler
 - `typescript-language-server` - TypeScript language server (LSP)
 - `prettier` - Code formatter
 - `task` - Task runner (go-task)
-- `agent-browser` - Browser verification agent for local UI inspection
-- `playwright` - Browser automation and E2E test runner
 
 ## TypeScript Code Development
 
@@ -214,36 +215,6 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 
 **TypeScript Configuration**: This project uses maximum TypeScript strictness. See `tsconfig.json` for the complete strict configuration.
 
-### Verify-Fix Cycle (MANDATORY for UI-related changes)
-
-After `check-and-test-after-modify` passes for UI-related changes, the main conversation MUST perform a browser verification step using `agent-browser`, then loop if errors are found:
-
-```
-ts-coding (implement)
-    |
-    v
-check-and-test-after-modify (typecheck + unit tests)
-    |
-    v
-Browser Verify (agent-browser: open, snapshot, screenshot)
-    |
-    +-- UI looks correct --> Done
-    |
-    +-- UI has issues --> ts-coding (fix) --> check-and-test --> Browser Verify (loop)
-```
-
-**Browser verification commands**:
-```bash
-agent-browser open http://127.0.0.1:43173
-agent-browser snapshot -i
-agent-browser screenshot --full
-agent-browser close
-```
-
-**When to apply**: Any change that affects browser rendering, layout, interactions, or API responses consumed by the browser UI. Skip this for pure backend or library changes with no UI impact.
-
-**Cycle limit**: Maximum 3 verify-fix iterations. If issues remain after 3 cycles, report the remaining issues clearly.
-
 ## Design Documentation
 
 **IMPORTANT**: When creating design documents, you (the LLM model) MUST follow the design-doc skill.
@@ -251,6 +222,18 @@ agent-browser close
 **Skill Reference**: Refer to `.claude/skills/design-doc/SKILL.md` for design document guidelines, templates, and naming conventions.
 
 **Output Location**: All design documents MUST be saved to `design-docs/` directory (NOT `docs/`).
+
+## TUI UX Conventions
+
+When modifying the terminal UI, treat the following interaction rules as standing repository requirements unless the user explicitly asks for an exception:
+
+- Use the `.agents/skills/tui-navigation-guardrails/` skill first when changing pane focus, keybindings, selected-row rendering, or detail-view navigation.
+
+- Only the focused pane should render an active selected-row state.
+- Any focused list-like or scrollable pane should support both arrow keys and `j` / `k` for in-pane movement.
+- `enter` and `ctrl-m` should stay semantically aligned within the same pane unless a documented screen-specific exception exists.
+- When `enter` or `ctrl-m` opens or deepens into a destination pane, that destination pane should remain the active pane. Detail viewers and similar drill-down states should be implemented in-pane by default rather than by stealing active-pane status with a modal layer.
+- A deeper detail pane should use `esc` to return focus to its immediate parent pane.
 
 **Design References**: See `design-docs/references/README.md` for all external references and design materials.
 
@@ -304,12 +287,15 @@ Subtasks marked as "Parallelizable: Yes" can be implemented concurrently:
 
 ```markdown
 ### TASK-001: Core Types
+
 **Parallelizable**: Yes
 
 ### TASK-002: Parser (depends on TASK-001)
+
 **Parallelizable**: No (depends on TASK-001)
 
 ### TASK-003: Validator
+
 **Parallelizable**: Yes
 ```
 
@@ -326,10 +312,12 @@ When implementing from a plan:
 5. When all tasks complete, move plan to `impl-plans/completed/`
 
 ## Task Management
+
 - Use `task` command for build automation
 - Define tasks in `Taskfile.yml` (to be created as needed)
 
 ## Git Workflow
+
 - Create meaningful commit messages
 - Keep commits focused and atomic
 - Follow conventional commit format when appropriate
@@ -339,6 +327,7 @@ When implementing from a plan:
 Implementation progress is tracked within implementation plans in `impl-plans/`:
 
 ### Directory Structure
+
 ```
 impl-plans/
 ├── README.md                    # Index of all implementation plans
@@ -360,13 +349,16 @@ Each implementation plan tracks progress through:
 4. **Progress Log**: Session-by-session updates
 
 Example subtask format:
+
 ```markdown
 ### TASK-001: Core Parser Implementation
+
 **Status**: In Progress
 **Parallelizable**: Yes
 **Deliverables**: src/parser/variable.ts
 
 **Completion Criteria**:
+
 - [x] parseVariables function implemented
 - [x] Variable interface defined
 - [ ] Unit tests written and passing
@@ -375,11 +367,13 @@ Example subtask format:
 ## Progress Log
 
 ### Session: 2025-01-04 10:00
+
 **Tasks Completed**: TASK-001 partially
 **Notes**: Implemented core parsing, tests pending
 ```
 
 ## Notes
+
 - This project uses Nix flakes for reproducible development environments
 - Use direnv for automatic environment activation
 - All development dependencies are managed through flake.nix

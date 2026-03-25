@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -28,6 +28,24 @@ describe("session-store", () => {
   test("uses ~/.divedra/project/<encoded>/divedra-artifact/sessions when unset", async () => {
     const root = await makeTempDir();
     const resolved = getSessionStoreRoot({ cwd: root, env: {} });
+    expect(resolved).toBe(
+      path.join(
+        os.homedir(),
+        ".divedra",
+        "project",
+        encodeProjectPathForDivedraScope(root),
+        "divedra-artifact",
+        "sessions",
+      ),
+    );
+  });
+
+  test("uses the nearest .divedra project root for default session-store scoping", async () => {
+    const root = await makeTempDir();
+    const nestedCwd = path.join(root, "packages", "feature", "src");
+    await mkdir(path.join(root, ".divedra"), { recursive: true });
+    await mkdir(nestedCwd, { recursive: true });
+    const resolved = getSessionStoreRoot({ cwd: nestedCwd, env: {} });
     expect(resolved).toBe(
       path.join(
         os.homedir(),

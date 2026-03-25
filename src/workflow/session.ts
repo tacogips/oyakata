@@ -1,3 +1,5 @@
+import { createHash, randomBytes } from "node:crypto";
+
 export type SessionStatus =
   | "running"
   | "paused"
@@ -250,11 +252,31 @@ export function isSafeSessionId(sessionId: string): boolean {
   return /^[a-zA-Z0-9][a-zA-Z0-9-_]{5,127}$/.test(sessionId);
 }
 
-export function createSessionId(now: Date = new Date()): string {
-  const timestamp = now
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z");
-  const random = Math.random().toString(36).slice(2, 10);
-  return `sess-${timestamp}-${random}`;
+function normalizeWorkflowSlug(workflowId: string): string {
+  const normalized = workflowId
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+  return normalized.length > 0 ? normalized : "workflow";
+}
+
+export function createSessionId(input: {
+  readonly workflowId?: string;
+  readonly now?: Date;
+} = {}): string {
+  const now = input.now ?? new Date();
+  const unixTime = String(Math.floor(now.getTime() / 1000));
+  const workflowSlug = normalizeWorkflowSlug(input.workflowId ?? "workflow");
+  const hash = createHash("sha256")
+    .update(`${input.workflowId ?? "workflow"}:${unixTime}:`)
+    .update(randomBytes(16).toString("hex"))
+    .digest("hex")
+    .slice(0, 8);
+  const maxWorkflowSlugLength = Math.max(
+    1,
+    128 - `div--${unixTime}-${hash}`.length,
+  );
+  const safeWorkflowSlug = workflowSlug.slice(0, maxWorkflowSlugLength);
+  return `div-${safeWorkflowSlug}-${unixTime}-${hash}`;
 }

@@ -1411,6 +1411,29 @@ function persistNodeBackendSession(input: {
   return current;
 }
 
+function buildScenarioExecutableNodePayload(
+  node: NodePayload,
+  hasScenarioEntry: boolean,
+): AgentNodePayload | null {
+  const agentNodePayload = asAgentNodePayload(node);
+  if (agentNodePayload !== null) {
+    return agentNodePayload;
+  }
+  if (!hasScenarioEntry) {
+    return null;
+  }
+  if (node.nodeType !== "command" && node.nodeType !== "container") {
+    return null;
+  }
+  const { nodeType: _nodeType, ...rest } = node;
+  return {
+    ...rest,
+    nodeType: "agent",
+    model: `scenario/${node.nodeType}`,
+    promptTemplate: node.promptTemplate ?? "",
+  };
+}
+
 export async function runWorkflow(
   workflowName: string,
   options: WorkflowRunOptions = {},
@@ -1480,7 +1503,7 @@ export async function runWorkflow(
     }
 
     session = createSessionState({
-      sessionId: createSessionId(),
+      sessionId: createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
       initialNodeId: options.rerunFromNodeId,
@@ -1514,7 +1537,9 @@ export async function runWorkflow(
     };
   } else {
     session = createSessionState({
-      sessionId: options.sessionId ?? createSessionId(),
+      sessionId:
+        options.sessionId ??
+        createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
       initialNodeId: workflow.managerNodeId,
@@ -1673,7 +1698,14 @@ export async function runWorkflow(
     }
     const skipOptionalNode =
       isOptionalExecutionNode && pendingOptionalDecision?.status === "skip";
-    if (nodePayload.nodeType === "command") {
+    const executableNodePayload = buildScenarioExecutableNodePayload(
+      nodePayload,
+      options.mockScenario?.[nodeId] !== undefined,
+    );
+    if (
+      nodePayload.nodeType === "command" &&
+      executableNodePayload === null
+    ) {
       const failed: WorkflowSessionState = {
         ...session,
         queue,
@@ -1689,7 +1721,10 @@ export async function runWorkflow(
           failed.lastError ?? "unsupported command node execution request",
       });
     }
-    if (nodePayload.nodeType === "container") {
+    if (
+      nodePayload.nodeType === "container" &&
+      executableNodePayload === null
+    ) {
       const failed: WorkflowSessionState = {
         ...session,
         queue,
@@ -1705,7 +1740,7 @@ export async function runWorkflow(
           failed.lastError ?? "unsupported container node execution request",
       });
     }
-    const agentNodePayload = asAgentNodePayload(nodePayload);
+    const agentNodePayload = executableNodePayload;
     if (
       agentNodePayload === null &&
       nodePayload.nodeType !== "user-action" &&

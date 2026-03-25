@@ -81,9 +81,10 @@ Validation-oriented reference bundle for the newer node authoring surface:
 
 Important current limitation:
 
-- this bundle is meant for `validate` and `inspect`
-- `command` and `container` nodes are still rejected by `workflow run` in the
-  current runtime, so this example is intentionally not documented as runnable
+- live `workflow run` still does not implement real `command` or `container`
+  execution in the current runtime
+- the bundled deterministic mock scenario can still exercise the full workflow
+  graph, including those node types, for example/demo purposes
 
 Validate it:
 

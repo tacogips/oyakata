@@ -11,7 +11,6 @@ describe("selectTuiRuntimeMode", () => {
     expect(result.mode).toBe("interactive");
     expect(result.reason).toBe("resume-session");
     expect(result.requiresWorkflowArgument).toBe(false);
-    expect(result.allowsWorkflowSelectionPrompt).toBe(false);
   });
 
   test("selects fallback mode for resume-session on a non-interactive terminal", () => {
@@ -23,7 +22,6 @@ describe("selectTuiRuntimeMode", () => {
     expect(result.mode).toBe("fallback");
     expect(result.reason).toBe("resume-session");
     expect(result.requiresWorkflowArgument).toBe(false);
-    expect(result.allowsWorkflowSelectionPrompt).toBe(false);
   });
 
   test("selects interactive mode for interactive terminal without resume-session", () => {
@@ -34,7 +32,6 @@ describe("selectTuiRuntimeMode", () => {
     expect(result.mode).toBe("interactive");
     expect(result.reason).toBe("interactive-terminal");
     expect(result.requiresWorkflowArgument).toBe(false);
-    expect(result.allowsWorkflowSelectionPrompt).toBe(true);
   });
 
   test("selects fallback mode for non-interactive terminal", () => {
@@ -45,6 +42,5 @@ describe("selectTuiRuntimeMode", () => {
     expect(result.mode).toBe("fallback");
     expect(result.reason).toBe("non-interactive-terminal");
     expect(result.requiresWorkflowArgument).toBe(true);
-    expect(result.allowsWorkflowSelectionPrompt).toBe(false);
   });
 });

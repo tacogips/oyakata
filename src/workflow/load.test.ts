@@ -7,6 +7,7 @@ import { loadWorkflowFromDisk } from "./load";
 import {
   computeDefaultRootDataDir,
   encodeProjectPathForDivedraScope,
+  inferRootDataDirFromExplicitStorageRoots,
   resolveAttachmentRoot,
   resolveEffectiveRoots,
 } from "./paths";
@@ -133,9 +134,9 @@ describe("resolveEffectiveRoots", () => {
     });
 
     expect(resolved.workflowRoot).toBe(path.join(root, ".divedra"));
-    expect(resolved.rootDataDir).toBe(computeDefaultRootDataDir(nestedCwd));
+    expect(resolved.rootDataDir).toBe(computeDefaultRootDataDir(root));
     expect(resolved.artifactRoot).toBe(
-      path.join(computeDefaultRootDataDir(nestedCwd), "workflow"),
+      path.join(computeDefaultRootDataDir(root), "workflow"),
     );
   });
 
@@ -166,6 +167,36 @@ describe("resolveEffectiveRoots", () => {
 
     expect(resolved.workflowRoot).toBe(path.join(nestedCwd, ".divedra"));
     expect(resolved.rootDataDir).toBe(computeDefaultRootDataDir(nestedCwd));
+  });
+});
+
+describe("inferRootDataDirFromExplicitStorageRoots", () => {
+  test("uses the explicit artifact-root parent when only artifact-root is provided", () => {
+    expect(
+      inferRootDataDirFromExplicitStorageRoots({
+        artifactRoot: "runtime/artifacts",
+        cwd: "/tmp/project",
+      }),
+    ).toBe("/tmp/project/runtime");
+  });
+
+  test("uses the shared parent when explicit artifact and session roots align", () => {
+    expect(
+      inferRootDataDirFromExplicitStorageRoots({
+        artifactRoot: "runtime/artifacts",
+        sessionStoreRoot: "runtime/sessions",
+        cwd: "/tmp/project",
+      }),
+    ).toBe("/tmp/project/runtime");
+  });
+
+  test("returns undefined when explicit storage roots do not share a parent", () => {
+    expect(
+      inferRootDataDirFromExplicitStorageRoots({
+        artifactRoot: "/tmp/artifacts",
+        sessionStoreRoot: "/var/sessions",
+      }),
+    ).toBeUndefined();
   });
 });
 

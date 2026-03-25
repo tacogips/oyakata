@@ -1,6 +1,6 @@
 # Architecture Design
 
-This document describes the current runtime architecture implemented in `src/workflow/`, `src/server/`, and `ui/`.
+This document describes the current runtime architecture implemented in `src/workflow/`, `src/server/`, and `src/tui/`.
 
 ## Overview
 
@@ -32,11 +32,13 @@ The loader resolves prompt files into effective `promptTemplate` text before val
 
 The runtime persists three distinct forms of state:
 
-- workflow session state in `{DIVEDRA_ARTIFACT_DIR}/sessions/` (default: `~/.divedra/project/<cwd-encoded>/divedra-artifact/sessions/`, where `<cwd-encoded>` joins path segments with `__` and normalizes path-hostile characters to `_`)
+- workflow session state in `{DIVEDRA_ARTIFACT_DIR}/sessions/` (default: `~/.divedra/project/<encoded-project-root>/divedra-artifact/sessions/`, where `<encoded-project-root>` is the nearest ancestor containing `.divedra` when present, otherwise the current working directory, with path segments joined by `__` and path-hostile characters normalized to `_`)
 - node and communication artifacts in `{DIVEDRA_ARTIFACT_DIR}/workflow/`
 - query-oriented runtime index data in `{DIVEDRA_ARTIFACT_DIR}/divedra.db`
 
-File artifacts remain the authoritative source for execution payloads. SQLite is a best-effort index for inspection and UI queries.
+File artifacts remain the authoritative source for execution payloads. SQLite is a best-effort index for CLI, TUI, and GraphQL inspection queries.
+
+When CLI or API entrypoints receive explicit artifact and/or session-store roots, they infer `rootDataDir` from those explicit storage roots when possible so `divedra.db` stays co-located with the selected runtime tree instead of drifting to an ambient `DIVEDRA_ARTIFACT_DIR`.
 
 ### Execution Boundary
 
@@ -129,7 +131,7 @@ Responsibilities:
 - persist queue and node execution history
 - track loop counts, restart counts, and transitions
 - record mailbox communications and conversation turns
-- expose stable session identity for CLI, TUI, GraphQL, and browser UI
+- expose stable session identity for CLI, TUI, GraphQL, and library consumers
 
 The queue is deduplicated after each scheduling pass. Multiple matched branch edges still fan out to multiple recipients, but duplicate node ids are collapsed in the queue view.
 
@@ -155,26 +157,64 @@ Current planning behavior:
 - manager output payloads may include `managerControl.actions`
 - the runtime validates control scope before honoring those actions
 
-### Server and Browser Control Plane
+### Server and GraphQL Control Plane
 
 Source:
 
 - `src/server/*`
 - `src/graphql/*`
-- `ui/*`
 
 Responsibilities:
 
-- serve the built frontend bundle
 - expose `/graphql` for workflow-definition and execution/session control flows
-- expose `/api/ui-config` as a small bootstrap endpoint
+- expose `/healthz` for liveness checks
 - keep manager auth/session scope on the HTTP transport boundary
+
+Serve-mode behavior:
+
+- `divedra serve` runs a local HTTP control plane only
+- an optional fixed workflow name constrains GraphQL workflow-definition access to that authored bundle
+- `readOnly` is enforced for write mutations
+- no browser asset serving or bootstrap REST surface remains in the current implementation
 
 Manager scope rules:
 
 - manager auth is established from request transport metadata
 - HTTP server ambient environment is not trusted as manager scope
 - manager sessions are minted per real manager-node execution
+
+### TUI Runtime Boundary
+
+Source:
+
+- `src/cli.ts`
+- `src/tui/runtime.ts`
+- `src/tui/opentui-screen.ts`
+- `src/tui/opentui-model.ts`
+- `src/tui/opentui-controller.ts`
+- `src/tui/opentui-detail-content.ts`
+- `src/tui/opentui-host-view.ts`
+- `src/tui/opentui-solid-app.tsx`
+- `src/tui/components/*.tsx`
+
+Responsibilities:
+
+- choose interactive versus fallback TUI runtime mode
+- lazy-load the OpenTUI screen boundary only when interactive rendering is needed
+- preserve direct resume behavior when `--resume-session` cannot use the full-screen TUI
+- keep the checked-in screen host compatible with the `@opentui/solid` view layer
+
+Current implementation status:
+
+- `src/tui/opentui-screen.ts` now creates the renderer and orchestrates focus, key routing, popup wiring, and async workflow actions, while the rendered screen tree lives in `src/tui/opentui-solid-app.tsx` and `src/tui/components/*.tsx`
+- `src/tui/opentui-model.ts` now owns the reusable workflow-preview/header and summary-selection helpers instead of duplicating that presentation logic in the host
+- `src/tui/opentui-controller.ts` owns run/rerun/resume/copy/refresh/input-format orchestration so the host no longer embeds those async action bodies inline
+- `src/tui/opentui-detail-content.ts` now owns mailbox/artifact-backed node-detail content loading plus history-detail pane state assembly so the host no longer embeds that file-IO and summary/viewer/detail decision tree directly
+- `src/tui/opentui-host-view.ts` now owns mounted-ref validation and pane-chrome application so the host does not repeat view-wiring checks and border/title updates across render paths
+- the remaining host-local helpers are renderer-specific concerns such as clipboard integration and bounded-select coordination; workflow/sub-workflow lookup helpers now live on the model seam
+- CLI fallback detection now treats missing `@opentui/core`, `@opentui/solid`, and required `solid-js` runtime modules as reasons to use the non-OpenTUI path
+- interactive `divedra tui` now enters the unified Solid workspace/history/run app directly instead of passing through a separate selector-only OpenTUI surface
+- Bun and TypeScript are configured for the checked-in `.tsx` OpenTUI modules; JSX compilation uses the standard `solid-js` runtime while `@opentui/solid` provides the renderer and terminal component catalogue
 
 ## Runtime Node Roles
 

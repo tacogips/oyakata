@@ -3,7 +3,7 @@
 **Status**: In Progress
 **Design Reference**: design-docs/specs/design-unified-workflow-role-model.md
 **Created**: 2026-03-19
-**Last Updated**: 2026-03-19
+**Last Updated**: 2026-03-26
 
 ## Design Document Reference
 
@@ -115,16 +115,16 @@ interface WorkflowEntryResolution {
 - [ ] Redefine manager-control scope around the current workflow execution only
 - [ ] Update prompt/mailbox composition to stop exposing structural input/output boundary roles
 
-### 3. Editor, Templates, and Examples
+### 3. Templates, Examples, and TUI/CLI Presentation
 
-#### `ui/src/lib/editor-*.ts`, `ui/src/lib/components/*.tsx`, `src/workflow/create.ts`, `examples/**/*.json`, `e2e/**/*.cjs`
+#### `src/workflow/create.ts`, `examples/**/*.json`, `src/tui/opentui-model.ts`, `src/tui/opentui-screen.ts`, `README.md`
 
 **Status**: NOT_STARTED
 
 ```typescript
-export type EditorNodeRole = "manager" | "worker";
+export type PresentedNodeRole = "manager" | "worker";
 
-export interface EditableWorkflowCall {
+export interface AuthoredWorkflowCallTemplate {
   id: string;
   workflowId: string;
   callerNodeId: string;
@@ -134,25 +134,23 @@ export interface EditableWorkflowCall {
 
 **Checklist**:
 
-- [ ] Replace manager-kind UI with role UI
-- [ ] Support workflows with no manager in the editor
-- [ ] Hide non-agent node-type controls for manager nodes
-- [ ] Add explicit workflow entry editing
-- [ ] Replace sub-workflow boundary editing with workflow-call editing
-- [ ] Update generated templates and example bundles to the new model
+- [ ] Replace manager-kind wording in generated templates and TUI/CLI presentation helpers with role-oriented wording
+- [ ] Support workflows with no manager in generated templates and user-facing summaries
+- [ ] Add explicit workflow entry authoring to generated templates
+- [ ] Replace structural sub-workflow example bundles with workflow-call-oriented examples
+- [ ] Keep any future browser editor work out of scope unless a new design reintroduces that surface
 
 ### 4. Migration and Verification
 
-#### `src/**/*.test.ts`, `ui/src/**/*.test.ts`, `design-docs/specs/*.md`, `README.md`
+#### `src/**/*.test.ts`, `design-docs/specs/*.md`, `README.md`, `examples/**/*.json`
 
 **Status**: NOT_STARTED
 
 ```typescript
 interface VerificationCommandSet {
-  readonly typecheckServer: "bun run typecheck:server";
-  readonly typecheckUi: "bun run typecheck:ui";
+  readonly typecheck: "bun run typecheck";
   readonly unitTests: "bun test";
-  readonly buildUi: "bun run build:ui";
+  readonly build: "bun run build";
 }
 ```
 
@@ -161,8 +159,9 @@ interface VerificationCommandSet {
 - [ ] Update architecture and workflow docs to the new role model
 - [ ] Remove tests that assume structural sub-workflow manager/input/output kinds
 - [ ] Add runtime tests for manager-less workflow execution
-- [ ] Run targeted server and UI tests
-- [ ] Run typechecks and UI build
+- [ ] Run targeted runtime, CLI, and TUI tests
+- [ ] Run typechecks and build verification for the current TUI/CLI-only repository
+- [ ] Run `bun run typecheck`, `bun test`, and `bun run build`
 
 ## Module Status
 
@@ -170,8 +169,8 @@ interface VerificationCommandSet {
 | ------------------------------------ | ------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------- |
 | Authored schema and validation       | `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/load.ts`                 | IN_PROGRESS | `bun test src/workflow/validate.test.ts src/workflow/load.test.ts`          |
 | Runtime execution and workflow calls | `src/workflow/engine.ts`, `src/workflow/manager-control.ts`, `src/workflow/sub-workflow.ts` | NOT_STARTED | `bun test src/workflow/engine.test.ts src/workflow/manager-control.test.ts` |
-| Editor, templates, and examples      | `ui/src/lib/editor-*.ts`, `src/workflow/create.ts`, `examples/**/*.json`                    | NOT_STARTED | `bun test ui/src/lib/*.test.ts`, targeted E2E                               |
-| Migration and verification           | `design-docs/specs/*.md`, `README.md`, `src/**/*.test.ts`, `ui/src/**/*.test.ts`            | NOT_STARTED | `bun run typecheck:server`, `bun run typecheck:ui`, `bun run build:ui`      |
+| Templates, examples, and TUI/CLI presentation | `src/workflow/create.ts`, `examples/**/*.json`, `src/tui/opentui-model.ts`, `src/tui/opentui-screen.ts` | NOT_STARTED | `bun test src/tui/opentui-screen.test.ts`, targeted example/runtime tests |
+| Migration and verification           | `design-docs/specs/*.md`, `README.md`, `src/**/*.test.ts`, `examples/**/*.json`             | NOT_STARTED | `bun run typecheck`, `bun test`, `bun run build`                            |
 
 ## Dependencies
 
@@ -179,8 +178,8 @@ interface VerificationCommandSet {
 | ------------------------------------ | ------------------------------------ | ------- |
 | Authored schema and validation       | New role model design                | READY   |
 | Runtime execution and workflow calls | Authored schema and validation       | BLOCKED |
-| Editor, templates, and examples      | Authored schema and validation       | BLOCKED |
-| Migration and verification           | Runtime execution and editor updates | BLOCKED |
+| Templates, examples, and TUI/CLI presentation | Authored schema and validation | BLOCKED |
+| Migration and verification           | Runtime execution and templates/presentation updates | BLOCKED |
 
 ## Completion Criteria
 
@@ -188,7 +187,7 @@ interface VerificationCommandSet {
 - [ ] Workflows with zero managers are valid and executable
 - [ ] Manager nodes cannot be authored as `command`, `container`, or `user-action`
 - [ ] Workflow nesting no longer relies on structural sub-workflow manager/input/output nodes
-- [ ] Editor can author manager-less workflows and explicit workflow calls
+- [ ] Generated templates and the checked-in TUI/CLI text can describe manager-less workflows and explicit workflow calls
 - [ ] Tests and typechecks pass
 
 ## Progress Log
@@ -213,6 +212,13 @@ interface VerificationCommandSet {
 **Tasks In Progress**: TASK-001
 **Blockers**: `workflowCalls` and manager-less execution remain blocked on TASK-002 runtime work; validation now rejects those authored bundles during the compatibility phase instead of silently accepting them.
 **Notes**: Review found that the runtime still boots from `workflow.managerNodeId` and has no execution path for explicit `workflowCalls`, so the transitional validator now reports those shapes as non-executable. Updated `src/workflow/validate.test.ts` and `src/workflow/load.test.ts` to keep unified role coverage while preventing unsupported bundles from loading as runnable workflows. Verified with `bun test src/workflow/validate.test.ts src/workflow/load.test.ts` and `bun run typecheck:server`.
+
+### Session: 2026-03-26 22:40
+
+**Tasks Completed**: Active-plan scope reassessment
+**Tasks In Progress**: TASK-001, TASK-002
+**Blockers**: Runtime execution still assumes the structural root/subworkflow manager model, and the repository no longer contains the previously referenced browser editor surface
+**Notes**: Re-reviewed this active plan against the current repository architecture after the checked-in web UI was removed and the TUI moved to OpenTUI Solid. The role-unification design intent still stands, but the plan had become stale because it referenced deleted `ui/` and E2E deliverables plus UI-only verification commands. Narrowed the plan to the current repository surfaces: runtime/schema work first, then generated templates/examples and any necessary TUI/CLI presentation updates. If a browser editor is reintroduced later, that should happen under a new design and implementation plan instead of silently reviving the deleted paths here.
 
 ## Related Plans
 

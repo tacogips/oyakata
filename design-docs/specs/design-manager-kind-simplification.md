@@ -104,9 +104,9 @@ Expected outcome:
 
 This refactor intentionally does not preserve backward compatibility for older authored workflow bundles.
 
-## Editor and Example Alignment
+## Authoring and Example Alignment
 
-The browser editor, example bundles, workflow templates, and E2E fixtures should all author the same canonical kinds:
+Workflow authoring tools, example bundles, workflow templates, and fixtures should all author the same canonical kinds:
 
 ```json
 {

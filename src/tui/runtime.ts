@@ -14,7 +14,6 @@ export interface TuiRuntimeSelection {
   readonly mode: TuiRuntimeMode;
   readonly reason: TuiRuntimeReason;
   readonly requiresWorkflowArgument: boolean;
-  readonly allowsWorkflowSelectionPrompt: boolean;
 }
 
 export interface TuiInteractiveScreenContext {
@@ -40,7 +39,6 @@ export function selectTuiRuntimeMode(
       mode: "fallback",
       reason: "resume-session",
       requiresWorkflowArgument: false,
-      allowsWorkflowSelectionPrompt: false,
     };
   }
 
@@ -49,7 +47,6 @@ export function selectTuiRuntimeMode(
       mode: "interactive",
       reason: "resume-session",
       requiresWorkflowArgument: false,
-      allowsWorkflowSelectionPrompt: false,
     };
   }
 
@@ -58,7 +55,6 @@ export function selectTuiRuntimeMode(
       mode: "interactive",
       reason: "interactive-terminal",
       requiresWorkflowArgument: false,
-      allowsWorkflowSelectionPrompt: true,
     };
   }
 
@@ -66,6 +62,5 @@ export function selectTuiRuntimeMode(
     mode: "fallback",
     reason: "non-interactive-terminal",
     requiresWorkflowArgument: true,
-    allowsWorkflowSelectionPrompt: false,
   };
 }

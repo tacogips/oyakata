@@ -17,6 +17,17 @@ Primary agent backends:
 - `official/openai-sdk`
 - `official/anthropic-sdk`
 
+## Terminal UI
+
+`divedra tui` now renders through `@opentui/solid` view components rooted in
+`src/tui/opentui-solid-app.tsx` and `src/tui/components/*.tsx`.
+`src/tui/opentui-screen.ts` remains the OpenTUI host/orchestration boundary for
+renderer setup, keyboard routing, popup/runtime orchestration, and fallback-aware CLI integration; reusable workflow-preview and artifact-backed node-detail content now live in `src/tui/opentui-model.ts` and `src/tui/opentui-detail-content.ts`.
+`src/tui/opentui-detail-content.ts` also assembles the history-detail pane
+state for summary, viewer, and artifact-backed detail modes so the host no
+longer embeds that decision tree inline.
+When OpenTUI is available, interactive `divedra tui` enters this unified workspace/history/run app directly.
+
 ## Current Runtime Model
 
 The source of truth is the implementation under `src/workflow/`.
@@ -48,7 +59,7 @@ Typical layout:
 Files:
 
 - `workflow.json`: canonical workflow structure and control-flow definition
-- `workflow-vis.json`: browser/editor vertical ordering metadata
+- `workflow-vis.json`: authored visualization ordering metadata
 - `node-{id}.json`: per-node execution payload
 - `prompts/*.md`: optional prompt bodies referenced by `promptTemplateFile`
 
@@ -372,8 +383,14 @@ bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root 
 
 - `divedra workflow run <workflow-name>`
   - queue-based workflow execution
+- `divedra workflow inspect <workflow-name>`
+  - print normalized workflow structure and defaults
+- `divedra workflow validate <workflow-name>`
+  - validate authored workflow bundle files
 - `divedra session progress <session-id>`
-  - inspect persisted session state
+  - inspect persisted session progress summary
+- `divedra session status <session-id>`
+  - print the persisted session snapshot
 - `divedra session resume <session-id>`
   - resume a paused session
 - `divedra session rerun <session-id> <node-id>`
@@ -381,7 +398,7 @@ bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root 
 - `divedra call-node <workflow-id> <workflow-run-id> <node-id>`
   - local direct node execution path for an existing workflow run
 - `divedra serve`
-  - browser UI + local GraphQL control plane
+  - local GraphQL control plane and health endpoint
 - `divedra gql "<document>"`
   - GraphQL client for local manager/control-plane operations
 - `divedra tui`
@@ -394,23 +411,15 @@ Go-task shortcuts:
 - `task tui-examples`
 - `task tui-examples -- --workflow claude-divedra-codex-coding`
 
-## GraphQL and Browser UI
+## GraphQL Control Plane
 
-The local server serves the browser app and exposes `/graphql`.
+The local server exposes `/graphql` and `/healthz`.
 
 Important transport rules:
 
 - `divedra gql` forwards `DIVEDRA_MANAGER_SESSION_ID` as `X-Divedra-Manager-Session-Id`
 - manager auth is established from HTTP transport metadata, not from the server process environment
-- `/api/ui-config` remains a small bootstrap endpoint for the browser, while workflow/session domain operations use GraphQL
-
-Frontend tooling:
-
-- `bun run ui:framework`
-- `bun run typecheck:ui`
-- `bun run test:ui`
-- `bun run check:ui`
-- `bun run build:ui`
+- workflow/session domain operations use GraphQL rather than parallel REST or browser bootstrap APIs
 
 ## Library API
 

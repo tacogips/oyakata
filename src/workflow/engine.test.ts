@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   AdapterExecutionError,
   DeterministicNodeAdapter,
+  type MockNodeScenario,
   ScenarioNodeAdapter,
 } from "./adapter";
 import type { NodeAdapter } from "./adapter";
@@ -5263,6 +5264,51 @@ describe("runWorkflow", () => {
     };
     expect(outputJson.provider).toBe("scenario-mock");
     expect(outputJson.payload.stage).toBe("test-review");
+  });
+
+  test("supports mock-scenario execution for command and container nodes", async () => {
+    const root = await makeTempDir();
+    const exampleWorkflowRoot = path.join(process.cwd(), "examples");
+    const scenarioRaw = await readFile(
+      path.join(
+        exampleWorkflowRoot,
+        "first-four-arithmetic-pipeline",
+        "mock-scenario.json",
+      ),
+      "utf8",
+    );
+    const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
+
+    const result = await runWorkflow("first-four-arithmetic-pipeline", {
+      workflowRoot: exampleWorkflowRoot,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      mockScenario: scenario,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+    const outputExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "divide-output",
+    );
+    expect(outputExec).toBeDefined();
+    if (outputExec === undefined) {
+      return;
+    }
+    const outputRaw = await readFile(
+      path.join(outputExec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { finalResult: number; summary: string };
+      provider: string;
+    };
+    expect(outputJson.provider).toBe("scenario-mock");
+    expect(outputJson.payload.finalResult).toBe(45);
+    expect(outputJson.payload.summary).toContain("45");
   });
 
   test("can rerun from a specific node based on a prior session", async () => {

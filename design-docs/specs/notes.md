@@ -36,9 +36,9 @@ Workflow data is intentionally split:
 
 - `workflow.json`: structure/control and workflow `description`
 - `node-{id}.json`: runtime payload (`executionBackend`, `model`, `promptTemplate`, `variables`)
-- `workflow-vis.json`: browser visualization state (`order`, etc.; `indent`/`color` are derived)
+- `workflow-vis.json`: authored visualization ordering metadata (`order`, etc.; `indent`/`color` are derived)
 
-This avoids coupling runtime semantics with browser UI state.
+This avoids coupling runtime semantics with derived visualization ordering state.
 
 ### Deterministic Control Flow
 
@@ -59,7 +59,7 @@ Implicit transitions are avoided.
 - Conversation handoff: `divedra` routes by explicit `OutputRef` (`workflowExecutionId`, `outputNodeId`, `nodeExecId`, and optional `subWorkflowId` for sub-workflow outputs) instead of implicit latest-output inference.
 - Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. The parent workflow manager writes only to the recipient sub-workflow manager inbox, and the recipient sub-workflow manager writes only to nodes inside that sub-workflow (validated via `subWorkflows[].nodeIds`). A re-executed/resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
 - Node execution inbox contract: canonical mailbox transport stays manager-owned, but workers receive one compiled execution-local inbox/outbox contract under their node artifact directory. The worker-facing metadata uses mailbox-root-relative paths plus `DIVEDRA_MAILBOX_DIR`, so node implementations do not need hidden knowledge of workflow graph shape or canonical `communications/...` layout. See `design-docs/specs/design-node-execution-inbox-contract.md`.
-- GraphQL control-plane direction: GraphQL is now the canonical served control-plane schema for execution, communication inspection/replay, manager send operations, and browser workflow/session flows. CLI may remain as a thin client surface over GraphQL, while `/api/ui-config` remains only as bootstrap metadata outside `/graphql`. See `design-docs/specs/design-graphql-manager-control-plane.md`.
+- GraphQL control-plane direction: GraphQL is now the canonical served control-plane schema for execution, communication inspection/replay, manager send operations, and workflow/session control flows. CLI may remain as a thin client surface over GraphQL. See `design-docs/specs/design-graphql-manager-control-plane.md`.
 - Manager control-plane separation: a manager-issued GraphQL manager-message mutation invoked through `divedra gql` is not itself a mailbox communication. It is a scoped control-plane request that may cause new mailbox communications, retries, planner-state changes, or node execution requests.
 - Manager-message provenance: manager-authored mailbox sends now use discriminated `payloadRef` provenance so node-output-backed and manager-message-backed communications stay replay/retry compatible under one durable artifact model.
 - File/image reference portability: GraphQL must use data-root-relative file references resolved under `DIVEDRA_ARTIFACT_DIR`, never host absolute paths. This is required for future container node execution with bind-mounted or synchronized data volumes regardless of whether the selected runner is Podman, Docker, nerdctl, or Apple container.
@@ -98,7 +98,7 @@ This supports quality gates in collaborative writing workflows.
   - expose `divedra gql` as the manager tool client over that control plane,
   - add first-class communication inspection and replay services,
   - keep CLI only as a thin GraphQL client surface,
-  - keep browser workflow-definition, execution, and session flows on GraphQL rather than reintroducing parallel REST routes.
+  - keep served workflow-definition and execution flows on GraphQL rather than reintroducing parallel REST routes.
 
 ### Migration Rule
 
@@ -107,23 +107,7 @@ This supports quality gates in collaborative writing workflows.
 - Bare `sessionId` is allowed only as a temporary compatibility alias in existing APIs and persisted workflow-run state.
 - Compatibility window is fixed: keep `sessionId` alias support through `2026-09-30`, then remove it in the first subsequent minor release.
 
-### Refactoring Investigation Plan
+### Documentation Cleanup Note
 
-- Repository-wide refactoring investigation is tracked in `design-docs/specs/design-refactoring-investigation-plan.md`.
-- The investigation is intentionally split into multiple passes so architectural, type-safety, DRY, hardcoding, and test-safety concerns can be analyzed separately before implementation planning.
-- Shared browser/server transport typing is tracked in `design-docs/specs/design-refactoring-shared-ui-contract.md`.
-- Shared derived visualization reuse is tracked in `design-docs/specs/design-refactoring-shared-visualization-derivation.md`.
-- Shared editable workflow typing is tracked in `design-docs/specs/design-refactoring-shared-editable-workflow-types.md`.
-- Frontend browser/API client extraction is tracked in `design-docs/specs/design-refactoring-editor-api-client.md`.
-- Frontend workflow-structure operations extraction is tracked in `design-docs/specs/design-refactoring-editor-workflow-operations.md`.
-- Frontend support-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-support-helpers.md`.
-- Frontend state-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-state-helpers.md`.
-- Frontend mutation-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-mutation-helpers.md`.
-- Frontend workflow/session data-loader extraction is tracked in `design-docs/specs/design-refactoring-editor-data-loaders.md`.
-- Frontend async action-helper extraction is tracked in `design-docs/specs/design-refactoring-editor-action-helpers.md`.
-- Frontend field/property update helper extraction is tracked in `design-docs/specs/design-refactoring-editor-field-updates.md`.
-- Frontend execution-form request helper extraction is tracked in `design-docs/specs/design-refactoring-editor-execution-helpers.md`.
-- Frontend center-panel component extraction is tracked in `design-docs/specs/design-refactoring-editor-main-panel-component.md`.
-- Server API request-parsing helper extraction is tracked in `design-docs/specs/design-refactoring-server-api-request-parsing.md`.
-- Server UI asset-serving helper extraction is tracked in `design-docs/specs/design-refactoring-server-ui-asset-serving.md`.
-- Frontend verification still requires framework-aware UI tooling to validate dependency availability explicitly before build/typecheck execution, even though the checked-in browser implementation is SolidJS today, because future framework swaps should preserve the same package-root and tooling guarantees.
+- Browser-editor and browser-asset design documents were removed after the Web UI implementation was deleted from the repository.
+- Remaining design notes in `design-docs/specs/` should describe the current CLI, GraphQL, runtime, and TUI surfaces only.

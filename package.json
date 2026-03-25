@@ -1,7 +1,7 @@
 {
   "name": "divedra",
   "version": "0.1.0",
-  "description": "no",
+  "description": "TypeScript/Bun workflow runtime for cooperative multi-agent execution",
   "type": "module",
   "main": "dist/main.js",
   "module": "dist/main.js",
@@ -15,25 +15,18 @@
   },
   "scripts": {
     "dev": "bun run --watch src/main.ts",
-    "build": "bun run build:server && bun run build:ui",
+    "build": "bun run build:server",
     "build:server": "bun build src/main.ts --outdir dist --target bun",
-    "build:ui": "bash ./scripts/require-node-tooling.sh node ./scripts/run-ui-build.mjs",
     "typecheck:server": "tsc --noEmit",
-    "typecheck:ui": "bash ./scripts/require-node-tooling.sh node ./scripts/run-ui-typecheck.mjs",
-    "ui:framework": "bash ./scripts/require-node-tooling.sh node ./scripts/run-ui-framework-status.mjs",
     "start": "bun run src/main.ts",
     "test": "bash ./scripts/run-bun-tests.sh",
-    "test:e2e": "bun run build:ui && bash ./scripts/require-node-tooling.sh node ./scripts/run-ui-e2e.mjs",
-    "test:all": "bun run test && bun run build:ui && bun run test:e2e",
+    "test:all": "bun run test",
     "test:watch": "bash ./scripts/run-bun-tests.sh --watch",
-    "test:ui": "bash ./scripts/require-node-tooling.sh node ./scripts/run-ui-vitest.mjs",
-    "test:ui:interactive": "bash ./scripts/require-node-tooling.sh node ./scripts/run-ui-vitest-ui.mjs",
-    "check:ui": "bun run typecheck:ui && bun run build:ui",
-    "typecheck": "bun run typecheck:server && bun run typecheck:ui",
+    "typecheck": "bun run typecheck:server",
     "lint": "bun run typecheck",
-    "format": "bash ./scripts/require-node-tooling.sh node ./scripts/run-prettier.mjs --write \"src/**/*.ts\" \"ui/**/*.ts\" \"ui/**/*.tsx\" \"scripts/**/*.mjs\" \"e2e/**/*.cjs\" \"playwright.config.cjs\"",
-    "format:check": "bash ./scripts/require-node-tooling.sh node ./scripts/run-prettier.mjs --check \"src/**/*.ts\" \"ui/**/*.ts\" \"ui/**/*.tsx\" \"scripts/**/*.mjs\" \"e2e/**/*.cjs\" \"playwright.config.cjs\"",
-    "clean": "rm -rf dist ui/dist"
+    "format": "prettier --ignore-unknown --write \"src/**/*.{ts,tsx}\" \"scripts/**/*\" \"*.{md,json}\"",
+    "format:check": "prettier --ignore-unknown --check \"src/**/*.{ts,tsx}\" \"scripts/**/*\" \"*.{md,json}\"",
+    "clean": "rm -rf dist"
   },
   "homepage": "https://github.com/user/repo",
   "repository": {
@@ -44,22 +37,19 @@
   "trustedDependencies": [],
   "dependencies": {
     "@anthropic-ai/sdk": "0.78.0",
-    "@opentui/core": "0.1.88",
+    "@opentui/core": "0.1.90",
+    "@opentui/solid": "0.1.90",
     "claude-code-agent": "github:tacogips/claude-code-agent#fd9634695b9369902cc1ee01960dd39cbc300b85",
     "codex-agent": "github:tacogips/codex-agent#23cd34cbec18ae10b1868ec154c088b6a2f1c8c1",
     "graphql": "16.13.1",
     "graphql-yoga": "5.18.1",
-    "openai": "6.27.0"
+    "openai": "6.27.0",
+    "solid-js": "1.9.11"
   },
   "devDependencies": {
-    "@playwright/test": "1.58.1",
     "@types/bun": "1.1.14",
-    "@vitest/ui": "2.1.8",
     "prettier": "3.4.2",
-    "solid-js": "^1.9.9",
     "typescript": "5.7.2",
-    "vite": "^5.4.21",
-    "vite-plugin-solid": "^2.11.8",
     "vitest": "2.1.8"
   }
 }

@@ -5,6 +5,7 @@ This document defines terminal UI design for workflow selection and execution in
 ## Overview
 
 `divedra tui` provides:
+
 - workflow browsing from `<workflow-root>` with a dedicated workspace screen
 - historical session and node-execution inspection
 - interactive workflow run, rerun, and resume flows with a dedicated new-run screen
@@ -15,19 +16,38 @@ The TUI uses the same workflow loader and execution engine as CLI and serve mode
 
 ## Framework Selection
 
-Selected framework: `neo-blessed` (Bun runtime, TypeScript integration).
+Selected stack: `@opentui/core` host runtime with an `@opentui/solid`
+view layer.
 
 Why:
+
 - Full-screen TUI primitives (list/log/input/detail panes) needed for workflow browser + execution console.
-- Mature event model for keyboard-driven UX.
-- Works as a Node-style terminal library that Bun can run in practice via compatibility layer.
+- The checked-in screen host still uses `@opentui/core` for renderer creation and low-level focus/keyboard interop inside `src/tui/opentui-screen.ts`.
+- `@opentui/solid` keeps the TUI in the Bun/TypeScript runtime while allowing the checked-in screen tree to live in declarative components instead of one imperative module.
+- The CLI can lazy-load the OpenTUI screen boundary and still fall back cleanly when the OpenTUI host/view packages or required `solid-js` runtime modules are unavailable.
+- The repository uses the standard `solid-js` JSX runtime for `.tsx` compilation because the current `@opentui/solid` package does not ship runtime `jsx-runtime` JavaScript exports; `@opentui/solid` still owns the renderer, intrinsic element catalogue, and preload integration.
+
+Current implementation boundary:
+
+- `src/cli.ts` owns runtime-mode selection and lazy-loads the OpenTUI screen module only for interactive mode
+- `src/tui/opentui-model.ts` owns framework-neutral TUI types plus pure helpers for filtering, pane chrome, breadcrumbs, run-status text, workflow preview/header text, and selection rows
+- `src/tui/opentui-detail-content.ts` owns artifact-backed node-detail content assembly plus history-detail pane state selection so mailbox/output loading and summary/viewer/detail decisions stay reusable outside the renderer host
+- `src/tui/opentui-host-view.ts` owns mounted-ref validation and pane-chrome application so host wiring is not duplicated inside the renderer loop
+- `src/tui/opentui-controller.ts` owns run/rerun/resume/copy/refresh/input-format action orchestration with explicit async boundaries
+- `src/tui/opentui-screen.ts` owns renderer startup, ref wiring, focus movement, keyboard dispatch, popup wiring, and host-local mutable runtime state while delegating the actual screen tree to `src/tui/opentui-solid-app.tsx`
+- `src/tui/opentui-solid-app.tsx` and `src/tui/components/*.tsx` define the workspace, workflow-history, new-run, detail, and popup surfaces through `@opentui/solid`
+- `package.json`, `bunfig.toml`, and `tsconfig.json` are configured so the checked-in `.tsx` TUI modules load through Bun with the OpenTUI Solid preload path
+- the interactive CLI path now enters the unified workspace/history/run app directly; no separate OpenTUI selector screen remains in front of it
 
 Not selected now:
+
 - `Ink`: strong React model, but current Bun input compatibility concerns exist in open issue tracking.
 - prompt-only libraries: insufficient for multi-pane live execution/trace experience.
 
 Selection policy:
-- Keep TUI framework swappable behind a thin UI adapter.
+
+- Keep TUI framework swappable behind a thin CLI/runtime adapter.
+- Keep screen state and actions behind framework-neutral seams so the view layer remains swappable even after the `@opentui/solid` cutover.
 - Re-evaluate `Ink` after Bun compatibility issue closure.
 
 ## Interaction Model
@@ -35,11 +55,13 @@ Selection policy:
 ### Startup
 
 Command:
+
 - `divedra tui`
 - `divedra tui --workflow <name>` (skip the workspace screen and open the workflow-history screen)
-- `divedra tui --resume-session <id>` (open the workflow-history screen focused on that historical session when interactive; direct-resume fallback when non-interactive, when the workflow bundle is unavailable, or when `neo-blessed` itself is unavailable)
+- `divedra tui --resume-session <id>` (open the workflow-history screen focused on that historical session when interactive; direct-resume fallback when non-interactive, when the workflow bundle is unavailable, or when OpenTUI cannot be loaded)
 
 Workflow root resolution:
+
 1. `--workflow-root`
 2. `DIVEDRA_WORKFLOW_ROOT`
 3. `./.divedra`
@@ -48,15 +70,19 @@ Workflow root resolution:
 
 The TUI uses three primary screens instead of a single always-expanded multi-pane layout.
 
+A compact breadcrumb bar stays visible at the top of the screen so nested navigation remains legible while moving across workspace, workflow history, new-run, and subworkflow views.
+
 #### Workspace Screen
 
 Default screen when `divedra tui` starts without `--workflow` or `--resume-session`.
 
 Layout:
+
 - Left pane: workflow list
-- Right pane: workflow preview showing workflow description plus a visual node summary
+- Right pane: workflow preview showing a visual node summary
 
 Behavior:
+
 1. the selector screen is dedicated to choosing a workflow, not browsing sessions and nodes yet
 2. pressing `/` opens a popup filter input
 3. the popup accepts a workflow-name substring filter and immediately narrows the workflow list
@@ -65,13 +91,16 @@ Behavior:
 6. pressing `?` opens a help popup, and `q` closes that popup
 
 Workflow preview content:
-- workflow description
-- workflow id and high-level counts
+
+- high-level node and subworkflow counts
 - visually ordered node structure derived from `workflow-vis.json`
+- the root manager remains at the top level, while subworkflow managers and their owned nodes render with deeper indentation so workflow ownership reads clearly
 - per-node metadata such as workflow node kind, node type, backend/model when present, and concise node help text derived first from node-level `description`, then from output descriptions or prompt summaries
+- the root manager block shows workflow id
 - the preview pane should not duplicate keybinding hints; shortcuts live in the help popup only
 
 Filtering rules:
+
 - filtering is local to the currently loaded workflow name list
 - filter matching is case-insensitive substring matching
 - clearing the popup input restores the full workflow list
@@ -82,27 +111,52 @@ Filtering rules:
 Shown after a workflow is selected, or immediately when `--workflow` or interactive `--resume-session` is used.
 
 Layout:
-- Left pane: historical workflow-session list for the selected workflow
+
+- Top breadcrumb bar: current location such as `workspace > review-flow > history > delivery-lane`
+- Top header: workflow id and optional workflow description when present, plus subworkflow scope metadata when drilled into a child workflow
+- Left pane: historical workflow-run list for the selected workflow
 - Right pane: node-execution list for the selected session
-- Bottom large pane: details view for summary, inbox, outbox, manager-session messages, or session logs
+- Bottom large pane: node-details view for the selected node
 - Bottom input area: run/rerun input editor
 
+Nested subworkflow inspection:
+
+- when the selected node row belongs to a subworkflow scope, the row should show the owning workflow id and node purpose
+- pressing `l` on that row opens a nested subworkflow view without leaving the workflow-history screen
+- the nested subworkflow view reuses the same three-pane history layout shape:
+  left pane becomes workflow nodes, right pane becomes workflow list, and the bottom pane remains node detail
+- nested subworkflow views may recurse; the breadcrumb bar is the authoritative location indicator
+
 Design intent:
+
 - keep the workflow selector mentally separate from workflow execution history
 - reduce first-screen noise by not showing sessions and nodes before a workflow is chosen
 - reserve the larger lower area for details because inbox/outbox and logs are multi-line artifacts
 - avoid a permanently visible status/help bar; transient guidance lives in a popup opened with `?`
+- render workflow runs and node executions as two-line rows so status, timestamps, ids, and node names stay readable
+- use color and ASCII badges/separators to make the layout easier to scan without relying on emoji
+
+Panel-interaction consistency:
+
+- only the active pane shows a selected-row state; inactive panes keep their logical cursor but render without active-row emphasis
+- every focused list-like or scrollable pane must accept both arrow keys and `j` / `k` for movement inside that pane
+- `enter` and `ctrl-m` should have the same meaning within a given pane unless the screen explicitly documents a different action
+- when `enter` or `ctrl-m` opens or deepens into another pane, the destination pane must become and remain the active pane
+- deeper inspection panes should use `esc` to return focus to the immediate parent pane rather than jumping to a distant screen
+- inverse navigation pairs must stay symmetric; if `enter` deepens into a pane and `esc` returns from it, or `l` moves right and `h` moves left, a deeper pane must not reuse the reverse key for unrelated global navigation
 
 #### New Workflow Run Screen
 
 Shown from the workspace screen via `ctrl-m`, or from the workflow-history screen via `n`.
 
 Layout:
+
 - Left pane: workflow detail preview using the same workflow-structure rendering style as the workspace preview
 - Right pane: realtime execution status for the newly launched workflow session
 - Bottom input area: workflow input editor
 
 Behavior:
+
 1. when the screen opens, the input editor is focused immediately
 2. the operator types plain text or JSON depending on detected workflow input mode
 3. `enter` or `ctrl-m` from this screen opens a confirmation popup instead of dispatching immediately
@@ -115,21 +169,30 @@ Behavior:
 ### Human Input Handling
 
 The current TUI does not wait for a runtime pause before collecting input. Instead:
+
 1. entering the workflow-history or new-run screen inspects input-node payloads and bindings
 2. the editor defaults to `text` or `json` mode based on structured `human-input` hints
 3. the operator can edit the input buffer at any time
 4. the workflow-history screen can open the new-run screen with `n`
 5. the new-run screen launches a new run only after explicit confirmation
-6. `r` reruns from the selected node execution
+6. `R` reruns from the selected node execution
 7. `u` resumes the selected workflow session
-8. interactive `--resume-session <id>` preselects the target session instead of bypassing the browser; non-interactive and `neo-blessed`-unavailable fallback paths still resume immediately rather than degrading to a generic workflow prompt
+8. interactive `--resume-session <id>` preselects the target session instead of bypassing the full-screen TUI; non-interactive and OpenTUI-unavailable fallback paths still resume immediately rather than degrading to a generic workflow prompt
+9. when a workflow run is focused, pressing `l` moves focus to nodes; selecting a node shows its input/output-oriented details in the lower pane
+10. within the workflow-history screen, `h` and `l` act as an inverse left/right pair across the workflow-run and node panes
+11. when the node-detail pane is focused, `j` / `k` continue operating within that pane: summary mode moves across detail items, while inbox/outbox/log/message views scroll the active detail body
+12. opening the full JSON/message viewer from node detail must keep node detail as the active pane; the viewer is an in-pane inspection state, not a focus transfer
+13. when the selected node belongs to a subworkflow, pressing `l` from the node pane opens that subworkflow scope; within the nested scope, `l` moves from workflow nodes to workflow list and opens the selected child subworkflow from the workflow-list pane
+14. within a nested subworkflow scope, `h` returns from workflow list to workflow nodes, and from workflow nodes to the immediate parent workflow-history scope
 
 Runtime-variable mapping:
+
 - text mode writes string values to `humanInput`, `prompt`, and `userPrompt`
 - json mode writes structured values to `humanInput`, `promptJson`, and `userPromptJson`
 - rerun actions also write `rerunPrompt`, plus `rerunManagerSessionId` when the selected node is a manager node
 
 JSON-editor expectations:
+
 - when a workflow definition implies structured human input, the editor starts in `json` mode
 - the input area must accept raw JSON objects, not only plain text
 - JSON mode must expose syntax validity in the status area
@@ -140,15 +203,18 @@ JSON-editor expectations:
 ## Data and Artifact Integration
 
 Per-node execution output location:
+
 - `{DIVEDRA_ARTIFACT_DIR}/workflow/{workflow_id}/executions/{workflowExecutionId}/nodes/{nodeId}/{nodeExecId}/` (default root under `~/.divedra/project/<cwd-encoded>/divedra-artifact/`)
 
 TUI behavior:
+
 - displays active artifact directory for the selected node execution
-- summarizes `input.json`, `output.json`, `meta.json`, mailbox `inbox/input.json`, and mailbox `meta.json`
+- summarizes `input.json`, `output.json`, `meta.json`, mailbox `inbox/input.json`, mailbox `inbox/meta.json`, and mailbox `outbox/output.json`
 - loads manager-session records from the manager-session store for manager nodes
 - loads node execution and session log summaries from the runtime DB
 - never mutates historical `output.json`; only appends new runs
-- uses a readline fallback only when `neo-blessed` is unavailable, except that `--resume-session` preserves direct-resume semantics because readline mode cannot represent a preselected historical session; ordinary TUI logic errors must surface as failures instead of being silently downgraded
+- uses a readline selector fallback only when OpenTUI cannot be loaded; `--resume-session` preserves direct-resume semantics because readline mode cannot represent a preselected historical session; ordinary TUI logic errors must surface as failures instead of being silently downgraded
+- when OpenTUI is available, workflow selection happens inside the workspace screen of the unified app rather than through a separate pre-app selector surface
 
 ## Keybindings (Initial)
 
@@ -156,26 +222,34 @@ TUI behavior:
 
 - `j` / `k`: move selection
 - `/`: open workflow filter popup
+- `y`: copy the highlighted workflow id
 - `?`: open help popup
 - `enter` / `l`: open the highlighted workflow in the workflow-history screen
 - `ctrl-m`: open the highlighted workflow in the new-run screen
-- `R`: refresh workflow list
+- `r`: refresh workflow list
 - `q`: quit
 
 ### Workflow History Screen
 
 - `j` / `k`: move selection within the focused pane
-- `tab` / `shift-tab`: cycle focus across sessions, nodes, and input
-- `enter` / `ctrl-m`: load the focused session or node, or begin input editing
+- when the node-detail pane is focused, `j` / `k` and arrow keys stay local to that pane; summary mode moves across detail items, and non-summary detail views scroll the active body
+- `tab` / `shift-tab`: cycle focus across sessions, nodes, node detail, and input
+- `enter` / `ctrl-m`: from workflow runs, load the selected run and focus node detail; from nodes, focus node detail; from node detail summary, open the selected JSON/message view or AI agent session popup; from input, begin input editing
+- `y`: copy the focused entity id (`workflow runs` copies `sessionId`; `nodes` copies `nodeExecId`; nested workflow nodes copy `nodeId`; nested workflow list copies `subworkflowId`)
+- `l`: when the workflow-run pane is focused, move focus into nodes; when a selected node row belongs to a subworkflow, open that nested subworkflow scope; within a nested scope, move from workflow nodes to workflow list, or open the selected child subworkflow from the workflow-list pane
+- `h`: when the node pane is focused, move focus back to workflow runs; within a nested subworkflow scope, move from workflow list to workflow nodes, or from workflow nodes back to the immediate parent scope
+- `esc`: when node detail is focused, return focus to the pane that opened it
+- when node detail is focused, pane-local keys stay active and `tab` / `shift-tab` continue the history-pane cycle; history-wide shortcuts such as `h` and `l` are ignored there
+- in-pane viewers and popups opened from node detail must preserve node detail's existing parent pane so closing them does not change where `esc` returns next
 - `n`: open the new-run screen for the current workflow
-- `r`: rerun from the selected node execution
+- `R`: rerun from the selected node execution
 - `u`: resume the selected workflow session
 - `m`: toggle input mode between text and JSON
 - `f`: format JSON input when JSON mode is active
 - `i` / `o` / `g` / `a` / `s`: show inbox, outbox, session logs, manager messages, or summary
 - `?`: open help popup
-- `h`: return to the workspace screen
-- `R`: refresh workflow/session/runtime state
+- `h`: when workflow runs are focused, return to the workspace screen
+- `r`: refresh workflow/session/runtime state
 - `q`: quit
 
 ### New Workflow Run Screen
@@ -186,7 +260,7 @@ TUI behavior:
 - `f`: format JSON input when JSON mode is active
 - `l`: open the workflow-history screen for the same workflow
 - `h`: return to the workspace screen
-- `R`: refresh workflow preview and current run-status pane
+- `r`: refresh workflow preview and current run-status pane
 - `?`: open help popup
 - `q`: quit
 
@@ -195,6 +269,8 @@ TUI behavior:
 - workflow filter popup: opened by `/`, applied by `enter` or `ctrl-m`, cancelled by `esc`
 - help popup: opened by `?`, closed by `q`
 - run confirmation popup: opened by `enter` or `ctrl-m` on the new-run screen, confirmed by `enter` or `ctrl-m`, cancelled by `esc`
+- node-detail JSON/message viewer: opened by `enter` or `ctrl-m` from node-detail summary as an in-pane detail state and must not steal active-pane status from node detail
+- node-detail AI agent session popup: when the selected summary row points at a persisted `codex-agent` or `claude-code-agent` session, `enter` or `ctrl-m` opens a scrollable popup showing that stored chat history; the popup stays tied to node detail and closes with `esc` or `q`
 
 ## Failure and Recovery
 
@@ -206,12 +282,12 @@ TUI behavior:
 
 - Runtime: Bun
 - Language: TypeScript strict mode
-- UI adapter boundary: isolate direct `neo-blessed` usage in one module so replacement cost is low.
-- Do not duplicate workflow logic in UI; UI consumes workflow definitions, session snapshots, runtime DB summaries, and mailbox artifacts exposed by existing runtime modules.
+- UI adapter boundary: isolate direct `@opentui/core` usage in one module so replacement cost stays low.
+- Do not duplicate workflow logic in the TUI; it consumes workflow definitions, session snapshots, runtime DB summaries, and mailbox artifacts exposed by existing runtime modules.
 
 ## References
 
 - Bun runtime docs: https://bun.sh/docs
-- neo-blessed package: https://www.npmjs.com/package/neo-blessed
+- OpenTUI package: https://www.npmjs.com/package/@opentui/core
 - Ink package: https://www.npmjs.com/package/ink
 - Bun + Ink compatibility issue: https://github.com/oven-sh/bun/issues/6862

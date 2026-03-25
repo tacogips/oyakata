@@ -795,7 +795,13 @@ async function executeWorkflowMutation(
   context: GraphqlRequestContext,
 ): Promise<ExecuteWorkflowPayload> {
   if (input.async === true) {
-    const workflowExecutionId = createSessionId();
+    const loadedWorkflow = await loadWorkflowFromDisk(input.workflowName, context);
+    if (!loadedWorkflow.ok) {
+      throw new Error(loadedWorkflow.error.message);
+    }
+    const workflowExecutionId = createSessionId({
+      workflowId: loadedWorkflow.value.bundle.workflow.workflowId,
+    });
     void runWorkflow(input.workflowName, {
       ...context,
       sessionId: workflowExecutionId,

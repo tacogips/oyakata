@@ -13,6 +13,12 @@ function resolveRootPath(root: string, cwd: string): string {
   return path.isAbsolute(root) ? root : path.resolve(cwd, root);
 }
 
+export interface ExplicitRuntimeStorageRoots {
+  readonly artifactRoot?: string;
+  readonly sessionStoreRoot?: string;
+  readonly cwd?: string;
+}
+
 function resolveNearestWorkflowProjectRoot(cwd: string): string {
   let current = path.resolve(cwd);
   while (true) {
@@ -35,12 +41,13 @@ function resolveNearestWorkflowProjectRoot(cwd: string): string {
 export function resolveRootDataDir(options: LoadOptions = {}): string {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
+  const scopedProjectRoot = resolveNearestWorkflowProjectRoot(cwd);
   const rootDataDir =
     options.rootDataDir ??
     env["DIVEDRA_ARTIFACT_DIR"] ??
     env["DIVEDRA_ROOT_DATA_DIR"] ??
     env["DIVEDRA_RUNTIME_ROOT"] ??
-    computeDefaultRootDataDir(cwd);
+    computeDefaultRootDataDir(scopedProjectRoot);
   return resolveRootPath(rootDataDir, cwd);
 }
 
@@ -84,6 +91,33 @@ export function resolveEffectiveRoots(
     rootDataDir,
     attachmentRoot,
   };
+}
+
+export function inferRootDataDirFromExplicitStorageRoots(
+  input: ExplicitRuntimeStorageRoots,
+): string | undefined {
+  const cwd = input.cwd ?? process.cwd();
+  const artifactRoot =
+    input.artifactRoot === undefined
+      ? undefined
+      : resolveRootPath(input.artifactRoot, cwd);
+  const sessionStoreRoot =
+    input.sessionStoreRoot === undefined
+      ? undefined
+      : resolveRootPath(input.sessionStoreRoot, cwd);
+
+  if (artifactRoot !== undefined && sessionStoreRoot !== undefined) {
+    const artifactParent = path.dirname(artifactRoot);
+    const sessionStoreParent = path.dirname(sessionStoreRoot);
+    return artifactParent === sessionStoreParent ? artifactParent : undefined;
+  }
+  if (artifactRoot !== undefined) {
+    return path.dirname(artifactRoot);
+  }
+  if (sessionStoreRoot !== undefined) {
+    return path.dirname(sessionStoreRoot);
+  }
+  return undefined;
 }
 /**
  * Encodes an absolute filesystem path for use under `~/.divedra/project/<encoded>/divedra-artifact`.

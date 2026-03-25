@@ -1,19 +1,16 @@
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  createOpenTuiWorkflowAppOptions,
+  loadOpenTuiScreenImplementations,
+  resolveCliHomeDir,
   resolveTuiStartupSelection,
   runCli,
   shouldFallbackFromOpenTuiError,
 } from "./cli";
+import type { CliDependencies } from "./cli";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
 
@@ -197,10 +194,27 @@ describe("runCli", () => {
     });
   });
 
-  test("shouldFallbackFromOpenTuiError only matches @opentui/core availability failures", () => {
+  test("shouldFallbackFromOpenTuiError only matches OpenTUI package availability failures", () => {
     expect(
       shouldFallbackFromOpenTuiError(
         new Error("Cannot find package '@opentui/core' imported from src/tui"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromOpenTuiError(
+        new Error("Cannot find package '@opentui/solid' imported from src/tui"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromOpenTuiError(
+        new Error("Cannot find package 'solid-js' imported from src/tui"),
+      ),
+    ).toBe(true);
+    expect(
+      shouldFallbackFromOpenTuiError(
+        new Error(
+          "Cannot find module 'solid-js/jsx-runtime' imported from src/tui/opentui-solid-app.tsx",
+        ),
       ),
     ).toBe(true);
     expect(
@@ -229,7 +243,140 @@ describe("runCli", () => {
     expect(
       shouldFallbackFromOpenTuiError(new Error("OpenTUI screen render failed")),
     ).toBe(false);
+    expect(
+      shouldFallbackFromOpenTuiError(
+        new Error("Cannot find package '@types/node' imported from src/tui"),
+      ),
+    ).toBe(false);
     expect(shouldFallbackFromOpenTuiError("@opentui/core")).toBe(false);
+  });
+
+  test("loadOpenTuiScreenImplementations prefers an injected OpenTUI app", async () => {
+    const runOpenTuiWorkflowApp = vi.fn<
+      NonNullable<CliDependencies["runOpenTuiWorkflowApp"]>
+    >(async () => 0);
+
+    const loaded = await loadOpenTuiScreenImplementations({
+      isInteractiveTerminal: () => true,
+      runOpenTuiWorkflowApp,
+      startServe: async () => ({
+        host: "127.0.0.1",
+        port: 7777,
+        stop: () => {},
+      }),
+    });
+
+    expect(loaded.runOpenTuiWorkflowApp).toBe(runOpenTuiWorkflowApp);
+  });
+
+  test("resolveCliHomeDir prefers HOME over USERPROFILE in injected env", () => {
+    expect(
+      resolveCliHomeDir({
+        HOME: "/tmp/home",
+        USERPROFILE: "/tmp/profile",
+      }),
+    ).toBe("/tmp/home");
+    expect(
+      resolveCliHomeDir({
+        HOME: "",
+        USERPROFILE: "/tmp/profile",
+      }),
+    ).toBe("/tmp/profile");
+  });
+
+  test("resolveCliHomeDir falls back to os.homedir when env vars are unavailable", () => {
+    const previousHome = process.env["HOME"];
+    const previousUserProfile = process.env["USERPROFILE"];
+    process.env["HOME"] = "";
+    process.env["USERPROFILE"] = "";
+    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue("/tmp/os-home");
+    try {
+      expect(
+        resolveCliHomeDir({
+          HOME: "",
+          USERPROFILE: "",
+        }),
+      ).toBe("/tmp/os-home");
+    } finally {
+      homedirSpy.mockRestore();
+      if (previousHome === undefined) {
+        delete process.env["HOME"];
+      } else {
+        process.env["HOME"] = previousHome;
+      }
+      if (previousUserProfile === undefined) {
+        delete process.env["USERPROFILE"];
+      } else {
+        process.env["USERPROFILE"] = previousUserProfile;
+      }
+    }
+  });
+
+  test("createOpenTuiWorkflowAppOptions merges CLI runtime variables into executeWorkflow", async () => {
+    const root = await makeTempDir();
+    expect(
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
+    ).toBe(0);
+
+    const startedInputs: Array<{
+      readonly workflowName: string;
+      readonly runtimeVariables: Readonly<Record<string, unknown>>;
+      readonly sessionId: string;
+    }> = [];
+    const appOptions = createOpenTuiWorkflowAppOptions({
+      deps: {
+        env: {},
+      },
+      io: createIoCapture().io,
+      optionRuntimeVariables: {
+        cliOnlyFlag: true,
+      },
+      runLocalTuiWorkflow: async () => ({
+        exitCode: 0,
+        sessionId: "unused",
+        status: "completed",
+      }),
+      sharedOptions: {
+        workflowRoot: root,
+      },
+      startLocalTuiWorkflow: async (input) => {
+        startedInputs.push(input);
+        return {
+          sessionId: input.sessionId,
+          completion: Promise.resolve({
+            exitCode: 0,
+            sessionId: input.sessionId,
+            status: "completed",
+          }),
+        };
+      },
+      workflowNames: ["demo"],
+    });
+
+    const handle = await appOptions.executeWorkflow({
+      workflowName: "demo",
+      runtimeVariables: {
+        humanInput: {
+          request: "ship it",
+        },
+      },
+    });
+
+    expect(startedInputs).toHaveLength(1);
+    expect(startedInputs[0]).toMatchObject({
+      workflowName: "demo",
+      runtimeVariables: {
+        cliOnlyFlag: true,
+        humanInput: {
+          request: "ship it",
+        },
+      },
+    });
+    expect(startedInputs[0]?.sessionId).toMatch(/^div-demo-/);
+    expect(handle.sessionId).toBe(startedInputs[0]?.sessionId);
   });
 
   test("returns help for unknown scope", async () => {
@@ -588,6 +735,85 @@ describe("runCli", () => {
     expect(rerunPayload.rerunFromNodeId).toBe("workflow-output");
   });
 
+  test("workflow run keeps the runtime db aligned with explicit storage roots", async () => {
+    const root = await makeTempDir();
+    const ambientRoot = path.join(root, "ambient-runtime");
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const scenarioPath = path.join(root, "scenario.json");
+    const variablesPath = await writeRuntimeVariablesFile(
+      root,
+      "runtime-variables.json",
+      {
+        humanInput: { request: "start demo workflow" },
+      },
+    );
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
+      "utf8",
+    );
+
+    expect(
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+        {
+          env: {
+            DIVEDRA_ARTIFACT_DIR: ambientRoot,
+          },
+          isInteractiveTerminal: () => false,
+          startServe: async () => ({
+            host: "127.0.0.1",
+            port: 7777,
+            stop: () => {},
+          }),
+        },
+      ),
+    ).toBe(0);
+
+    const runCapture = createIoCapture();
+    const runCode = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
+        "--variables",
+        variablesPath,
+        "--max-steps",
+        "1",
+        "--output",
+        "json",
+      ],
+      runCapture.io,
+      {
+        env: {
+          DIVEDRA_ARTIFACT_DIR: ambientRoot,
+        },
+        isInteractiveTerminal: () => false,
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
+      },
+    );
+
+    expect(runCode).toBe(4);
+    expect(await Bun.file(path.join(root, "divedra.db")).exists()).toBe(true);
+    expect(await Bun.file(path.join(ambientRoot, "divedra.db")).exists()).toBe(
+      false,
+    );
+  });
+
   test("gql sends the document, variables, and ambient auth token", async () => {
     const capture = createIoCapture();
     let requestedUrl = "";
@@ -611,7 +837,6 @@ describe("runCli", () => {
           port: 43173,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         fetchImpl: async (input, init) => {
           requestedUrl = String(input);
@@ -694,7 +919,6 @@ describe("runCli", () => {
           port: 43173,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         fetchImpl: async (input, init) => {
           const body = JSON.parse(String(init?.body)) as Readonly<
@@ -785,7 +1009,6 @@ describe("runCli", () => {
           port: 43173,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         fetchImpl: async (_input, init) => {
           requestedBody = JSON.parse(String(init?.body)) as Readonly<
@@ -842,7 +1065,6 @@ describe("runCli", () => {
           port: 43173,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         fetchImpl: async (_input, init) => {
           requestedBody = JSON.parse(String(init?.body)) as Readonly<
@@ -908,7 +1130,6 @@ describe("runCli", () => {
           port: 43173,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         fetchImpl: async () => {
           fetchCalled = true;
@@ -957,7 +1178,6 @@ describe("runCli", () => {
             stop: () => {},
           };
         },
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         waitForServeShutdown: async () => {},
       },
@@ -970,55 +1190,6 @@ describe("runCli", () => {
     expect(started[0]?.noExec).toBe(true);
     const payload = JSON.parse(capture.stdout.join("\n")) as { port: number };
     expect(payload.port).toBe(7777);
-  });
-
-  test("serve --open invokes browser opener with served url", async () => {
-    const capture = createIoCapture();
-    const openedUrls: string[] = [];
-
-    const code = await runCli(
-      ["serve", "demo", "--host", "127.0.0.1", "--port", "7777", "--open"],
-      capture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        openBrowserUrl: async (url) => {
-          openedUrls.push(url);
-        },
-        isInteractiveTerminal: () => true,
-        waitForServeShutdown: async () => {},
-      },
-    );
-
-    expect(code).toBe(0);
-    expect(openedUrls).toEqual(["http://127.0.0.1:7777"]);
-  });
-
-  test("serve --open reports opener failure but still succeeds", async () => {
-    const capture = createIoCapture();
-
-    const code = await runCli(
-      ["serve", "demo", "--host", "127.0.0.1", "--port", "7777", "--open"],
-      capture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        openBrowserUrl: async () => {
-          throw new Error("boom");
-        },
-        isInteractiveTerminal: () => true,
-        waitForServeShutdown: async () => {},
-      },
-    );
-
-    expect(code).toBe(0);
-    expect(capture.stderr.join("\n")).toContain("failed to open browser: boom");
   });
 
   test("serve reports the actual bound port returned by the server", async () => {
@@ -1042,7 +1213,6 @@ describe("runCli", () => {
           port: 48321,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         waitForServeShutdown: async () => {},
       },
@@ -1080,7 +1250,6 @@ describe("runCli", () => {
         port: 7777,
         stop: () => {},
       }),
-      openBrowserUrl: async () => {},
       isInteractiveTerminal: () => false,
     });
 
@@ -1088,6 +1257,46 @@ describe("runCli", () => {
     expect(capture.stderr.join("\n")).toContain(
       "workflow name is required in non-interactive terminal",
     );
+  });
+
+  test("interactive tui opens the unified OpenTUI app directly", async () => {
+    const root = await makeTempDir();
+    expect(
+      await runCli(
+        ["workflow", "create", "demo", "--workflow-root", root],
+        createIoCapture().io,
+      ),
+    ).toBe(0);
+
+    const appCalls: Array<
+      Parameters<NonNullable<CliDependencies["runOpenTuiWorkflowApp"]>>[0]
+    > = [];
+    const runOpenTuiWorkflowApp = vi.fn<
+      NonNullable<CliDependencies["runOpenTuiWorkflowApp"]>
+    >(async (options) => {
+      appCalls.push(options);
+      return 0;
+    });
+    const code = await runCli(
+      ["tui", "--workflow-root", root],
+      createIoCapture().io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 7777,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        runOpenTuiWorkflowApp,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(runOpenTuiWorkflowApp).toHaveBeenCalledTimes(1);
+    expect(appCalls[0]).toMatchObject({
+      workflowNames: ["demo"],
+    });
+    expect(appCalls[0]?.initialWorkflowName).toBeUndefined();
   });
 
   test("tui supports non-interactive fallback and resume-session", async () => {
@@ -1140,7 +1349,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -1178,7 +1386,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -1238,7 +1445,6 @@ describe("runCli", () => {
             port: 7777,
             stop: () => {},
           }),
-          openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
       ),
@@ -1273,7 +1479,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -1334,7 +1539,6 @@ describe("runCli", () => {
             port: 7777,
             stop: () => {},
           }),
-          openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
       ),
@@ -1367,7 +1571,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         runOpenTuiWorkflowApp: async () => {
           throw new Error(
@@ -1441,7 +1644,6 @@ describe("runCli", () => {
             port: 7777,
             stop: () => {},
           }),
-          openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
       ),
@@ -1472,7 +1674,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => true,
         runOpenTuiWorkflowApp: async () => {
           throw new Error(
@@ -1489,6 +1690,8 @@ describe("runCli", () => {
 
   test("tui supports --workflow option in non-interactive mode", async () => {
     const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
     const variablesPath = await writeRuntimeVariablesFile(
       root,
@@ -1517,6 +1720,10 @@ describe("runCli", () => {
         "demo",
         "--workflow-root",
         root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
         "--mock-scenario",
         scenarioPath,
         "--variables",
@@ -1531,7 +1738,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -1567,7 +1773,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -1629,7 +1834,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
@@ -1723,7 +1927,6 @@ describe("runCli", () => {
             port: 7777,
             stop: () => {},
           }),
-          openBrowserUrl: async () => {},
           isInteractiveTerminal: () => false,
         },
       ),
@@ -1758,7 +1961,6 @@ describe("runCli", () => {
           port: 7777,
           stop: () => {},
         }),
-        openBrowserUrl: async () => {},
         isInteractiveTerminal: () => false,
       },
     );
