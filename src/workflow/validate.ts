@@ -1661,12 +1661,25 @@ function normalizeWorkflow(
     "workflow",
     issues,
   );
-  const description = readStringField(
-    workflow,
-    "description",
-    "workflow",
-    issues,
-  );
+  const descriptionRaw = workflow["description"];
+  let description: string | null;
+  if (descriptionRaw === undefined) {
+    description = "";
+  } else if (
+    typeof descriptionRaw === "string" &&
+    descriptionRaw.length > 0
+  ) {
+    description = descriptionRaw;
+  } else {
+    issues.push(
+      makeIssue(
+        "error",
+        "workflow.description",
+        "must be a non-empty string when provided",
+      ),
+    );
+    description = null;
+  }
   const managerNodeIdRaw = workflow["managerNodeId"];
   let managerNodeId: string | undefined | null;
   if (managerNodeIdRaw !== undefined) {

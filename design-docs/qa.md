@@ -16,7 +16,7 @@
 - optional workflow-local prompt files such as `prompts/<node-id>.md`
 
 3. workflow.json role
-- Must include `description` describing workflow purpose.
+- May include optional `description` describing workflow purpose.
 - Defines node combinations, branching, and looping structure.
 
 4. node-{id}.json role

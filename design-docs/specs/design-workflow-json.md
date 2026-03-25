@@ -63,7 +63,6 @@ Current authored shape:
 ```json
 {
   "workflowId": "example",
-  "description": "Example workflow",
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
@@ -89,7 +88,6 @@ Current authored shape:
 Required:
 
 - `workflowId: string`
-- `description: string`
 - `defaults.maxLoopIterations: number`
 - `defaults.nodeTimeoutMs: number`
 - `managerNodeId: string`
@@ -100,9 +98,15 @@ Required:
 
 Optional:
 
+- `description: string`
 - `defaults.containerRuntime`
 - `prompts`
 - `subWorkflowConversations`
+
+Validation rules:
+
+- when provided, `description` must be a non-empty string
+- when omitted, the normalized runtime bundle uses `description: ""`
 - `loops`
 
 Not part of the current schema:

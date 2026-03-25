@@ -176,6 +176,41 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.workflow.nodes[1]?.role).toBeUndefined();
   });
 
+  test("accepts workflow definitions without a top-level description", () => {
+    const raw = makeValidRaw();
+    delete (raw.workflow as { description?: unknown }).description;
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.workflow.description).toBe("");
+  });
+
+  test("rejects empty workflow descriptions when provided", () => {
+    const raw = makeValidRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      description: "",
+    };
+
+    const result = validateWorkflowBundleDetailed(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.description" &&
+          issue.message === "must be a non-empty string when provided",
+      ),
+    ).toBe(true);
+  });
+
   test("accepts unified role schema", () => {
     const result = validateWorkflowBundle(makeUnifiedRoleRaw());
     expect(result.ok).toBe(true);

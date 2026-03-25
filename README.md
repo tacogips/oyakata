@@ -61,7 +61,7 @@ Implementation note:
 Current top-level fields:
 
 - `workflowId`
-- `description`
+- optional `description`
 - `defaults`
   - `maxLoopIterations`
   - `nodeTimeoutMs`
@@ -79,6 +79,8 @@ Current top-level fields:
   - currently only `mode: "fan-out"`
 
 Fields such as `workflowType`, `nodeGroups`, and workflow-ref child workflows are not part of the current authored schema, even though older docs mentioned them.
+
+When omitted, `workflow.description` normalizes to an empty string in the loaded bundle.
 
 ## Node Kinds
 

@@ -254,6 +254,55 @@ describe("loadWorkflowFromDisk", () => {
     );
   });
 
+  test("loads workflows without a top-level description", async () => {
+    const root = await makeTempDir();
+    const workflowName = "workflow-without-description";
+    const workflowDirectory = path.join(root, workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "divedra-manager",
+      subWorkflows: [],
+      nodes: [
+        {
+          id: "divedra-manager",
+          kind: "root-manager",
+          nodeFile: "node-divedra-manager.json",
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+
+    await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
+      nodes: [{ id: "divedra-manager", order: 0 }],
+    });
+
+    await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
+      id: "divedra-manager",
+      model: "gpt-5-nano",
+      executionBackend: "codex-agent",
+      promptTemplate: "manager",
+      variables: {},
+    });
+
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.bundle.workflow.description).toBe("");
+  });
+
   test("loads unified role workflows with a manager-role node", async () => {
     const root = await makeTempDir();
     const workflowName = "unified-role-workflow";
