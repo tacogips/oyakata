@@ -80,7 +80,9 @@ export interface OpenTuiWorkflowAppOptions {
   readonly io: CliIo;
   readonly workflowNames: readonly string[];
   readonly refreshWorkflowNames: () => Promise<readonly string[]>;
-  readonly loadWorkflowDefinition: (workflowName: string) => Promise<LoadedWorkflow>;
+  readonly loadWorkflowDefinition: (
+    workflowName: string,
+  ) => Promise<LoadedWorkflow>;
   readonly listWorkflowSessions: (
     workflowName: string,
   ) => Promise<readonly RuntimeSessionSummary[]>;
@@ -133,6 +135,28 @@ type DetailMode =
 type ShortcutKeyEvent = Pick<KeyEvent, "ctrl" | "meta" | "name" | "shift">;
 type ScreenMode = "history" | "run" | "workspace";
 type HistoryPaneNavigationMode = "list" | "scroll" | "typing";
+
+interface OpenTuiPaneChrome {
+  readonly backgroundColor: string;
+  readonly borderColor: string;
+  readonly title: string;
+}
+
+interface OpenTuiPaneChromeState {
+  readonly detail: OpenTuiPaneChrome;
+  readonly historyHeader: OpenTuiPaneChrome;
+  readonly input: OpenTuiPaneChrome;
+  readonly node: OpenTuiPaneChrome;
+  readonly runStatus: OpenTuiPaneChrome;
+  readonly runWorkflow: OpenTuiPaneChrome;
+  readonly selectorPreview: OpenTuiPaneChrome;
+  readonly session: OpenTuiPaneChrome;
+  readonly workflow: OpenTuiPaneChrome;
+}
+
+interface OpenTuiFocusableTarget {
+  focus(): void;
+}
 
 interface BlurredSelectIndicatorLayout {
   readonly fontHeight: number;
@@ -232,7 +256,12 @@ class FocusAwareSelectRenderable extends SelectRenderable {
       Math.min(state.linesPerItem, this.height - redrawTarget.nameY),
       state._backgroundColor,
     );
-    this.frameBuffer.drawText(redrawTarget.name, 1, redrawTarget.nameY, state._textColor);
+    this.frameBuffer.drawText(
+      redrawTarget.name,
+      1,
+      redrawTarget.nameY,
+      state._textColor,
+    );
     if (
       redrawTarget.descriptionY !== undefined &&
       redrawTarget.descriptionY < this.height
@@ -269,7 +298,10 @@ function summarizeLines(value: string | null, maxLength = 600): string {
   if (value === null) {
     return "(not found)";
   }
-  return truncate(value.trim().length === 0 ? "(empty)" : value.trim(), maxLength);
+  return truncate(
+    value.trim().length === 0 ? "(empty)" : value.trim(),
+    maxLength,
+  );
 }
 
 function selectBoundedIndex(
@@ -303,7 +335,8 @@ export function filterWorkflowNames(
   workflowNames: readonly string[],
   filterText: string,
 ): readonly string[] {
-  const normalizedFilter = normalizeWorkflowFilterText(filterText).toLowerCase();
+  const normalizedFilter =
+    normalizeWorkflowFilterText(filterText).toLowerCase();
   if (normalizedFilter.length === 0) {
     return [...workflowNames];
   }
@@ -312,11 +345,16 @@ export function filterWorkflowNames(
   );
 }
 
-function looksLikeStructuredHumanInputBinding(binding: ArgumentBinding): boolean {
+function looksLikeStructuredHumanInputBinding(
+  binding: ArgumentBinding,
+): boolean {
   if (binding.source !== "human-input") {
     return false;
   }
-  if (binding.sourcePath === undefined || binding.sourcePath.trim().length === 0) {
+  if (
+    binding.sourcePath === undefined ||
+    binding.sourcePath.trim().length === 0
+  ) {
     return false;
   }
   const normalized = binding.sourcePath.trim().toLowerCase();
@@ -377,9 +415,7 @@ export function detectWorkflowInputMode(
     workflow.subWorkflows.map((subWorkflow) => subWorkflow.inputNodeId),
   );
   const inputPayloads = workflow.nodes
-    .filter(
-      (node) => node.kind === "input" || inputNodeIds.has(node.id),
-    )
+    .filter((node) => node.kind === "input" || inputNodeIds.has(node.id))
     .map((node) => loaded.bundle.nodePayloads[node.nodeFile])
     .filter((payload): payload is NodePayload => payload !== undefined);
 
@@ -393,7 +429,8 @@ export function detectWorkflowInputMode(
 
   return {
     mode: "text",
-    reason: "defaulted to plain text because the workflow definition has no clear JSON-only hint",
+    reason:
+      "defaulted to plain text because the workflow definition has no clear JSON-only hint",
   };
 }
 
@@ -438,18 +475,18 @@ export function deriveEditorTextFromRuntimeVariables(
 ): string {
   const preferredValue =
     mode === "json"
-      ? runtimeVariables["rerunPrompt"] ??
+      ? (runtimeVariables["rerunPrompt"] ??
         runtimeVariables["promptJson"] ??
         runtimeVariables["userPromptJson"] ??
         runtimeVariables["humanInput"] ??
         runtimeVariables["prompt"] ??
-        runtimeVariables["userPrompt"]
-      : runtimeVariables["rerunPrompt"] ??
+        runtimeVariables["userPrompt"])
+      : (runtimeVariables["rerunPrompt"] ??
         runtimeVariables["humanInput"] ??
         runtimeVariables["prompt"] ??
         runtimeVariables["userPrompt"] ??
         runtimeVariables["promptJson"] ??
-        runtimeVariables["userPromptJson"];
+        runtimeVariables["userPromptJson"]);
   return formatEditorValue(preferredValue, mode);
 }
 
@@ -476,7 +513,9 @@ export function buildTuiRuntimeVariables(input: {
   const parsedValue = parseTuiEditorValue(input.editorText, input.mode);
   if (input.mode === "text") {
     const textValue =
-      typeof parsedValue === "string" ? parsedValue : compactJson(parsedValue, 20_000);
+      typeof parsedValue === "string"
+        ? parsedValue
+        : compactJson(parsedValue, 20_000);
     return {
       humanInput: textValue,
       prompt: textValue,
@@ -596,7 +635,9 @@ function workflowNamesToSelectOptions(
   }));
 }
 
-function summarizePromptHelp(promptTemplate: string | undefined): string | undefined {
+function summarizePromptHelp(
+  promptTemplate: string | undefined,
+): string | undefined {
   if (promptTemplate === undefined) {
     return undefined;
   }
@@ -629,9 +670,7 @@ export function resolveWorkflowPreviewIndent(input: {
   return input.derivedIndent;
 }
 
-function buildWorkflowNodePreview(
-  loaded: LoadedWorkflow,
-): StyledText {
+function buildWorkflowNodePreview(loaded: LoadedWorkflow): StyledText {
   const derivedNodes = deriveWorkflowVisualization({
     workflow: loaded.bundle.workflow,
     workflowVis: loaded.bundle.workflowVis,
@@ -800,7 +839,10 @@ function takeFirstLines(text: string, maxLines: number): string {
   ].join("\n");
 }
 
-function summarizeJsonBlock(raw: string | null): { full: string; preview: string } {
+function summarizeJsonBlock(raw: string | null): {
+  full: string;
+  preview: string;
+} {
   const full = formatJsonForDisplay(raw);
   const preview = takeFirstLines(full, SUMMARY_JSON_PREVIEW_LINES);
   return { full, preview };
@@ -860,7 +902,9 @@ async function loadNodeExecutionArtifacts(
     Promise.resolve(runtimeExecution?.outputJson ?? null).then(
       async (runtimeOutput) =>
         runtimeOutput ??
-        readOptionalText(path.join(selectedExecution.artifactDir, "output.json")),
+        readOptionalText(
+          path.join(selectedExecution.artifactDir, "output.json"),
+        ),
     ),
     readOptionalText(path.join(selectedExecution.artifactDir, "meta.json")),
     readOptionalText(mailboxPaths.metaPath),
@@ -955,14 +999,24 @@ async function buildDetailContent(input: {
     input.loadedWorkflow.bundle.workflow,
     selectedExecution,
   );
-  const bundle = await loadNodeExecutionArtifacts(sessionView, selectedExecution);
-  const { artifactInput, artifactOutput, artifactMeta, mailboxMeta, mailboxInput } =
-    bundle;
+  const bundle = await loadNodeExecutionArtifacts(
+    sessionView,
+    selectedExecution,
+  );
+  const {
+    artifactInput,
+    artifactOutput,
+    artifactMeta,
+    mailboxMeta,
+    mailboxInput,
+  } = bundle;
   const inboundCommunications = session.communications.filter(
-    (communication) => communication.consumedByNodeExecId === selectedExecution.nodeExecId,
+    (communication) =>
+      communication.consumedByNodeExecId === selectedExecution.nodeExecId,
   );
   const outboundCommunications = session.communications.filter(
-    (communication) => communication.sourceNodeExecId === selectedExecution.nodeExecId,
+    (communication) =>
+      communication.sourceNodeExecId === selectedExecution.nodeExecId,
   );
 
   if (input.detailMode === "inbox") {
@@ -1114,10 +1168,120 @@ function popupBackgroundColor(): string {
   return "#0d141b";
 }
 
+export function resolveOpenTuiPaneChrome(input: {
+  readonly focusPane: FocusPane;
+  readonly hasRuntimeSession: boolean;
+  readonly inputMode: TuiWorkflowInputMode;
+  readonly inputSyntaxStatus: TuiWorkflowInputSyntax["status"];
+  readonly screenMode: ScreenMode;
+}): OpenTuiPaneChromeState {
+  const workspaceWorkflowsActive =
+    input.screenMode === "workspace" && input.focusPane === "workflows";
+  const inputSyntaxSuffix =
+    input.inputMode === "json"
+      ? `, ${input.inputSyntaxStatus === "invalid" ? "syntax error" : "syntax ok"}`
+      : "";
+  const historyNodeTitle = input.hasRuntimeSession
+    ? "Nodes"
+    : "Nodes (select a run)";
+
+  return {
+    detail: {
+      backgroundColor: "transparent",
+      borderColor: paneBorderColor(
+        input.screenMode === "history" && input.focusPane === "detail",
+      ),
+      title: paneTitle(
+        "node detail",
+        input.screenMode === "history" && input.focusPane === "detail",
+      ),
+    },
+    historyHeader: {
+      backgroundColor: "transparent",
+      borderColor: paneBorderColor(input.screenMode === "history"),
+      title: paneTitle("Workflow", input.screenMode === "history"),
+    },
+    input: {
+      backgroundColor: paneBackgroundColor(
+        input.screenMode === "run" ||
+          (input.screenMode === "history" && input.focusPane === "input"),
+      ),
+      borderColor: paneBorderColor(
+        input.screenMode === "run" ||
+          (input.screenMode === "history" && input.focusPane === "input"),
+      ),
+      title:
+        input.screenMode === "run"
+          ? paneTitle(
+              `Run Input (${input.inputMode}${inputSyntaxSuffix})`,
+              true,
+            )
+          : paneTitle(
+              `Input (${input.inputMode}${inputSyntaxSuffix})`,
+              input.screenMode === "history" && input.focusPane === "input",
+            ),
+    },
+    node: {
+      backgroundColor: paneBackgroundColor(
+        input.screenMode === "history" && input.focusPane === "nodes",
+      ),
+      borderColor: paneBorderColor(
+        input.screenMode === "history" && input.focusPane === "nodes",
+      ),
+      title: paneTitle(
+        historyNodeTitle,
+        input.screenMode === "history" && input.focusPane === "nodes",
+      ),
+    },
+    runStatus: {
+      backgroundColor: "transparent",
+      borderColor: paneBorderColor(input.screenMode === "run"),
+      title: paneTitle("Execution Status", input.screenMode === "run"),
+    },
+    runWorkflow: {
+      backgroundColor: "transparent",
+      borderColor: paneBorderColor(input.screenMode === "run"),
+      title: paneTitle("Workflow Detail", input.screenMode === "run"),
+    },
+    selectorPreview: {
+      backgroundColor: "transparent",
+      borderColor: paneBorderColor(
+        input.screenMode === "workspace" && !workspaceWorkflowsActive,
+      ),
+      title: paneTitle(
+        "Workflow Preview",
+        input.screenMode === "workspace" && !workspaceWorkflowsActive,
+      ),
+    },
+    session: {
+      backgroundColor: paneBackgroundColor(
+        input.screenMode === "history" && input.focusPane === "sessions",
+      ),
+      borderColor: paneBorderColor(
+        input.screenMode === "history" && input.focusPane === "sessions",
+      ),
+      title: paneTitle(
+        "Workflow Runs",
+        input.screenMode === "history" && input.focusPane === "sessions",
+      ),
+    },
+    workflow: {
+      backgroundColor: paneBackgroundColor(workspaceWorkflowsActive),
+      borderColor: paneBorderColor(workspaceWorkflowsActive),
+      title: paneTitle("Workflows", workspaceWorkflowsActive),
+    },
+  };
+}
+
+export function focusOpenTuiTarget(target: OpenTuiFocusableTarget): void {
+  target.focus();
+}
+
 function resolveWorkflowFinalResult(
   runtimeSessionView: RuntimeSessionView | undefined,
 ): unknown {
-  const workflowOutput = runtimeSessionView?.session.runtimeVariables["workflowOutput"];
+  const workflowOutput =
+    runtimeSessionView?.session.runtimeVariables["workflowOutput"];
   if (workflowOutput !== undefined) {
     return workflowOutput;
   }
@@ -1162,7 +1326,9 @@ export function buildWorkflowRunStatusContent(input: {
     `Current node: ${session.currentNodeId ?? "-"}`,
     `Queue: ${session.queue.join(",") || "-"}`,
     `Node executions: ${String(session.nodeExecutions.length)}`,
-    ...(session.lastError === undefined ? [] : [`Last error: ${session.lastError}`]),
+    ...(session.lastError === undefined
+      ? []
+      : [`Last error: ${session.lastError}`]),
     ...(input.statusError === undefined
       ? []
       : [`Status refresh note: ${input.statusError}`]),
@@ -1318,7 +1484,7 @@ export async function renderOpenTuiWorkflowSelector(options: {
   updateWorkflows(workflowNames);
 
   renderer.start();
-  renderer.focusRenderable(workflowSelect);
+  focusOpenTuiTarget(workflowSelect);
 
   return await new Promise<OpenTuiWorkflowSelection>((resolve) => {
     const complete = (result: OpenTuiWorkflowSelection): void => {
@@ -1716,12 +1882,14 @@ export async function runOpenTuiWorkflowApp(
   let runtimeSessionView: RuntimeSessionView | undefined;
   let managerMessages: readonly ManagerMessageRecord[] = [];
   let focusPane: FocusPane =
-    options.initialWorkflowName === undefined && options.initialSessionId === undefined
+    options.initialWorkflowName === undefined &&
+    options.initialSessionId === undefined
       ? "workflows"
       : "sessions";
   let detailMode: DetailMode = "summary";
   let screenMode: ScreenMode =
-    options.initialWorkflowName === undefined && options.initialSessionId === undefined
+    options.initialWorkflowName === undefined &&
+    options.initialSessionId === undefined
       ? "workspace"
       : "history";
   let busy = false;
@@ -1766,7 +1934,9 @@ export async function runOpenTuiWorkflowApp(
     if (option === null || option.value === EMPTY_SELECT) {
       return undefined;
     }
-    return workflowSessions.find((session) => session.sessionId === option.value);
+    return workflowSessions.find(
+      (session) => session.sessionId === option.value,
+    );
   };
 
   const selectedNodeExecution = (): NodeExecutionRecord | undefined => {
@@ -1901,7 +2071,7 @@ export async function runOpenTuiWorkflowApp(
     syncFilteredWorkflowNames(
       screenMode === "workspace"
         ? selectedWorkflowName()
-        : loadedWorkflow?.workflowName ?? selectedWorkflowName(),
+        : (loadedWorkflow?.workflowName ?? selectedWorkflowName()),
     );
 
     selectorRow.visible = screenMode === "workspace";
@@ -1920,7 +2090,9 @@ export async function runOpenTuiWorkflowApp(
       ...(runExecutionResult === undefined
         ? {}
         : { completionResult: runExecutionResult }),
-      ...(runPendingSessionId === undefined ? {} : { sessionId: runPendingSessionId }),
+      ...(runPendingSessionId === undefined
+        ? {}
+        : { sessionId: runPendingSessionId }),
       ...(runStatusError === undefined ? {} : { statusError: runStatusError }),
     });
 
@@ -1931,7 +2103,8 @@ export async function runOpenTuiWorkflowApp(
       selectBoundedIndex(
         sessionSelect,
         workflowSessions.findIndex(
-          (session) => session.sessionId === runtimeSessionView?.session.sessionId,
+          (session) =>
+            session.sessionId === runtimeSessionView?.session.sessionId,
         ),
         workflowSessions.length,
       );
@@ -1948,95 +2121,56 @@ export async function runOpenTuiWorkflowApp(
       if (sessionView === undefined) {
         nodeSelect.setSelectedIndex(0);
       } else {
-      const selectedExecution = selectedNodeExecution();
-      const selectedIndex =
-        selectedExecution === undefined
-          ? sessionView.session.nodeExecutions.length - 1
-          : sessionView.session.nodeExecutions.findIndex(
-              (entry) => entry.nodeExecId === selectedExecution.nodeExecId,
-            );
-      selectBoundedIndex(
-        nodeSelect,
-        selectedIndex < 0
-          ? sessionView.session.nodeExecutions.length - 1
-          : selectedIndex,
-        sessionView.session.nodeExecutions.length,
-      );
+        const selectedExecution = selectedNodeExecution();
+        const selectedIndex =
+          selectedExecution === undefined
+            ? sessionView.session.nodeExecutions.length - 1
+            : sessionView.session.nodeExecutions.findIndex(
+                (entry) => entry.nodeExecId === selectedExecution.nodeExecId,
+              );
+        selectBoundedIndex(
+          nodeSelect,
+          selectedIndex < 0
+            ? sessionView.session.nodeExecutions.length - 1
+            : selectedIndex,
+          sessionView.session.nodeExecutions.length,
+        );
       }
     }
-
-    const workspaceWorkflowsActive =
-      screenMode === "workspace" && focusPane === "workflows";
-    workflowPane.title = paneTitle("Workflows", workspaceWorkflowsActive);
-    workflowPane.borderColor = paneBorderColor(workspaceWorkflowsActive);
-    workflowPane.backgroundColor = paneBackgroundColor(workspaceWorkflowsActive);
-    selectorPreviewScroll.title = paneTitle(
-      "Workflow Preview",
-      screenMode === "workspace" && !workspaceWorkflowsActive,
-    );
-    selectorPreviewScroll.borderColor = paneBorderColor(
-      screenMode === "workspace" && !workspaceWorkflowsActive,
-    );
-
-    historyHeaderBox.title = paneTitle("Workflow", screenMode === "history");
-    historyHeaderBox.borderColor = paneBorderColor(screenMode === "history");
-    sessionPane.title = paneTitle("Workflow Runs", screenMode === "history" && focusPane === "sessions");
-    sessionPane.borderColor = paneBorderColor(
-      screenMode === "history" && focusPane === "sessions",
-    );
-    sessionPane.backgroundColor = paneBackgroundColor(
-      screenMode === "history" && focusPane === "sessions",
-    );
-    nodePane.title = paneTitle(
-      runtimeSessionView === undefined ? "Nodes (select a run)" : "Nodes",
-      screenMode === "history" && focusPane === "nodes",
-    );
-    nodePane.borderColor = paneBorderColor(
-      screenMode === "history" && focusPane === "nodes",
-    );
-    nodePane.backgroundColor = paneBackgroundColor(
-      screenMode === "history" && focusPane === "nodes",
-    );
-    detailScroll.title = paneTitle(
-      "node detail",
-      screenMode === "history" && focusPane === "detail",
-    );
-    detailScroll.borderColor = paneBorderColor(
-      screenMode === "history" && focusPane === "detail",
-    );
-
-    runWorkflowPane.title = paneTitle(
-      "Workflow Detail",
-      screenMode === "run",
-    );
-    runWorkflowPane.borderColor = paneBorderColor(screenMode === "run");
-    runStatusPane.title = paneTitle(
-      "Execution Status",
-      screenMode === "run",
-    );
-    runStatusPane.borderColor = paneBorderColor(screenMode === "run");
 
     const inputSyntax = describeTuiWorkflowInputSyntax(
       inputTextarea.plainText,
       workflowInputDetection.mode,
     );
-    const syntaxSuffix =
-      workflowInputDetection.mode === "json"
-        ? `, ${inputSyntax.status === "invalid" ? "syntax error" : "syntax ok"}`
-        : "";
-    inputShell.title =
-      screenMode === "run"
-        ? paneTitle(`Run Input (${workflowInputDetection.mode}${syntaxSuffix})`, true)
-        : paneTitle(
-            `Input (${workflowInputDetection.mode}${syntaxSuffix})`,
-            screenMode === "history" && focusPane === "input",
-          );
-    inputShell.borderColor = paneBorderColor(
-      screenMode === "run" || (screenMode === "history" && focusPane === "input"),
-    );
-    inputShell.backgroundColor = paneBackgroundColor(
-      screenMode === "run" || (screenMode === "history" && focusPane === "input"),
-    );
+    const paneChrome = resolveOpenTuiPaneChrome({
+      focusPane,
+      hasRuntimeSession: runtimeSessionView !== undefined,
+      inputMode: workflowInputDetection.mode,
+      inputSyntaxStatus: inputSyntax.status,
+      screenMode,
+    });
+    workflowPane.title = paneChrome.workflow.title;
+    workflowPane.borderColor = paneChrome.workflow.borderColor;
+    workflowPane.backgroundColor = paneChrome.workflow.backgroundColor;
+    selectorPreviewScroll.title = paneChrome.selectorPreview.title;
+    selectorPreviewScroll.borderColor = paneChrome.selectorPreview.borderColor;
+    historyHeaderBox.title = paneChrome.historyHeader.title;
+    historyHeaderBox.borderColor = paneChrome.historyHeader.borderColor;
+    sessionPane.title = paneChrome.session.title;
+    sessionPane.borderColor = paneChrome.session.borderColor;
+    sessionPane.backgroundColor = paneChrome.session.backgroundColor;
+    nodePane.title = paneChrome.node.title;
+    nodePane.borderColor = paneChrome.node.borderColor;
+    nodePane.backgroundColor = paneChrome.node.backgroundColor;
+    detailScroll.title = paneChrome.detail.title;
+    detailScroll.borderColor = paneChrome.detail.borderColor;
+    runWorkflowPane.title = paneChrome.runWorkflow.title;
+    runWorkflowPane.borderColor = paneChrome.runWorkflow.borderColor;
+    runStatusPane.title = paneChrome.runStatus.title;
+    runStatusPane.borderColor = paneChrome.runStatus.borderColor;
+    inputShell.title = paneChrome.input.title;
+    inputShell.borderColor = paneChrome.input.borderColor;
+    inputShell.backgroundColor = paneChrome.input.backgroundColor;
 
     if (screenMode === "history") {
       if (
@@ -2106,31 +2240,60 @@ export async function runOpenTuiWorkflowApp(
 
   const applyFocus = (nextFocusPane: FocusPane): void => {
     focusPane = nextFocusPane;
-    if (filterPopupOpen) {
-      renderer.focusRenderable(filterTextarea);
-    } else if (helpPopupOpen) {
-      renderer.focusRenderable(helpPopup);
-    } else if (confirmPopupOpen) {
-      renderer.focusRenderable(confirmPopup);
-    } else if (screenMode === "workspace") {
-      renderer.focusRenderable(workflowSelect);
-    } else if (screenMode === "run") {
-      renderer.focusRenderable(inputTextarea);
-    } else if (focusPane === "sessions") {
-      renderer.focusRenderable(sessionSelect);
-    } else if (focusPane === "nodes") {
-      renderer.focusRenderable(nodeSelect);
-    } else if (focusPane === "detail") {
-      if (detailMode === "summary") {
-        renderer.focusRenderable(detailSummarySelect);
-      } else {
-        renderer.focusRenderable(detailScroll);
-      }
-    } else if (editingInput) {
-      renderer.focusRenderable(inputTextarea);
-    } else {
-      renderer.focusRenderable(inputShell);
-    }
+    const paneChrome = resolveOpenTuiPaneChrome({
+      focusPane,
+      hasRuntimeSession: runtimeSessionView !== undefined,
+      inputMode: workflowInputDetection.mode,
+      inputSyntaxStatus: describeTuiWorkflowInputSyntax(
+        inputTextarea.plainText,
+        workflowInputDetection.mode,
+      ).status,
+      screenMode,
+    });
+    workflowPane.title = paneChrome.workflow.title;
+    workflowPane.borderColor = paneChrome.workflow.borderColor;
+    workflowPane.backgroundColor = paneChrome.workflow.backgroundColor;
+    selectorPreviewScroll.title = paneChrome.selectorPreview.title;
+    selectorPreviewScroll.borderColor = paneChrome.selectorPreview.borderColor;
+    historyHeaderBox.title = paneChrome.historyHeader.title;
+    historyHeaderBox.borderColor = paneChrome.historyHeader.borderColor;
+    sessionPane.title = paneChrome.session.title;
+    sessionPane.borderColor = paneChrome.session.borderColor;
+    sessionPane.backgroundColor = paneChrome.session.backgroundColor;
+    nodePane.title = paneChrome.node.title;
+    nodePane.borderColor = paneChrome.node.borderColor;
+    nodePane.backgroundColor = paneChrome.node.backgroundColor;
+    detailScroll.title = paneChrome.detail.title;
+    detailScroll.borderColor = paneChrome.detail.borderColor;
+    runWorkflowPane.title = paneChrome.runWorkflow.title;
+    runWorkflowPane.borderColor = paneChrome.runWorkflow.borderColor;
+    runStatusPane.title = paneChrome.runStatus.title;
+    runStatusPane.borderColor = paneChrome.runStatus.borderColor;
+    inputShell.title = paneChrome.input.title;
+    inputShell.borderColor = paneChrome.input.borderColor;
+    inputShell.backgroundColor = paneChrome.input.backgroundColor;
+    const focusTarget: OpenTuiFocusableTarget = filterPopupOpen
+      ? filterTextarea
+      : helpPopupOpen
+        ? helpPopup
+        : confirmPopupOpen
+          ? confirmPopup
+          : screenMode === "workspace"
+            ? workflowSelect
+            : screenMode === "run"
+              ? inputTextarea
+              : focusPane === "sessions"
+                ? sessionSelect
+                : focusPane === "nodes"
+                  ? nodeSelect
+                  : focusPane === "detail"
+                    ? detailMode === "summary"
+                      ? detailSummarySelect
+                      : detailScroll
+                    : editingInput
+                      ? inputTextarea
+                      : inputShell;
+    focusOpenTuiTarget(focusTarget);
     renderer.requestRender();
   };
 
@@ -2169,7 +2332,8 @@ export async function runOpenTuiWorkflowApp(
       managerMessages = [];
       return;
     }
-    managerMessages = await options.loadManagerSessionMessages(managerSessionId);
+    managerMessages =
+      await options.loadManagerSessionMessages(managerSessionId);
   };
 
   const refreshSelectorPreviewWorkflow = async (
@@ -2186,7 +2350,8 @@ export async function runOpenTuiWorkflowApp(
     if (selectorPreviewWorkflow?.workflowName === workflowName) {
       return;
     }
-    selectorPreviewWorkflow = await options.loadWorkflowDefinition(workflowName);
+    selectorPreviewWorkflow =
+      await options.loadWorkflowDefinition(workflowName);
   };
 
   const refreshSessionView = async (
@@ -2301,7 +2466,8 @@ export async function runOpenTuiWorkflowApp(
     if (opt === null || opt.value === EMPTY_SELECT) {
       return;
     }
-    const body = typeof opt.value === "string" ? opt.value : String(opt.value ?? "");
+    const body =
+      typeof opt.value === "string" ? opt.value : String(opt.value ?? "");
     detailViewerBody = body;
     const wf = loadedWorkflow?.bundle.workflow.workflowId ?? "workflow";
     const node = selectedNodeExecution()?.nodeId ?? "node";
@@ -2324,7 +2490,8 @@ export async function runOpenTuiWorkflowApp(
     }
     runPollInFlight = true;
     try {
-      runSessionView = await options.loadRuntimeSessionView(runPendingSessionId);
+      runSessionView =
+        await options.loadRuntimeSessionView(runPendingSessionId);
       runStatusError = undefined;
     } catch (error: unknown) {
       runStatusError =
@@ -2482,7 +2649,10 @@ export async function runOpenTuiWorkflowApp(
 
   const confirmRunAction = async (): Promise<void> => {
     const workflowName = loadedWorkflow?.workflowName;
-    if (workflowName === undefined || pendingRunRuntimeVariables === undefined) {
+    if (
+      workflowName === undefined ||
+      pendingRunRuntimeVariables === undefined
+    ) {
       setStatus("Run confirmation is unavailable");
       await render();
       return;
@@ -2537,7 +2707,9 @@ export async function runOpenTuiWorkflowApp(
     const session = selectedSessionSummary();
     const execution = selectedNodeExecution();
     if (session === undefined || execution === undefined) {
-      setStatus("Select a historical session and node execution before rerunning");
+      setStatus(
+        "Select a historical session and node execution before rerunning",
+      );
       await render();
       return;
     }
@@ -2602,7 +2774,9 @@ export async function runOpenTuiWorkflowApp(
 
   const refreshAll = async (): Promise<void> => {
     await withBusy(
-      screenMode === "workspace" ? "Refreshing workflow list" : "Refreshing TUI data",
+      screenMode === "workspace"
+        ? "Refreshing workflow list"
+        : "Refreshing TUI data",
       async () => {
         workflowNames = [...(await options.refreshWorkflowNames())];
         if (screenMode === "workspace") {
@@ -2746,7 +2920,9 @@ export async function runOpenTuiWorkflowApp(
               workflowInputDetection.mode,
             ),
           );
-          setStatus(`Selected session '${runtimeSessionView.session.sessionId}'`);
+          setStatus(
+            `Selected session '${runtimeSessionView.session.sessionId}'`,
+          );
         }
       });
       return;

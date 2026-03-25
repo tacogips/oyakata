@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { LoadedWorkflow } from "../workflow/load";
 import type { NodePayload } from "../workflow/types";
 import {
@@ -10,9 +10,14 @@ import {
   deriveEditorTextFromRuntimeVariables,
   detectWorkflowInputMode,
   filterWorkflowNames,
+  focusOpenTuiTarget,
   formatJsonEditorText,
   isOpenTuiHelpKey,
   isOpenTuiRefreshKey,
+  resolveBlurredSelectRedrawTarget,
+  resolveHistoryPaneNavigationMode,
+  resolveOpenTuiPaneChrome,
+  resolveWorkflowPreviewIndent,
   resolveSelectedWorkflowName,
 } from "./opentui-screen";
 
@@ -174,7 +179,7 @@ describe("buildTuiRuntimeVariables", () => {
   test("builds json-oriented runtime variables for rerun execution", () => {
     expect(
       buildTuiRuntimeVariables({
-        editorText: "{\"request\":\"retry\"}",
+        editorText: '{"request":"retry"}',
         managerSessionId: "mgrsess-exec-000001",
         mode: "json",
         purpose: "rerun",
@@ -223,7 +228,7 @@ describe("deriveEditorTextFromRuntimeVariables", () => {
 
 describe("formatJsonEditorText", () => {
   test("formats valid json and normalizes whitespace", () => {
-    expect(formatJsonEditorText("{\"a\":1,\"b\":[2]}")).toBe(
+    expect(formatJsonEditorText('{"a":1,"b":[2]}')).toBe(
       '{\n  "a": 1,\n  "b": [\n    2\n  ]\n}',
     );
   });
@@ -245,14 +250,16 @@ describe("describeTuiWorkflowInputSyntax", () => {
   });
 
   test("reports valid json input", () => {
-    expect(describeTuiWorkflowInputSyntax("{\"request\":\"hello\"}", "json")).toEqual({
+    expect(
+      describeTuiWorkflowInputSyntax('{"request":"hello"}', "json"),
+    ).toEqual({
       status: "valid",
       summary: "valid JSON",
     });
   });
 
   test("reports invalid json input with location context when available", () => {
-    const syntax = describeTuiWorkflowInputSyntax("{\"request\":}", "json");
+    const syntax = describeTuiWorkflowInputSyntax('{"request":}', "json");
     expect(syntax.status).toBe("invalid");
     expect(syntax.summary).toContain("invalid JSON");
   });
@@ -357,6 +364,148 @@ describe("OpenTui pane layout", () => {
   });
 });
 
+describe("resolveBlurredSelectRedrawTarget", () => {
+  test("returns the selected row content when the logical selection is visible", () => {
+    expect(
+      resolveBlurredSelectRedrawTarget({
+        fontHeight: 1,
+        linesPerItem: 3,
+        maxVisibleItems: 4,
+        selectedOption: {
+          name: "selected row",
+          description: "detail text",
+        },
+        scrollOffset: 2,
+        showDescription: true,
+        selectedIndex: 3,
+      }),
+    ).toEqual({
+      descriptionY: 4,
+      name: "  selected row",
+      nameY: 3,
+    });
+  });
+
+  test("returns undefined when the logical selection is outside the visible window", () => {
+    expect(
+      resolveBlurredSelectRedrawTarget({
+        fontHeight: 1,
+        linesPerItem: 2,
+        maxVisibleItems: 3,
+        selectedOption: {
+          name: "hidden row",
+          description: "",
+        },
+        scrollOffset: 4,
+        showDescription: false,
+        selectedIndex: 2,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("resolveHistoryPaneNavigationMode", () => {
+  test("treats detail summary as list navigation", () => {
+    expect(
+      resolveHistoryPaneNavigationMode({
+        detailMode: "summary",
+        focusPane: "detail",
+      }),
+    ).toBe("list");
+  });
+
+  test("treats non-summary detail views as scroll navigation", () => {
+    expect(
+      resolveHistoryPaneNavigationMode({
+        detailMode: "inbox",
+        focusPane: "detail",
+      }),
+    ).toBe("scroll");
+  });
+
+  test("treats the input pane as typing, not pane navigation", () => {
+    expect(
+      resolveHistoryPaneNavigationMode({
+        detailMode: "summary",
+        focusPane: "input",
+      }),
+    ).toBe("typing");
+  });
+});
+
+describe("resolveOpenTuiPaneChrome", () => {
+  test("marks node detail as active after history focus moves from nodes to detail", () => {
+    const chrome = resolveOpenTuiPaneChrome({
+      focusPane: "detail",
+      hasRuntimeSession: true,
+      inputMode: "json",
+      inputSyntaxStatus: "valid",
+      screenMode: "history",
+    });
+
+    expect(chrome.detail.title).toBe(" >> node detail << ");
+    expect(chrome.detail.borderColor).toBe("#4fd1ff");
+    expect(chrome.node.title).toBe(" Nodes ");
+    expect(chrome.node.borderColor).toBe("#5b6670");
+  });
+
+  test("uses the select-a-run node title until a session is loaded", () => {
+    const chrome = resolveOpenTuiPaneChrome({
+      focusPane: "sessions",
+      hasRuntimeSession: false,
+      inputMode: "text",
+      inputSyntaxStatus: "not-applicable",
+      screenMode: "history",
+    });
+
+    expect(chrome.node.title).toBe(" Nodes (select a run) ");
+  });
+});
+
+describe("focusOpenTuiTarget", () => {
+  test("invokes the renderable focus lifecycle for keyboard-driven pane changes", () => {
+    const target = {
+      focus: vi.fn(),
+    };
+
+    focusOpenTuiTarget(target);
+
+    expect(target.focus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("resolveWorkflowPreviewIndent", () => {
+  test("keeps the root manager at indent zero", () => {
+    expect(
+      resolveWorkflowPreviewIndent({
+        derivedIndent: 3,
+        inSubworkflowScope: true,
+        kind: "root-manager",
+      }),
+    ).toBe(0);
+  });
+
+  test("adds one indent level for nodes inside a subworkflow scope", () => {
+    expect(
+      resolveWorkflowPreviewIndent({
+        derivedIndent: 1,
+        inSubworkflowScope: true,
+        kind: "subworkflow-manager",
+      }),
+    ).toBe(2);
+  });
+
+  test("keeps root-level non-subworkflow nodes at their derived indent", () => {
+    expect(
+      resolveWorkflowPreviewIndent({
+        derivedIndent: 0,
+        inSubworkflowScope: false,
+        kind: "task",
+      }),
+    ).toBe(0);
+  });
+});
+
 describe("buildWorkflowRunStatusContent", () => {
   test("shows a pre-launch hint before any session exists", () => {
     const loaded = makeLoadedWorkflow({
@@ -432,7 +581,7 @@ describe("buildWorkflowRunStatusContent", () => {
               inputHash: "in",
               outputHash: "out",
               inputJson: "{}",
-              outputJson: "{\"summary\":\"done\"}",
+              outputJson: '{"summary":"done"}',
               createdAt: "2026-03-24T00:00:20.000Z",
             },
           ],
