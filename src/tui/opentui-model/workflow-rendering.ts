@@ -39,11 +39,14 @@ import {
   compactJson,
   findLatestNodeExecution,
   formatLogEntries,
+  formatOptionalTimestampForDisplay,
+  formatTimestampForDisplay,
   formatStatusLabel,
   hasVisibleText,
   resolveManagerSessionId,
   resolveNodeKind,
   resolveNodePurpose,
+  resolveSystemTimeZoneLabel,
   resolveOwningSubWorkflow,
   resolveWorkflowFinalResult,
   resolveWorkflowNodeVisualMetadata,
@@ -332,14 +335,17 @@ export function buildSessionSelectOptions(
       },
     ];
   }
-  return sessions.map((session) => ({
-    labelText: session.startedAt,
-    name: session.startedAt,
-    description: `run id: ${session.sessionId}`,
-    statusColor: resolveOpenTuiStatusColor(session.status),
-    statusLabel: formatStatusLabel(session.status),
-    value: session.sessionId,
-  }));
+  return sessions.map((session) => {
+    const startedAtLabel = formatTimestampForDisplay(session.startedAt);
+    return {
+      labelText: startedAtLabel,
+      name: startedAtLabel,
+      description: `run id: ${session.sessionId}`,
+      statusColor: resolveOpenTuiStatusColor(session.status),
+      statusLabel: formatStatusLabel(session.status),
+      value: session.sessionId,
+    };
+  });
 }
 
 export function buildNodeSelectOptions(
@@ -535,8 +541,13 @@ export function buildSummaryDetailHeaderText(input: {
   );
   return [
     `Workflow run: ${input.session.sessionId} status=${input.session.status}`,
+    `Timezone: ${resolveSystemTimeZoneLabel()}`,
+    `Workflow start: ${formatTimestampForDisplay(input.session.startedAt)}`,
+    `Workflow end: ${formatOptionalTimestampForDisplay(input.session.endedAt)}`,
     `Node: ${input.selectedExecution.nodeId} [${kind}] status=${input.selectedExecution.status}`,
     `Node execution: ${input.selectedExecution.nodeExecId}`,
+    `Node start: ${formatTimestampForDisplay(input.selectedExecution.startedAt)}`,
+    `Node end: ${formatTimestampForDisplay(input.selectedExecution.endedAt)}`,
     `Artifact dir: ${input.selectedExecution.artifactDir}`,
     `Backend session: ${input.selectedExecution.backendSessionId ?? "(none)"}`,
     `Manager session: ${managerSessionId ?? "(not a manager node)"}`,
@@ -581,6 +592,9 @@ export function buildWorkflowRunStatusContent(input: {
   return [
     `Workflow: ${session.workflowName}`,
     `Session: ${session.sessionId} status=${session.status}`,
+    `Timezone: ${resolveSystemTimeZoneLabel()}`,
+    `Started: ${formatTimestampForDisplay(session.startedAt)}`,
+    `Ended: ${formatOptionalTimestampForDisplay(session.endedAt)}`,
     `Current node: ${session.currentNodeId ?? "-"}`,
     `Queue: ${session.queue.join(",") || "-"}`,
     `Node executions: ${String(session.nodeExecutions.length)}`,

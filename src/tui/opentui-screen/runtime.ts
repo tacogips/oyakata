@@ -341,6 +341,8 @@ export async function runOpenTuiWorkflowApp(
     historyViewMode: historyViewMode(),
     screenMode,
   });
+  const historyRootReturnScreen = (): "definition" | "workspace" =>
+    historyReturnsToDefinition ? "definition" : "workspace";
 
   const isEnterKey = (key: KeyEvent): boolean => key.name === "return";
   const isCtrlMKey = (key: KeyEvent): boolean =>
@@ -1617,8 +1619,8 @@ export async function runOpenTuiWorkflowApp(
   };
 
   const moveFocusedList = async (delta: number): Promise<void> => {
-      const navigationMode =
-        screenMode === "history"
+    const navigationMode =
+      screenMode === "history"
         ? resolveHistoryPaneNavigationMode({
             navigation: navigationState(),
           })
@@ -2009,9 +2011,7 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "forward",
-              historyRootReturnScreen: historyReturnsToDefinition
-                ? "definition"
-                : "workspace",
+              historyRootReturnScreen: historyRootReturnScreen(),
               navigation: navigationState(),
             }),
           );
@@ -2031,9 +2031,7 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "revert",
-              historyRootReturnScreen: historyReturnsToDefinition
-                ? "definition"
-                : "workspace",
+              historyRootReturnScreen: historyRootReturnScreen(),
               navigation: navigationState(),
             }),
           );
@@ -2044,9 +2042,7 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "forward",
-              historyRootReturnScreen: historyReturnsToDefinition
-                ? "definition"
-                : "workspace",
+              historyRootReturnScreen: historyRootReturnScreen(),
               navigation: navigationState(),
             }),
           );
@@ -2077,9 +2073,7 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "revert",
-              historyRootReturnScreen: historyReturnsToDefinition
-                ? "definition"
-                : "workspace",
+              historyRootReturnScreen: historyRootReturnScreen(),
               navigation: navigationState(),
             }),
           );
@@ -2090,9 +2084,7 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "forward",
-              historyRootReturnScreen: historyReturnsToDefinition
-                ? "definition"
-                : "workspace",
+              historyRootReturnScreen: historyRootReturnScreen(),
               navigation: navigationState(),
             }),
           );
@@ -2259,9 +2251,7 @@ export async function runOpenTuiWorkflowApp(
         void executeDirectionalNavigationAction(
           resolveDirectionalNavigationAction({
             direction: "forward",
-            historyRootReturnScreen: historyReturnsToDefinition
-              ? "definition"
-              : "workspace",
+            historyRootReturnScreen: historyRootReturnScreen(),
             navigation: navigationState(),
           }),
         );
@@ -2282,9 +2272,7 @@ export async function runOpenTuiWorkflowApp(
         void executeDirectionalNavigationAction(
           resolveDirectionalNavigationAction({
             direction: "revert",
-            historyRootReturnScreen: historyReturnsToDefinition
-              ? "definition"
-              : "workspace",
+            historyRootReturnScreen: historyRootReturnScreen(),
             navigation: navigationState(),
           }),
         );

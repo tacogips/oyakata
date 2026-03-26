@@ -9,6 +9,8 @@ import type { NodePayload } from "../workflow/types";
 import { buildHistoryDetailPaneState } from "./opentui-detail-content";
 import {
   OPEN_TUI_EMPTY_SELECT_VALUE,
+  formatTimestampForDisplay,
+  resolveSystemTimeZoneLabel,
   type RuntimeSessionView,
 } from "./opentui-model";
 
@@ -237,6 +239,15 @@ describe("buildHistoryDetailPaneState", () => {
     expect(state.summaryHeaderVisible).toBe(true);
     expect(state.summaryHeaderText).toContain("Workflow run: sess-1");
     expect(state.summaryHeaderText).toContain("Node execution: nodeexec-1");
+    expect(state.summaryHeaderText).toContain(
+      `Timezone: ${resolveSystemTimeZoneLabel()}`,
+    );
+    expect(state.summaryHeaderText).toContain(
+      `Node start: ${formatTimestampForDisplay("2026-03-26T00:00:10.000Z")}`,
+    );
+    expect(state.summaryHeaderText).toContain(
+      `Node end: ${formatTimestampForDisplay("2026-03-26T00:00:20.000Z")}`,
+    );
     expect(state.summaryVisible).toBe(true);
     expect(state.textVisible).toBe(false);
     expect(state.summaryOptions[0]?.name).toBe("AI agent session (codex-agent)");
@@ -274,6 +285,95 @@ describe("buildHistoryDetailPaneState", () => {
     expect(state.textContent).toContain('"ok":true');
     expect(state.textContent).toContain("Mailbox outbox/output.json:");
     expect(state.textContent).toContain('"kind": "outbox"');
+  });
+
+  test("renders workflow logs with localized workflow timestamps", async () => {
+    const artifactDir = await createNodeExecutionArtifactDir();
+    const runtimeSessionView = makeRuntimeSessionView(artifactDir);
+    const state = await buildHistoryDetailPaneState({
+      detailMode: "session-logs",
+      detailViewerBody: "",
+      detailViewerTitle: "",
+      historyViewMode: "workflow",
+      inputDetection: {
+        mode: "json",
+        reason: "structured input",
+      },
+      loadedWorkflow: makeLoadedWorkflow({
+        id: "worker",
+        executionBackend: "codex-agent",
+        model: "gpt-5",
+        promptTemplate: "Do work",
+        variables: {},
+      }),
+      managerMessages: [],
+      runtimeSessionView,
+      selectedNodeExecution: runtimeSessionView.session.nodeExecutions[0],
+    });
+
+    expect(state.summaryVisible).toBe(false);
+    expect(state.textVisible).toBe(true);
+    expect(state.textContent).toContain("Workflow run logs for sess-1");
+    expect(state.textContent).toContain(
+      `Timezone: ${resolveSystemTimeZoneLabel()}`,
+    );
+    expect(state.textContent).toContain(
+      `Start datetime: ${formatTimestampForDisplay("2026-03-26T00:00:00.000Z")}`,
+    );
+    expect(state.textContent).toContain(
+      `End datetime: ${formatTimestampForDisplay("2026-03-26T00:01:00.000Z")}`,
+    );
+    expect(state.textContent).toContain(
+      formatTimestampForDisplay("2026-03-26T00:00:20.000Z"),
+    );
+  });
+
+  test("renders manager-session detail with localized timestamps", async () => {
+    const artifactDir = await createNodeExecutionArtifactDir();
+    const runtimeSessionView = makeRuntimeSessionView(artifactDir);
+    const state = await buildHistoryDetailPaneState({
+      detailMode: "manager",
+      detailViewerBody: "",
+      detailViewerTitle: "",
+      historyViewMode: "workflow",
+      inputDetection: {
+        mode: "json",
+        reason: "structured input",
+      },
+      loadedWorkflow: makeLoadedWorkflow({
+        id: "worker",
+        executionBackend: "codex-agent",
+        model: "gpt-5",
+        promptTemplate: "Do work",
+        variables: {},
+      }),
+      managerMessages: [
+        {
+          accepted: true,
+          createdAt: "2026-03-26T00:00:20.000Z",
+          managerMessageId: "mgrmsg-1",
+          managerNodeExecId: "nodeexec-1",
+          managerNodeId: "worker",
+          managerSessionId: "mgrsess-nodeexec-1",
+          parsedIntent: [{ kind: "planner-note" }],
+          workflowExecutionId: "sess-1",
+          workflowId: "demo",
+          message: "Proceed to the next step.",
+        },
+      ],
+      runtimeSessionView,
+      selectedNodeExecution: runtimeSessionView.session.nodeExecutions[0],
+    });
+
+    expect(state.summaryVisible).toBe(false);
+    expect(state.textVisible).toBe(true);
+    expect(state.textContent).toContain(
+      `Timezone: ${resolveSystemTimeZoneLabel()}`,
+    );
+    expect(state.textContent).toContain(
+      formatTimestampForDisplay("2026-03-26T00:00:20.000Z"),
+    );
+    expect(state.textContent).toContain("mgrmsg-1");
   });
 
   test("renders viewer content through the shared detail-pane state", async () => {

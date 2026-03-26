@@ -7,7 +7,6 @@ import type {
   NodeExecutionRecord,
   WorkflowSessionState,
 } from "../workflow/session";
-import type { RuntimeNodeLogEntry } from "../workflow/runtime-db";
 import type {
   DetailMode,
   DetailAgentSessionSelection,
@@ -19,10 +18,14 @@ import type {
 } from "./opentui-model";
 import {
   buildSummaryDetailHeaderText,
+  formatLogEntries,
+  formatOptionalTimestampForDisplay,
+  formatTimestampForDisplay,
   buildSummaryJsonSelectOptions,
   OPEN_TUI_EMPTY_SELECT_VALUE,
   resolveAgentSessionSummarySelection,
   resolveManagerSessionId,
+  resolveSystemTimeZoneLabel,
 } from "./opentui-model";
 
 export interface OpenTuiDetailSummarySelectOption {
@@ -73,25 +76,6 @@ async function readOptionalText(filePath: string): Promise<string | null> {
   } catch {
     return null;
   }
-}
-
-function formatLogEntries(
-  logEntries: readonly RuntimeNodeLogEntry[],
-  limit: number,
-): string {
-  if (logEntries.length === 0) {
-    return "(no logs)";
-  }
-  return logEntries
-    .slice(Math.max(0, logEntries.length - limit))
-    .map((entry) => {
-      const scope =
-        entry.nodeId === null
-          ? "workflow"
-          : `${entry.nodeId}${entry.nodeExecId === null ? "" : `/${entry.nodeExecId}`}`;
-      return `[${entry.at}] [${entry.level}] ${scope}: ${entry.message}`;
-    })
-    .join("\n");
 }
 
 function formatCommunications(
@@ -173,6 +157,9 @@ export async function buildDetailContent(input: {
   if (input.detailMode === "session-logs") {
     return [
       `Workflow run logs for ${session.sessionId}`,
+      `Timezone: ${resolveSystemTimeZoneLabel()}`,
+      `Start datetime: ${formatTimestampForDisplay(session.startedAt)}`,
+      `End datetime: ${formatOptionalTimestampForDisplay(session.endedAt)}`,
       "",
       formatLogEntries(sessionView.nodeLogs, 200),
     ].join("\n");
@@ -239,6 +226,7 @@ export async function buildDetailContent(input: {
     return [
       `Manager session for ${selectedExecution.nodeId} / ${selectedExecution.nodeExecId}`,
       `managerSessionId: ${managerSessionId ?? "(not a manager node)"}`,
+      `Timezone: ${resolveSystemTimeZoneLabel()}`,
       "",
       input.managerMessages.length === 0
         ? "(no manager-session messages)"
@@ -249,7 +237,7 @@ export async function buildDetailContent(input: {
                   ? "(empty message)"
                   : truncate(message.message, 600);
               return [
-                `- ${message.createdAt} ${message.managerMessageId}`,
+                `- ${formatTimestampForDisplay(message.createdAt)} ${message.managerMessageId}`,
                 `  accepted=${String(message.accepted)} intents=${compactJson(message.parsedIntent, 500)}`,
                 `  message=${summary}`,
               ].join("\n");

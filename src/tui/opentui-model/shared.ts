@@ -187,6 +187,42 @@ export function formatStatusLabel(status: string): string {
   return status.replace(/_/g, " ").toUpperCase();
 }
 
+function padTwoDigits(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function formatUtcOffset(offsetMinutes: number): string {
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absoluteMinutes = Math.abs(offsetMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+  return `UTC${sign}${padTwoDigits(hours)}:${padTwoDigits(minutes)}`;
+}
+
+export function resolveSystemTimeZoneLabel(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "system-local";
+}
+
+export function formatTimestampForDisplay(timestamp: string): string {
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp;
+  }
+  return (
+    `${parsed.getFullYear()}-${padTwoDigits(parsed.getMonth() + 1)}-${padTwoDigits(parsed.getDate())} ` +
+    `${padTwoDigits(parsed.getHours())}:${padTwoDigits(parsed.getMinutes())}:${padTwoDigits(parsed.getSeconds())} ` +
+    `${formatUtcOffset(-parsed.getTimezoneOffset())} (${resolveSystemTimeZoneLabel()})`
+  );
+}
+
+export function formatOptionalTimestampForDisplay(
+  timestamp: string | null | undefined,
+): string {
+  return timestamp === undefined || timestamp === null
+    ? "-"
+    : formatTimestampForDisplay(timestamp);
+}
+
 function formatNodeTypeLabel(nodeType: string): string {
   if (nodeType === "user-action") {
     return "USER ACTION";
@@ -443,7 +479,7 @@ export function formatLogEntries(
         entry.nodeId === null
           ? "workflow"
           : `${entry.nodeId}${entry.nodeExecId === null ? "" : `/${entry.nodeExecId}`}`;
-      return `[${entry.at}] [${entry.level}] ${scope}: ${entry.message}`;
+      return `[${formatTimestampForDisplay(entry.at)}] [${entry.level}] ${scope}: ${entry.message}`;
     })
     .join("\n");
 }
