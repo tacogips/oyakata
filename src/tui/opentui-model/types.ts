@@ -58,6 +58,24 @@ export type HistoryPaneNavigationMode = "list" | "scroll" | "typing";
 
 export type HistoryViewMode = "subworkflow" | "workflow";
 
+export interface OpenTuiNavigationState {
+  readonly detailMode: DetailMode;
+  readonly detailReturnPane: DetailReturnPane;
+  readonly editingInput: boolean;
+  readonly focusPane: FocusPane;
+  readonly historyViewMode: HistoryViewMode;
+  readonly screenMode: ScreenMode;
+}
+
+export interface OpenTuiShortcutEntry {
+  readonly compactLabel?: string;
+  readonly helpLabel: string;
+}
+
+export interface OpenTuiShortcutSection {
+  readonly entries: readonly OpenTuiShortcutEntry[];
+}
+
 export type OpenTuiDirectionalAction =
   | {
       readonly kind: "close-subworkflow";

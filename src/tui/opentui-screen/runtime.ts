@@ -66,6 +66,7 @@ import type {
   DetailReturnPane,
   FocusPane,
   HistoryViewMode,
+  OpenTuiNavigationState,
   RuntimeSessionView,
   ScreenMode,
   TuiWorkflowInputDetection,
@@ -311,6 +312,7 @@ export async function runOpenTuiWorkflowApp(
   let detailViewerTitle = "";
   let detailViewerBody = "";
   let subworkflowPath: string[] = [];
+  let historyReturnsToDefinition = false;
   let workflowFilterText = "";
   let workflowFilterTextBeforePopup = "";
   let workflowSelectionBeforePopup: string | undefined;
@@ -330,6 +332,15 @@ export async function runOpenTuiWorkflowApp(
     screenMode === "workspace"
       ? "Select a workflow, then open definition with enter/ctrl-m/l or start a new run with n."
       : "Loading TUI state...";
+
+  const navigationState = (): OpenTuiNavigationState => ({
+    detailMode,
+    detailReturnPane,
+    editingInput,
+    focusPane,
+    historyViewMode: historyViewMode(),
+    screenMode,
+  });
 
   const isEnterKey = (key: KeyEvent): boolean => key.name === "return";
   const isCtrlMKey = (key: KeyEvent): boolean =>
@@ -494,18 +505,14 @@ export async function runOpenTuiWorkflowApp(
     lastStatus = message;
     helpText.content = buildWorkflowHistoryStatusMessage({
       busy,
-      detailMode,
-      editingInput,
       filterText: workflowFilterText,
-      focusPane,
-      historyViewMode: historyViewMode(),
       inputSyntax: describeTuiWorkflowInputSyntax(
         inputTextarea.plainText,
         workflowInputDetection.mode,
       ),
       matchesCount: filteredWorkflowNames.length,
       message,
-      screenMode,
+      navigation: navigationState(),
       workflowCount: workflowNames.length,
       workflowInputDetection,
       ...(loadedWorkflow?.workflowName === undefined
@@ -515,6 +522,7 @@ export async function runOpenTuiWorkflowApp(
   };
 
   const render = async (): Promise<void> => {
+    const navigation = navigationState();
     const preferredSubworkflowNodeId = selectedSubworkflowNodeId();
     const preferredChildSubworkflowId = selectedChildSubworkflowId();
     const preferredDefinitionNodeId = selectedDefinitionNodeId();
@@ -564,8 +572,7 @@ export async function runOpenTuiWorkflowApp(
         : { selectedWorkflowName: currentSelectedWorkflowName }),
     });
     footerText.content = buildOpenTuiFooterShortcutRow({
-      historyViewMode: historyViewMode(),
-      screenMode,
+      navigation,
     });
     historyHeaderText.content = buildWorkflowHistoryHeader(
       loadedWorkflow,
@@ -1256,6 +1263,7 @@ export async function runOpenTuiWorkflowApp(
   const openWorkspaceScreen = async (): Promise<void> => {
     screenMode = "workspace";
     subworkflowPath = [];
+    historyReturnsToDefinition = false;
     editingInput = false;
     confirmPopupOpen = false;
     filterPopupOpen = false;
@@ -1277,6 +1285,7 @@ export async function runOpenTuiWorkflowApp(
     await withBusy(`Loading workflow '${workflowName}'`, async () => {
       await refreshWorkflow(workflowName);
       subworkflowPath = [];
+      historyReturnsToDefinition = false;
       screenMode = "definition";
       detailMode = "summary";
       editingInput = false;
@@ -1299,6 +1308,7 @@ export async function runOpenTuiWorkflowApp(
     await withBusy(`Loading workflow '${workflowName}'`, async () => {
       await refreshWorkflow(workflowName, preferredSessionId);
       subworkflowPath = [];
+      historyReturnsToDefinition = screenMode === "definition";
       screenMode = "history";
       detailMode = "summary";
       editingInput = false;
@@ -1319,6 +1329,7 @@ export async function runOpenTuiWorkflowApp(
     await withBusy(`Loading workflow '${workflowName}'`, async () => {
       await refreshWorkflow(workflowName);
       subworkflowPath = [];
+      historyReturnsToDefinition = false;
       resetRunState();
       screenMode = "run";
       editingInput = true;
@@ -1606,9 +1617,11 @@ export async function runOpenTuiWorkflowApp(
   };
 
   const moveFocusedList = async (delta: number): Promise<void> => {
-    const navigationMode =
-      screenMode === "history"
-        ? resolveHistoryPaneNavigationMode({ detailMode, focusPane })
+      const navigationMode =
+        screenMode === "history"
+        ? resolveHistoryPaneNavigationMode({
+            navigation: navigationState(),
+          })
         : "list";
     if (navigationMode === "scroll") {
       detailScroll.scrollBy(delta, "content");
@@ -1996,9 +2009,10 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "forward",
-              focusPane,
-              historyViewMode: historyViewMode(),
-              screenMode,
+              historyRootReturnScreen: historyReturnsToDefinition
+                ? "definition"
+                : "workspace",
+              navigation: navigationState(),
             }),
           );
           return;
@@ -2017,9 +2031,10 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "revert",
-              focusPane,
-              historyViewMode: historyViewMode(),
-              screenMode,
+              historyRootReturnScreen: historyReturnsToDefinition
+                ? "definition"
+                : "workspace",
+              navigation: navigationState(),
             }),
           );
           return;
@@ -2029,9 +2044,10 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "forward",
-              focusPane,
-              historyViewMode: historyViewMode(),
-              screenMode,
+              historyRootReturnScreen: historyReturnsToDefinition
+                ? "definition"
+                : "workspace",
+              navigation: navigationState(),
             }),
           );
           return;
@@ -2061,9 +2077,10 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "revert",
-              focusPane,
-              historyViewMode: historyViewMode(),
-              screenMode,
+              historyRootReturnScreen: historyReturnsToDefinition
+                ? "definition"
+                : "workspace",
+              navigation: navigationState(),
             }),
           );
           return;
@@ -2073,9 +2090,10 @@ export async function runOpenTuiWorkflowApp(
           void executeDirectionalNavigationAction(
             resolveDirectionalNavigationAction({
               direction: "forward",
-              focusPane,
-              historyViewMode: historyViewMode(),
-              screenMode,
+              historyRootReturnScreen: historyReturnsToDefinition
+                ? "definition"
+                : "workspace",
+              navigation: navigationState(),
             }),
           );
           return;
@@ -2111,11 +2129,7 @@ export async function runOpenTuiWorkflowApp(
         const revertAction =
           screenMode === "history"
             ? resolveHistoryRevertAction({
-                detailMode,
-                detailReturnPane,
-                editingInput,
-                focusPane,
-                historyViewMode: historyViewMode(),
+                navigation: navigationState(),
               })
             : { kind: "none" as const };
         if (revertAction.kind !== "none") {
@@ -2143,8 +2157,7 @@ export async function runOpenTuiWorkflowApp(
         key.preventDefault();
         const nextFocus = resolveTabFocusTarget({
           direction: key.shift ? "previous" : "next",
-          focusPane,
-          screenMode,
+          navigation: navigationState(),
         });
         if (nextFocus !== undefined) {
           applyFocus(nextFocus);
@@ -2154,12 +2167,10 @@ export async function runOpenTuiWorkflowApp(
 
       if (key.name === "down" || (key.name === "j" && !key.ctrl)) {
         const internallyHandledListId = resolveOpenTuiInternallyHandledListId({
-          detailMode,
+          navigation: navigationState(),
           detailSummarySelectId: DETAIL_SUMMARY_SELECT_ID,
           definitionNodeSelectId: DEFINITION_NODE_SELECT_ID,
-          focusPane,
           nodeSelectId: NODE_SELECT_ID,
-          screenMode,
           sessionSelectId: SESSION_SELECT_ID,
           workflowSelectId: WORKFLOW_SELECT_ID,
         });
@@ -2179,12 +2190,10 @@ export async function runOpenTuiWorkflowApp(
       }
       if (key.name === "up" || (key.name === "k" && !key.ctrl)) {
         const internallyHandledListId = resolveOpenTuiInternallyHandledListId({
-          detailMode,
+          navigation: navigationState(),
           detailSummarySelectId: DETAIL_SUMMARY_SELECT_ID,
           definitionNodeSelectId: DEFINITION_NODE_SELECT_ID,
-          focusPane,
           nodeSelectId: NODE_SELECT_ID,
-          screenMode,
           sessionSelectId: SESSION_SELECT_ID,
           workflowSelectId: WORKFLOW_SELECT_ID,
         });
@@ -2209,8 +2218,7 @@ export async function runOpenTuiWorkflowApp(
           return;
         }
         const advanceAction = resolveHistoryAdvanceAction({
-          detailMode,
-          focusPane,
+          navigation: navigationState(),
         });
         switch (advanceAction.kind) {
           case "load-session-selection":
@@ -2251,9 +2259,10 @@ export async function runOpenTuiWorkflowApp(
         void executeDirectionalNavigationAction(
           resolveDirectionalNavigationAction({
             direction: "forward",
-            focusPane,
-            historyViewMode: historyViewMode(),
-            screenMode,
+            historyRootReturnScreen: historyReturnsToDefinition
+              ? "definition"
+              : "workspace",
+            navigation: navigationState(),
           }),
         );
         return;
@@ -2273,9 +2282,10 @@ export async function runOpenTuiWorkflowApp(
         void executeDirectionalNavigationAction(
           resolveDirectionalNavigationAction({
             direction: "revert",
-            focusPane,
-            historyViewMode: historyViewMode(),
-            screenMode,
+            historyRootReturnScreen: historyReturnsToDefinition
+              ? "definition"
+              : "workspace",
+            navigation: navigationState(),
           }),
         );
         return;

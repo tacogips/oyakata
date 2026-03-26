@@ -4,6 +4,7 @@ import type { RuntimeSessionSummary } from "../workflow/runtime-db";
 import type {
   FocusPane,
   HistoryViewMode,
+  OpenTuiNavigationState,
   OpenTuiCopyTargetInput,
   RuntimeSessionView,
   ScreenMode,
@@ -28,9 +29,9 @@ export interface OpenTuiPopupState {
 }
 
 export interface OpenTuiScreenState {
-  readonly detailMode: "inbox" | "manager" | "outbox" | "session-logs" | "summary" | "viewer";
-  readonly detailReturnPane: "nodes" | "sessions";
-  readonly editingInput: boolean;
+  readonly detailMode: OpenTuiNavigationState["detailMode"];
+  readonly detailReturnPane: OpenTuiNavigationState["detailReturnPane"];
+  readonly editingInput: OpenTuiNavigationState["editingInput"];
   readonly focusPane: FocusPane;
   readonly lastStatus: string;
   readonly popups: OpenTuiPopupState;

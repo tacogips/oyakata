@@ -10,6 +10,7 @@ import {
   type HistoryPaneLabels,
   type HistoryPaneNavigationMode,
   type HistoryViewMode,
+  type OpenTuiNavigationState,
   type OpenTuiCopyTarget,
   type OpenTuiCopyTargetInput,
   type OpenTuiDirectionalAction,
@@ -29,30 +30,28 @@ export function isOpenTuiEmptySelectValue(value: unknown): boolean {
 }
 
 export function resolveHistoryPaneNavigationMode(input: {
-  readonly detailMode: DetailMode;
-  readonly focusPane: FocusPane;
+  readonly navigation: Pick<OpenTuiNavigationState, "detailMode" | "focusPane">;
 }): HistoryPaneNavigationMode {
-  if (input.focusPane === "input") {
+  if (input.navigation.focusPane === "input") {
     return "typing";
   }
-  if (input.focusPane === "detail") {
-    return input.detailMode === "summary" ? "list" : "scroll";
+  if (input.navigation.focusPane === "detail") {
+    return input.navigation.detailMode === "summary" ? "list" : "scroll";
   }
   return "list";
 }
 
 export function resolveTabFocusTarget(input: {
   readonly direction: "next" | "previous";
-  readonly focusPane: FocusPane;
-  readonly screenMode: ScreenMode;
+  readonly navigation: Pick<OpenTuiNavigationState, "focusPane" | "screenMode">;
 }): FocusPane | undefined {
-  if (input.screenMode === "definition") {
+  if (input.navigation.screenMode === "definition") {
     if (input.direction === "next") {
-      return input.focusPane === "definition" ? "nodes" : "definition";
+      return input.navigation.focusPane === "definition" ? "nodes" : "definition";
     }
-    return input.focusPane === "nodes" ? "definition" : "nodes";
+    return input.navigation.focusPane === "nodes" ? "definition" : "nodes";
   }
-  if (input.screenMode !== "history") {
+  if (input.navigation.screenMode !== "history") {
     return undefined;
   }
   if (input.direction === "next") {
@@ -65,9 +64,9 @@ export function resolveTabFocusTarget(input: {
       detail: "input",
       input: "sessions",
     };
-    return input.focusPane === "definition"
+    return input.navigation.focusPane === "definition"
       ? undefined
-      : nextFocus[input.focusPane];
+      : nextFocus[input.navigation.focusPane];
   }
   const previousFocus: Readonly<
     Record<Exclude<FocusPane, "definition">, FocusPane>
@@ -78,48 +77,50 @@ export function resolveTabFocusTarget(input: {
     detail: "nodes",
     input: "detail",
   };
-  return input.focusPane === "definition"
+  return input.navigation.focusPane === "definition"
     ? undefined
-    : previousFocus[input.focusPane];
+    : previousFocus[input.navigation.focusPane];
 }
 
 export function resolveDirectionalNavigationAction(input: {
   readonly direction: "forward" | "revert";
-  readonly focusPane: FocusPane;
-  readonly historyViewMode: HistoryViewMode;
-  readonly screenMode: ScreenMode;
+  readonly historyRootReturnScreen?: "definition" | "workspace";
+  readonly navigation: Pick<
+    OpenTuiNavigationState,
+    "focusPane" | "historyViewMode" | "screenMode"
+  >;
 }): OpenTuiDirectionalAction {
-  if (input.screenMode === "workspace") {
+  if (input.navigation.screenMode === "workspace") {
     return input.direction === "forward"
       ? { kind: "open-definition" }
       : { kind: "none" };
   }
 
-  if (input.screenMode === "definition") {
+  if (input.navigation.screenMode === "definition") {
     return input.direction === "forward"
       ? { kind: "open-history" }
       : { kind: "open-workspace" };
   }
 
-  if (input.screenMode === "run") {
+  if (input.navigation.screenMode === "run") {
     return input.direction === "forward"
       ? { kind: "open-history" }
       : { kind: "open-workspace" };
   }
 
   if (input.direction === "forward") {
-    if (input.focusPane === "sessions") {
+    if (input.navigation.focusPane === "sessions") {
       return {
         kind: "focus",
         focusPane: "nodes",
         nextDetailMode: "summary",
         status:
-          input.historyViewMode === "workflow"
+          input.navigation.historyViewMode === "workflow"
             ? "Focused nodes for the selected workflow run"
             : "Focused child workflow list",
       };
     }
-    if (input.focusPane === "nodes") {
+    if (input.navigation.focusPane === "nodes") {
       return {
         kind: "open-subworkflow",
       };
@@ -127,21 +128,23 @@ export function resolveDirectionalNavigationAction(input: {
     return { kind: "none" };
   }
 
-  if (input.focusPane === "nodes") {
+  if (input.navigation.focusPane === "nodes") {
     return {
       kind: "focus",
       focusPane: "sessions",
       nextDetailMode: "summary",
       status:
-        input.historyViewMode === "workflow"
+        input.navigation.historyViewMode === "workflow"
           ? "Focused workflow runs"
           : "Focused workflow nodes",
     };
   }
-  if (input.focusPane === "sessions") {
-    return input.historyViewMode === "subworkflow"
+  if (input.navigation.focusPane === "sessions") {
+    return input.navigation.historyViewMode === "subworkflow"
       ? { kind: "close-subworkflow" }
-      : { kind: "open-workspace" };
+      : input.historyRootReturnScreen === "definition"
+        ? { kind: "open-definition" }
+        : { kind: "open-workspace" };
   }
   return { kind: "none" };
 }
@@ -229,31 +232,37 @@ export function resolvePopupScrollDelta(input: {
 }
 
 export function resolveOpenTuiInternallyHandledListId(input: {
-  readonly detailMode: DetailMode;
+  readonly navigation: Pick<
+    OpenTuiNavigationState,
+    "detailMode" | "focusPane" | "screenMode"
+  >;
   readonly detailSummarySelectId: string;
-  readonly focusPane: FocusPane;
   readonly definitionNodeSelectId: string;
   readonly nodeSelectId: string;
-  readonly screenMode: ScreenMode;
   readonly sessionSelectId: string;
   readonly workflowSelectId: string;
 }): string | undefined {
-  if (input.screenMode === "workspace") {
+  if (input.navigation.screenMode === "workspace") {
     return input.workflowSelectId;
   }
-  if (input.screenMode === "definition") {
-    return input.focusPane === "nodes" ? input.definitionNodeSelectId : undefined;
+  if (input.navigation.screenMode === "definition") {
+    return input.navigation.focusPane === "nodes"
+      ? input.definitionNodeSelectId
+      : undefined;
   }
-  if (input.screenMode !== "history") {
+  if (input.navigation.screenMode !== "history") {
     return undefined;
   }
-  if (input.focusPane === "sessions") {
+  if (input.navigation.focusPane === "sessions") {
     return input.sessionSelectId;
   }
-  if (input.focusPane === "nodes") {
+  if (input.navigation.focusPane === "nodes") {
     return input.nodeSelectId;
   }
-  if (input.focusPane === "detail" && input.detailMode === "summary") {
+  if (
+    input.navigation.focusPane === "detail" &&
+    input.navigation.detailMode === "summary"
+  ) {
     return input.detailSummarySelectId;
   }
   return undefined;
@@ -441,41 +450,43 @@ export function resolveNodeDetailEscape(input: {
 }
 
 export function resolveHistoryAdvanceAction(input: {
-  readonly detailMode: DetailMode;
-  readonly focusPane: FocusPane;
+  readonly navigation: Pick<OpenTuiNavigationState, "detailMode" | "focusPane">;
 }): OpenTuiHistoryAdvanceAction {
-  if (input.focusPane === "sessions") {
+  if (input.navigation.focusPane === "sessions") {
     return {
       kind: "load-session-selection",
       focusAfterSessionLoad: "detail",
     };
   }
-  if (input.focusPane === "nodes") {
+  if (input.navigation.focusPane === "nodes") {
     return { kind: "load-node-selection" };
   }
-  if (input.focusPane === "detail") {
-    return input.detailMode === "summary"
+  if (input.navigation.focusPane === "detail") {
+    return input.navigation.detailMode === "summary"
       ? { kind: "open-detail-summary-selection" }
       : { kind: "none" };
   }
-  if (input.focusPane === "input") {
+  if (input.navigation.focusPane === "input") {
     return { kind: "start-input-editing" };
   }
   return { kind: "none" };
 }
 
 export function resolveHistoryRevertAction(input: {
-  readonly detailMode: DetailMode;
-  readonly detailReturnPane: DetailReturnPane;
-  readonly editingInput: boolean;
-  readonly focusPane: FocusPane;
-  readonly historyViewMode: HistoryViewMode;
+  readonly navigation: Pick<
+    OpenTuiNavigationState,
+    | "detailMode"
+    | "detailReturnPane"
+    | "editingInput"
+    | "focusPane"
+    | "historyViewMode"
+  >;
 }): OpenTuiHistoryRevertAction {
-  if (input.focusPane === "detail") {
+  if (input.navigation.focusPane === "detail") {
     const escapeResult = resolveNodeDetailEscape({
-      detailMode: input.detailMode,
-      detailReturnPane: input.detailReturnPane,
-      historyViewMode: input.historyViewMode,
+      detailMode: input.navigation.detailMode,
+      detailReturnPane: input.navigation.detailReturnPane,
+      historyViewMode: input.navigation.historyViewMode,
     });
     return {
       kind: "focus",
@@ -484,7 +495,7 @@ export function resolveHistoryRevertAction(input: {
       status: escapeResult.status,
     };
   }
-  if (input.focusPane === "input" && input.editingInput) {
+  if (input.navigation.focusPane === "input" && input.navigation.editingInput) {
     return {
       kind: "finish-input-editing",
       status: "Input edit finished",

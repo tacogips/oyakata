@@ -1,8 +1,10 @@
 import type {
   FocusPane,
   HistoryPaneLabels,
-  HistoryViewMode,
+  OpenTuiNavigationState,
   OpenTuiPaneChromeState,
+  OpenTuiShortcutEntry,
+  OpenTuiShortcutSection,
   ScreenMode,
   TuiWorkflowInputDetection,
   TuiWorkflowInputMode,
@@ -19,6 +21,163 @@ function paneBorderColor(active: boolean): string {
 
 function paneBackgroundColor(active: boolean): string {
   return active ? "#101a22" : "transparent";
+}
+
+function shortcut(
+  compactLabel: string | undefined,
+  helpLabel: string,
+): OpenTuiShortcutEntry {
+  return compactLabel === undefined ? { helpLabel } : { compactLabel, helpLabel };
+}
+
+function formatCompactShortcutSection(section: OpenTuiShortcutSection): string {
+  return section.entries
+    .flatMap((entry) =>
+      entry.compactLabel === undefined ? [] : [entry.compactLabel],
+    )
+    .join("  ");
+}
+
+function formatHelpShortcutSection(section: OpenTuiShortcutSection): string {
+  return section.entries.map((entry) => entry.helpLabel).join("  ");
+}
+
+export function resolveOpenTuiShortcutSections(input: {
+  readonly navigation: Pick<OpenTuiNavigationState, "historyViewMode" | "screenMode">;
+}): readonly OpenTuiShortcutSection[] {
+  if (input.navigation.screenMode === "workspace") {
+    return [
+      {
+        entries: [
+          shortcut("j/k move", "j/k: move"),
+          shortcut("/ filter", "/: filter"),
+          shortcut(
+            "enter/ctrl-m/l definition",
+            "enter/ctrl-m/l: definition",
+          ),
+          shortcut("n new-run", "n: new run"),
+          shortcut("y copy workflow id", "y: copy workflow id"),
+          shortcut("r refresh", "r: refresh"),
+          shortcut("? help", "?: help"),
+          shortcut("q quit", "q: quit"),
+        ],
+      },
+    ];
+  }
+
+  if (input.navigation.screenMode === "definition") {
+    return [
+      {
+        entries: [
+          shortcut(
+            "tab/shift-tab cycle panes",
+            "tab/shift-tab: cycle definition <-> nodes",
+          ),
+          shortcut("j/k or arrows move/scroll", "j/k or arrows: scroll/move in the focused pane"),
+        ],
+      },
+      {
+        entries: [
+          shortcut(
+            "enter/ctrl-m node popup",
+            "nodes: enter/ctrl-m opens the node-definition popup",
+          ),
+          shortcut("l history", "l: history"),
+          shortcut("n new-run", "n: new run"),
+          shortcut("h workspace", "h: workspace"),
+        ],
+      },
+      {
+        entries: [
+          shortcut("y copy workflow id", "y: copy workflow id"),
+          shortcut("r refresh", "r: refresh"),
+          shortcut("? help", "?: help"),
+          shortcut("q quit", "q: quit"),
+        ],
+      },
+    ];
+  }
+
+  if (input.navigation.screenMode === "run") {
+    return [
+      {
+        entries: [
+          shortcut(undefined, "Type into the input editor."),
+          shortcut("enter/ctrl-m confirm run", "enter/ctrl-m: confirm run"),
+          shortcut("f format JSON", "f: format JSON"),
+          shortcut("m mode", "m: toggle input mode"),
+        ],
+      },
+      {
+        entries: [
+          shortcut("l history", "l: open history"),
+          shortcut("h workspace", "h: workspace"),
+          shortcut("r refresh", "r: refresh status"),
+          shortcut("? help", "?: help"),
+          shortcut("q quit", "q: quit"),
+        ],
+      },
+    ];
+  }
+
+  const historyFooterForward =
+    input.navigation.historyViewMode === "workflow"
+      ? "l runs->nodes/subworkflow"
+      : "l nodes->list/child";
+  const historyHelpForward =
+    input.navigation.historyViewMode === "workflow"
+      ? "l: workflow runs -> nodes, subworkflow row -> subworkflow view"
+      : "l: workflow nodes -> workflow list, workflow list -> child subworkflow";
+  const historyFooterRevert =
+    input.navigation.historyViewMode === "workflow"
+      ? "h nodes->runs/parent"
+      : "h list->nodes/parent";
+  const historyHelpRevert =
+    input.navigation.historyViewMode === "workflow"
+      ? "h: nodes -> workflow runs, workflow runs -> workspace"
+      : "h: workflow list -> workflow nodes, workflow nodes -> parent view";
+  return [
+    {
+      entries: [
+        shortcut("tab/shift-tab cycle panes", "tab/shift-tab: cycle sessions -> nodes -> detail -> input"),
+        shortcut("j/k or arrows move/scroll", "j/k or arrows: move/scroll"),
+        shortcut("enter/ctrl-m select/open", "enter/ctrl-m: load selection"),
+        shortcut("e edit", "e: edit input"),
+        shortcut("f format", "f: format JSON"),
+        shortcut("m mode", "m: toggle input mode"),
+      ],
+    },
+    {
+      entries: [
+        shortcut(
+          undefined,
+          "nodes: enter/ctrl-m to node detail",
+        ),
+        shortcut(
+          undefined,
+          "node detail: j/k or arrows stay in-pane, enter/ctrl-m opens the selected JSON viewer or AI session popup, esc closes in-pane viewers before returning to the opener",
+        ),
+      ],
+    },
+    {
+      entries: [
+        shortcut("n new-run", "n: open new-run screen"),
+        shortcut("R rerun", "R: rerun selected node"),
+        shortcut("u resume", "u: resume selected session"),
+        shortcut("y copy id", "y: copy focused id"),
+        shortcut("i/o/g/a/s detail", "i/o/g/a/s: change detail view"),
+      ],
+    },
+    {
+      entries: [
+        shortcut(historyFooterForward, historyHelpForward),
+        shortcut(historyFooterRevert, historyHelpRevert),
+        shortcut("r refresh", "r: refresh"),
+        shortcut("? help", "?: help"),
+        shortcut("q quit", "q: quit"),
+      ],
+    },
+  ];
 }
 
 export function resolveOpenTuiPaneChrome(input: {
@@ -152,54 +311,50 @@ export function resolveOpenTuiPaneChrome(input: {
 
 export function buildWorkflowHistoryStatusMessage(input: {
   readonly busy: boolean;
-  readonly detailMode: import("./types").DetailMode;
-  readonly editingInput: boolean;
   readonly filterText: string;
-  readonly focusPane: FocusPane;
-  readonly historyViewMode: HistoryViewMode;
   readonly inputSyntax: TuiWorkflowInputSyntax;
   readonly matchesCount: number;
   readonly message: string;
-  readonly screenMode: ScreenMode;
+  readonly navigation: OpenTuiNavigationState;
   readonly workflowCount: number;
   readonly workflowInputDetection: TuiWorkflowInputDetection;
   readonly workflowName?: string;
 }): string {
-  if (input.screenMode === "workspace") {
+  const shortcutSections = resolveOpenTuiShortcutSections({
+    navigation: input.navigation,
+  });
+  if (input.navigation.screenMode === "workspace") {
     return [
       input.message,
       "",
       `Screen=workspace  Filter=${input.filterText.length === 0 ? "(none)" : input.filterText}  Matches=${String(
         input.matchesCount,
       )}/${String(input.workflowCount)}  Busy=${String(input.busy)}`,
-      "j/k: move  /: filter  y: copy workflow id  enter/ctrl-m/l: definition  n: new run  r: refresh  ?: help  q: quit",
+      ...shortcutSections.map(formatHelpShortcutSection),
       "",
       "Press q to close this popup.",
     ].join("\n");
   }
-  if (input.screenMode === "definition") {
+  if (input.navigation.screenMode === "definition") {
     return [
       input.message,
       "",
-      `Screen=definition  Workflow=${input.workflowName ?? "-"}  Focus=${input.focusPane}  Busy=${String(
+      `Screen=definition  Workflow=${input.workflowName ?? "-"}  Focus=${input.navigation.focusPane}  Busy=${String(
         input.busy,
       )}`,
-      "tab/shift-tab: cycle definition <-> nodes  j/k or arrows: scroll/move in the focused pane",
-      "nodes: enter/ctrl-m opens the node-definition popup  l: history  n: new run  h: workspace",
-      "r: refresh  ?: help  q: quit",
+      ...shortcutSections.map(formatHelpShortcutSection),
       "",
       "Press q to close this popup.",
     ].join("\n");
   }
-  if (input.screenMode === "run") {
+  if (input.navigation.screenMode === "run") {
     return [
       input.message,
       "",
       `Screen=run  Workflow=${input.workflowName ?? "-"}  InputMode=${input.workflowInputDetection.mode}  InputSyntax=${input.inputSyntax.summary}  Busy=${String(
         input.busy,
       )}`,
-      "Type into the input editor. enter/ctrl-m: confirm run  f: format JSON  m: toggle input mode",
-      "l: open history  h: workspace  r: refresh status  ?: help  q: quit",
+      ...shortcutSections.map(formatHelpShortcutSection),
       "",
       "Press q to close this popup.",
     ].join("\n");
@@ -207,86 +362,23 @@ export function buildWorkflowHistoryStatusMessage(input: {
   return [
     input.message,
     "",
-    `Screen=history/${input.historyViewMode}  Focus=${input.focusPane}  Detail=${input.detailMode}  InputMode=${input.workflowInputDetection.mode}  Editing=${String(
-      input.editingInput,
+    `Screen=history/${input.navigation.historyViewMode}  Focus=${input.navigation.focusPane}  Detail=${input.navigation.detailMode}  InputMode=${input.workflowInputDetection.mode}  Editing=${String(
+      input.navigation.editingInput,
     )}  Busy=${String(input.busy)}`,
     `Input syntax=${input.inputSyntax.summary}`,
-    "tab/shift-tab: cycle sessions -> nodes -> detail -> input  enter/ctrl-m: load selection  e: edit input  f: format JSON  m: toggle input mode",
-    "nodes: enter/ctrl-m to node detail  node detail: j/k or arrows stay in-pane, enter/ctrl-m opens the selected JSON viewer or AI session popup, esc closes in-pane viewers before returning to the opener",
-    "n: open new-run screen  y: copy focused id  R: rerun selected node  u: resume selected session  i/o/g/a/s: change detail view",
-    input.historyViewMode === "workflow"
-      ? "l: workflow runs -> nodes, subworkflow row -> subworkflow view  h: nodes -> workflow runs, workflow runs -> workspace  r: refresh  ?: help  q: quit"
-      : "l: workflow nodes -> workflow list, workflow list -> child subworkflow  h: workflow list -> workflow nodes, workflow nodes -> parent view  r: refresh  ?: help  q: quit",
+    ...shortcutSections.map(formatHelpShortcutSection),
     "",
     "Press q to close this popup.",
   ].join("\n");
 }
 
 export function buildOpenTuiFooterShortcutRow(input: {
-  readonly historyViewMode: HistoryViewMode;
-  readonly screenMode: ScreenMode;
+  readonly navigation: Pick<OpenTuiNavigationState, "historyViewMode" | "screenMode">;
 }): string {
-  if (input.screenMode === "workspace") {
-    return [
-      "j/k move",
-      "/ filter",
-      "enter/ctrl-m/l definition",
-      "n new-run",
-      "y copy workflow id",
-      "r refresh",
-      "? help",
-      "q quit",
-    ].join("  ");
-  }
-
-  if (input.screenMode === "definition") {
-    return [
-      "tab/shift-tab cycle panes",
-      "j/k or arrows move/scroll",
-      "enter/ctrl-m node popup",
-      "l history",
-      "n new-run",
-      "h workspace",
-      "y copy workflow id",
-      "r refresh",
-      "? help",
-      "q quit",
-    ].join("  ");
-  }
-
-  if (input.screenMode === "run") {
-    return [
-      "enter/ctrl-m confirm run",
-      "m mode",
-      "f format JSON",
-      "l history",
-      "h workspace",
-      "r refresh",
-      "? help",
-      "q quit",
-    ].join("  ");
-  }
-
-  return [
-    "tab/shift-tab cycle panes",
-    "j/k or arrows move/scroll",
-    "enter/ctrl-m select/open",
-    input.historyViewMode === "workflow"
-      ? "l runs->nodes/subworkflow"
-      : "l nodes->list/child",
-    input.historyViewMode === "workflow"
-      ? "h nodes->runs/workspace"
-      : "h list->nodes/parent",
-    "e edit",
-    "m mode",
-    "f format",
-    "i/o/g/a/s detail",
-    "n new-run",
-    "R rerun",
-    "u resume",
-    "y copy id",
-    "r refresh",
-    "? help",
-    "q quit",
-  ].join("  ");
+  return resolveOpenTuiShortcutSections({
+    navigation: input.navigation,
+  })
+    .map(formatCompactShortcutSection)
+    .filter((line) => line.length > 0)
+    .join("  ");
 }
