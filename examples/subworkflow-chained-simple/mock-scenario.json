@@ -7,7 +7,7 @@
     },
     "payload": {
       "stage": "root-dispatch",
-      "policy": "sequential-subworkflows"
+      "policy": "sequential-lanes"
     }
   },
   "alpha-manager": {
@@ -57,7 +57,7 @@
       "token": "alpha-token-1",
       "status": "ready",
       "notes": [
-        "alpha-lane published output for beta-lane inputSources"
+        "alpha-lane published output for the next ordered beta lane"
       ]
     }
   },
@@ -90,7 +90,7 @@
     },
     "payload": {
       "answer": "beta stage consumed alpha output.",
-      "detail": "chained sub-workflow demo"
+      "detail": "chained lane demo"
     }
   },
   "beta-output": {
@@ -100,10 +100,10 @@
       "always": true
     },
     "payload": {
-      "summary": "Chained sub-workflow example completed.",
+      "summary": "Chained lane example completed.",
       "status": "ready",
       "notes": [
-        "beta-lane followed alpha-lane via sub-workflow-output input source"
+        "beta-lane followed alpha-lane in ordered node flow"
       ]
     }
   }

@@ -1,178 +1,59 @@
 {
   "workflowId": "subworkflow-chained-simple",
-  "description": "Minimal runnable bundle: root manager orchestrates two plain sub-workflows; the second lane consumes the first lane's output via inputSources type sub-workflow-output.",
+  "description": "Minimal runnable bundle authored as an ordered node list with two sequential grouped lanes, where beta consumes the published result from alpha.",
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
   },
   "prompts": {
-    "divedraPromptTemplate": "Coordinate {{workflowId}} as two sequential sub-workflow lanes. Start alpha-lane when human input is ready; after alpha-output succeeds, start beta-lane which receives the prior lane's published output.",
+    "divedraPromptTemplate": "Coordinate {{workflowId}} as two sequential grouped lanes. Run alpha first; after alpha-output succeeds, run beta and pass along the prior published result.",
     "workerSystemPromptTemplate": "Work only on the current node responsibility and return concise business JSON."
   },
-  "managerNodeId": "divedra-manager",
-  "subWorkflows": [
-    {
-      "id": "alpha-lane",
-      "description": "Normalize human input and produce an intermediate token for the next lane.",
-      "managerNodeId": "alpha-manager",
-      "inputNodeId": "alpha-input",
-      "outputNodeId": "alpha-output",
-      "nodeIds": [
-        "alpha-manager",
-        "alpha-input",
-        "alpha-worker",
-        "alpha-output"
-      ],
-      "inputSources": [
-        {
-          "type": "human-input"
-        }
-      ],
-      "block": {
-        "type": "plain"
-      }
-    },
-    {
-      "id": "beta-lane",
-      "description": "Consume alpha-lane's output and produce the final workflow result.",
-      "managerNodeId": "beta-manager",
-      "inputNodeId": "beta-input",
-      "outputNodeId": "beta-output",
-      "nodeIds": [
-        "beta-manager",
-        "beta-input",
-        "beta-worker",
-        "beta-output"
-      ],
-      "inputSources": [
-        {
-          "type": "sub-workflow-output",
-          "subWorkflowId": "alpha-lane"
-        }
-      ],
-      "block": {
-        "type": "plain"
-      }
-    }
-  ],
   "nodes": [
     {
       "id": "divedra-manager",
-      "kind": "root-manager",
-      "nodeFile": "node-divedra-manager.json",
-      "completion": {
-        "type": "none"
-      }
+      "role": "manager",
+      "nodeFile": "node-divedra-manager.json"
     },
     {
       "id": "alpha-manager",
-      "kind": "subworkflow-manager",
-      "nodeFile": "node-alpha-manager.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "alpha-lane",
+      "nodeFile": "node-alpha-manager.json"
     },
     {
       "id": "alpha-input",
-      "kind": "input",
-      "nodeFile": "node-alpha-input.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "alpha-lane",
+      "nodeFile": "node-alpha-input.json"
     },
     {
       "id": "alpha-worker",
-      "kind": "task",
-      "nodeFile": "node-alpha-worker.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "alpha-lane",
+      "nodeFile": "node-alpha-worker.json"
     },
     {
       "id": "alpha-output",
-      "kind": "output",
-      "nodeFile": "node-alpha-output.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "alpha-lane",
+      "nodeFile": "node-alpha-output.json"
     },
     {
       "id": "beta-manager",
-      "kind": "subworkflow-manager",
-      "nodeFile": "node-beta-manager.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "beta-lane",
+      "nodeFile": "node-beta-manager.json"
     },
     {
       "id": "beta-input",
-      "kind": "input",
-      "nodeFile": "node-beta-input.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "beta-lane",
+      "nodeFile": "node-beta-input.json"
     },
     {
       "id": "beta-worker",
-      "kind": "task",
-      "nodeFile": "node-beta-worker.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "beta-lane",
+      "nodeFile": "node-beta-worker.json"
     },
     {
       "id": "beta-output",
-      "kind": "output",
-      "nodeFile": "node-beta-output.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "beta-lane",
+      "nodeFile": "node-beta-output.json"
     }
-  ],
-  "edges": [
-    {
-      "from": "divedra-manager",
-      "to": "alpha-manager",
-      "when": "always"
-    },
-    {
-      "from": "alpha-manager",
-      "to": "alpha-input",
-      "when": "always"
-    },
-    {
-      "from": "alpha-input",
-      "to": "alpha-worker",
-      "when": "always"
-    },
-    {
-      "from": "alpha-worker",
-      "to": "alpha-output",
-      "when": "always"
-    },
-    {
-      "from": "alpha-output",
-      "to": "beta-manager",
-      "when": "always"
-    },
-    {
-      "from": "beta-manager",
-      "to": "beta-input",
-      "when": "always"
-    },
-    {
-      "from": "beta-input",
-      "to": "beta-worker",
-      "when": "always"
-    },
-    {
-      "from": "beta-worker",
-      "to": "beta-output",
-      "when": "always"
-    }
-  ],
-  "loops": [],
-  "branching": {
-    "mode": "fan-out"
-  }
+  ]
 }

@@ -17,7 +17,7 @@
       "always": true
     },
     "payload": {
-      "stage": "subworkflow-dispatch",
+      "stage": "delivery-dispatch",
       "delegationPolicy": "codex-only-for-coding"
     }
   },

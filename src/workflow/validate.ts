@@ -43,6 +43,7 @@ import {
   type WorkflowEdge,
   type WorkflowJson,
   type WorkflowNodeExecutionPolicy,
+  type WorkflowNodeRepeatPolicy,
   type WorkflowNodeRef,
   type WorkflowPrompts,
   type WorkflowVisJson,
@@ -970,11 +971,31 @@ function normalizeNodeRef(
     `${path}.completion`,
     issues,
   );
+  const repeat = normalizeWorkflowNodeRepeatPolicy(
+    value["repeat"],
+    `${path}.repeat`,
+    issues,
+  );
   const execution = normalizeWorkflowNodeExecutionPolicy(
     value["execution"],
     `${path}.execution`,
     issues,
   );
+  const groupRaw = value["group"];
+  let group: string | undefined;
+  if (groupRaw !== undefined) {
+    if (typeof groupRaw !== "string" || groupRaw.length === 0) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.group`,
+          "must be a non-empty string when provided",
+        ),
+      );
+    } else {
+      group = groupRaw;
+    }
+  }
 
   const roleRaw = value["role"];
   const normalizedRole = normalizeNodeRole(roleRaw);
@@ -1060,6 +1081,38 @@ function normalizeNodeRef(
   if (role === undefined && control !== undefined) {
     role = "worker";
   }
+  if (repeat !== undefined) {
+    if (role === "manager") {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.repeat`,
+          "manager-role nodes cannot declare repeat",
+        ),
+      );
+    }
+    role ??= "worker";
+    if (control !== undefined && control !== "loop-judge") {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.control`,
+          "repeat nodes must use loop-judge control",
+        ),
+      );
+    }
+    control = "loop-judge";
+    if (kind !== undefined && kind !== "loop-judge") {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.kind`,
+          "repeat nodes must use kind 'loop-judge'",
+        ),
+      );
+    }
+    kind = "loop-judge";
+  }
   if (kind === undefined) {
     kind = deriveLegacyKindFromRoleAndControl(role, control);
   }
@@ -1096,6 +1149,8 @@ function normalizeNodeRef(
     ...(control === undefined ? {} : { control }),
     ...(completion === undefined ? {} : { completion }),
     ...(execution === undefined ? {} : { execution }),
+    ...(group === undefined ? {} : { group }),
+    ...(repeat === undefined ? {} : { repeat }),
   };
 }
 
@@ -1185,6 +1240,80 @@ function normalizeWorkflowNodeExecutionPolicy(
   return {
     ...(mode === undefined ? {} : { mode }),
     ...(decisionBy === undefined ? {} : { decisionBy }),
+  };
+}
+
+function normalizeWorkflowNodeRepeatPolicy(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): WorkflowNodeRepeatPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return undefined;
+  }
+
+  const allowedKeys = new Set(["while", "restartAt", "maxIterations"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.${key}`,
+          "uses an unsupported workflow node repeat field",
+        ),
+      );
+    }
+  }
+
+  const whileExpression = readStringField(value, "while", path, issues);
+  const restartAtRaw = value["restartAt"];
+  let restartAt: string | undefined;
+  if (restartAtRaw !== undefined) {
+    if (typeof restartAtRaw !== "string" || restartAtRaw.length === 0) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.restartAt`,
+          "must be a non-empty string when provided",
+        ),
+      );
+    } else {
+      restartAt = restartAtRaw;
+    }
+  }
+
+  const maxIterationsRaw = value["maxIterations"];
+  let maxIterations: number | undefined;
+  if (maxIterationsRaw !== undefined) {
+    if (
+      typeof maxIterationsRaw !== "number" ||
+      !Number.isFinite(maxIterationsRaw) ||
+      maxIterationsRaw <= 0
+    ) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.maxIterations`,
+          "must be a finite number > 0 when provided",
+        ),
+      );
+    } else {
+      maxIterations = maxIterationsRaw;
+    }
+  }
+
+  if (whileExpression === null) {
+    return undefined;
+  }
+
+  return {
+    while: whileExpression,
+    ...(restartAt === undefined ? {} : { restartAt }),
+    ...(maxIterations === undefined ? {} : { maxIterations }),
   };
 }
 
@@ -1646,6 +1775,92 @@ function normalizeSubWorkflowConversation(
   };
 }
 
+function buildRepeatExitExpression(whileExpression: string): string {
+  return `!(${whileExpression})`;
+}
+
+function synthesizeSequentialEdges(input: {
+  readonly nodes: readonly WorkflowNodeRef[];
+  readonly issues: ValidationIssue[];
+}): readonly WorkflowEdge[] {
+  const edges: WorkflowEdge[] = [];
+
+  input.nodes.forEach((node, index) => {
+    const nextNode = input.nodes[index + 1];
+    if (nextNode === undefined) {
+      if (node.repeat !== undefined) {
+        input.issues.push(
+          makeIssue(
+            "error",
+            `workflow.nodes[${index}].repeat`,
+            "repeat nodes cannot be the terminal node in simplified sequential mode",
+          ),
+        );
+      }
+      return;
+    }
+
+    if (node.repeat === undefined) {
+      edges.push({ from: node.id, to: nextNode.id, when: "always" });
+      return;
+    }
+
+    const restartAt = node.repeat.restartAt ?? node.id;
+    const restartIndex = input.nodes.findIndex(
+      (candidate) => candidate.id === restartAt,
+    );
+    if (restartIndex < 0) {
+      input.issues.push(
+        makeIssue(
+          "error",
+          `workflow.nodes[${index}].repeat.restartAt`,
+          `must reference an existing node id (${restartAt})`,
+        ),
+      );
+      return;
+    }
+    if (restartIndex > index) {
+      input.issues.push(
+        makeIssue(
+          "error",
+          `workflow.nodes[${index}].repeat.restartAt`,
+          "must reference the same node or an earlier node in simplified sequential mode",
+        ),
+      );
+      return;
+    }
+
+    edges.push({ from: node.id, to: restartAt, when: node.repeat.while });
+    edges.push({
+      from: node.id,
+      to: nextNode.id,
+      when: buildRepeatExitExpression(node.repeat.while),
+    });
+  });
+
+  return edges;
+}
+
+function synthesizeRepeatLoops(
+  nodes: readonly WorkflowNodeRef[],
+): readonly LoopRule[] {
+  return nodes.flatMap((node) =>
+    node.repeat === undefined
+      ? []
+      : [
+          {
+            id: `repeat-${node.id}`,
+            judgeNodeId: node.id,
+            continueWhen: node.repeat.while,
+            exitWhen: buildRepeatExitExpression(node.repeat.while),
+            ...(node.repeat.maxIterations === undefined
+              ? {}
+              : { maxIterations: node.repeat.maxIterations }),
+          },
+        ],
+  );
+}
+
 function normalizeWorkflow(
   workflow: unknown,
   issues: ValidationIssue[],
@@ -1820,14 +2035,16 @@ function normalizeWorkflow(
     : [];
 
   const edgesRaw = workflow["edges"];
-  if (!Array.isArray(edgesRaw)) {
-    issues.push(makeIssue("error", "workflow.edges", "must be an array"));
+  if (edgesRaw !== undefined && !Array.isArray(edgesRaw)) {
+    issues.push(
+      makeIssue("error", "workflow.edges", "must be an array when provided"),
+    );
   }
-  const edges = Array.isArray(edgesRaw)
+  const authoredEdges = Array.isArray(edgesRaw)
     ? edgesRaw
         .map((entry, index) => normalizeEdge(entry, index, issues))
         .filter((entry): entry is WorkflowEdge => entry !== null)
-    : [];
+    : undefined;
 
   const workflowCallsRaw = workflow["workflowCalls"];
   if (workflowCallsRaw !== undefined && !Array.isArray(workflowCallsRaw)) {
@@ -1846,7 +2063,7 @@ function normalizeWorkflow(
     : undefined;
 
   const loopsRaw = workflow["loops"];
-  const loops = Array.isArray(loopsRaw)
+  const authoredLoops = Array.isArray(loopsRaw)
     ? loopsRaw
         .map((entry, index) => normalizeLoop(entry, index, issues))
         .filter((entry): entry is LoopRule => entry !== null)
@@ -1858,14 +2075,39 @@ function normalizeWorkflow(
     );
   }
 
-  const branching = workflow["branching"];
-  if (!isRecord(branching)) {
-    issues.push(makeIssue("error", "workflow.branching", "must be an object"));
-  }
-  if (!isRecord(branching) || branching["mode"] !== "fan-out") {
+  const hasRepeatNodes = nodes.some((node) => node.repeat !== undefined);
+  if (hasRepeatNodes && authoredEdges !== undefined) {
     issues.push(
-      makeIssue("error", "workflow.branching.mode", "must be 'fan-out'"),
+      makeIssue(
+        "error",
+        "workflow.edges",
+        "repeat is supported only when workflow.edges is omitted in the simplified transition format",
+      ),
     );
+  }
+
+  const edges =
+    authoredEdges ?? synthesizeSequentialEdges({ nodes, issues });
+  const repeatLoops = synthesizeRepeatLoops(nodes);
+  const loops =
+    authoredLoops === undefined
+      ? repeatLoops.length === 0
+        ? undefined
+        : repeatLoops
+      : [...authoredLoops, ...repeatLoops];
+
+  const branching = workflow["branching"];
+  if (branching !== undefined) {
+    if (!isRecord(branching)) {
+      issues.push(
+        makeIssue("error", "workflow.branching", "must be an object"),
+      );
+    }
+    if (!isRecord(branching) || branching["mode"] !== "fan-out") {
+      issues.push(
+        makeIssue("error", "workflow.branching.mode", "must be 'fan-out'"),
+      );
+    }
   }
 
   const subWorkflowConversationsRaw = workflow["subWorkflowConversations"];

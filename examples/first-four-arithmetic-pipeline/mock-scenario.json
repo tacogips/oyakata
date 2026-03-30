@@ -7,7 +7,7 @@
     },
     "payload": {
       "stage": "root-dispatch",
-      "policy": "sequential-subworkflows"
+      "policy": "sequential-stages"
     }
   },
   "add-manager": {

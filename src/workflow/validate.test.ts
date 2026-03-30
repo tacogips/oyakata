@@ -224,6 +224,190 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.workflow.nodes[2]?.kind).toBe("loop-judge");
   });
 
+  test("accepts simplified sequential schema and synthesizes edges plus repeat loops", () => {
+    const raw = {
+      workflow: {
+        workflowId: "simplified-sequential",
+        description: "simplified sequential workflow",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        nodes: [
+          {
+            id: "divedra-manager",
+            role: "manager",
+            nodeFile: "node-divedra-manager.json",
+            completion: { type: "none" },
+          },
+          {
+            id: "step-1",
+            role: "worker",
+            group: "phase-a",
+            nodeFile: "node-step-1.json",
+            completion: { type: "none" },
+          },
+          {
+            id: "repeat-step",
+            role: "worker",
+            nodeFile: "node-repeat-step.json",
+            repeat: {
+              while: "continue_turn",
+              maxIterations: 2,
+            },
+            completion: { type: "none" },
+          },
+          {
+            id: "done-step",
+            role: "worker",
+            nodeFile: "node-done-step.json",
+            completion: { type: "none" },
+          },
+        ],
+      },
+      workflowVis: {
+        nodes: [
+          { id: "divedra-manager", order: 0 },
+          { id: "step-1", order: 1 },
+          { id: "repeat-step", order: 2 },
+          { id: "done-step", order: 3 },
+        ],
+      },
+      nodePayloads: {
+        "node-divedra-manager.json": {
+          id: "divedra-manager",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "manager",
+          variables: {},
+        },
+        "node-step-1.json": {
+          id: "step-1",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "step-1",
+          variables: {},
+        },
+        "node-repeat-step.json": {
+          id: "repeat-step",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "repeat-step",
+          variables: {},
+        },
+        "node-done-step.json": {
+          id: "done-step",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "done-step",
+          variables: {},
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.workflow.managerNodeId).toBe("divedra-manager");
+    expect(result.value.workflow.entryNodeId).toBe("divedra-manager");
+    expect(result.value.workflow.subWorkflows).toEqual([]);
+    expect(result.value.workflow.edges).toEqual([
+      { from: "divedra-manager", to: "step-1", when: "always" },
+      { from: "step-1", to: "repeat-step", when: "always" },
+      { from: "repeat-step", to: "repeat-step", when: "continue_turn" },
+      { from: "repeat-step", to: "done-step", when: "!(continue_turn)" },
+    ]);
+    expect(result.value.workflow.loops).toEqual([
+      {
+        id: "repeat-repeat-step",
+        judgeNodeId: "repeat-step",
+        continueWhen: "continue_turn",
+        exitWhen: "!(continue_turn)",
+        maxIterations: 2,
+      },
+    ]);
+    expect(result.value.workflow.nodes[2]?.kind).toBe("loop-judge");
+    expect(result.value.workflow.nodes[1]?.group).toBe("phase-a");
+  });
+
+  test("rejects repeat when explicit edges are also authored", () => {
+    const raw = {
+      workflow: {
+        workflowId: "repeat-with-edges",
+        description: "repeat with explicit edges",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        nodes: [
+          {
+            id: "divedra-manager",
+            role: "manager",
+            nodeFile: "node-divedra-manager.json",
+            completion: { type: "none" },
+          },
+          {
+            id: "repeat-step",
+            role: "worker",
+            nodeFile: "node-repeat-step.json",
+            repeat: {
+              while: "continue_turn",
+            },
+            completion: { type: "none" },
+          },
+          {
+            id: "done-step",
+            role: "worker",
+            nodeFile: "node-done-step.json",
+            completion: { type: "none" },
+          },
+        ],
+        edges: [{ from: "divedra-manager", to: "repeat-step", when: "always" }],
+      },
+      workflowVis: {
+        nodes: [
+          { id: "divedra-manager", order: 0 },
+          { id: "repeat-step", order: 1 },
+          { id: "done-step", order: 2 },
+        ],
+      },
+      nodePayloads: {
+        "node-divedra-manager.json": {
+          id: "divedra-manager",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "manager",
+          variables: {},
+        },
+        "node-repeat-step.json": {
+          id: "repeat-step",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "repeat-step",
+          variables: {},
+        },
+        "node-done-step.json": {
+          id: "done-step",
+          model: "gpt-5-nano",
+          executionBackend: "codex-agent",
+          promptTemplate: "done-step",
+          variables: {},
+        },
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.edges" &&
+          issue.message.includes("repeat is supported only when workflow.edges is omitted"),
+      ),
+    ).toBe(true);
+  });
+
   test("rejects workflowCalls until the runtime implements them", () => {
     const raw = makeUnifiedRoleRaw();
     raw.workflow = {

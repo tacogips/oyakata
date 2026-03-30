@@ -144,7 +144,7 @@
     {
       "from": "divedra-manager",
       "to": "affirmative-manager",
-      "when": "always"
+      "when": "start_affirmative"
     },
     {
       "from": "affirmative-manager",
@@ -163,7 +163,7 @@
     },
     {
       "from": "affirmative-output",
-      "to": "negative-manager",
+      "to": "divedra-manager",
       "when": "always"
     },
     {
@@ -179,6 +179,11 @@
     {
       "from": "negative-speaker",
       "to": "negative-output",
+      "when": "always"
+    },
+    {
+      "from": "negative-output",
+      "to": "divedra-manager",
       "when": "always"
     }
   ],

@@ -34,6 +34,15 @@ The source of truth is the implementation under `src/workflow/`.
 
 The current runtime is not a purely manager-driven `call-node` orchestrator. The main `workflow run` path uses a persisted session with a deduplicated execution queue, transition communications, and runtime-owned artifact publication. Manager nodes still matter, but they operate inside that queue-based engine rather than replacing it.
 
+Authoring direction:
+
+- ordered `workflow.json.nodes[]` should be treated as the canonical flow
+- authored `workflow.edges` are optional compatibility input
+- when `edges` are omitted, the loader/validator synthesizes sequential edges
+  for the current engine
+- authored `subWorkflows` are optional and increasingly legacy outside features
+  that still depend on them, such as `subWorkflowConversations`
+
 ## Workflow Bundle
 
 Workflows live under `<workflow-root>/<workflow-name>/`.
@@ -80,16 +89,22 @@ Current top-level fields:
 - optional `prompts`
   - `divedraPromptTemplate`
   - `workerSystemPromptTemplate`
-- `managerNodeId`
-- `subWorkflows`
+- optional `managerNodeId`
+- optional `subWorkflows`
 - optional `subWorkflowConversations`
 - `nodes`
-- `edges`
+- optional `edges`
 - optional `loops`
-- `branching`
+- optional `branching`
   - currently only `mode: "fan-out"`
 
-Fields such as `workflowType`, `nodeGroups`, and workflow-ref child workflows are not part of the current authored schema, even though older docs mentioned them.
+When authored `edges` are omitted, the loader normalizes the workflow into a
+sequential edge list based on node order. When authored `managerNodeId` is
+omitted, the loader may infer it from exactly one manager-role node.
+
+Fields such as `workflowType`, `nodeGroups`, and workflow-ref child workflows
+are not part of the current authored schema, even though older docs mentioned
+them.
 
 When omitted, `workflow.description` normalizes to an empty string in the loaded bundle.
 
@@ -386,7 +401,7 @@ Live execution note:
 - the bundled mock scenario demonstrates the repeated same-node graph shape
 - actual backend session continuation still depends on the configured backend returning a reusable session id
 
-Validation-oriented node-authoring showcase:
+Runnable node-authoring showcase with a bundled deterministic scenario:
 
 - `examples/node-combinations-showcase/workflow.json`
 - `examples/node-combinations-showcase/workflow-vis.json`
@@ -403,9 +418,10 @@ This bundle keeps the graph small while showing:
 
 Current limitation:
 
-- `command` and `container` nodes are authorable and validatable
-- `runWorkflow()` still rejects them explicitly, so this showcase is intended
-  for `workflow validate` and `workflow inspect`, not for end-to-end execution
+- live `workflow run` still does not execute real `command` or `container`
+  workers in the current runtime
+- the bundled deterministic mock scenario can still exercise the full authored
+  graph, including those node types, for example and verification purposes
 
 Validate it:
 
@@ -417,6 +433,15 @@ Inspect it:
 
 ```bash
 bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run node-combinations-showcase \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/node-combinations-showcase/mock-scenario.json \
+  --output json
 ```
 
 ## Interfaces

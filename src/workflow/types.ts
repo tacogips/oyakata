@@ -45,6 +45,12 @@ export interface WorkflowNodeExecutionPolicy {
   readonly decisionBy?: "owning-manager";
 }
 
+export interface WorkflowNodeRepeatPolicy {
+  readonly while: string;
+  readonly restartAt?: string;
+  readonly maxIterations?: number;
+}
+
 export interface WorkflowNodeRef {
   readonly id: string;
   readonly nodeFile: string;
@@ -53,6 +59,8 @@ export interface WorkflowNodeRef {
   readonly control?: NodeControlKind;
   readonly completion?: CompletionRule;
   readonly execution?: WorkflowNodeExecutionPolicy;
+  readonly group?: string;
+  readonly repeat?: WorkflowNodeRepeatPolicy;
 }
 
 export interface WorkflowCallRef {

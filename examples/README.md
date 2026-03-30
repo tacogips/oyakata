@@ -3,15 +3,29 @@
 This directory contains reference workflow bundles that can be validated or run
 without copying them into `./.divedra`.
 
+Each example directory also includes `EXPECTED_RESULTS.md`, which records the
+stable assertions used for deterministic verification.
+
+Most example bundles now use the simplified authored shape:
+
+- ordered `nodes[]` are the canonical flow
+- authored `edges` are omitted
+- authored `subWorkflows` are omitted
+- repeat-style examples use node-local `repeat`
+
+Current exception:
+
+- `codex-codex-euthanasia-debate` still uses the legacy sub-workflow structure
+  because `subWorkflowConversations` has not yet been migrated to the
+  simplified format
+
 ## Available Examples
 
 ### `subworkflow-chained-simple`
 
-Minimal runnable reference for **two plain sub-workflows in one bundle**, where the
-second lane lists `inputSources` with `type: "sub-workflow-output"` and
-`subWorkflowId` pointing at the first lane (same pattern as
-`first-four-arithmetic-pipeline`, but all nodes stay on `claude-code-agent` so
-`workflow run` works with the bundled mock scenario).
+Minimal runnable reference for two sequential grouped lanes in one ordered node
+list. The beta lane follows the alpha lane without authored `edges` or
+`subWorkflows`.
 
 Validate it:
 
@@ -71,9 +85,8 @@ bun run src/main.ts workflow run claude-divedra-codex-coding \
 
 Validation-oriented reference bundle for the newer node authoring surface:
 
-- sibling plain sub-workflows show the current fan-out/concurrent-style pattern
-- a loop-body sub-workflow shows the current repeated-iteration pattern used in
-  place of a first-class `foreach` field
+- ordered grouped nodes replace authored sibling sub-workflows
+- a node-local `repeat` shows the repeated-iteration pattern for `foreach`
 - one task uses `nodeType: "command"`
 - one task uses `nodeType: "container"`
 - workflow-relative support assets are included for the command script and
@@ -83,8 +96,8 @@ Important current limitation:
 
 - live `workflow run` still does not implement real `command` or `container`
   execution in the current runtime
-- the bundled deterministic mock scenario can still exercise the full workflow
-  graph, including those node types, for example/demo purposes
+- the bundled deterministic mock scenario can still exercise the full ordered
+  workflow, including those node types, for example/demo purposes
 
 Validate it:
 
@@ -96,6 +109,15 @@ Inspect it:
 
 ```bash
 bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run node-combinations-showcase \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/node-combinations-showcase/mock-scenario.json \
+  --output json
 ```
 
 ### `first-four-arithmetic-pipeline`
@@ -113,9 +135,10 @@ Validation-oriented arithmetic pipeline reference:
 
 Important current limitation:
 
-- this bundle is meant for `validate` and `inspect`
-- `command` and `container` nodes are still rejected by `workflow run` in the
-  current runtime, so this example is intentionally not documented as runnable
+- live `workflow run` still does not execute real `command` or `container`
+  workers in the current runtime
+- the bundled deterministic mock scenario can still exercise the authored
+  command/container graph for example and verification purposes
 
 Validate it:
 
@@ -127,6 +150,15 @@ Inspect it:
 
 ```bash
 bun run src/main.ts workflow inspect first-four-arithmetic-pipeline --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run first-four-arithmetic-pipeline \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/first-four-arithmetic-pipeline/mock-scenario.json \
+  --output json
 ```
 
 ### `claude-divedra-claude-worker`
@@ -163,7 +195,7 @@ bun run src/main.ts workflow run claude-divedra-claude-worker \
 
 Reference workflow for the case where one worker node should run twice:
 
-- the same node id `echo-session` is revisited by a self-edge
+- the same node id `echo-session` is revisited through node-local `repeat`
 - `node-echo-session.json` opts into `sessionPolicy.mode = "reuse"`
 - the first visit echoes the normalized request
 - the second visit answers using that earlier echo
@@ -218,6 +250,15 @@ Inspect it:
 
 ```bash
 bun run src/main.ts workflow inspect codex-codex-euthanasia-debate --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run codex-codex-euthanasia-debate \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/codex-codex-euthanasia-debate/mock-scenario.json \
+  --output json
 ```
 
 Live execution note:
