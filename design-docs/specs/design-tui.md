@@ -349,6 +349,8 @@ Each primary screen shows a single-line footer shortcut row summarizing the scre
 - `n`: open the new-run screen for the current workflow
 - `R`: rerun from the selected node execution
 - `u`: resume the selected workflow session
+- `d`: when workflow runs are focused, open a delete-history confirmation popup for the selected run; block the action while the selected session is `running` or `paused`; confirm with `enter` or `ctrl-m`, cancel with `esc`
+- `D`: when workflow runs are focused, open a workflow history `delete-all` confirmation popup for the current workflow; block the action while any session is `running` or `paused`
 - `m`: toggle input mode between text and JSON
 - `f`: format JSON input when JSON mode is active
 - `i` / `o` / `g` / `a` / `s`: show inbox, outbox, session logs, manager messages, or summary
@@ -374,6 +376,8 @@ Each primary screen shows a single-line footer shortcut row summarizing the scre
 - workflow filter popup: opened by `/`, applied by `enter` or `ctrl-m`, cancelled by `esc`
 - help popup: opened by `?`, closed by `q`
 - run confirmation popup: opened by `enter` or `ctrl-m` on the new-run screen, confirmed by `enter` or `ctrl-m`, cancelled by `esc`
+- history delete confirmation popup: opened by `d` from the workflow-runs pane, confirmed by `enter` or `ctrl-m` as `yes`, cancelled by `esc`
+- workflow history delete-all confirmation popup: opened by `D` from the workflow-runs pane, confirmed by `enter` or `ctrl-m` as `yes`, cancelled by `esc`
 - workflow node-definition popup: opened by `enter` or `ctrl-m` from the workflow-definition node list, scrollable with `j` / `k` or arrows, and closed by `esc` or `q`
 - node-detail JSON/message viewer: opened by `enter` or `ctrl-m` from node-detail summary as an in-pane detail state and must not steal active-pane status from node detail
 - node-detail AI agent session popup: when the selected summary row points at a persisted `codex-agent` or `claude-code-agent` session, `enter` or `ctrl-m` opens a scrollable popup showing that stored chat history; the popup stays tied to node detail and closes with `esc` or `q`

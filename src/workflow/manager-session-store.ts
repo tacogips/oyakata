@@ -101,6 +101,8 @@ export interface ManagerSessionStore {
   createOrResumeSession(
     input: ManagerSessionRecord,
   ): Promise<ManagerSessionRecord>;
+  deleteByWorkflowId(workflowId: string): Promise<void>;
+  deleteByWorkflowExecutionId(workflowExecutionId: string): Promise<void>;
   claimControlMode(input: {
     readonly managerSessionId: string;
     readonly controlMode: ManagerControlMode;
@@ -386,6 +388,30 @@ async function withManagerDatabase<T>(
 export function createManagerSessionStore(
   options: LoadOptions = {},
 ): ManagerSessionStore {
+  const deleteManagerSessions = (
+    db: Database,
+    query: string,
+    parameter: string,
+    deleteManagerSessionsSql: string,
+  ): void => {
+    const managerSessionIds = (
+      db.prepare(query).all(parameter) as Array<{
+        readonly manager_session_id: string;
+      }>
+    ).map((row) => row.manager_session_id);
+
+    for (const managerSessionId of managerSessionIds) {
+      db.prepare(
+        "DELETE FROM idempotent_mutations WHERE manager_session_id = ?",
+      ).run(managerSessionId);
+      db.prepare("DELETE FROM manager_messages WHERE manager_session_id = ?").run(
+        managerSessionId,
+      );
+    }
+
+    db.prepare(deleteManagerSessionsSql).run(parameter);
+  };
+
   return {
     async createOrResumeSession(input) {
       await withManagerDatabase(options, (db) => {
@@ -431,6 +457,42 @@ export function createManagerSessionStore(
         );
       });
       return input;
+    },
+    async deleteByWorkflowId(workflowId) {
+      await withManagerDatabase(options, (db) => {
+        const runDeleteByWorkflowId = db.transaction((targetWorkflowId: string) => {
+          deleteManagerSessions(
+            db,
+            `
+              SELECT manager_session_id
+              FROM manager_sessions
+              WHERE workflow_id = ?
+            `,
+            targetWorkflowId,
+            "DELETE FROM manager_sessions WHERE workflow_id = ?",
+          );
+        });
+        runDeleteByWorkflowId(workflowId);
+      });
+    },
+    async deleteByWorkflowExecutionId(workflowExecutionId) {
+      await withManagerDatabase(options, (db) => {
+        const runDeleteByWorkflowExecutionId = db.transaction(
+          (targetWorkflowExecutionId: string) => {
+            deleteManagerSessions(
+              db,
+              `
+                SELECT manager_session_id
+                FROM manager_sessions
+                WHERE workflow_execution_id = ?
+              `,
+              targetWorkflowExecutionId,
+              "DELETE FROM manager_sessions WHERE workflow_execution_id = ?",
+            );
+          },
+        );
+        runDeleteByWorkflowExecutionId(workflowExecutionId);
+      });
     },
     async claimControlMode(input) {
       return await withManagerDatabase(options, (db) => {

@@ -112,6 +112,19 @@ export interface OpenTuiWorkflowAppOptions {
   readonly loadRuntimeSessionView: (
     sessionId: string,
   ) => Promise<RuntimeSessionView>;
+  readonly deleteWorkflowSession?: (input: {
+    readonly sessionId: string;
+    readonly workflowId: string;
+    readonly workflowName: string;
+  }) => Promise<void>;
+  readonly deleteWorkflowHistory?: (input: {
+    readonly workflowId: string;
+    readonly workflowName: string;
+  }) => Promise<{
+    readonly deletedSessionCount: number;
+    readonly workflowId: string;
+    readonly workflowName: string;
+  }>;
   readonly loadManagerSessionMessages: (
     managerSessionId: string,
   ) => Promise<readonly ManagerMessageRecord[]>;
@@ -303,7 +316,10 @@ export async function runOpenTuiWorkflowApp(
   let editingInput: boolean = false;
   let filterPopupOpen = false;
   let helpPopupOpen = false;
-  let confirmPopupOpen = false;
+  let confirmPopupKind: "delete-history-confirm" | "none" | "run-confirm" =
+    "none";
+  let confirmPopupTitle = " Confirm Run ";
+  let pendingDeleteScope: "none" | "session" | "workflow" = "none";
   let agentSessionPopupOpen = false;
   let nodeDefinitionPopupOpen = false;
   let agentSessionPopupTextContent = "";
@@ -353,6 +369,10 @@ export async function runOpenTuiWorkflowApp(
     key.name === "m" && key.ctrl && !key.meta;
   const isConfirmKey = (key: KeyEvent): boolean =>
     isEnterKey(key) || isCtrlMKey(key);
+  const isDeleteHistoryAllowed = (): boolean =>
+    screenMode === "history" &&
+    historyViewMode() === "workflow" &&
+    focusPane === "sessions";
 
   const selectedWorkflowName = (): string | undefined => {
     const option = workflowSelect.getSelectedOption();
@@ -371,6 +391,41 @@ export async function runOpenTuiWorkflowApp(
       (session) => session.sessionId === option.value,
     );
   };
+
+  const describeDeleteHistoryConfirmation = (
+    session: RuntimeSessionSummary,
+  ): string =>
+    [
+      `Delete workflow run '${session.sessionId}'?`,
+      "",
+      `Workflow: ${session.workflowName}`,
+      `Status: ${session.status}`,
+      `Started: ${session.startedAt}`,
+      `Ended: ${session.endedAt ?? "-"}`,
+      "",
+      "Yes: enter or ctrl-m",
+      "No: esc",
+      "",
+      "This removes the saved history entry, runtime index rows, and stored artifacts for this run.",
+    ].join("\n");
+
+  const describeDeleteWorkflowHistoryConfirmation = (
+    workflowName: string,
+    workflowId: string,
+    sessions: readonly RuntimeSessionSummary[],
+  ): string =>
+    [
+      `Delete all workflow history for '${workflowName}'?`,
+      "",
+      `Workflow-ID: ${workflowId}`,
+      `Stored runs: ${String(sessions.length)}`,
+      `Latest run: ${sessions[0]?.sessionId ?? "-"}`,
+      "",
+      "Yes: enter or ctrl-m",
+      "No: esc",
+      "",
+      "This runs workflow history delete-all and removes saved session files, runtime index rows, and stored artifacts for this workflow.",
+    ].join("\n");
 
   const selectedNodeExecution = (): NodeExecutionRecord | undefined => {
     if (runtimeSessionView === undefined) {
@@ -553,7 +608,8 @@ export async function runOpenTuiWorkflowApp(
     inputRow.flexGrow = screenMode === "run" ? 32 : 20;
     filterPopup.visible = filterPopupOpen;
     helpPopup.visible = helpPopupOpen;
-    confirmPopup.visible = confirmPopupOpen;
+    confirmPopup.visible = confirmPopupKind !== "none";
+    confirmPopup.title = confirmPopupTitle;
     agentSessionPopup.visible = agentSessionPopupOpen;
     agentSessionPopup.title = agentSessionPopupTitle;
     agentSessionPopupText.content = agentSessionPopupTextContent;
@@ -803,7 +859,7 @@ export async function runOpenTuiWorkflowApp(
       ? filterTextarea
       : helpPopupOpen
         ? helpPopup
-        : confirmPopupOpen
+        : confirmPopupKind !== "none"
           ? confirmPopup
           : nodeDefinitionPopupOpen
             ? nodeDefinitionPopup
@@ -858,7 +914,7 @@ export async function runOpenTuiWorkflowApp(
     busy ||
     filterPopupOpen ||
     helpPopupOpen ||
-    confirmPopupOpen ||
+    confirmPopupKind !== "none" ||
     nodeDefinitionPopupOpen;
 
   const clearRunPolling = (): void => {
@@ -1137,7 +1193,8 @@ export async function runOpenTuiWorkflowApp(
     filterTextarea.setText(workflowFilterText);
     filterPopupOpen = true;
     helpPopupOpen = false;
-    confirmPopupOpen = false;
+    confirmPopupKind = "none";
+    pendingDeleteScope = "none";
     nodeDefinitionPopupOpen = false;
     setStatus("Editing workflow filter");
     await render();
@@ -1168,7 +1225,8 @@ export async function runOpenTuiWorkflowApp(
   const openHelpPopup = async (): Promise<void> => {
     helpPopupOpen = true;
     filterPopupOpen = false;
-    confirmPopupOpen = false;
+    confirmPopupKind = "none";
+    pendingDeleteScope = "none";
     nodeDefinitionPopupOpen = false;
     setStatus("Help");
     await render();
@@ -1182,10 +1240,86 @@ export async function runOpenTuiWorkflowApp(
   };
 
   const closeConfirmPopup = async (): Promise<void> => {
-    confirmPopupOpen = false;
-    pendingRunRuntimeVariables = undefined;
+    const returnFocusPane = confirmPopupKind === "run-confirm" ? "input" : "sessions";
+    if (confirmPopupKind === "run-confirm") {
+      pendingRunRuntimeVariables = undefined;
+    }
+    confirmPopupKind = "none";
+    confirmPopupTitle = " Confirm Run ";
+    pendingDeleteScope = "none";
     await render();
-    applyFocus("input");
+    applyFocus(returnFocusPane);
+  };
+
+  const openDeleteHistoryConfirmation = async (): Promise<void> => {
+    if (!isDeleteHistoryAllowed()) {
+      return;
+    }
+    if (options.deleteWorkflowSession === undefined) {
+      setStatus("History deletion is unavailable in this TUI mode");
+      await render();
+      return;
+    }
+    const session = selectedSessionSummary();
+    if (session === undefined) {
+      setStatus("Select a workflow run before deleting history");
+      await render();
+      return;
+    }
+    if (session.status === "paused" || session.status === "running") {
+      setStatus(
+        `Cannot delete a workflow run while it is ${session.status}`,
+      );
+      await render();
+      return;
+    }
+    confirmPopupKind = "delete-history-confirm";
+    confirmPopupTitle = " Confirm Delete ";
+    pendingDeleteScope = "session";
+    confirmText.content = describeDeleteHistoryConfirmation(session);
+    setStatus(`Confirm deleting workflow run '${session.sessionId}'`);
+    await render();
+    applyFocus("sessions");
+  };
+
+  const openDeleteWorkflowHistoryConfirmation = async (): Promise<void> => {
+    if (!isDeleteHistoryAllowed()) {
+      return;
+    }
+    const workflowName = loadedWorkflow?.workflowName ?? selectedWorkflowName();
+    const workflowId = loadedWorkflow?.bundle.workflow.workflowId;
+    if (
+      workflowName === undefined ||
+      workflowId === undefined ||
+      options.deleteWorkflowHistory === undefined
+    ) {
+      setStatus("Workflow history delete-all is unavailable in this TUI mode");
+      await render();
+      return;
+    }
+    const activeSessions = workflowSessions.filter(
+      (session) => session.status === "paused" || session.status === "running",
+    );
+    if (activeSessions.length > 0) {
+      setStatus(
+        `Cannot delete workflow history while sessions are active: ${activeSessions
+          .map((session) => session.sessionId)
+          .join(", ")}`,
+      );
+      await render();
+      return;
+    }
+    confirmPopupKind = "delete-history-confirm";
+    confirmPopupTitle = " Confirm Delete-All ";
+    pendingDeleteScope = "workflow";
+    confirmText.content = describeDeleteWorkflowHistoryConfirmation(
+      workflowName,
+      workflowId,
+      workflowSessions,
+    );
+    setStatus(`Confirm workflow history delete-all for '${workflowName}'`);
+    await render();
+    applyFocus("sessions");
   };
 
   const closeAgentSessionPopup = async (): Promise<void> => {
@@ -1333,7 +1467,8 @@ export async function runOpenTuiWorkflowApp(
     subworkflowPath = [];
     historyReturnsToDefinition = false;
     editingInput = false;
-    confirmPopupOpen = false;
+    confirmPopupKind = "none";
+    confirmPopupTitle = " Confirm Run ";
     filterPopupOpen = false;
     helpPopupOpen = false;
     agentSessionPopupOpen = false;
@@ -1342,6 +1477,7 @@ export async function runOpenTuiWorkflowApp(
       await refreshWorkspaceSelectionData(workspaceWorkflowName);
       setStatus("Returned to workspace");
     });
+    pendingDeleteScope = "none";
     applyFocus("workflows");
   };
 
@@ -1359,6 +1495,7 @@ export async function runOpenTuiWorkflowApp(
       screenMode = "definition";
       detailMode = "summary";
       editingInput = false;
+      pendingDeleteScope = "none";
       agentSessionPopupOpen = false;
       nodeDefinitionPopupOpen = false;
       setStatus(`Opened definition for '${workflowName}'`);
@@ -1382,6 +1519,7 @@ export async function runOpenTuiWorkflowApp(
       screenMode = "history";
       detailMode = "summary";
       editingInput = false;
+      pendingDeleteScope = "none";
       agentSessionPopupOpen = false;
       nodeDefinitionPopupOpen = false;
       setStatus(`Opened history for '${workflowName}'`);
@@ -1403,6 +1541,7 @@ export async function runOpenTuiWorkflowApp(
       resetRunState();
       screenMode = "run";
       editingInput = true;
+      pendingDeleteScope = "none";
       agentSessionPopupOpen = false;
       nodeDefinitionPopupOpen = false;
       inputTextarea.setText(workflowInputDetection.mode === "json" ? "{}" : "");
@@ -1464,6 +1603,72 @@ export async function runOpenTuiWorkflowApp(
 
   const confirmRunActionImpl = async (): Promise<void> => {
     await controller.confirmRun();
+  };
+
+  const confirmDeleteHistoryActionImpl = async (): Promise<void> => {
+    const workflowName = loadedWorkflow?.workflowName ?? selectedWorkflowName();
+    if (pendingDeleteScope === "workflow") {
+      const workflowId = loadedWorkflow?.bundle.workflow.workflowId;
+      if (
+        workflowName === undefined ||
+        workflowId === undefined ||
+        options.deleteWorkflowHistory === undefined
+      ) {
+        setStatus("Workflow history delete-all is unavailable");
+        await render();
+        return;
+      }
+
+      await withBusy("Deleting workflow history", async () => {
+        const deleted = await options.deleteWorkflowHistory?.({
+          workflowId,
+          workflowName,
+        });
+        confirmPopupKind = "none";
+        confirmPopupTitle = " Confirm Run ";
+        pendingDeleteScope = "none";
+        await refreshWorkflow(workflowName);
+        setStatus(
+          `Deleted ${String(deleted?.deletedSessionCount ?? 0)} workflow history entr${
+            deleted?.deletedSessionCount === 1 ? "y" : "ies"
+          } for '${workflowName}'`,
+        );
+      });
+      applyFocus("sessions");
+      return;
+    }
+
+    const session = selectedSessionSummary();
+    if (
+      session === undefined ||
+      workflowName === undefined ||
+      options.deleteWorkflowSession === undefined
+    ) {
+      setStatus("History deletion is unavailable");
+      await render();
+      return;
+    }
+
+    const selectedSessionIndex = workflowSessions.findIndex(
+      (entry) => entry.sessionId === session.sessionId,
+    );
+    const preferredSessionId =
+      workflowSessions[selectedSessionIndex + 1]?.sessionId ??
+      workflowSessions[selectedSessionIndex - 1]?.sessionId;
+
+    await withBusy("Deleting workflow history", async () => {
+      await options.deleteWorkflowSession?.({
+        sessionId: session.sessionId,
+        workflowId: session.workflowId,
+        workflowName: session.workflowName,
+      });
+      confirmPopupKind = "none";
+      confirmPopupTitle = " Confirm Run ";
+      pendingDeleteScope = "none";
+      await refreshWorkflow(workflowName, preferredSessionId);
+      setStatus(`Deleted workflow run '${session.sessionId}'`);
+    });
+    applyFocus("sessions");
   };
 
   const rerunWorkflowActionImpl = async (): Promise<void> => {
@@ -1567,7 +1772,8 @@ export async function runOpenTuiWorkflowApp(
       confirmText.content = content;
     },
     setRunConfirmationOpen: (open) => {
-      confirmPopupOpen = open;
+      confirmPopupKind = open ? "run-confirm" : "none";
+      confirmPopupTitle = " Confirm Run ";
       if (open) {
         helpPopupOpen = false;
         filterPopupOpen = false;
@@ -1884,7 +2090,7 @@ export async function runOpenTuiWorkflowApp(
       case "close-help":
         await closeHelpPopup();
         return;
-      case "close-run-confirm":
+      case "close-confirm-popup":
         await closeConfirmPopup();
         return;
       case "close-agent-session":
@@ -1904,6 +2110,9 @@ export async function runOpenTuiWorkflowApp(
     switch (action.kind) {
       case "apply-filter":
         await closeFilterPopup("apply");
+        return;
+      case "confirm-delete-history":
+        await confirmDeleteHistoryActionImpl();
         return;
       case "confirm-run":
         await confirmRunAction();
@@ -1957,7 +2166,7 @@ export async function runOpenTuiWorkflowApp(
 
       const popupKind = resolveOpenTuiPopupKind({
         agentSessionPopupOpen,
-        confirmPopupOpen,
+        confirmPopupKind,
         filterPopupOpen,
         helpPopupOpen,
         nodeDefinitionPopupOpen,
@@ -2308,6 +2517,16 @@ export async function runOpenTuiWorkflowApp(
       if (key.name === "n" && !key.ctrl) {
         key.preventDefault();
         void openRunScreenAction();
+        return;
+      }
+      if (key.name === "d" && key.shift && !key.ctrl && !key.meta) {
+        key.preventDefault();
+        void openDeleteWorkflowHistoryConfirmation();
+        return;
+      }
+      if (key.name === "d" && !key.ctrl && !key.meta) {
+        key.preventDefault();
+        void openDeleteHistoryConfirmation();
         return;
       }
       if (

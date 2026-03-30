@@ -137,6 +137,7 @@ export type OpenTuiHistoryRevertAction =
 
 export type OpenTuiPopupKind =
   | "agent-session"
+  | "delete-history-confirm"
   | "filter"
   | "help"
   | "node-definition"
@@ -146,6 +147,9 @@ export type OpenTuiPopupKind =
 export type OpenTuiPopupConfirmAction =
   | {
       readonly kind: "apply-filter";
+    }
+  | {
+      readonly kind: "confirm-delete-history";
     }
   | {
       readonly kind: "confirm-run";
@@ -168,7 +172,7 @@ export type OpenTuiPopupRevertAction =
       readonly kind: "close-help";
     }
   | {
-      readonly kind: "close-run-confirm";
+      readonly kind: "close-confirm-popup";
     }
   | {
       readonly kind: "none";

@@ -34,6 +34,8 @@ import {
   listRuntimeSessions,
 } from "./workflow/runtime-db";
 import { createManagerSessionStore } from "./workflow/manager-session-store";
+import { deleteWorkflowSessionHistory } from "./workflow/session-history";
+import { deleteWorkflowHistory as deleteWorkflowHistoryForWorkflow } from "./workflow/history";
 
 export interface CliIo {
   readonly stdout: (line: string) => void;
@@ -918,6 +920,23 @@ export function createOpenTuiWorkflowAppOptions(
         nodeLogs,
       };
     },
+    deleteWorkflowSession: async ({ sessionId, workflowId, workflowName }) =>
+      deleteWorkflowSessionHistory(
+        {
+          sessionId,
+          workflowId,
+          workflowName,
+        },
+        input.sharedOptions,
+      ),
+    deleteWorkflowHistory: async ({ workflowId, workflowName }) =>
+      deleteWorkflowHistoryForWorkflow(
+        {
+          workflowId,
+          workflowName,
+          ...input.sharedOptions,
+        },
+      ),
     loadManagerSessionMessages: async (managerSessionId) =>
       createManagerSessionStore(input.sharedOptions).listMessages(
         managerSessionId,

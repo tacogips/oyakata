@@ -4,7 +4,12 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createSessionState } from "./session";
 import { encodeProjectPathForDivedraScope } from "./paths";
-import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
+import {
+  deleteSession,
+  getSessionStoreRoot,
+  loadSession,
+  saveSession,
+} from "./session-store";
 
 const tempDirs: string[] = [];
 
@@ -154,5 +159,30 @@ describe("session-store", () => {
     expect(loaded.value.communications).toEqual([]);
     expect(loaded.value.pendingOptionalNodeDecisions).toEqual([]);
     expect(loaded.value.activeUserActions).toEqual([]);
+  });
+
+  test("deleteSession removes the persisted session file", async () => {
+    const root = await makeTempDir();
+    const session = createSessionState({
+      sessionId: "sess-delete001",
+      workflowName: "wf",
+      workflowId: "wf",
+      initialNodeId: "manager",
+      runtimeVariables: {},
+    });
+    await saveSession(session, { sessionStoreRoot: root });
+
+    const deleted = await deleteSession(session.sessionId, {
+      sessionStoreRoot: root,
+    });
+    expect(deleted.ok).toBe(true);
+
+    const loaded = await loadSession(session.sessionId, {
+      sessionStoreRoot: root,
+    });
+    expect(loaded.ok).toBe(false);
+    if (!loaded.ok) {
+      expect(loaded.error.code).toBe("NOT_FOUND");
+    }
   });
 });
