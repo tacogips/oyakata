@@ -1,118 +1,44 @@
 {
   "workflowId": "claude-divedra-codex-coding",
-  "description": "Reference workflow that keeps divedra orchestration on claude-code while delegating concrete coding work to codex.",
+  "description": "Reference workflow that keeps divedra orchestration on claude-code while delegating concrete coding work to codex, authored as a linear ordered node list.",
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
   },
   "prompts": {
-    "divedraPromptTemplate": "Coordinate {{workflowId}} so claude-code managers preserve scope, keep instructions concrete, and hand coding tasks to codex only when the implementation brief is ready. When `divedra gql` is available, use it for manager control actions such as sub-workflow starts, child-input delivery, retries, and manager-authored routing instead of relying only on prose.",
+    "divedraPromptTemplate": "Coordinate {{workflowId}} so claude-code managers preserve scope, keep instructions concrete, and hand coding tasks to codex only when the implementation brief is ready. When `divedra gql` is available, use it for manager control actions such as retries and manager-authored routing instead of relying only on prose.",
     "workerSystemPromptTemplate": "Work only on the current node's responsibility. Return a concise business JSON payload that is useful to the next node."
   },
-  "managerNodeId": "divedra-manager",
-  "subWorkflows": [
-    {
-      "id": "delivery",
-      "description": "Single delivery lane that turns a human request into a codex implementation handoff.",
-      "managerNodeId": "main-divedra",
-      "inputNodeId": "workflow-input",
-      "outputNodeId": "workflow-output",
-      "nodeIds": [
-        "main-divedra",
-        "workflow-input",
-        "implementation-brief",
-        "implement",
-        "workflow-output"
-      ],
-      "inputSources": [
-        {
-          "type": "human-input"
-        }
-      ],
-      "block": {
-        "type": "plain"
-      }
-    }
-  ],
   "nodes": [
     {
       "id": "divedra-manager",
-      "kind": "root-manager",
-      "nodeFile": "node-divedra-manager.json",
-      "completion": {
-        "type": "none"
-      }
+      "role": "manager",
+      "nodeFile": "nodes/node-divedra-manager.json"
     },
     {
       "id": "main-divedra",
-      "kind": "subworkflow-manager",
-      "nodeFile": "node-main-divedra.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "delivery",
+      "nodeFile": "nodes/node-main-divedra.json"
     },
     {
       "id": "workflow-input",
-      "kind": "input",
-      "nodeFile": "node-workflow-input.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "delivery",
+      "nodeFile": "nodes/node-workflow-input.json"
     },
     {
       "id": "implementation-brief",
-      "kind": "task",
-      "nodeFile": "node-implementation-brief.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "delivery",
+      "nodeFile": "nodes/node-implementation-brief.json"
     },
     {
       "id": "implement",
-      "kind": "task",
-      "nodeFile": "node-implement.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "delivery",
+      "nodeFile": "nodes/node-implement.json"
     },
     {
       "id": "workflow-output",
-      "kind": "output",
-      "nodeFile": "node-workflow-output.json",
-      "completion": {
-        "type": "none"
-      }
+      "group": "delivery",
+      "nodeFile": "nodes/node-workflow-output.json"
     }
-  ],
-  "edges": [
-    {
-      "from": "divedra-manager",
-      "to": "main-divedra",
-      "when": "always"
-    },
-    {
-      "from": "main-divedra",
-      "to": "workflow-input",
-      "when": "always"
-    },
-    {
-      "from": "workflow-input",
-      "to": "implementation-brief",
-      "when": "always"
-    },
-    {
-      "from": "implementation-brief",
-      "to": "implement",
-      "when": "always"
-    },
-    {
-      "from": "implement",
-      "to": "workflow-output",
-      "when": "always"
-    }
-  ],
-  "loops": [],
-  "branching": {
-    "mode": "fan-out"
-  }
+  ]
 }

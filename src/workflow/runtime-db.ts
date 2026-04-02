@@ -2,7 +2,11 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Database } from "bun:sqlite";
 import { resolveRootDataDir } from "./paths";
-import type { NodeExecutionRecord, WorkflowSessionState } from "./session";
+import type {
+  NodeExecutionRecord,
+  SessionStatus,
+  WorkflowSessionState,
+} from "./session";
 import type { LoadOptions } from "./types";
 
 interface RuntimeNodeExecutionRow {
@@ -29,7 +33,7 @@ export interface RuntimeSessionSummary {
   readonly sessionId: string;
   readonly workflowName: string;
   readonly workflowId: string;
-  readonly status: string;
+  readonly status: SessionStatus;
   readonly startedAt: string;
   readonly endedAt: string | null;
   readonly currentNodeId: string | null;
@@ -95,6 +99,34 @@ async function withDatabase<T>(
   } finally {
     db.close();
   }
+}
+
+interface RuntimeSessionRow {
+  readonly session_id: string;
+  readonly workflow_name: string;
+  readonly workflow_id: string;
+  readonly status: SessionStatus;
+  readonly started_at: string;
+  readonly ended_at: string | null;
+  readonly current_node_id: string | null;
+  readonly node_execution_counter: number;
+  readonly last_error: string | null;
+  readonly updated_at: string;
+}
+
+function toRuntimeSessionSummary(row: RuntimeSessionRow): RuntimeSessionSummary {
+  return {
+    sessionId: row.session_id,
+    workflowName: row.workflow_name,
+    workflowId: row.workflow_id,
+    status: row.status,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    currentNodeId: row.current_node_id,
+    nodeExecutionCounter: row.node_execution_counter,
+    lastError: row.last_error,
+    updatedAt: row.updated_at,
+  };
 }
 
 function ensureSchema(db: Database): void {
@@ -287,31 +319,36 @@ export async function listRuntimeSessions(
          FROM sessions
          ORDER BY updated_at DESC`,
       )
-      .all() as Array<{
-      session_id: string;
-      workflow_name: string;
-      workflow_id: string;
-      status: string;
-      started_at: string;
-      ended_at: string | null;
-      current_node_id: string | null;
-      node_execution_counter: number;
-      last_error: string | null;
-      updated_at: string;
-    }>;
+      .all() as RuntimeSessionRow[];
 
-    return rows.map((row) => ({
-      sessionId: row.session_id,
-      workflowName: row.workflow_name,
-      workflowId: row.workflow_id,
-      status: row.status,
-      startedAt: row.started_at,
-      endedAt: row.ended_at,
-      currentNodeId: row.current_node_id,
-      nodeExecutionCounter: row.node_execution_counter,
-      lastError: row.last_error,
-      updatedAt: row.updated_at,
-    }));
+    return rows.map(toRuntimeSessionSummary);
+  });
+}
+
+export async function loadRuntimeSessionSummary(
+  sessionId: string,
+  options: LoadOptions = {},
+): Promise<RuntimeSessionSummary | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          session_id,
+          workflow_name,
+          workflow_id,
+          status,
+          started_at,
+          ended_at,
+          current_node_id,
+          node_execution_counter,
+          last_error,
+          updated_at
+         FROM sessions
+         WHERE session_id = ?`,
+      )
+      .get(sessionId) as RuntimeSessionRow | null;
+
+    return row === null ? null : toRuntimeSessionSummary(row);
   });
 }
 
@@ -435,5 +472,25 @@ export async function listRuntimeNodeLogs(
       payloadJson: row.payload_json,
       at: row.at,
     }));
+  });
+}
+
+export async function deleteRuntimeSession(
+  sessionId: string,
+  options: LoadOptions = {},
+): Promise<void> {
+  await withDatabase(options, (db) => {
+    const runDelete = db.transaction((targetSessionId: string) => {
+      db.prepare("DELETE FROM node_logs WHERE session_id = ?").run(
+        targetSessionId,
+      );
+      db.prepare("DELETE FROM node_executions WHERE session_id = ?").run(
+        targetSessionId,
+      );
+      db.prepare("DELETE FROM sessions WHERE session_id = ?").run(
+        targetSessionId,
+      );
+    });
+    runDelete(sessionId);
   });
 }

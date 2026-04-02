@@ -37,6 +37,7 @@ import {
 } from "./manager-session-store";
 import { composeExecutionPrompts } from "./prompt-composition";
 import { err, ok, type Result } from "./result";
+import { inspectWorkflowRuntimeReadiness } from "./runtime-readiness";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import {
   loadSession,
@@ -763,6 +764,29 @@ class ExecutionDispatcher {
         exitCode: 1,
         message: `node '${input.nodeId}' requests nodeType='container', but container execution is not implemented yet`,
       });
+    }
+
+    if (
+      this.#adapter instanceof DispatchingNodeAdapter &&
+      input.mockScenario === undefined &&
+      input.dryRun !== true
+    ) {
+      const readiness = await inspectWorkflowRuntimeReadiness(
+        loaded.value.bundle,
+        {
+          ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+          ...(input.env === undefined ? {} : { env: input.env }),
+          onlyNodeIds: new Set([input.nodeId]),
+        },
+      );
+      if (!readiness.ready) {
+        return err({
+          session,
+          exitCode: 1,
+          message:
+            `workflow runtime readiness failed: ${readiness.blockers.join("; ")}`,
+        });
+      }
     }
     const agentNodePayload = asAgentNodePayload(nodePayload);
     if (agentNodePayload === null) {

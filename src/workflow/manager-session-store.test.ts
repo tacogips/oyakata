@@ -248,4 +248,112 @@ describe("manager-session-store", () => {
     expect(persisted?.controlMode).toBe("graphql-manager-message");
     expect(persisted?.updatedAt).toBe("2026-03-15T00:01:00.000Z");
   });
+
+  test("deleteByWorkflowExecutionId removes manager session records and dependent rows", async () => {
+    const root = await makeTempDir();
+    const store = createManagerSessionStore({
+      cwd: root,
+      rootDataDir: path.join(root, "data"),
+    });
+
+    await store.createOrResumeSession({
+      managerSessionId: "mgrsess-delete-000001",
+      workflowId: "demo",
+      workflowExecutionId: "sess-delete-000001",
+      managerNodeId: "divedra-manager",
+      managerNodeExecId: "exec-000001",
+      status: "active",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z",
+      authTokenHash: hashManagerAuthToken("delete-secret"),
+      authTokenExpiresAt: "2026-03-16T00:00:00.000Z",
+    });
+    await store.appendMessage({
+      managerMessageId: "mgrmsg-delete-000001",
+      managerSessionId: "mgrsess-delete-000001",
+      workflowId: "demo",
+      workflowExecutionId: "sess-delete-000001",
+      managerNodeId: "divedra-manager",
+      managerNodeExecId: "exec-000001",
+      message: "delete me",
+      parsedIntent: [{ kind: "wait" }],
+      accepted: true,
+      createdAt: "2026-03-15T00:01:00.000Z",
+    });
+    await store.saveIdempotentResult({
+      mutationName: "resumeWorkflow",
+      managerSessionId: "mgrsess-delete-000001",
+      idempotencyKey: "idem-delete-1",
+      normalizedRequestHash: "sha256:delete",
+      responseJson: "{\"ok\":true}",
+      completedAt: "2026-03-15T00:02:00.000Z",
+    });
+
+    await store.deleteByWorkflowExecutionId("sess-delete-000001");
+
+    expect(await store.loadSession("mgrsess-delete-000001")).toBeNull();
+    expect(await store.listMessages("mgrsess-delete-000001")).toEqual([]);
+    expect(
+      await store.loadIdempotentResult({
+        mutationName: "resumeWorkflow",
+        managerSessionId: "mgrsess-delete-000001",
+        idempotencyKey: "idem-delete-1",
+      }),
+    ).toBeNull();
+  });
+
+  test("deleteByWorkflowId removes manager session records across the workflow", async () => {
+    const root = await makeTempDir();
+    const store = createManagerSessionStore({
+      cwd: root,
+      rootDataDir: path.join(root, "data"),
+    });
+
+    await store.createOrResumeSession({
+      managerSessionId: "mgrsess-delete-workflow-000001",
+      workflowId: "demo",
+      workflowExecutionId: "sess-delete-workflow-000001",
+      managerNodeId: "divedra-manager",
+      managerNodeExecId: "exec-000001",
+      status: "active",
+      createdAt: "2026-03-15T00:00:00.000Z",
+      updatedAt: "2026-03-15T00:00:00.000Z",
+      authTokenHash: hashManagerAuthToken("delete-secret"),
+      authTokenExpiresAt: "2026-03-16T00:00:00.000Z",
+    });
+    await store.appendMessage({
+      managerMessageId: "mgrmsg-delete-workflow-000001",
+      managerSessionId: "mgrsess-delete-workflow-000001",
+      workflowId: "demo",
+      workflowExecutionId: "sess-delete-workflow-000001",
+      managerNodeId: "divedra-manager",
+      managerNodeExecId: "exec-000001",
+      message: "delete me",
+      parsedIntent: [{ kind: "wait" }],
+      accepted: true,
+      createdAt: "2026-03-15T00:01:00.000Z",
+    });
+    await store.saveIdempotentResult({
+      mutationName: "resumeWorkflow",
+      managerSessionId: "mgrsess-delete-workflow-000001",
+      idempotencyKey: "idem-delete-workflow-1",
+      normalizedRequestHash: "sha256:delete",
+      responseJson: "{\"ok\":true}",
+      completedAt: "2026-03-15T00:02:00.000Z",
+    });
+
+    await store.deleteByWorkflowId("demo");
+
+    expect(await store.loadSession("mgrsess-delete-workflow-000001")).toBeNull();
+    expect(await store.listMessages("mgrsess-delete-workflow-000001")).toEqual(
+      [],
+    );
+    expect(
+      await store.loadIdempotentResult({
+        mutationName: "resumeWorkflow",
+        managerSessionId: "mgrsess-delete-workflow-000001",
+        idempotencyKey: "idem-delete-workflow-1",
+      }),
+    ).toBeNull();
+  });
 });

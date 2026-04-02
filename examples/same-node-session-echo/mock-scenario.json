@@ -17,7 +17,7 @@
       "always": true
     },
     "payload": {
-      "stage": "subworkflow-dispatch",
+      "stage": "delivery-dispatch",
       "policy": "normalize-then-revisit-same-worker"
     }
   },
@@ -74,9 +74,9 @@
       "echoText": "What is the capital of France?",
       "finalAnswer": "The capital of France is Paris.",
       "notes": [
-        "The graph revisits the same node id.",
+        "The ordered node list revisits the same node id via repeat.",
         "The node payload opts into sessionPolicy.mode = reuse.",
-        "The mock scenario demonstrates the two-turn graph shape; live backend session continuity still depends on the configured backend returning a reusable session id."
+        "The mock scenario demonstrates the two-turn repeat shape; live backend session continuity still depends on the configured backend returning a reusable session id."
       ]
     }
   }

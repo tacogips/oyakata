@@ -3,32 +3,50 @@
 This directory contains reference workflow bundles that can be validated or run
 without copying them into `./.divedra`.
 
+Each example directory also includes `EXPECTED_RESULTS.md`, which records the
+stable assertions used for deterministic verification.
+
+Most example bundles now use the simplified authored shape:
+
+- ordered `nodes[]` are the canonical flow
+- authored `edges` are omitted
+- authored `subWorkflows` are omitted
+- repeat-style examples use node-local `repeat`
+- node payload files live under `nodes/` by default
+- grouped lane payloads may live under `workflows/*/nodes/`
+- inline node payload authoring is exercised by `same-node-session-echo`
+
+Current exception:
+
+- `codex-codex-euthanasia-debate` still uses the legacy sub-workflow structure
+  because `subWorkflowConversations` has not yet been migrated to the
+  simplified format
+
 ## Available Examples
 
 ### `subworkflow-chained-simple`
 
-Minimal runnable reference for **two plain sub-workflows in one bundle**, where the
-second lane lists `inputSources` with `type: "sub-workflow-output"` and
-`subWorkflowId` pointing at the first lane (same pattern as
-`first-four-arithmetic-pipeline`, but all nodes stay on `claude-code-agent` so
-`workflow run` works with the bundled mock scenario).
+Minimal runnable reference for two sequential grouped lanes in one ordered node
+list. The beta lane follows the alpha lane without authored `edges` or
+`subWorkflows`, and the grouped lane payloads now live under
+`workflows/alpha/` and `workflows/beta/`.
 
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate subworkflow-chained-simple --workflow-root ./examples
+bun run src/main.ts cli workflow validate subworkflow-chained-simple --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect subworkflow-chained-simple --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect subworkflow-chained-simple --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run subworkflow-chained-simple \
+bun run src/main.ts cli workflow run subworkflow-chained-simple \
   --workflow-root ./examples \
   --mock-scenario ./examples/subworkflow-chained-simple/mock-scenario.json \
   --output json
@@ -49,19 +67,19 @@ Recommended mixed-backend reference:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-root ./examples
+bun run src/main.ts cli workflow validate claude-divedra-codex-coding --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect claude-divedra-codex-coding --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect claude-divedra-codex-coding --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run claude-divedra-codex-coding \
+bun run src/main.ts cli workflow run claude-divedra-codex-coding \
   --workflow-root ./examples \
   --mock-scenario ./examples/claude-divedra-codex-coding/mock-scenario.json \
   --output json
@@ -71,31 +89,40 @@ bun run src/main.ts workflow run claude-divedra-codex-coding \
 
 Validation-oriented reference bundle for the newer node authoring surface:
 
-- sibling plain sub-workflows show the current fan-out/concurrent-style pattern
-- a loop-body sub-workflow shows the current repeated-iteration pattern used in
-  place of a first-class `foreach` field
+- ordered grouped nodes replace authored sibling sub-workflows
+- a node-local `repeat` shows the repeated-iteration pattern for `foreach`
 - one task uses `nodeType: "command"`
 - one task uses `nodeType: "container"`
 - workflow-relative support assets are included for the command script and
   container build context
+- node payload files live under `nodes/`
 
 Important current limitation:
 
 - live `workflow run` still does not implement real `command` or `container`
   execution in the current runtime
-- the bundled deterministic mock scenario can still exercise the full workflow
-  graph, including those node types, for example/demo purposes
+- the bundled deterministic mock scenario can still exercise the full ordered
+  workflow, including those node types, for example/demo purposes
 
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate node-combinations-showcase --workflow-root ./examples
+bun run src/main.ts cli workflow validate node-combinations-showcase --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect node-combinations-showcase --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts cli workflow run node-combinations-showcase \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/node-combinations-showcase/mock-scenario.json \
+  --output json
 ```
 
 ### `first-four-arithmetic-pipeline`
@@ -110,23 +137,38 @@ Validation-oriented arithmetic pipeline reference:
 - stage 3 uses a `command` worker to divide the stage 2 result by the fourth
   number
 - managers treat each stage as opaque and only move scoped payloads forward
+- stage payloads live under `workflows/add`, `workflows/multiply`, and
+  `workflows/divide`
+- those nested stage payloads reuse the parent-level
+  `prompts/subworkflow-manager.md`, which demonstrates workflow-local asset
+  reuse across nested directories
 
 Important current limitation:
 
-- this bundle is meant for `validate` and `inspect`
-- `command` and `container` nodes are still rejected by `workflow run` in the
-  current runtime, so this example is intentionally not documented as runnable
+- live `workflow run` still does not execute real `command` or `container`
+  workers in the current runtime
+- the bundled deterministic mock scenario can still exercise the authored
+  command/container graph for example and verification purposes
 
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate first-four-arithmetic-pipeline --workflow-root ./examples
+bun run src/main.ts cli workflow validate first-four-arithmetic-pipeline --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect first-four-arithmetic-pipeline --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect first-four-arithmetic-pipeline --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts cli workflow run first-four-arithmetic-pipeline \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/first-four-arithmetic-pipeline/mock-scenario.json \
+  --output json
 ```
 
 ### `claude-divedra-claude-worker`
@@ -141,19 +183,19 @@ Reference workflow for the case where a regular task node also uses
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-claude-worker --workflow-root ./examples
+bun run src/main.ts cli workflow validate claude-divedra-claude-worker --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect claude-divedra-claude-worker --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect claude-divedra-claude-worker --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run claude-divedra-claude-worker \
+bun run src/main.ts cli workflow run claude-divedra-claude-worker \
   --workflow-root ./examples \
   --mock-scenario ./examples/claude-divedra-claude-worker/mock-scenario.json \
   --output json
@@ -163,29 +205,30 @@ bun run src/main.ts workflow run claude-divedra-claude-worker \
 
 Reference workflow for the case where one worker node should run twice:
 
-- the same node id `echo-session` is revisited by a self-edge
-- `node-echo-session.json` opts into `sessionPolicy.mode = "reuse"`
+- the same node id `echo-session` is revisited through node-local `repeat`
+- `nodes/node-echo-session.json` opts into `sessionPolicy.mode = "reuse"`
 - the first visit echoes the normalized request
 - the second visit answers using that earlier echo
 - the prompt also reads `{{inbox.latest.output.echoText}}` so the earlier echo is
   available explicitly in workflow data, not only via backend memory
+- the root manager payload is authored inline in `workflow.json`
 
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate same-node-session-echo --workflow-root ./examples
+bun run src/main.ts cli workflow validate same-node-session-echo --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect same-node-session-echo --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect same-node-session-echo --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run same-node-session-echo \
+bun run src/main.ts cli workflow run same-node-session-echo \
   --workflow-root ./examples \
   --mock-scenario ./examples/same-node-session-echo/mock-scenario.json \
   --output json
@@ -211,13 +254,22 @@ Reference debate bundle for the new node-local prompt split:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate codex-codex-euthanasia-debate --workflow-root ./examples
+bun run src/main.ts cli workflow validate codex-codex-euthanasia-debate --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect codex-codex-euthanasia-debate --workflow-root ./examples --output json
+bun run src/main.ts cli workflow inspect codex-codex-euthanasia-debate --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts cli workflow run codex-codex-euthanasia-debate \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/codex-codex-euthanasia-debate/mock-scenario.json \
+  --output json
 ```
 
 Live execution note:

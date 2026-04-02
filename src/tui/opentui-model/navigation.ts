@@ -151,7 +151,7 @@ export function resolveDirectionalNavigationAction(input: {
 
 export function resolveOpenTuiPopupKind(input: {
   readonly agentSessionPopupOpen: boolean;
-  readonly confirmPopupOpen: boolean;
+  readonly confirmPopupKind: "delete-history-confirm" | "none" | "run-confirm";
   readonly filterPopupOpen: boolean;
   readonly helpPopupOpen: boolean;
   readonly nodeDefinitionPopupOpen: boolean;
@@ -162,8 +162,8 @@ export function resolveOpenTuiPopupKind(input: {
   if (input.helpPopupOpen) {
     return "help";
   }
-  if (input.confirmPopupOpen) {
-    return "run-confirm";
+  if (input.confirmPopupKind !== "none") {
+    return input.confirmPopupKind;
   }
   if (input.nodeDefinitionPopupOpen) {
     return "node-definition";
@@ -180,6 +180,8 @@ export function resolvePopupConfirmAction(
   switch (popupKind) {
     case "filter":
       return { kind: "apply-filter" };
+    case "delete-history-confirm":
+      return { kind: "confirm-delete-history" };
     case "run-confirm":
       return { kind: "confirm-run" };
     default:
@@ -195,8 +197,9 @@ export function resolvePopupRevertAction(
       return { kind: "cancel-filter" };
     case "help":
       return { kind: "close-help" };
+    case "delete-history-confirm":
     case "run-confirm":
-      return { kind: "close-run-confirm" };
+      return { kind: "close-confirm-popup" };
     case "node-definition":
       return { kind: "close-node-definition" };
     case "agent-session":

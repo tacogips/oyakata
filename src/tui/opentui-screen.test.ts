@@ -92,14 +92,14 @@ function makeLoadedWorkflow(inputNodePayload: NodePayload): LoadedWorkflow {
         ],
       },
       nodePayloads: {
-        "node-divedra-manager.json": {
+        "divedra-manager": {
           id: "divedra-manager",
           model: "manager-model",
           promptTemplate: "Manage the workflow",
           variables: {},
         },
-        "node-workflow-input.json": inputNodePayload,
-        "node-workflow-output.json": {
+        "workflow-input": inputNodePayload,
+        "workflow-output": {
           id: "workflow-output",
           model: "output-model",
           promptTemplate: "Return output",
@@ -751,6 +751,35 @@ describe("buildWorkflowHistoryStatusMessage", () => {
     ).toContain("enter/ctrl-m: load selection");
   });
 
+  test("documents workflow history delete-all in the history help text", () => {
+    expect(
+      buildWorkflowHistoryStatusMessage({
+        busy: false,
+        filterText: "",
+        inputSyntax: {
+          status: "valid",
+          summary: "valid JSON",
+        },
+        matchesCount: 2,
+        message: "Help",
+        navigation: {
+          detailMode: "summary",
+          detailReturnPane: "nodes",
+          editingInput: false,
+          focusPane: "sessions",
+          historyViewMode: "workflow",
+          screenMode: "history",
+        },
+        workflowCount: 2,
+        workflowInputDetection: {
+          mode: "json",
+          reason: "detected structured input",
+        },
+        workflowName: "demo-flow",
+      }),
+    ).toContain("workflow runs: D runs workflow history delete-all for the current workflow");
+  });
+
   test("documents that escape closes in-pane viewers before returning", () => {
     expect(
       buildWorkflowHistoryStatusMessage({
@@ -812,7 +841,7 @@ describe("buildOpenTuiFooterShortcutRow", () => {
           screenMode: "history",
         },
       }),
-    ).toContain("h nodes->runs/parent");
+    ).toContain("D delete-all");
   });
 
   test("returns subworkflow-history shortcuts on one line", () => {
@@ -1098,7 +1127,7 @@ describe("resolveOpenTuiPopupKind", () => {
     expect(
       resolveOpenTuiPopupKind({
         agentSessionPopupOpen: true,
-        confirmPopupOpen: true,
+        confirmPopupKind: "run-confirm",
         filterPopupOpen: true,
         helpPopupOpen: true,
         nodeDefinitionPopupOpen: true,
@@ -1110,7 +1139,7 @@ describe("resolveOpenTuiPopupKind", () => {
     expect(
       resolveOpenTuiPopupKind({
         agentSessionPopupOpen: true,
-        confirmPopupOpen: false,
+        confirmPopupKind: "none",
         filterPopupOpen: false,
         helpPopupOpen: false,
         nodeDefinitionPopupOpen: true,
@@ -1122,12 +1151,24 @@ describe("resolveOpenTuiPopupKind", () => {
     expect(
       resolveOpenTuiPopupKind({
         agentSessionPopupOpen: false,
-        confirmPopupOpen: false,
+        confirmPopupKind: "none",
         filterPopupOpen: false,
         helpPopupOpen: false,
         nodeDefinitionPopupOpen: false,
       }),
     ).toBe("none");
+  });
+
+  test("returns delete-history-confirm when that confirmation popup is open", () => {
+    expect(
+      resolveOpenTuiPopupKind({
+        agentSessionPopupOpen: false,
+        confirmPopupKind: "delete-history-confirm",
+        filterPopupOpen: false,
+        helpPopupOpen: false,
+        nodeDefinitionPopupOpen: false,
+      }),
+    ).toBe("delete-history-confirm");
   });
 });
 
@@ -1138,6 +1179,9 @@ describe("resolvePopupConfirmAction", () => {
     });
     expect(resolvePopupConfirmAction("run-confirm")).toEqual({
       kind: "confirm-run",
+    });
+    expect(resolvePopupConfirmAction("delete-history-confirm")).toEqual({
+      kind: "confirm-delete-history",
     });
     expect(resolvePopupConfirmAction("help")).toEqual({ kind: "none" });
   });
@@ -1152,7 +1196,10 @@ describe("resolvePopupRevertAction", () => {
       kind: "close-help",
     });
     expect(resolvePopupRevertAction("run-confirm")).toEqual({
-      kind: "close-run-confirm",
+      kind: "close-confirm-popup",
+    });
+    expect(resolvePopupRevertAction("delete-history-confirm")).toEqual({
+      kind: "close-confirm-popup",
     });
     expect(resolvePopupRevertAction("node-definition")).toEqual({
       kind: "close-node-definition",

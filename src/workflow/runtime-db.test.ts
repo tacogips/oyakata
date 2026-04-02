@@ -5,7 +5,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "vitest";
 import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
-import { resolveRuntimeDbPath } from "./runtime-db";
+import { deleteRuntimeSession, resolveRuntimeDbPath } from "./runtime-db";
 
 const tempDirs: string[] = [];
 
@@ -562,6 +562,63 @@ describe("runtime-db", () => {
         String(row.output_validation_errors_json),
       ) as Array<{ path: string }>;
       expect(errors[0]?.path).toBe("$.summary");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("deleteRuntimeSession removes indexed rows for the workflow execution", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "sqlite-delete-session");
+
+    const options = makeRuntimeDbOptions(root, "sess-sqlite-delete-session");
+    const result = await runWorkflow("sqlite-delete-session", {
+      ...options,
+      mockScenario: {
+        "divedra-manager": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "design" },
+        },
+        "step-1": {
+          provider: "scenario-mock",
+          when: { always: true },
+          payload: { stage: "implement" },
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    await deleteRuntimeSession("sess-sqlite-delete-session", options);
+
+    const db = new Database(resolveRuntimeDbPath(options), { readonly: true });
+    try {
+      expect(
+        (
+          db
+            .query("SELECT count(*) as count FROM sessions WHERE session_id = ?")
+            .get("sess-sqlite-delete-session") as { count: number }
+        ).count,
+      ).toBe(0);
+      expect(
+        (
+          db
+            .query(
+              "SELECT count(*) as count FROM node_executions WHERE session_id = ?",
+            )
+            .get("sess-sqlite-delete-session") as { count: number }
+        ).count,
+      ).toBe(0);
+      expect(
+        (
+          db
+            .query("SELECT count(*) as count FROM node_logs WHERE session_id = ?")
+            .get("sess-sqlite-delete-session") as { count: number }
+        ).count,
+      ).toBe(0);
     } finally {
       db.close();
     }

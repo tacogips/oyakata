@@ -164,6 +164,18 @@ export function resolveOpenTuiShortcutSections(input: {
         shortcut("n new-run", "n: open new-run screen"),
         shortcut("R rerun", "R: rerun selected node"),
         shortcut("u resume", "u: resume selected session"),
+        shortcut(
+          input.navigation.historyViewMode === "workflow"
+            ? "d delete run"
+            : undefined,
+          "workflow runs: d opens delete confirmation",
+        ),
+        shortcut(
+          input.navigation.historyViewMode === "workflow"
+            ? "D delete-all"
+            : undefined,
+          "workflow runs: D runs workflow history delete-all for the current workflow",
+        ),
         shortcut("y copy id", "y: copy focused id"),
         shortcut("i/o/g/a/s detail", "i/o/g/a/s: change detail view"),
       ],

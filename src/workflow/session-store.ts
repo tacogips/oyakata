@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
 import {
@@ -126,6 +126,32 @@ export async function listSessions(
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({ code: "IO", message: `failed listing sessions: ${message}` });
+  }
+}
+
+export async function deleteSession(
+  sessionId: string,
+  options: SessionStoreOptions = {},
+): Promise<Result<void, SessionStoreFailure>> {
+  if (!isSafeSessionId(sessionId)) {
+    return err({
+      code: "INVALID_SESSION_ID",
+      message: `invalid session id '${sessionId}'`,
+    });
+  }
+
+  const root = resolveSessionStoreRoot(options);
+  const target = sessionFilePath(root, sessionId);
+
+  try {
+    await rm(target, { force: true });
+    return ok(undefined);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    return err({
+      code: "IO",
+      message: `failed deleting session file: ${message}`,
+    });
   }
 }
 

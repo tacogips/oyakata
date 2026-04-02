@@ -267,6 +267,16 @@ function resolveScenarioEntry(
   return entry as MockNodeResponse;
 }
 
+function resolveScenarioSequenceIndex(input: AdapterExecutionInput): number {
+  if (input.output === undefined) {
+    return input.executionIndex;
+  }
+  return (
+    (input.executionIndex - 1) * input.output.maxValidationAttempts +
+    input.output.attempt
+  );
+}
+
 export class DeterministicNodeAdapter implements NodeAdapter {
   async execute(
     input: AdapterExecutionInput,
@@ -310,8 +320,8 @@ export class ScenarioNodeAdapter implements NodeAdapter {
       return this.#fallback.execute(input, context);
     }
 
-    const attemptIndex = input.output?.attempt ?? input.executionIndex;
-    const response = resolveScenarioEntry(scenarioEntry, attemptIndex);
+    const sequenceIndex = resolveScenarioSequenceIndex(input);
+    const response = resolveScenarioEntry(scenarioEntry, sequenceIndex);
     if (response.fail === true) {
       throw new Error(`scenario forced failure for node '${input.nodeId}'`);
     }
