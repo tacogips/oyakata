@@ -59,7 +59,6 @@ export async function computeWorkflowRevisionFromFiles(
   const extraFileSet = new Set(sortedExtraFiles);
   const files = [
     "workflow.json",
-    "workflow-vis.json",
     ...sortedNodeFiles,
     ...sortedExtraFiles,
   ];

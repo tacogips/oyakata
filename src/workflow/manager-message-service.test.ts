@@ -166,22 +166,6 @@ async function createOptionalDecisionWorkflowFixture(
     )}\n`,
     "utf8",
   );
-  await writeFile(
-    path.join(workflowDir, "workflow-vis.json"),
-    `${JSON.stringify(
-      {
-        nodes: [
-          { id: "divedra-manager", order: 0 },
-          { id: "step-1", order: 1 },
-          { id: "step-2", order: 2 },
-        ],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-
   for (const node of [
     {
       file: "node-divedra-manager.json",

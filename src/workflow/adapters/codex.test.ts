@@ -5,8 +5,6 @@ import type {
 } from "../adapter";
 import { CodexAgentAdapter } from "./codex";
 
-const originalFetch = globalThis.fetch;
-
 const baseInput: AdapterExecutionInput = {
   workflowId: "wf",
   workflowExecutionId: "sess-1",
@@ -71,8 +69,6 @@ const baseContext: AdapterExecutionContext = {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
-  delete process.env["TEST_CODEX_KEY"];
 });
 
 function makeCodexRunnerFixture(input: {
@@ -339,33 +335,5 @@ describe("CodexAgentAdapter", () => {
         baseContext,
       ),
     ).rejects.toHaveProperty("code", "invalid_output");
-  });
-
-  test("supports the legacy endpoint fallback", async () => {
-    process.env["TEST_CODEX_KEY"] = "secret";
-    const fetchMock = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          provider: "codex-provider",
-          model: "gpt-5-nano",
-          promptText: "hello",
-          completionPassed: true,
-          when: { always: true },
-          payload: { ok: true },
-        }),
-        { status: 200 },
-      );
-    });
-    (globalThis as { fetch: typeof fetch }).fetch =
-      fetchMock as unknown as typeof fetch;
-
-    const adapter = new CodexAgentAdapter({
-      endpoint: "http://localhost/codex",
-      apiKeyEnv: "TEST_CODEX_KEY",
-    });
-
-    const output = await adapter.execute(baseInput, baseContext);
-    expect(output.provider).toBe("codex-provider");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

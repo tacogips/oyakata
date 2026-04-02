@@ -248,7 +248,6 @@ async function buildWorkflowDefinitionView(
     bundle: loaded.value.bundle,
     derivedVisualization: deriveWorkflowVisualization({
       workflow: loaded.value.bundle.workflow,
-      workflowVis: loaded.value.bundle.workflowVis,
     }),
   } satisfies WorkflowResponse;
 }
@@ -286,7 +285,6 @@ async function saveWorkflowDefinitionMutation(
     input.workflowName,
     {
       workflow: input.bundle.workflow,
-      workflowVis: input.bundle.workflowVis,
       nodePayloads: input.bundle.nodePayloads,
       ...(input.expectedRevision === undefined
         ? {}
@@ -320,12 +318,7 @@ async function validateWorkflowDefinitionMutation(
   if (input.bundle !== undefined) {
     const validation = validateWorkflowBundleDetailed({
       workflow: input.bundle.workflow,
-      workflowVis: input.bundle.workflowVis,
-      nodePayloads: remapNodePayloadsForValidation(
-        input.bundle as unknown as Parameters<
-          typeof remapNodePayloadsForValidation
-        >[0],
-      ),
+      nodePayloads: remapNodePayloadsForValidation(input.bundle),
     });
     if (!validation.ok) {
       return {

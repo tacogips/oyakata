@@ -19,7 +19,7 @@ Implemented `PUT /api/workflows/:name` with expected revision conflict protectio
 
 **Completion Criteria**:
 - [x] Workflow revision hash can be computed from on-disk file set
-- [x] Atomic write helpers persist `workflow.json`, `workflow-vis.json`, and `node-*.json`
+- [x] Atomic write helpers persist `workflow.json` and `node-*.json`
 - [x] Save validates payload before writing
 
 ### TASK-002: API GET/PUT Integration

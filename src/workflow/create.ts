@@ -196,14 +196,6 @@ export async function createWorkflowTemplate(
     branching: { mode: "fan-out" },
   };
 
-  const workflowVis = {
-    nodes: TEMPLATE_NODE_DEFINITIONS.map((definition, order) => ({
-      id: definition.id,
-      order,
-    })),
-    uiMeta: { layout: "vertical" },
-  };
-
   const nodePayloads = TEMPLATE_NODE_DEFINITIONS.map((definition) =>
     createTemplateNodePayload(definition, workflowId),
   );
@@ -213,10 +205,6 @@ export async function createWorkflowTemplate(
     await writeJson(
       path.join(workflowDirectory, "workflow.json"),
       workflowJson,
-    );
-    await writeJson(
-      path.join(workflowDirectory, "workflow-vis.json"),
-      workflowVis,
     );
     await mkdir(promptDirectory, { recursive: true });
     for (const node of nodePayloads) {

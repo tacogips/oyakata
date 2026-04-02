@@ -40,7 +40,6 @@ export function isReservedWorkflowDefinitionPath(relativePath: string): boolean 
   }
   return (
     fileName === "workflow.json" ||
-    fileName === "workflow-vis.json" ||
     /^node-.+\.json$/u.test(fileName)
   );
 }

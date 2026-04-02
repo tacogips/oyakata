@@ -65,13 +65,6 @@ function makeLoadedWorkflow(inputNodePayload: NodePayload): LoadedWorkflow {
         loops: [],
         branching: { mode: "fan-out" },
       },
-      workflowVis: {
-        nodes: [
-          { id: "divedra-manager", order: 0 },
-          { id: "workflow-input", order: 1 },
-          { id: "workflow-output", order: 2 },
-        ],
-      },
       nodePayloads: {
         "node-divedra-manager.json": {
           id: "divedra-manager",

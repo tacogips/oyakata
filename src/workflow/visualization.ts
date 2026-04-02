@@ -1,4 +1,4 @@
-import type { SubWorkflowRef, WorkflowJson, WorkflowVisJson } from "./types";
+import type { SubWorkflowRef, WorkflowJson } from "./types";
 
 export interface DerivedVisNode {
   readonly id: string;
@@ -157,11 +157,11 @@ function collectScopesForOrder(
 
 export function deriveWorkflowVisualization(args: {
   readonly workflow: WorkflowJson;
-  readonly workflowVis: WorkflowVisJson;
 }): readonly DerivedVisNode[] {
-  const orderedVisNodes = [...args.workflowVis.nodes].sort(
-    (a, b) => a.order - b.order || a.id.localeCompare(b.id),
-  );
+  const orderedVisNodes = args.workflow.nodes.map((node, order) => ({
+    id: node.id,
+    order,
+  }));
   const orderByNodeId = new Map<string, number>();
   orderedVisNodes.forEach((node) => {
     orderByNodeId.set(node.id, node.order);

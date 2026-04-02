@@ -23,7 +23,6 @@ The source of truth for these shapes is:
 A workflow bundle contains:
 
 - `workflow.json`
-- `workflow-vis.json`
 - `node-{id}.json`
 - optional prompt files
 
@@ -166,14 +165,13 @@ Current implementation note:
 `NormalizedWorkflowBundle` contains:
 
 - `workflow: WorkflowJson`
-- `workflowVis: WorkflowVisJson`
 - `nodePayloads: Record<string, NodePayload>`
 
 Normalization behavior:
 
 - prompt files are resolved into effective `promptTemplate`
 - selected legacy non-manager fields may be normalized during load, but legacy manager kinds are rejected
-- if `workflow-vis.json` is absent, a default ordered `WorkflowVisJson` is synthesized
+- `workflow.json.nodes[]` order is canonical and requires no separate visualization file
 
 ## Session Model
 

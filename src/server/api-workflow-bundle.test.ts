@@ -15,9 +15,6 @@ describe("remapNodePayloadsForValidation", () => {
           },
         ],
       },
-      workflowVis: {
-        nodes: [{ id: "worker", order: 0 }],
-      },
       nodePayloads: {
         worker: {
           id: "worker",
@@ -50,9 +47,6 @@ describe("remapNodePayloadsForValidation", () => {
             },
           },
         ],
-      },
-      workflowVis: {
-        nodes: [{ id: "manager", order: 0 }],
       },
       nodePayloads: {
         manager: {

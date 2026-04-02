@@ -849,19 +849,6 @@ async function createWorkflowFixture(
     branching: { mode: "fan-out" },
   });
 
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: withLoop
-      ? [
-          { id: "divedra-manager", order: 0 },
-          { id: "step-1", order: 1 },
-          { id: "done", order: 2 },
-        ]
-      : [
-          { id: "divedra-manager", order: 0 },
-          { id: "step-1", order: 1 },
-        ],
-  });
-
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
     id: "divedra-manager",
     model: "tacogips/codex-agent",
@@ -931,14 +918,6 @@ async function createOptionalExecutionFixture(
     branching: { mode: "fan-out" },
   });
 
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "step-1", order: 1 },
-      { id: "done", order: 2 },
-    ],
-  });
-
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
     id: "divedra-manager",
     model: "tacogips/codex-agent",
@@ -989,13 +968,6 @@ async function createUserActionFixture(
     edges: [{ from: "divedra-manager", to: "approval", when: "always" }],
     loops: [],
     branching: { mode: "fan-out" },
-  });
-
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "approval", order: 1 },
-    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1064,15 +1036,6 @@ async function createNodeSessionReuseFixture(
     ],
     loops: [],
     branching: { mode: "fan-out" },
-  });
-
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "step-a", order: 1 },
-      { id: "step-b", order: 2 },
-      { id: "step-c", order: 3 },
-    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1198,18 +1161,6 @@ async function createSubWorkflowRuntimeFixture(
     branching: { mode: "fan-out" },
   });
 
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "a-manager", order: 1 },
-      { id: "a-input", order: 2 },
-      { id: "a-output", order: 3 },
-      { id: "b-manager", order: 4 },
-      { id: "b-input", order: 5 },
-      { id: "b-output", order: 6 },
-    ],
-  });
-
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
     id: "divedra-manager",
     model: "tacogips/codex-agent",
@@ -1289,13 +1240,6 @@ async function createManagerAfterOutputFixture(
     branching: { mode: "fan-out" },
   });
 
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "workflow-output", order: 1 },
-    ],
-  });
-
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
     id: "divedra-manager",
     model: "tacogips/codex-agent",
@@ -1340,13 +1284,6 @@ async function createSingleRootOutputFixture(
     edges: [{ from: "divedra-manager", to: "workflow-output", when: "always" }],
     loops: [],
     branching: { mode: "fan-out" },
-  });
-
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "workflow-output", order: 1 },
-    ],
   });
 
   for (const nodeId of ["divedra-manager", "workflow-output"]) {
@@ -1400,14 +1337,6 @@ async function createMultipleRootOutputsFixture(
     branching: { mode: "fan-out" },
   });
 
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "first-output", order: 1 },
-      { id: "second-output", order: 2 },
-    ],
-  });
-
   for (const nodeId of ["divedra-manager", "first-output", "second-output"]) {
     await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
       id: nodeId,
@@ -1457,14 +1386,6 @@ async function createRootOutputThenTaskFixture(
     ],
     loops: [],
     branching: { mode: "fan-out" },
-  });
-
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "workflow-output", order: 1 },
-      { id: "final-task", order: 2 },
-    ],
   });
 
   for (const nodeId of ["divedra-manager", "workflow-output", "final-task"]) {
@@ -1539,16 +1460,6 @@ async function createWorkflowOutputDrivenSubWorkflowFixture(
     ],
     loops: [],
     branching: { mode: "fan-out" },
-  });
-
-  await writeJson(path.join(workflowDir, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "workflow-output", order: 1 },
-      { id: "review-manager", order: 2 },
-      { id: "review-input", order: 3 },
-      { id: "review-output", order: 4 },
-    ],
   });
 
   for (const nodeId of [
@@ -6082,17 +5993,6 @@ describe("runWorkflow", () => {
       (node) => node.id !== "b-manager",
     );
     await writeJson(workflowPath, workflowJson);
-
-    const workflowVisPath = path.join(root, workflowName, "workflow-vis.json");
-    const workflowVisJson = JSON.parse(
-      await readFile(workflowVisPath, "utf8"),
-    ) as {
-      nodes: Array<{ id: string; order: number }>;
-    };
-    workflowVisJson.nodes = workflowVisJson.nodes
-      .filter((node) => node.id !== "b-manager")
-      .map((node, index) => ({ ...node, order: index }));
-    await writeJson(workflowVisPath, workflowVisJson);
 
     const result = await runWorkflow(
       workflowName,

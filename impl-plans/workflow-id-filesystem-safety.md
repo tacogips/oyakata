@@ -66,7 +66,6 @@ declare function validateWorkflowBundleDetailed(
 ```typescript
 declare function makeValidRaw(): {
   workflow: unknown;
-  workflowVis: unknown;
   nodePayloads: Record<string, unknown>;
 };
 ```

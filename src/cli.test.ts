@@ -130,12 +130,6 @@ async function createCallNodeFixture(
     loops: [],
     branching: { mode: "fan-out" },
   });
-  await writeJson(path.join(workflowDirectory, "workflow-vis.json"), {
-    nodes: [
-      { id: "divedra-manager", order: 0 },
-      { id: "writer", order: 1 },
-    ],
-  });
   await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
     id: "divedra-manager",
     model: "tacogips/claude-code-agent",

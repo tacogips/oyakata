@@ -1,4 +1,4 @@
-import { AdapterExecutionError, type AdapterExecutionInput } from "../adapter";
+import { AdapterExecutionError } from "../adapter";
 
 const DEFAULT_MAX_ATTEMPTS = 2;
 const DEFAULT_RETRY_DELAY_MS = 50;
@@ -22,42 +22,6 @@ export function resolveRetryPolicy(config: {
   return {
     maxAttempts: Math.max(1, config.maxAttempts ?? DEFAULT_MAX_ATTEMPTS),
     retryDelayMs: Math.max(0, config.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS),
-  };
-}
-
-export function buildRemoteAgentRequestBody(
-  input: AdapterExecutionInput,
-): Record<string, unknown> {
-  const remotePromptText =
-    input.systemPromptText === undefined ||
-    input.systemPromptText.trim().length === 0
-      ? input.promptText
-      : `${input.systemPromptText}\n\n${input.promptText}`;
-  return {
-    workflowId: input.workflowId,
-    workflowExecutionId: input.workflowExecutionId,
-    nodeId: input.nodeId,
-    nodeExecId: input.nodeExecId,
-    model: input.node.model,
-    promptText: remotePromptText,
-    arguments: input.arguments,
-    mergedVariables: input.mergedVariables,
-    executionIndex: input.executionIndex,
-    ...(input.systemPromptText === undefined
-      ? {}
-      : { systemPromptText: input.systemPromptText }),
-    ...(input.output === undefined ? { artifactDir: input.artifactDir } : {}),
-    upstreamCommunicationIds: input.upstreamCommunicationIds,
-    ...(input.executionMailbox === undefined
-      ? {}
-      : { executionMailbox: input.executionMailbox }),
-    ...(input.backendSession === undefined
-      ? {}
-      : { backendSession: input.backendSession }),
-    ...(input.ambientManagerContext === undefined
-      ? {}
-      : { ambientManagerContext: input.ambientManagerContext }),
-    ...(input.output === undefined ? {} : { output: input.output }),
   };
 }
 

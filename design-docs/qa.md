@@ -11,7 +11,6 @@
 
 2. Required files per workflow
 - `workflow.json`
-- `workflow-vis.json`
 - `node-{id}.json` (one file per node)
 - optional workflow-local prompt files such as `prompts/<node-id>.md`
 
@@ -27,10 +26,10 @@
   - `model`
   - `variables`
 
-5. workflow-vis.json role
-- Stores browser visualization state (e.g., node `order`).
+5. workflow.json node-order role
+- Stores browser/runtime node order directly in `workflow.json.nodes[]`.
 - `indent`/`color` are derived from graph and loop/group semantics at render time.
-- Updated by browser operations.
+- Updated by browser operations through `workflow.json`.
 
 6. Branch match policy
 - When multiple branch conditions are true, execute all matched branches (fan-out).

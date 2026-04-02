@@ -147,9 +147,7 @@ Agent cooperation is defined by a JSON-managed `workflow` model. A workflow can 
 
 Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 
-- `workflow.json` (purpose via `description`, graph/control-flow)
-- `workflow.json` (purpose via `description`, graph/control-flow, global defaults)
-- `workflow-vis.json` (visualization ordering state for nodes such as `order`; `indent`/`color` are derived)
+- `workflow.json` (purpose via `description`, graph/control-flow, global defaults, and node ordering)
 - `node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate` or `promptTemplateFile`, `variables`, optional `timeoutMs`)
 
 ## Development Environment
@@ -185,7 +183,7 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 - `examples/` stores reference workflow bundles that should remain directly
   usable with `--workflow-root ./examples`.
 - Keep example bundles aligned with the canonical workflow file set:
-  `workflow.json`, `workflow-vis.json`, and `node-{id}.json`.
+  `workflow.json` and `node-{id}.json`.
 - Prefer examples that demonstrate the recommended backend split:
   `divedra` managers on `claude-code-agent` and coding workers on
   `codex-agent`.

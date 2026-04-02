@@ -46,7 +46,6 @@ import {
   type SubWorkflowInputSource,
   type SubWorkflowRef,
   type ValidationIssue,
-  type VisNode,
   type WorkflowCallRef,
   type WorkflowEdge,
   type WorkflowJson,
@@ -54,27 +53,12 @@ import {
   type WorkflowNodeRepeatPolicy,
   type WorkflowNodeRef,
   type WorkflowPrompts,
-  type WorkflowVisJson,
   type UserActionNodeConfig,
 } from "./types";
 
 interface RawBundle {
   readonly workflow: unknown;
-  readonly workflowVis: unknown;
   readonly nodePayloads: Readonly<Record<string, unknown>>;
-}
-
-interface LegacyLayout {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
-
-interface NormalizedVisNodeCandidate {
-  readonly id: string;
-  readonly order?: number;
-  readonly legacyLayout?: LegacyLayout;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -369,7 +353,7 @@ function normalizeContainerBuild(
         makeIssue(
           "error",
           `${path}.${key}`,
-          "must not target canonical workflow definition files such as workflow.json, workflow-vis.json, or node-*.json",
+          "must not target canonical workflow definition files such as workflow.json or node-*.json",
         ),
       );
       return undefined;
@@ -2262,184 +2246,6 @@ function normalizeWorkflow(
   };
 }
 
-function normalizeVisNode(
-  value: unknown,
-  index: number,
-  issues: ValidationIssue[],
-): NormalizedVisNodeCandidate | null {
-  const path = `workflowVis.nodes[${index}]`;
-  if (!isRecord(value)) {
-    issues.push(makeIssue("error", path, "must be an object"));
-    return null;
-  }
-
-  const id = readStringField(value, "id", path, issues);
-  if (id === null) {
-    return null;
-  }
-
-  let order: number | undefined;
-  const orderRaw = value["order"];
-  if (orderRaw !== undefined) {
-    if (
-      typeof orderRaw !== "number" ||
-      !Number.isInteger(orderRaw) ||
-      orderRaw < 0
-    ) {
-      issues.push(
-        makeIssue("error", `${path}.order`, "must be a non-negative integer"),
-      );
-    } else {
-      order = orderRaw;
-    }
-  } else {
-    const hasLegacyLayoutFields =
-      value["x"] !== undefined ||
-      value["y"] !== undefined ||
-      value["width"] !== undefined ||
-      value["height"] !== undefined;
-    if (hasLegacyLayoutFields) {
-      const x = readNumberField(value, "x", path, issues);
-      const y = readNumberField(value, "y", path, issues);
-      const width = readNumberField(value, "width", path, issues);
-      const height = readNumberField(value, "height", path, issues);
-      if (x !== null && y !== null && width !== null && height !== null) {
-        return {
-          id,
-          legacyLayout: { x, y, width, height },
-        };
-      }
-    } else {
-      issues.push(
-        makeIssue("error", `${path}.order`, "must be a non-negative integer"),
-      );
-    }
-  }
-
-  if (value["indent"] !== undefined || value["indentLevel"] !== undefined) {
-    issues.push(
-      makeIssue(
-        "warning",
-        `${path}.indent`,
-        "is ignored; indent is derived from workflow graph structure",
-      ),
-    );
-  }
-
-  if (value["color"] !== undefined) {
-    issues.push(
-      makeIssue(
-        "warning",
-        `${path}.color`,
-        "is ignored; color is derived from workflow loop/group scope",
-      ),
-    );
-  }
-
-  if (order === undefined) {
-    return null;
-  }
-
-  return {
-    id,
-    ...(order === undefined ? {} : { order }),
-  };
-}
-
-function normalizeWorkflowVis(
-  workflowVis: unknown,
-  issues: ValidationIssue[],
-): WorkflowVisJson | null {
-  if (!isRecord(workflowVis)) {
-    issues.push(makeIssue("error", "workflowVis", "must be an object"));
-    return null;
-  }
-
-  const nodesRaw = workflowVis["nodes"];
-  if (!Array.isArray(nodesRaw)) {
-    issues.push(makeIssue("error", "workflowVis.nodes", "must be an array"));
-    return null;
-  }
-
-  const candidates = nodesRaw
-    .map((entry, index) => normalizeVisNode(entry, index, issues))
-    .filter((entry): entry is NormalizedVisNodeCandidate => entry !== null);
-
-  const legacyCandidates = candidates.filter(
-    (
-      entry,
-    ): entry is NormalizedVisNodeCandidate & {
-      readonly legacyLayout: LegacyLayout;
-    } => entry.legacyLayout !== undefined,
-  );
-  const explicitCandidates = candidates.filter(
-    (entry): entry is NormalizedVisNodeCandidate & { readonly order: number } =>
-      entry.order !== undefined,
-  );
-
-  if (legacyCandidates.length > 0 && explicitCandidates.length > 0) {
-    issues.push(
-      makeIssue(
-        "error",
-        "workflowVis.nodes",
-        "must not mix explicit order entries with legacy coordinate layout entries",
-      ),
-    );
-  }
-
-  const nodes: readonly VisNode[] =
-    legacyCandidates.length > 0
-      ? [...legacyCandidates]
-          .sort((a, b) => {
-            const aLayout = a.legacyLayout;
-            const bLayout = b.legacyLayout;
-            return (
-              aLayout.y - bLayout.y ||
-              aLayout.x - bLayout.x ||
-              a.id.localeCompare(b.id)
-            );
-          })
-          .map((entry, index) => {
-            issues.push(
-              makeIssue(
-                "warning",
-                `workflowVis.nodes[${index}].order`,
-                "legacy x/y layout normalized to top-to-bottom, left-to-right order; set explicit order",
-              ),
-            );
-            return { id: entry.id, order: index };
-          })
-      : [...explicitCandidates]
-          .map((entry) => ({ id: entry.id, order: entry.order }))
-          .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
-
-  if (workflowVis["viewport"] !== undefined) {
-    issues.push(
-      makeIssue(
-        "warning",
-        "workflowVis.viewport",
-        "legacy canvas viewport is ignored in vertical workflow layout",
-      ),
-    );
-  }
-
-  const uiMetaRaw = workflowVis["uiMeta"];
-  if (uiMetaRaw !== undefined && !isRecord(uiMetaRaw)) {
-    issues.push(
-      makeIssue(
-        "error",
-        "workflowVis.uiMeta",
-        "must be an object when provided",
-      ),
-    );
-  }
-
-  return {
-    nodes,
-    ...(isRecord(uiMetaRaw) ? { uiMeta: uiMetaRaw } : {}),
-  };
-}
-
 function normalizeNodeTemplateFields(args: {
   readonly path: string;
   readonly payload: Readonly<Record<string, unknown>>;
@@ -2469,7 +2275,7 @@ function normalizeNodeTemplateFields(args: {
             makeIssue(
               "error",
               `${args.path}.${args.templateFileField}`,
-              "must not target canonical workflow definition files such as workflow.json, workflow-vis.json, or node-*.json",
+              "must not target canonical workflow definition files such as workflow.json or node-*.json",
             ),
           );
         } else {
@@ -3350,10 +3156,7 @@ function findNodeIdByOrder(
   bundle: NormalizedWorkflowBundle,
   order: number,
 ): string {
-  return (
-    bundle.workflowVis.nodes.find((entry) => entry.order === order)?.id ??
-    "unknown"
-  );
+  return bundle.workflow.nodes[order]?.id ?? "unknown";
 }
 
 function pushCrossingIntervalIssue(
@@ -3391,8 +3194,8 @@ function runSemanticValidation(
   issues: ValidationIssue[],
 ): void {
   const nodeIdSet = new Set(bundle.workflow.nodes.map((node) => node.id));
-  const visOrderByNodeId = new Map(
-    bundle.workflowVis.nodes.map((entry) => [entry.id, entry.order]),
+  const nodeOrderByNodeId = new Map(
+    bundle.workflow.nodes.map((node, order) => [node.id, order]),
   );
   const rootManagerNodeIds = bundle.workflow.nodes
     .filter((node) => node.kind === "root-manager")
@@ -4105,62 +3908,14 @@ function runSemanticValidation(
     });
   });
 
-  const visNodeSet = new Set<string>();
-  const visOrderSet = new Set<number>();
-  bundle.workflowVis.nodes.forEach((entry, index) => {
-    if (!nodeIdSet.has(entry.id)) {
-      issues.push(
-        makeIssue(
-          "error",
-          `workflowVis.nodes[${index}].id`,
-          "references unknown node id",
-        ),
-      );
-    }
-    if (visNodeSet.has(entry.id)) {
-      issues.push(
-        makeIssue(
-          "error",
-          `workflowVis.nodes[${index}].id`,
-          `duplicate vis node id '${entry.id}'`,
-        ),
-      );
-    } else {
-      visNodeSet.add(entry.id);
-    }
-    if (visOrderSet.has(entry.order)) {
-      issues.push(
-        makeIssue(
-          "error",
-          `workflowVis.nodes[${index}].order`,
-          `duplicate order '${entry.order}'`,
-        ),
-      );
-    } else {
-      visOrderSet.add(entry.order);
-    }
-  });
-
-  nodeIdSet.forEach((nodeId) => {
-    if (!visNodeSet.has(nodeId)) {
-      issues.push(
-        makeIssue(
-          "error",
-          "workflowVis.nodes",
-          `missing vertical order for node '${nodeId}'`,
-        ),
-      );
-    }
-  });
-
   const subWorkflowIntervals: Array<{
     readonly id: string;
     readonly inputOrder: number;
     readonly outputOrder: number;
   }> = [];
   for (const subWorkflow of bundle.workflow.subWorkflows) {
-    const inputOrder = visOrderByNodeId.get(subWorkflow.inputNodeId);
-    const outputOrder = visOrderByNodeId.get(subWorkflow.outputNodeId);
+    const inputOrder = nodeOrderByNodeId.get(subWorkflow.inputNodeId);
+    const outputOrder = nodeOrderByNodeId.get(subWorkflow.outputNodeId);
     if (inputOrder === undefined || outputOrder === undefined) {
       continue;
     }
@@ -4226,8 +3981,8 @@ function runSemanticValidation(
     ) {
       return;
     }
-    const inputOrder = visOrderByNodeId.get(subWorkflow.inputNodeId);
-    const outputOrder = visOrderByNodeId.get(subWorkflow.outputNodeId);
+    const inputOrder = nodeOrderByNodeId.get(subWorkflow.inputNodeId);
+    const outputOrder = nodeOrderByNodeId.get(subWorkflow.outputNodeId);
     if (inputOrder === undefined || outputOrder === undefined) {
       return;
     }
@@ -4252,7 +4007,7 @@ function runSemanticValidation(
     if (loopIdsRepresentedBySubWorkflow.has(loop.id)) {
       return;
     }
-    const judgeOrder = visOrderByNodeId.get(loop.judgeNodeId);
+    const judgeOrder = nodeOrderByNodeId.get(loop.judgeNodeId);
     if (judgeOrder === undefined) {
       return;
     }
@@ -4271,7 +4026,7 @@ function runSemanticValidation(
       );
     }
     continueTargets.forEach((edge, continueIndex) => {
-      const targetOrder = visOrderByNodeId.get(edge.to);
+      const targetOrder = nodeOrderByNodeId.get(edge.to);
       if (targetOrder === undefined) {
         return;
       }
@@ -4294,7 +4049,7 @@ function runSemanticValidation(
       if (
         continueIndex > 0 &&
         targetOrder !== undefined &&
-        targetOrder !== visOrderByNodeId.get(continueTargets[0]?.to ?? "")
+        targetOrder !== nodeOrderByNodeId.get(continueTargets[0]?.to ?? "")
       ) {
         issues.push(
           makeIssue(
@@ -4311,7 +4066,7 @@ function runSemanticValidation(
         (edge) => edge.from === loop.judgeNodeId && edge.when === loop.exitWhen,
       )
       .forEach((edge) => {
-        const targetOrder = visOrderByNodeId.get(edge.to);
+        const targetOrder = nodeOrderByNodeId.get(edge.to);
         if (targetOrder === undefined) {
           return;
         }
@@ -4400,7 +4155,6 @@ export function validateWorkflowBundleDetailed(
   );
 
   const workflow = normalizeWorkflow(raw.workflow, issues);
-  const workflowVis = normalizeWorkflowVis(raw.workflowVis, issues);
 
   const nodePayloads: Record<string, NodePayload> = {};
   if (workflow !== null) {
@@ -4428,13 +4182,12 @@ export function validateWorkflowBundleDetailed(
     });
   }
 
-  if (workflow === null || workflowVis === null) {
+  if (workflow === null) {
     return err(issues);
   }
 
   const bundle: NormalizedWorkflowBundle = {
     workflow,
-    workflowVis,
     nodePayloads,
   };
 

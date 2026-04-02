@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { deriveWorkflowVisualization } from "./visualization";
-import type { WorkflowJson, WorkflowVisJson } from "./types";
+import type { WorkflowJson } from "./types";
 
 function makeBaseWorkflow(
   nodes: readonly string[],
@@ -24,12 +24,6 @@ function makeBaseWorkflow(
   };
 }
 
-function makeVis(nodeIds: readonly string[]): WorkflowVisJson {
-  return {
-    nodes: nodeIds.map((id, index) => ({ id, order: index })),
-  };
-}
-
 describe("deriveWorkflowVisualization", () => {
   test("keeps top-level linear chain at base indent", () => {
     const workflow = makeBaseWorkflow(
@@ -42,7 +36,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis(["divedra-manager", "design", "implement"]),
     });
 
     expect(derived).toEqual([
@@ -101,12 +94,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "implement",
-        "test-review",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([
@@ -181,13 +168,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow: grouped,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "group-manager",
-        "group-input",
-        "group-output",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([
@@ -267,13 +247,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "branch-manager",
-        "branch-input",
-        "branch-output",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([
@@ -389,15 +362,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "group-manager",
-        "group-input",
-        "implement",
-        "test-review",
-        "group-output",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([
@@ -500,15 +464,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "loop-manager",
-        "loop-input",
-        "implement",
-        "loop-output",
-        "loop-judge",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([
@@ -657,18 +612,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "loop-manager",
-        "loop-input",
-        "inner-manager",
-        "inner-input",
-        "implement",
-        "inner-output",
-        "loop-output",
-        "loop-judge",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([
@@ -802,17 +745,6 @@ describe("deriveWorkflowVisualization", () => {
 
     const derived = deriveWorkflowVisualization({
       workflow,
-      workflowVis: makeVis([
-        "divedra-manager",
-        "branch-manager",
-        "branch-input",
-        "inner-manager",
-        "inner-input",
-        "review",
-        "inner-output",
-        "branch-output",
-        "done",
-      ]),
     });
 
     expect(derived).toEqual([

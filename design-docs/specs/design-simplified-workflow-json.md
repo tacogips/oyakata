@@ -111,7 +111,6 @@ Example:
 Semantics:
 
 - default next node = the next node in array order
-- `workflow-vis.json` remains visual/editor metadata only
 - authored execution order no longer depends on reconstructing an edge graph
 
 ### 2. `edges[]` Is Removed From the Default Schema
@@ -234,8 +233,6 @@ should live on the nodes themselves:
 { "id": "draft", "group": "writing" }
 { "id": "review", "group": "qa" }
 ```
-
-or in `workflow-vis.json`.
 
 This grouping should not affect runtime routing by itself.
 
@@ -368,7 +365,7 @@ If the project wants maximum conceptual simplicity, it should go further:
 - Should `runWhen` and `skipWhen` both exist, or should one canonical field be
   used?
 - Should workflow-call nodes be a node-ref field or a node payload `nodeType`?
-- Should `group` live in `workflow.json.nodes[]` or only in `workflow-vis.json`?
+- Should `group` live in `workflow.json.nodes[]`?
 - Is true fan-out intentionally out of scope, or should there be a later
   advanced control extension?
 

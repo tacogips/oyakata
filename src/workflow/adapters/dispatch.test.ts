@@ -8,8 +8,6 @@ import {
   resolveNodeExecutionBackend,
 } from "./dispatch";
 
-const originalFetch = globalThis.fetch;
-
 const baseContext: AdapterExecutionContext = {
   timeoutMs: 1000,
   signal: new AbortController().signal,
@@ -17,8 +15,84 @@ const baseContext: AdapterExecutionContext = {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
 });
+
+function makeCodexRunner() {
+  return {
+    createRunner: vi.fn(() => ({
+      startSession: vi.fn(async () => ({
+        sessionId: "codex-session-1",
+        async *messages(): AsyncGenerator<unknown, void, undefined> {
+          yield {
+            type: "session_meta",
+            payload: {
+              meta: { id: "codex-session-1" },
+            },
+          };
+          yield {
+            type: "response_item",
+            payload: {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "{\"ok\":true}" }],
+            },
+          };
+        },
+        waitForCompletion: vi.fn(async () => ({
+          success: true,
+          exitCode: 0,
+          stats: {
+            startedAt: "2026-03-30T00:00:00.000Z",
+            completedAt: "2026-03-30T00:00:01.000Z",
+            messageCount: 2,
+          },
+        })),
+        cancel: vi.fn(async () => {
+          return;
+        }),
+      })),
+      resumeSession: vi.fn(async () => {
+        throw new Error("resumeSession should not be used in this test");
+      }),
+    })),
+  };
+}
+
+function makeClaudeRunner() {
+  return {
+    createRunner: vi.fn(() => ({
+      startSession: vi.fn(async () => ({
+        sessionId: "claude-session-1",
+        async *messages(): AsyncGenerator<object, void, undefined> {
+          yield {
+            type: "assistant",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "{\"ok\":true}" }],
+            },
+          };
+        },
+        waitForCompletion: vi.fn(async () => ({
+          success: true,
+          stats: {
+            startedAt: "2026-03-30T00:00:00.000Z",
+            completedAt: "2026-03-30T00:00:01.000Z",
+            toolCallCount: 0,
+            messageCount: 1,
+          },
+        })),
+        cancel: vi.fn(async () => {
+          return;
+        }),
+        on: vi.fn(),
+        removeListener: vi.fn(),
+      })),
+      resumeSession: vi.fn(async () => {
+        throw new Error("resumeSession should not be used in this test");
+      }),
+    })),
+  };
+}
 
 describe("resolveNodeExecutionBackend", () => {
   test("derives canonical short backend from legacy model alias when executionBackend is omitted", () => {
@@ -74,23 +148,9 @@ describe("DispatchingNodeAdapter", () => {
   });
 
   test("routes to codex-agent backend from legacy model alias when executionBackend is omitted", async () => {
-    const fetchMock = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          provider: "codex-provider",
-          promptText: "hello",
-          completionPassed: true,
-          when: { always: true },
-          payload: { ok: true },
-        }),
-        { status: 200 },
-      );
-    });
-    (globalThis as { fetch: typeof fetch }).fetch =
-      fetchMock as unknown as typeof fetch;
-
+    const fixture = makeCodexRunner();
     const adapter = new DispatchingNodeAdapter({
-      codexAgent: { endpoint: "http://localhost/codex" },
+      codexAgent: { createRunner: fixture.createRunner },
     });
     const input: AdapterExecutionInput = {
       workflowId: "wf",
@@ -112,28 +172,15 @@ describe("DispatchingNodeAdapter", () => {
     };
 
     const output = await adapter.execute(input, baseContext);
-    expect(output.provider).toBe("codex-provider");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(output.provider).toBe("codex-agent");
+    expect(output.payload).toEqual({ text: "{\"ok\":true}" });
+    expect(fixture.createRunner).toHaveBeenCalledTimes(1);
   });
 
   test("routes to canonical claude-code-agent backend and preserves provider model", async () => {
-    const fetchMock = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          provider: "claude-provider",
-          promptText: "hello",
-          completionPassed: true,
-          when: { always: true },
-          payload: { ok: true },
-        }),
-        { status: 200 },
-      );
-    });
-    (globalThis as { fetch: typeof fetch }).fetch =
-      fetchMock as unknown as typeof fetch;
-
+    const fixture = makeClaudeRunner();
     const adapter = new DispatchingNodeAdapter({
-      claudeCodeAgent: { endpoint: "http://localhost/claude" },
+      claudeCodeAgent: { createRunner: fixture.createRunner },
     });
     const input: AdapterExecutionInput = {
       workflowId: "wf",
@@ -156,15 +203,9 @@ describe("DispatchingNodeAdapter", () => {
     };
 
     const output = await adapter.execute(input, baseContext);
-    expect(output.provider).toBe("claude-provider");
+    expect(output.provider).toBe("claude-code-agent");
     expect(output.model).toBe("claude-opus-4-1");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const calls = (fetchMock as { mock: { calls: unknown[][] } }).mock.calls;
-    const request = calls[0]?.[1] as RequestInit | undefined;
-    const body = JSON.parse(String(request?.body ?? "{}")) as Record<
-      string,
-      unknown
-    >;
-    expect(body["model"]).toBe("claude-opus-4-1");
+    expect(output.payload).toEqual({ text: "{\"ok\":true}" });
+    expect(fixture.createRunner).toHaveBeenCalledTimes(1);
   });
 });

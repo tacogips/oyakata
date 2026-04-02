@@ -153,7 +153,7 @@ Behavior:
 Workflow preview content:
 
 - high-level node and subworkflow counts
-- visually ordered node structure derived from `workflow-vis.json`
+- visually ordered node structure derived from `workflow.json.nodes[]`
 - the root manager remains at the top level, while subworkflow managers and their owned nodes render with deeper indentation so workflow ownership reads clearly
 - per-node metadata such as workflow node kind, node type, backend/model when present, and concise node help text derived first from node-level `description`, then from output descriptions or prompt summaries
 - the root manager block shows workflow id
@@ -219,7 +219,7 @@ Shown from the workspace screen via `enter`, `ctrl-m`, or `l`.
 
 Layout:
 
-- Top pane: compact workflow summary showing identity, location, scope, and input-mode hints without rendering raw `workflow.json` or `workflow-vis.json`
+- Top pane: compact workflow summary showing identity, location, scope, and input-mode hints without rendering raw `workflow.json`
 - Bottom pane: workflow node list
 
 Behavior:

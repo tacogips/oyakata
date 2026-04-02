@@ -1,6 +1,5 @@
 import {
   AdapterExecutionError,
-  normalizeAdapterOutput,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -15,15 +14,10 @@ import {
   withProcessEnvOverride,
 } from "./local-agent";
 import {
-  buildRemoteAgentRequestBody,
   executeWithRetry,
   normalizeAdapterFailure,
-  resolveConfiguredEnvValue,
   resolveRetryPolicy,
 } from "./shared";
-
-export const DEFAULT_CODEX_ENDPOINT = "http://127.0.0.1:7070/codex/execute";
-const DEFAULT_CODEX_API_KEY_ENV = "CODEX_API_KEY";
 
 type CodexSandboxMode = "full" | "network-only" | "none";
 type CodexApprovalMode =
@@ -96,8 +90,6 @@ type CodexRunnerFactory = (
 ) => CodexSessionRunnerLike | Promise<CodexSessionRunnerLike>;
 
 export interface CodexAdapterConfig {
-  readonly endpoint?: string;
-  readonly apiKeyEnv?: string;
   readonly maxAttempts?: number;
   readonly retryDelayMs?: number;
   readonly cwd?: string;
@@ -109,10 +101,6 @@ export interface CodexAdapterConfig {
   readonly additionalArgs?: readonly string[];
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly createRunner?: CodexRunnerFactory;
-}
-
-function resolveApiKey(config: CodexAdapterConfig): string | undefined {
-  return resolveConfiguredEnvValue(config.apiKeyEnv, DEFAULT_CODEX_API_KEY_ENV);
 }
 
 const importUnknownModule = new Function(
@@ -140,50 +128,6 @@ async function toCodexNormalizedEvents(
     ) => AsyncIterable<CodexNormalizedEvent>;
   };
   return module.toNormalizedEvents(chunks);
-}
-
-async function executeRemoteCodexAgent(
-  config: CodexAdapterConfig,
-  input: AdapterExecutionInput,
-  context: AdapterExecutionContext,
-): Promise<AdapterExecutionOutput> {
-  const endpoint = config.endpoint ?? DEFAULT_CODEX_ENDPOINT;
-  const apiKey = resolveApiKey(config);
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  };
-  if (apiKey !== undefined) {
-    headers["authorization"] = `Bearer ${apiKey}`;
-  }
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    signal: context.signal,
-    body: JSON.stringify(buildRemoteAgentRequestBody(input)),
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new AdapterExecutionError(
-        "policy_blocked",
-        `codex adapter request blocked (${response.status})`,
-      );
-    }
-    if (response.status === 408 || response.status === 504) {
-      throw new AdapterExecutionError(
-        "timeout",
-        `codex adapter request timeout (${response.status})`,
-      );
-    }
-    throw new AdapterExecutionError(
-      "provider_error",
-      `codex adapter request failed (${response.status})`,
-    );
-  }
-
-  const payload = (await response.json()) as unknown;
-  return normalizeAdapterOutput(payload, input.node.model);
 }
 
 function resolveLocalSessionConfig(
@@ -363,10 +307,7 @@ export class CodexAgentAdapter implements NodeAdapter {
       maxAttempts,
       retryDelayMs,
       signal: context.signal,
-      run: async () =>
-        this.#config.endpoint === undefined
-          ? await executeLocalCodexAgent(this.#config, input, context)
-          : await executeRemoteCodexAgent(this.#config, input, context),
+      run: async () => await executeLocalCodexAgent(this.#config, input, context),
       normalizeError: (error) =>
         error instanceof DOMException && error.name === "AbortError"
           ? new AdapterExecutionError(

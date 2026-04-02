@@ -34,11 +34,10 @@ Additional input assembly policy:
 
 Workflow data is intentionally split:
 
-- `workflow.json`: structure/control and workflow `description`
+- `workflow.json`: structure/control, workflow `description`, and node ordering
 - `node-{id}.json`: runtime payload (`executionBackend`, `model`, `promptTemplate`, `variables`)
-- `workflow-vis.json`: authored visualization ordering metadata (`order`, etc.; `indent`/`color` are derived)
 
-This avoids coupling runtime semantics with derived visualization ordering state.
+This keeps derived visualization state out of separate authored files.
 
 ### Deterministic Control Flow
 

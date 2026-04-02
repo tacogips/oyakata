@@ -11,7 +11,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 ### Subcommands
 
 - `cli workflow create <name>`
-  - Create `<workflow-root>/<name>/` with `workflow.json`, `workflow-vis.json`, prompt templates, and default `nodes/node-{id}.json` payload files.
+  - Create `<workflow-root>/<name>/` with `workflow.json`, prompt templates, and default `nodes/node-{id}.json` payload files.
 - `cli workflow validate <name>`
   - Validate `<workflow-root>/<name>/` structure and semantic constraints.
 - `cli workflow inspect <name>`

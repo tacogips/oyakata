@@ -86,7 +86,7 @@ Implemented strict TypeScript domain models, JSON normalization, semantic valida
 **Completion Criteria**:
 - [x] Workflow root resolution priority implemented (`flag` > env > default)
 - [x] Artifact root resolution priority implemented (`flag` > env > default)
-- [x] Loader reads `workflow.json`, `workflow-vis.json`, and `node-{id}.json`
+- [x] Loader reads `workflow.json` and `node-{id}.json`
 - [x] Loader validates loaded payloads and returns normalized definition
 
 **Verification Criteria**:

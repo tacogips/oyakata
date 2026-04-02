@@ -107,7 +107,7 @@ or:
   `build.containerfilePath`
 - `build.containerfilePath` and legacy `build.dockerfilePath` must not target
   canonical workflow definition files
-  such as `workflow.json`, `workflow-vis.json`, or `node-*.json`
+  such as `workflow.json` or `node-*.json`
 - `build.target`, when provided, must be a non-empty string
 - `podman`, `docker`, `nerdctl`, and `apple-container` are valid runner kinds
 - host-side environments such as Colima, OrbStack, and Lima are not runner

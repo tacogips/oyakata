@@ -51,9 +51,6 @@ function makeBundle(
       edges: [],
       branching: { mode: "fan-out" },
     },
-    workflowVis: {
-      nodes: nodeIds.map((id, index) => ({ id, order: index })),
-    },
     nodePayloads,
   };
 }

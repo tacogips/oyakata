@@ -36,11 +36,6 @@ describe("workflow revision prompt file tracking", () => {
       "utf8",
     );
     await writeFile(
-      path.join(workflowDirectory, "workflow-vis.json"),
-      '{"nodes":[]}\n',
-      "utf8",
-    );
-    await writeFile(
       path.join(workflowDirectory, "node-manager.json"),
       '{"id":"manager"}\n',
       "utf8",
@@ -106,11 +101,6 @@ describe("workflow revision prompt file tracking", () => {
       "utf8",
     );
     await writeFile(
-      path.join(workflowDirectory, "workflow-vis.json"),
-      '{"nodes":[]}\n',
-      "utf8",
-    );
-    await writeFile(
       path.join(workflowDirectory, "nodes", "node-manager.json"),
       '{"id":"manager"}\n',
       "utf8",
@@ -130,12 +120,6 @@ describe("workflow revision prompt file tracking", () => {
       '{"workflowId":"wf"}\n',
       "utf8",
     );
-    await writeFile(
-      path.join(workflowDirectory, "workflow-vis.json"),
-      '{"nodes":[]}\n',
-      "utf8",
-    );
-
     const revision = await computeWorkflowRevisionFromFiles(
       workflowDirectory,
       ["../nodes/node-manager.json"],

@@ -292,7 +292,6 @@ export function buildWorkflowNodeVisualMetadata(
 ): ReadonlyMap<string, WorkflowNodeVisualMetadata> {
   const derivedNodes = deriveWorkflowVisualization({
     workflow: loaded.bundle.workflow,
-    workflowVis: loaded.bundle.workflowVis,
   });
   const nodeKindById = new Map(
     loaded.bundle.workflow.nodes.map((node) => [node.id, node.kind ?? "task"] as const),

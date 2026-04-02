@@ -47,12 +47,6 @@ function makeLoadedWorkflow(workerPayload: NodePayload): LoadedWorkflow {
         loops: [],
         branching: { mode: "fan-out" },
       },
-      workflowVis: {
-        nodes: [
-          { id: "manager", order: 0 },
-          { id: "worker", order: 1 },
-        ],
-      },
       nodePayloads: {
         manager: {
           id: "manager",

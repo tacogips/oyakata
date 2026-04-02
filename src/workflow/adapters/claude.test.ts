@@ -5,8 +5,6 @@ import type {
 } from "../adapter";
 import { ClaudeCodeAgentAdapter } from "./claude";
 
-const originalFetch = globalThis.fetch;
-
 const baseInput: AdapterExecutionInput = {
   workflowId: "wf",
   workflowExecutionId: "sess-1",
@@ -71,7 +69,6 @@ const baseContext: AdapterExecutionContext = {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
 });
 
 function makeClaudeRunnerFixture(input: {
@@ -280,32 +277,5 @@ describe("ClaudeCodeAgentAdapter", () => {
         baseContext,
       ),
     ).rejects.toHaveProperty("code", "invalid_output");
-  });
-
-  test("supports the legacy endpoint fallback", async () => {
-    const fetchMock = vi
-      .fn(async () => {
-        return new Response(
-          JSON.stringify({
-            provider: "claude-provider",
-            promptText: "hello",
-            completionPassed: true,
-            when: { always: true },
-            payload: { ok: true },
-          }),
-          { status: 200 },
-        );
-      })
-      .mockName("fetch-claude-ok");
-    (globalThis as { fetch: typeof fetch }).fetch =
-      fetchMock as unknown as typeof fetch;
-
-    const adapter = new ClaudeCodeAgentAdapter({
-      endpoint: "http://localhost/claude",
-    });
-    const output = await adapter.execute(baseInput, baseContext);
-
-    expect(output.provider).toBe("claude-provider");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,7 +1,6 @@
 import { pathToFileURL } from "node:url";
 import {
   AdapterExecutionError,
-  normalizeAdapterOutput,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -15,15 +14,10 @@ import {
   throwIfAborted,
 } from "./local-agent";
 import {
-  buildRemoteAgentRequestBody,
   executeWithRetry,
   normalizeAdapterFailure,
-  resolveConfiguredEnvValue,
   resolveRetryPolicy,
 } from "./shared";
-
-export const DEFAULT_CLAUDE_ENDPOINT = "http://127.0.0.1:7070/claude/execute";
-const DEFAULT_CLAUDE_API_KEY_ENV = "CLAUDE_API_KEY";
 
 type PermissionMode =
   | "default"
@@ -78,8 +72,6 @@ type ClaudeRunnerFactory = (
 ) => ClaudeSessionRunnerLike | Promise<ClaudeSessionRunnerLike>;
 
 export interface ClaudeAdapterConfig {
-  readonly endpoint?: string;
-  readonly apiKeyEnv?: string;
   readonly maxAttempts?: number;
   readonly retryDelayMs?: number;
   readonly cwd?: string;
@@ -87,13 +79,6 @@ export interface ClaudeAdapterConfig {
   readonly additionalArgs?: readonly string[];
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly createRunner?: ClaudeRunnerFactory;
-}
-
-function resolveApiKey(config: ClaudeAdapterConfig): string | undefined {
-  return resolveConfiguredEnvValue(
-    config.apiKeyEnv,
-    DEFAULT_CLAUDE_API_KEY_ENV,
-  );
 }
 
 const importUnknownModule = new Function(
@@ -183,50 +168,6 @@ function extractAssistantText(message: object): string | null {
     messageRecord?.["content"] ?? root["content"] ?? messageRecord;
   const text = extractTextFromContent(contentSource);
   return text.length === 0 ? null : text;
-}
-
-async function executeRemoteClaudeCodeAgent(
-  config: ClaudeAdapterConfig,
-  input: AdapterExecutionInput,
-  context: AdapterExecutionContext,
-): Promise<AdapterExecutionOutput> {
-  const endpoint = config.endpoint ?? DEFAULT_CLAUDE_ENDPOINT;
-  const apiKey = resolveApiKey(config);
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-  };
-  if (apiKey !== undefined) {
-    headers["authorization"] = `Bearer ${apiKey}`;
-  }
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    signal: context.signal,
-    body: JSON.stringify(buildRemoteAgentRequestBody(input)),
-  });
-
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new AdapterExecutionError(
-        "policy_blocked",
-        `claude adapter request blocked (${response.status})`,
-      );
-    }
-    if (response.status === 408 || response.status === 504) {
-      throw new AdapterExecutionError(
-        "timeout",
-        `claude adapter request timeout (${response.status})`,
-      );
-    }
-    throw new AdapterExecutionError(
-      "provider_error",
-      `claude adapter request failed (${response.status})`,
-    );
-  }
-
-  const payload = (await response.json()) as unknown;
-  return normalizeAdapterOutput(payload, input.node.model);
 }
 
 function resolveLocalSessionConfig(
@@ -365,9 +306,7 @@ export class ClaudeCodeAgentAdapter implements NodeAdapter {
       retryDelayMs,
       signal: context.signal,
       run: async () =>
-        this.#config.endpoint === undefined
-          ? await executeLocalClaudeCodeAgent(this.#config, input, context)
-          : await executeRemoteClaudeCodeAgent(this.#config, input, context),
+        await executeLocalClaudeCodeAgent(this.#config, input, context),
       normalizeError: (error) =>
         error instanceof DOMException && error.name === "AbortError"
           ? new AdapterExecutionError(

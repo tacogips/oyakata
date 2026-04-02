@@ -181,7 +181,6 @@ Typical layout:
 .divedra/
   my-workflow/
     workflow.json
-    workflow-vis.json
     nodes/
       node-divedra-manager.json
       node-main-divedra.json
@@ -200,8 +199,7 @@ Typical layout:
 
 Current file roles:
 
-- `workflow.json`: canonical workflow structure and control-flow definition
-- `workflow-vis.json`: visualization ordering metadata for the editor/TUI
+- `workflow.json`: canonical workflow structure, control-flow definition, and node ordering
 - `nodes/node-{id}.json`: default location for per-node payloads
 - `workflows/*/nodes/node-{id}.json`: optional grouped-lane or nested authoring layout
 - `prompts/*.md`: prompt bodies referenced by `promptTemplateFile`, `systemPromptTemplateFile`, or `sessionStartPromptTemplateFile`

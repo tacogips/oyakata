@@ -7,7 +7,6 @@ This document defines the current authored workflow bundle format implemented by
 A workflow bundle is a directory containing:
 
 - `workflow.json`
-- `workflow-vis.json`
 - one `node-{id}.json` file per referenced node
 - optional prompt files referenced by `systemPromptTemplateFile`, `promptTemplateFile`, and `sessionStartPromptTemplateFile`
 
@@ -21,7 +20,6 @@ Typical layout:
 <workflow-root>/
   <workflow-name>/
     workflow.json
-    workflow-vis.json
     node-divedra-manager.json
     node-main-divedra.json
     node-workflow-input.json
@@ -35,7 +33,7 @@ Typical layout:
 
 Notes:
 
-- `workflow-vis.json` is canonical for editor ordering but can be synthesized by the loader when missing.
+- `workflow.json.nodes[]` order is canonical for editor and runtime vertical ordering.
 - runtime execution artifacts are written outside the workflow-definition directory under the configured artifact root.
 
 ## `node-{id}.json`
@@ -432,30 +430,10 @@ Rules:
 - the runtime validates candidate payloads before writing final `output.json`
 - candidate-file submission is only allowed when `output` is configured
 
-## `workflow-vis.json`
+## Node Order
 
-Current shape:
-
-```json
-{
-  "nodes": [{ "id": "divedra-manager", "order": 0 }],
-  "uiMeta": {
-    "layout": "vertical"
-  }
-}
-```
-
-Fields:
-
-- `nodes: VisNode[]`
-- optional `uiMeta`
-
-`VisNode` fields:
-
-- `id`
-- `order`
-
-The runtime does not derive execution order from `order`. It is editor-facing metadata used for vertical presentation and additional validation around sub-workflow interval layout.
+Vertical ordering is defined directly by the array order of `workflow.json.nodes[]`.
+The runtime and editor derive indent/color from workflow graph structure rather than persisted visualization metadata.
 
 ## Current Compatibility Notes
 

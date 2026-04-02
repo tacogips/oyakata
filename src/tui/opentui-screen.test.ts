@@ -84,13 +84,6 @@ function makeLoadedWorkflow(inputNodePayload: NodePayload): LoadedWorkflow {
         loops: [],
         branching: { mode: "fan-out" },
       },
-      workflowVis: {
-        nodes: [
-          { id: "divedra-manager", order: 0 },
-          { id: "workflow-input", order: 1 },
-          { id: "workflow-output", order: 2 },
-        ],
-      },
       nodePayloads: {
         "divedra-manager": {
           id: "divedra-manager",
@@ -251,7 +244,6 @@ describe("buildWorkflowDefinitionContent", () => {
       "Use the Nodes pane and press enter to inspect an individual node definition.",
     );
     expect(content).not.toContain("workflow.json");
-    expect(content).not.toContain("workflow-vis.json");
   });
 });
 

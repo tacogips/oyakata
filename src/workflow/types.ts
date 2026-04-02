@@ -304,16 +304,6 @@ export function asAgentNodePayload(node: NodePayload): AgentNodePayload | null {
   return node as AgentNodePayload;
 }
 
-export interface VisNode {
-  readonly id: string;
-  readonly order: number;
-}
-
-export interface WorkflowVisJson {
-  readonly nodes: readonly VisNode[];
-  readonly uiMeta?: Readonly<Record<string, unknown>>;
-}
-
 export interface ValidationIssue {
   readonly severity: "error" | "warning";
   readonly path: string;
@@ -322,7 +312,6 @@ export interface ValidationIssue {
 
 export interface NormalizedWorkflowBundle {
   readonly workflow: WorkflowJson;
-  readonly workflowVis: WorkflowVisJson;
   readonly nodePayloads: Readonly<Record<string, NodePayload>>;
 }
 

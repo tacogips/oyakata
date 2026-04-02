@@ -57,7 +57,6 @@ describe("saveWorkflowToDisk", () => {
       "demo",
       {
         workflow: loaded.value.bundle.workflow,
-        workflowVis: loaded.value.bundle.workflowVis,
         nodePayloads: updatedNodePayloads,
       },
       {
@@ -131,7 +130,6 @@ describe("saveWorkflowToDisk", () => {
       "demo",
       {
         workflow: loaded.value.bundle.workflow,
-        workflowVis: loaded.value.bundle.workflowVis,
         nodePayloads: updatedNodePayloads,
       },
       {
@@ -187,7 +185,6 @@ describe("saveWorkflowToDisk", () => {
       "demo",
       {
         workflow: loaded.value.bundle.workflow,
-        workflowVis: loaded.value.bundle.workflowVis,
         nodePayloads: updatedNodePayloads,
       },
       {
@@ -283,7 +280,6 @@ describe("saveWorkflowToDisk", () => {
       "demo",
       {
         workflow: loaded.value.bundle.workflow,
-        workflowVis: loaded.value.bundle.workflowVis,
         nodePayloads: updatedNodePayloads,
       },
       {
@@ -339,9 +335,6 @@ describe("saveWorkflowToDisk", () => {
           edges: [],
           loops: [],
           branching: { mode: "fan-out" },
-        },
-        workflowVis: {
-          nodes: [{ id: "divedra-manager", order: 0 }],
         },
         nodePayloads: {},
       },
@@ -409,9 +402,6 @@ describe("saveWorkflowToDisk", () => {
           loops: [],
           branching: { mode: "fan-out" },
         },
-        workflowVis: {
-          nodes: [{ id: "divedra-manager", order: 0 }],
-        },
         nodePayloads: {
           "divedra-manager": {
             id: "divedra-manager",
@@ -471,9 +461,6 @@ describe("saveWorkflowToDisk", () => {
           loops: [],
           branching: { mode: "fan-out" },
         },
-        workflowVis: {
-          nodes: [{ id: "divedra-manager", order: 0 }],
-        },
         nodePayloads: {
           "obsolete-worker": {
             id: "obsolete-worker",
@@ -495,6 +482,48 @@ describe("saveWorkflowToDisk", () => {
     }
 
     expect(saveResult.value.revision).toMatch(/^sha256:/u);
+  });
+
+  test("removes deprecated workflow-vis.json files when saving existing workflows", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+
+    const workflowVisPath = path.join(root, "demo", "workflow-vis.json");
+    await Bun.write(
+      workflowVisPath,
+      `${JSON.stringify({ nodes: [{ id: "divedra-manager", order: 0 }] }, null, 2)}\n`,
+    );
+
+    const loaded = await loadWorkflowFromDisk("demo", {
+      workflowRoot: root,
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+
+    const saveResult = await saveWorkflowToDisk(
+      "demo",
+      {
+        workflow: loaded.value.bundle.workflow,
+        nodePayloads: loaded.value.bundle.nodePayloads,
+      },
+      {
+        workflowRoot: root,
+      },
+    );
+    expect(saveResult.ok).toBe(true);
+    if (!saveResult.ok) {
+      return;
+    }
+
+    await expect(readFile(workflowVisPath, "utf8")).rejects.toThrow(/ENOENT/u);
   });
 
   test("preserves podman runtimeIsolation metadata across save and reload", async () => {
@@ -534,7 +563,6 @@ describe("saveWorkflowToDisk", () => {
       "demo",
       {
         workflow: loaded.value.bundle.workflow,
-        workflowVis: loaded.value.bundle.workflowVis,
         nodePayloads: updatedNodePayloads,
       },
       {

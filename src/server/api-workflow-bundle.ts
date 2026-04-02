@@ -6,7 +6,6 @@ import { jsonBodyObject, optionalStringField } from "./api-request";
 
 export interface ParsedWorkflowBundleRequest {
   readonly workflow: JsonObject;
-  readonly workflowVis: JsonObject;
   readonly nodePayloads: JsonObject;
 }
 
@@ -48,11 +47,6 @@ function parseWorkflowBundleSections(
     return "bundle.workflow is required";
   }
 
-  const workflowVis = bundle["workflowVis"];
-  if (!isJsonObject(workflowVis)) {
-    return "bundle.workflowVis is required";
-  }
-
   const nodePayloads = bundle["nodePayloads"];
   if (!isJsonObject(nodePayloads)) {
     return "bundle.nodePayloads is required";
@@ -60,7 +54,6 @@ function parseWorkflowBundleSections(
 
   return {
     workflow,
-    workflowVis,
     nodePayloads,
   };
 }

@@ -61,7 +61,7 @@ Implemented CLI MVP commands: `workflow create`, `workflow validate`, `workflow 
 **Completion Criteria**:
 - [x] Creates workflow directory and required files
 - [x] Prevents path traversal and invalid names
-- [x] Creates minimal valid template files (`workflow.json`, `workflow-vis.json`, node files)
+- [x] Creates minimal valid template files (`workflow.json`, node files)
 
 **Verification Criteria**:
 - [x] Created directory validates successfully via core validator

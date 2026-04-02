@@ -6,7 +6,6 @@ import {
 
 function makeValidRaw(): {
   workflow: unknown;
-  workflowVis: unknown;
   nodePayloads: Record<string, unknown>;
 } {
   return {
@@ -34,12 +33,6 @@ function makeValidRaw(): {
       loops: [],
       branching: { mode: "fan-out" },
     },
-    workflowVis: {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "worker-1", order: 1 },
-      ],
-    },
     nodePayloads: {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -59,7 +52,6 @@ function makeValidRaw(): {
 
 function makeUnifiedRoleRaw(): {
   workflow: unknown;
-  workflowVis: unknown;
   nodePayloads: Record<string, unknown>;
 } {
   return {
@@ -95,13 +87,6 @@ function makeUnifiedRoleRaw(): {
         { from: "worker-1", to: "worker-2", when: "always" },
       ],
       branching: { mode: "fan-out" },
-    },
-    workflowVis: {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "worker-1", order: 1 },
-        { id: "worker-2", order: 2 },
-      ],
     },
     nodePayloads: {
       "node-divedra-manager.json": {
@@ -412,14 +397,6 @@ describe("validateWorkflowBundle", () => {
           },
         ],
       },
-      workflowVis: {
-        nodes: [
-          { id: "divedra-manager", order: 0 },
-          { id: "step-1", order: 1 },
-          { id: "repeat-step", order: 2 },
-          { id: "done-step", order: 3 },
-        ],
-      },
       nodePayloads: {
         "node-divedra-manager.json": {
           id: "divedra-manager",
@@ -510,13 +487,6 @@ describe("validateWorkflowBundle", () => {
           },
         ],
         edges: [{ from: "divedra-manager", to: "repeat-step", when: "always" }],
-      },
-      workflowVis: {
-        nodes: [
-          { id: "divedra-manager", order: 0 },
-          { id: "repeat-step", order: 1 },
-          { id: "done-step", order: 2 },
-        ],
       },
       nodePayloads: {
         "node-divedra-manager.json": {
@@ -615,12 +585,6 @@ describe("validateWorkflowBundle", () => {
     };
     delete (raw.workflow as Record<string, unknown>)["managerNodeId"];
     delete raw.nodePayloads["node-divedra-manager.json"];
-    raw.workflowVis = {
-      nodes: [
-        { id: "worker-1", order: 0 },
-        { id: "worker-2", order: 1 },
-      ],
-    };
 
     const result = validateWorkflowBundle(raw);
     expect(result.ok).toBe(false);
@@ -1700,49 +1664,6 @@ describe("validateWorkflowBundle", () => {
     ).toBe(false);
   });
 
-  test("normalizes legacy coordinate layout to top-to-bottom then left-to-right order", () => {
-    const raw = makeValidRaw();
-    raw.workflowVis = {
-      nodes: [
-        { id: "worker-1", x: 200, y: 10, width: 100, height: 80 },
-        { id: "divedra-manager", x: 10, y: 10, width: 100, height: 80 },
-      ],
-      viewport: { x: 0, y: 0, zoom: 1 },
-    };
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    expect(result.value.workflowVis.nodes).toEqual([
-      { id: "divedra-manager", order: 0 },
-      { id: "worker-1", order: 1 },
-    ]);
-  });
-
-  test("ignores persisted indent and color metadata", () => {
-    const raw = makeValidRaw();
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0, indent: 0, color: "manager" },
-        { id: "worker-1", order: 1, indent: 1, color: "loop-main" },
-      ],
-    };
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    expect(result.value.workflowVis.nodes).toEqual([
-      { id: "divedra-manager", order: 0 },
-      { id: "worker-1", order: 1 },
-    ]);
-  });
-
   test("reports semantic errors for missing manager and bad node ids", () => {
     const raw = makeValidRaw();
     raw.workflow = {
@@ -1811,9 +1732,6 @@ describe("validateWorkflowBundle", () => {
 
   test("rejects additional root-manager nodes that are not workflow.managerNodeId", () => {
     const raw = makeValidRaw();
-    const workflowVis = raw.workflowVis as {
-      nodes: Array<{ id: string; order: number }>;
-    };
     raw.workflow = {
       ...(raw.workflow as Record<string, unknown>),
       nodes: [
@@ -1824,12 +1742,6 @@ describe("validateWorkflowBundle", () => {
           nodeFile: "node-shadow-manager.json",
           completion: { type: "none" },
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        ...workflowVis.nodes,
-        { id: "shadow-manager", order: workflowVis.nodes.length },
       ],
     };
     raw.nodePayloads["node-shadow-manager.json"] = {
@@ -1917,15 +1829,6 @@ describe("validateWorkflowBundle", () => {
       edges: [],
       loops: [],
       branching: { mode: "fan-out" },
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "sub-manager-a", order: 1 },
-        { id: "input-a", order: 2 },
-        { id: "output-a", order: 3 },
-        { id: "output-b", order: 4 },
-      ],
     };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
@@ -2024,14 +1927,6 @@ describe("validateWorkflowBundle", () => {
       loops: [],
       branching: { mode: "fan-out" },
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "sub-manager-a", order: 1 },
-        { id: "input-a", order: 2 },
-        { id: "output-a", order: 3 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -2112,13 +2007,6 @@ describe("validateWorkflowBundle", () => {
       edges: [],
       loops: [],
       branching: { mode: "fan-out" },
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "sub-manager-a", order: 1 },
-        { id: "sub-output-a", order: 2 },
-      ],
     };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
@@ -2203,14 +2091,6 @@ describe("validateWorkflowBundle", () => {
       edges: [],
       loops: [],
       branching: { mode: "fan-out" },
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "sub-manager-a", order: 1 },
-        { id: "input-a", order: 2 },
-        { id: "output-a", order: 3 },
-      ],
     };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
@@ -2301,14 +2181,6 @@ describe("validateWorkflowBundle", () => {
       loops: [],
       branching: { mode: "fan-out" },
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "plain-manager-a", order: 1 },
-        { id: "input-a", order: 2 },
-        { id: "output-a", order: 3 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -2349,73 +2221,6 @@ describe("validateWorkflowBundle", () => {
           issue.message.includes("kind 'subworkflow-manager'"),
       ),
     ).toBe(true);
-  });
-
-  test("rejects duplicate vertical order entries", () => {
-    const raw = makeValidRaw();
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "worker-1", order: 0 },
-      ],
-    };
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    const messages = result.error
-      .map((entry) => `${entry.path}:${entry.message}`)
-      .join("\n");
-    expect(messages).toContain(
-      "workflowVis.nodes[1].order:duplicate order '0'",
-    );
-  });
-
-  test("rejects missing vertical order for any workflow node", () => {
-    const raw = makeValidRaw();
-    raw.workflowVis = {
-      nodes: [{ id: "divedra-manager", order: 0 }],
-    };
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    const messages = result.error
-      .map((entry) => `${entry.path}:${entry.message}`)
-      .join("\n");
-    expect(messages).toContain(
-      "workflowVis.nodes:missing vertical order for node 'worker-1'",
-    );
-  });
-
-  test("rejects unknown vertical order ids", () => {
-    const raw = makeValidRaw();
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "worker-1", order: 1 },
-        { id: "ghost", order: 2 },
-      ],
-    };
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    const messages = result.error
-      .map((entry) => `${entry.path}:${entry.message}`)
-      .join("\n");
-    expect(messages).toContain(
-      "workflowVis.nodes[2].id:references unknown node id",
-    );
   });
 
   test("accepts typed subWorkflows and subWorkflowConversations", () => {
@@ -2509,18 +2314,6 @@ describe("validateWorkflowBundle", () => {
           maxTurns: 4,
           stopWhen: "done",
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "branch-judge", order: 1 },
-        { id: "sw1-manager", order: 2 },
-        { id: "sw1-input", order: 3 },
-        { id: "sw1-output", order: 4 },
-        { id: "sw2-manager", order: 5 },
-        { id: "sw2-input", order: 6 },
-        { id: "sw2-output", order: 7 },
       ],
     };
     raw.nodePayloads = {
@@ -2638,14 +2431,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
       loops: [],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "loop-manager", order: 1 },
-        { id: "loop-input", order: 2 },
-        { id: "loop-output", order: 3 },
-      ],
     };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
@@ -2777,18 +2562,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "loop-manager-a", order: 1 },
-        { id: "loop-input-a", order: 2 },
-        { id: "loop-output-a", order: 3 },
-        { id: "loop-manager-b", order: 4 },
-        { id: "loop-input-b", order: 5 },
-        { id: "loop-output-b", order: 6 },
-        { id: "loop-judge", order: 7 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -2908,15 +2681,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "prepare", order: 1 },
-        { id: "branch-manager", order: 2 },
-        { id: "branch-input", order: 3 },
-        { id: "branch-output", order: 4 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -3029,16 +2793,6 @@ describe("validateWorkflowBundle", () => {
           continueWhen: "continue_round",
           exitWhen: "loop_exit",
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "loop-manager", order: 1 },
-        { id: "loop-input", order: 2 },
-        { id: "loop-worker", order: 3 },
-        { id: "loop-output", order: 4 },
-        { id: "loop-judge", order: 5 },
       ],
     };
     raw.nodePayloads = {
@@ -3165,17 +2919,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "a-manager", order: 1 },
-        { id: "a-input", order: 2 },
-        { id: "a-inner-manager", order: 3 },
-        { id: "a-inner-input", order: 4 },
-        { id: "a-inner-output", order: 5 },
-        { id: "a-output", order: 6 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -3295,17 +3038,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "a-manager", order: 1 },
-        { id: "a-input", order: 2 },
-        { id: "b-manager", order: 3 },
-        { id: "b-input", order: 4 },
-        { id: "a-output", order: 5 },
-        { id: "b-output", order: 6 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -3414,15 +3146,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "root-worker", order: 1 },
-        { id: "sw-manager", order: 2 },
-        { id: "sw-input", order: 3 },
-        { id: "sw-output", order: 4 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -3517,15 +3240,6 @@ describe("validateWorkflowBundle", () => {
           nodeIds: ["sw-manager", "sw-input", "sw-output"],
           inputSources: [{ type: "human-input" }],
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "root-worker", order: 1 },
-        { id: "sw-manager", order: 2 },
-        { id: "sw-input", order: 3 },
-        { id: "sw-output", order: 4 },
       ],
     };
     raw.nodePayloads = {
@@ -3645,17 +3359,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "a-manager", order: 1 },
-        { id: "a-input", order: 2 },
-        { id: "a-output", order: 3 },
-        { id: "b-manager", order: 4 },
-        { id: "b-input", order: 5 },
-        { id: "b-output", order: 6 },
-      ],
-    };
     raw.nodePayloads = {
       "node-divedra-manager.json": {
         id: "divedra-manager",
@@ -3752,11 +3455,12 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
       nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "loop-judge", order: 1 },
-        { id: "worker-1", order: 2 },
+        (raw.workflow as { nodes: unknown[] }).nodes[0],
+        (raw.workflow as { nodes: unknown[] }).nodes[2],
+        (raw.workflow as { nodes: unknown[] }).nodes[1],
       ],
     };
     raw.nodePayloads["node-loop-judge.json"] = {
@@ -3835,15 +3539,6 @@ describe("validateWorkflowBundle", () => {
           continueWhen: "retry-b",
           exitWhen: "exit-b",
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "loop-a-start", order: 1 },
-        { id: "loop-b-start", order: 2 },
-        { id: "loop-a-judge", order: 3 },
-        { id: "loop-b-judge", order: 4 },
       ],
     };
     raw.nodePayloads["node-loop-a-start.json"] = {
@@ -3956,16 +3651,6 @@ describe("validateWorkflowBundle", () => {
         },
       ],
     };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "group-manager", order: 1 },
-        { id: "group-input", order: 2 },
-        { id: "loop-start", order: 3 },
-        { id: "group-output", order: 4 },
-        { id: "loop-judge", order: 5 },
-      ],
-    };
     raw.nodePayloads["node-group-manager.json"] = {
       id: "group-manager",
       model: "tacogips/codex-agent",
@@ -4065,14 +3750,6 @@ describe("validateWorkflowBundle", () => {
           stopWhen: "done",
           conversationPolicy: { turnPolicy: "round-robin" },
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", order: 0 },
-        { id: "sw1-manager", order: 1 },
-        { id: "sw1-input", order: 2 },
-        { id: "sw1-output", order: 3 },
       ],
     };
     raw.nodePayloads = {
@@ -4194,17 +3871,6 @@ describe("validateWorkflowBundle", () => {
           maxTurns: 2,
           stopWhen: "done",
         },
-      ],
-    };
-    raw.workflowVis = {
-      nodes: [
-        { id: "divedra-manager", x: 10, y: 10, width: 100, height: 80 },
-        { id: "sw1-manager", x: 120, y: 10, width: 100, height: 80 },
-        { id: "sw1-input", x: 230, y: 10, width: 100, height: 80 },
-        { id: "sw1-output", x: 340, y: 10, width: 100, height: 80 },
-        { id: "sw2-manager", x: 450, y: 10, width: 100, height: 80 },
-        { id: "sw2-input", x: 560, y: 10, width: 100, height: 80 },
-        { id: "sw2-output", x: 670, y: 10, width: 100, height: 80 },
       ],
     };
     raw.nodePayloads = {

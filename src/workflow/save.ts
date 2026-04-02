@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJsonFile, atomicWriteTextFile } from "../shared/fs";
 import { NODE_TEMPLATE_FIELD_SPECS } from "./node-template-fields";
@@ -18,7 +18,6 @@ import type { LoadOptions } from "./types";
 
 export interface SaveWorkflowInput {
   readonly workflow: unknown;
-  readonly workflowVis: unknown;
   readonly nodePayloads: Readonly<Record<string, unknown>>;
   readonly expectedRevision?: string;
 }
@@ -39,6 +38,8 @@ export interface SaveWorkflowFailure {
   }[];
   readonly currentRevision?: string;
 }
+
+const LEGACY_WORKFLOW_VISUALIZATION_FILE = "workflow-vis.json";
 
 function collectReferencedNodePayloads(input: {
   readonly workflow: {
@@ -254,7 +255,6 @@ export async function saveWorkflowToDisk(
 
   const validation = validateWorkflowBundle({
     workflow: input.workflow,
-    workflowVis: input.workflowVis,
     nodePayloads: validationNodePayloads.value,
   });
 
@@ -298,10 +298,6 @@ export async function saveWorkflowToDisk(
       path.join(workflowDirectory, "workflow.json"),
       validation.value.workflow,
     );
-    await atomicWriteJsonFile(
-      path.join(workflowDirectory, "workflow-vis.json"),
-      validation.value.workflowVis,
-    );
     for (const node of validation.value.workflow.nodes) {
       const payload =
         normalizedNodePayloads[node.nodeFile] ??
@@ -325,6 +321,10 @@ export async function saveWorkflowToDisk(
         payload,
       });
     }
+    await rm(
+      path.join(workflowDirectory, LEGACY_WORKFLOW_VISUALIZATION_FILE),
+      { force: true },
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({

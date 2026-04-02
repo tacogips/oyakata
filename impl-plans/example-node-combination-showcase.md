@@ -31,8 +31,6 @@ Out of scope:
 
 #### `examples/node-combinations-showcase/workflow.json`
 
-#### `examples/node-combinations-showcase/workflow-vis.json`
-
 #### `examples/node-combinations-showcase/node-*.json`
 
 #### `examples/node-combinations-showcase/prompts/*.md`
