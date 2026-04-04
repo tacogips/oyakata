@@ -44,6 +44,12 @@
 
       in
       {
+        packages.default = pkgs.buildEnv {
+          name = "divedra-dev-tools";
+          paths = devPackages;
+          pathsToLink = [ "/bin" ];
+        };
+
         devShells.default = pkgs.mkShell {
           packages = devPackages;
 
