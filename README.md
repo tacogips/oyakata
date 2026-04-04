@@ -384,8 +384,14 @@ Primary exports from `src/lib.ts`:
 - `startServe()`
 - `handleApiRequest()`
 - `handleGraphqlRequest()`
+- `executeGraphqlDocument()`
 - `createGraphqlSchema()`
 - `executeGraphqlRequest()`
+- `loadWorkflowFromDisk()`
+- `deriveWorkflowVisualization()`
+- `createCommunicationService()`
+- `createManagerSessionStore()`
+- `createManagerMessageService()`
 
 Minimal example:
 

@@ -34,19 +34,19 @@ list. The beta lane follows the alpha lane without authored `edges` or
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate subworkflow-chained-simple --workflow-root ./examples
+bun run src/main.ts workflow validate subworkflow-chained-simple --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect subworkflow-chained-simple --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect subworkflow-chained-simple --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run subworkflow-chained-simple \
+bun run src/main.ts workflow run subworkflow-chained-simple \
   --workflow-root ./examples \
   --mock-scenario ./examples/subworkflow-chained-simple/mock-scenario.json \
   --output json
@@ -67,19 +67,19 @@ Recommended mixed-backend reference:
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate claude-divedra-codex-coding --workflow-root ./examples
+bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect claude-divedra-codex-coding --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect claude-divedra-codex-coding --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run claude-divedra-codex-coding \
+bun run src/main.ts workflow run claude-divedra-codex-coding \
   --workflow-root ./examples \
   --mock-scenario ./examples/claude-divedra-codex-coding/mock-scenario.json \
   --output json
@@ -107,19 +107,19 @@ Important current limitation:
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate node-combinations-showcase --workflow-root ./examples
+bun run src/main.ts workflow validate node-combinations-showcase --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect node-combinations-showcase --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect node-combinations-showcase --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run node-combinations-showcase \
+bun run src/main.ts workflow run node-combinations-showcase \
   --workflow-root ./examples \
   --mock-scenario ./examples/node-combinations-showcase/mock-scenario.json \
   --output json
@@ -153,19 +153,19 @@ Important current limitation:
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate first-four-arithmetic-pipeline --workflow-root ./examples
+bun run src/main.ts workflow validate first-four-arithmetic-pipeline --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect first-four-arithmetic-pipeline --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect first-four-arithmetic-pipeline --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run first-four-arithmetic-pipeline \
+bun run src/main.ts workflow run first-four-arithmetic-pipeline \
   --workflow-root ./examples \
   --mock-scenario ./examples/first-four-arithmetic-pipeline/mock-scenario.json \
   --output json
@@ -183,19 +183,19 @@ Reference workflow for the case where a regular task node also uses
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate claude-divedra-claude-worker --workflow-root ./examples
+bun run src/main.ts workflow validate claude-divedra-claude-worker --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect claude-divedra-claude-worker --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect claude-divedra-claude-worker --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run claude-divedra-claude-worker \
+bun run src/main.ts workflow run claude-divedra-claude-worker \
   --workflow-root ./examples \
   --mock-scenario ./examples/claude-divedra-claude-worker/mock-scenario.json \
   --output json
@@ -216,19 +216,19 @@ Reference workflow for the case where one worker node should run twice:
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate same-node-session-echo --workflow-root ./examples
+bun run src/main.ts workflow validate same-node-session-echo --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect same-node-session-echo --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect same-node-session-echo --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run same-node-session-echo \
+bun run src/main.ts workflow run same-node-session-echo \
   --workflow-root ./examples \
   --mock-scenario ./examples/same-node-session-echo/mock-scenario.json \
   --output json
@@ -254,19 +254,19 @@ Reference debate bundle for the new node-local prompt split:
 Validate it:
 
 ```bash
-bun run src/main.ts cli workflow validate codex-codex-euthanasia-debate --workflow-root ./examples
+bun run src/main.ts workflow validate codex-codex-euthanasia-debate --workflow-root ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts cli workflow inspect codex-codex-euthanasia-debate --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect codex-codex-euthanasia-debate --workflow-root ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts cli workflow run codex-codex-euthanasia-debate \
+bun run src/main.ts workflow run codex-codex-euthanasia-debate \
   --workflow-root ./examples \
   --mock-scenario ./examples/codex-codex-euthanasia-debate/mock-scenario.json \
   --output json

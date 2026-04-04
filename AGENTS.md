@@ -18,10 +18,6 @@ You (the LLM model) must include a paraphrase or summary of the user's instructi
 
 You are a professional system architect. You will continuously perform system design, implementation, and test execution according to user instructions. However, you must always consider the possibility that user instructions may contain unclear parts, incorrect parts, or that the user may be giving instructions based on a misunderstanding of the system. You have an obligation to prioritize questioning the validity of execution and asking necessary questions over executing tasks when appropriate, rather than simply following user instructions as given.
 
-## Language Instructions
-
-You (the LLM model) must always think and provide output in English, regardless of the language used in the user's input. Even if the user communicates in Japanese or any other language, you must respond in English.
-
 ## Session Initialization Requirements
 
 When starting a new session, you (the LLM model) should be ready to assist the user with their requests immediately without any mandatory initialization process.
@@ -130,10 +126,12 @@ feat: implement user authentication system
 ## Project Overview
 
 This is divedra, a TypeScript/Bun system for cooperative multi-agent session management.
-The project orchestrates writing sessions with two primary agent backends:
+The project orchestrates writing sessions with the following agent backends:
 
 - `codex-agent`
 - `claude-code-agent`
+- `official/openai-sdk`
+- `official/anthropic-sdk`
 
 Agent cooperation is defined by a JSON-managed `workflow` model. A workflow can represent:
 
@@ -145,10 +143,10 @@ Agent cooperation is defined by a JSON-managed `workflow` model. A workflow can 
 - Repetition (loop control)
 - Node timeout control (global default + per-node override)
 
-Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
+Workflow storage is directory-based under `<workflow-root>/<workflow-name>/` and uses:
 
 - `workflow.json` (purpose via `description`, graph/control-flow, global defaults, and node ordering)
-- `node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate` or `promptTemplateFile`, `variables`, optional `timeoutMs`)
+- `nodes/node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate` or `promptTemplateFile`, `variables`, optional `timeoutMs`)
 
 ## Development Environment
 
@@ -165,16 +163,26 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 ├── flake.nix          # Nix flake configuration for TypeScript/Bun development
 ├── package.json       # Package manifest
 ├── tsconfig.json      # TypeScript configuration (maximum strictness)
+├── vitest.config.ts   # Vitest test runner configuration
+├── Taskfile.yml       # go-task automation definitions
 ├── .envrc             # direnv configuration
 ├── AGENTS.md          # Agent operation and workflow rules
 ├── README.md          # Project overview and workflow model summary
 ├── examples/          # Reference workflows runnable with --workflow-root ./examples
-├── .divedra/          # Workflow definitions and visualization state
 ├── design-docs/       # Architecture and command design docs
+├── impl-plans/        # Implementation plans and progress tracking
+├── scripts/           # Build and test helper scripts
+├── e2e/               # End-to-end tests
+├── ui/                # UI assets
 ├── src/               # Source code
 │   ├── main.ts        # Entry point
-│   ├── lib.ts         # Library code
-│   └── lib.test.ts    # Test files
+│   ├── cli.ts         # CLI command parser and dispatch
+│   ├── lib.ts         # Public library API
+│   ├── workflow/      # Workflow engine, loaders, validation, adapters
+│   ├── graphql/       # GraphQL schema and client
+│   ├── server/        # HTTP server and API handlers
+│   ├── tui/           # OpenTUI terminal interface
+│   └── shared/        # Shared utilities
 └── .gitignore         # Git ignore patterns
 ```
 
@@ -183,7 +191,7 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 - `examples/` stores reference workflow bundles that should remain directly
   usable with `--workflow-root ./examples`.
 - Keep example bundles aligned with the canonical workflow file set:
-  `workflow.json` and `node-{id}.json`.
+  `workflow.json` and `nodes/node-{id}.json`.
 - Prefer examples that demonstrate the recommended backend split:
   `divedra` managers on `claude-code-agent` and coding workers on
   `codex-agent`.
@@ -225,7 +233,7 @@ Workflow storage is directory-based under `.divedra/<workflow-name>/` and uses:
 
 When modifying the terminal UI, treat the following interaction rules as standing repository requirements unless the user explicitly asks for an exception:
 
-- Use the `.agents/skills/tui-navigation-guardrails/` skill first when changing pane focus, keybindings, selected-row rendering, or detail-view navigation.
+- Use the `.claude/skills/tui-navigation-guardrails/` skill first when changing pane focus, keybindings, selected-row rendering, or detail-view navigation.
 
 - Only the focused pane should render an active selected-row state.
 - Any focused list-like or scrollable pane should support both arrow keys and `j` / `k` for in-pane movement.
@@ -312,7 +320,7 @@ When implementing from a plan:
 ## Task Management
 
 - Use `task` command for build automation
-- Define tasks in `Taskfile.yml` (to be created as needed)
+- Tasks are defined in `Taskfile.yml`
 
 ## Git Workflow
 
@@ -375,4 +383,4 @@ Example subtask format:
 - This project uses Nix flakes for reproducible development environments
 - Use direnv for automatic environment activation
 - All development dependencies are managed through flake.nix
-- Runtime is Bun, which provides fast TypeScript execution and built-in testing
+- Runtime is Bun for TypeScript execution; tests use Vitest
