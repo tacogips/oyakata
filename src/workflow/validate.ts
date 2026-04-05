@@ -2011,11 +2011,28 @@ function normalizeWorkflow(
   if (!Array.isArray(nodesRaw)) {
     issues.push(makeIssue("error", "workflow.nodes", "must be an array"));
   }
+  const usesAuthoredRoleModel =
+    Array.isArray(nodesRaw) &&
+    nodesRaw.some(
+      (entry) =>
+        isRecord(entry) &&
+        (Object.hasOwn(entry, "role") || Object.hasOwn(entry, "control")),
+    );
   const nodes = Array.isArray(nodesRaw)
     ? nodesRaw
         .map((entry, index) => normalizeNodeRef(entry, index, issues))
         .filter((entry): entry is WorkflowNodeRef => entry !== null)
     : [];
+
+  if (usesAuthoredRoleModel && subWorkflows.length > 0) {
+    issues.push(
+      makeIssue(
+        "error",
+        "workflow.subWorkflows",
+        "non-empty structural subWorkflows are legacy compatibility only and cannot be combined with authored role/control nodes",
+      ),
+    );
+  }
 
   const edgesRaw = workflow["edges"];
   if (edgesRaw !== undefined && !Array.isArray(edgesRaw)) {
@@ -2112,6 +2129,19 @@ function normalizeWorkflow(
         )
         .filter((entry): entry is SubWorkflowConversation => entry !== null)
     : undefined;
+
+  if (
+    usesAuthoredRoleModel &&
+    (subWorkflowConversations?.length ?? 0) > 0
+  ) {
+    issues.push(
+      makeIssue(
+        "error",
+        "workflow.subWorkflowConversations",
+        "non-empty structural subWorkflowConversations are legacy compatibility only and cannot be combined with authored role/control nodes",
+      ),
+    );
+  }
 
   const authoredManagerNodeIds = nodes
     .filter((node) => node.role === "manager")

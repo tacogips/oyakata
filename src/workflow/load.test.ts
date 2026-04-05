@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createWorkflowTemplate } from "./create";
-import { loadWorkflowFromDisk } from "./load";
+import { loadWorkflowByIdFromDisk, loadWorkflowFromDisk } from "./load";
 import {
   computeDefaultRootDataDir,
   encodeProjectPathForDivedraScope,
@@ -836,6 +836,18 @@ describe("loadWorkflowFromDisk", () => {
       return;
     }
 
+    const workflowJsonText = await readFile(
+      path.join(root, "template-role-workflow", "workflow.json"),
+      "utf8",
+    );
+    expect(workflowJsonText).not.toContain('"subWorkflows"');
+    expect(workflowJsonText).not.toContain('"edges"');
+    expect(workflowJsonText).not.toContain('"loops"');
+    expect(workflowJsonText).not.toContain('"branching"');
+    expect(workflowJsonText).not.toContain('"containerRuntime"');
+    expect(workflowJsonText).not.toContain('"completion"');
+    expect(workflowJsonText).toContain('"entryNodeId": "divedra-manager"');
+
     const result = await loadWorkflowFromDisk("template-role-workflow", {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
@@ -893,6 +905,12 @@ describe("loadWorkflowFromDisk", () => {
       "utf8",
     );
     expect(workflowJsonText).not.toContain('"managerNodeId"');
+    expect(workflowJsonText).not.toContain('"subWorkflows"');
+    expect(workflowJsonText).not.toContain('"edges"');
+    expect(workflowJsonText).not.toContain('"loops"');
+    expect(workflowJsonText).not.toContain('"branching"');
+    expect(workflowJsonText).not.toContain('"containerRuntime"');
+    expect(workflowJsonText).not.toContain('"completion"');
     expect(workflowJsonText).toContain('"entryNodeId": "main-worker"');
 
     const result = await loadWorkflowFromDisk("template-worker-only", {
@@ -1148,6 +1166,135 @@ describe("loadWorkflowFromDisk", () => {
     );
   });
 
+  test("loads the workflow-call examples with explicit parent call metadata and a worker-only callee", async () => {
+    const artifactRoot = path.join(await makeTempDir(), "artifacts");
+    const examplesRoot = path.resolve(process.cwd(), "examples");
+    const parentResult = await loadWorkflowFromDisk("workflow-call-simple", {
+      workflowRoot: examplesRoot,
+      artifactRoot,
+    });
+
+    expect(parentResult.ok).toBe(true);
+    if (!parentResult.ok) {
+      return;
+    }
+
+    expect(parentResult.value.bundle.workflow.workflowCalls).toEqual([
+      {
+        id: "call-review",
+        workflowId: "workflow-call-review-target",
+        callerNodeId: "draft-write",
+        resultNodeId: "apply-review",
+      },
+    ]);
+    expect(parentResult.value.bundle.workflow.managerNodeId).toBe(
+      "divedra-manager",
+    );
+
+    const calleeResult = await loadWorkflowFromDisk(
+      "workflow-call-review-target",
+      {
+        workflowRoot: examplesRoot,
+        artifactRoot,
+      },
+    );
+
+    expect(calleeResult.ok).toBe(true);
+    if (!calleeResult.ok) {
+      return;
+    }
+
+    expect(calleeResult.value.bundle.workflow.hasManagerNode).toBe(false);
+    expect(calleeResult.value.bundle.workflow.entryNodeId).toBe("reviewer");
+    expect(calleeResult.value.bundle.workflow.nodes.map((node) => node.id)).toEqual([
+      "reviewer",
+    ]);
+  });
+
+  test("resolves workflow ids from a directory whose name differs from workflowId", async () => {
+    const root = await makeTempDir();
+    const workflowDirectory = path.join(root, "review-flow-bundle");
+    await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: "review-flow",
+      description: "review workflow",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      entryNodeId: "reviewer",
+      nodes: [
+        {
+          id: "reviewer",
+          role: "worker",
+          nodeFile: "nodes/node-reviewer.json",
+        },
+      ],
+    });
+    await writeJson(path.join(workflowDirectory, "nodes", "node-reviewer.json"), {
+      id: "reviewer",
+      executionBackend: "codex-agent",
+      model: "gpt-5",
+      promptTemplate: "review",
+      variables: {},
+    });
+
+    const result = await loadWorkflowByIdFromDisk("review-flow", {
+      workflowRoot: root,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.workflowName).toBe("review-flow-bundle");
+    expect(result.value.bundle.workflow.workflowId).toBe("review-flow");
+  });
+
+  test("surfaces validation failures for workflow ids found under a different directory name", async () => {
+    const root = await makeTempDir();
+    const workflowDirectory = path.join(root, "review-flow-bundle");
+    await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: "review-flow",
+      description: "invalid review workflow",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      entryNodeId: "reviewer",
+      nodes: [
+        {
+          id: "reviewer",
+          role: "worker",
+          nodeFile: "nodes/node-reviewer.json",
+        },
+      ],
+    });
+    await writeJson(path.join(workflowDirectory, "nodes", "node-reviewer.json"), {
+      id: "reviewer",
+      executionBackend: "codex-agent",
+      model: "gpt-5",
+      variables: {},
+    });
+
+    const result = await loadWorkflowByIdFromDisk("review-flow", {
+      workflowRoot: root,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.code).toBe("VALIDATION");
+    expect(result.error.message).toContain("workflow validation failed");
+    expect(result.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "nodePayloads.nodes/node-reviewer.json.promptTemplate",
+        }),
+      ]),
+    );
+  });
+
   test("rejects promptTemplateFile values that target canonical workflow definition files", async () => {
     const root = await makeTempDir();
     const workflowName = "invalid-prompt-file-workflow";
@@ -1180,6 +1327,58 @@ describe("loadWorkflowFromDisk", () => {
       promptTemplateFile: "workflow.json",
       variables: {},
     });
+
+    const result = await loadWorkflowFromDisk(workflowName, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.code).toBe("IO");
+    expect(result.error.message).toContain(
+      "must not overwrite canonical workflow definition files",
+    );
+  });
+
+  test("rejects promptTemplateFile values that target nested canonical node payload files", async () => {
+    const root = await makeTempDir();
+    const workflowName = "invalid-nested-prompt-file-workflow";
+    const workflowDirectory = path.join(root, workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+    await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      description: "sample",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      managerNodeId: "divedra-manager",
+      subWorkflows: [],
+      nodes: [
+        {
+          id: "divedra-manager",
+          kind: "root-manager",
+          nodeFile: "nodes/node-divedra-manager.json",
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+
+    await writeJson(
+      path.join(workflowDirectory, "nodes", "node-divedra-manager.json"),
+      {
+        id: "divedra-manager",
+        executionBackend: "codex-agent",
+        model: "gpt-5-nano",
+        promptTemplateFile: "nodes/node-divedra-manager.json",
+        variables: {},
+      },
+    );
 
     const result = await loadWorkflowFromDisk(workflowName, {
       workflowRoot: root,

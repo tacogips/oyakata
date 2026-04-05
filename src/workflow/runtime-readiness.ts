@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { resolveConfiguredEnvValue } from "./adapters/shared";
 import { resolveNodeExecutionBackend } from "./adapters/dispatch";
+import { loadWorkflowByIdFromDisk } from "./load";
 import {
   asAgentNodePayload,
   DEFAULT_CONTAINER_RUNNER_KIND,
@@ -38,8 +39,7 @@ export interface WorkflowRuntimeReadiness {
   readonly blockers: readonly string[];
 }
 
-interface RequirementProbeOptions
-  extends Pick<LoadOptions, "cwd" | "env"> {
+interface RequirementProbeOptions extends LoadOptions {
   readonly onlyNodeIds?: ReadonlySet<string>;
 }
 
@@ -56,6 +56,7 @@ interface ContainerRunnerRequirementCandidate {
 }
 
 interface WorkflowCallRequirementCandidate {
+  readonly rootWorkflowId: string;
   readonly callIds: readonly string[];
   readonly targetWorkflowIds: readonly string[];
   readonly sourceNodeIds: readonly string[];
@@ -273,6 +274,61 @@ async function probeClaudeBackend(
   };
 }
 
+async function probeWorkflowCallRuntime(
+  candidate: WorkflowCallRequirementCandidate,
+  options: LoadOptions,
+): Promise<WorkflowRuntimeRequirement> {
+  const targetFailures = new Set<string>();
+  const loadedWorkflowCalls = new Map<string, readonly string[]>();
+
+  async function visitWorkflowCallTarget(
+    workflowId: string,
+    chain: readonly string[],
+  ): Promise<void> {
+    if (chain.includes(workflowId)) {
+      targetFailures.add(
+        `recursive workflow-call chains are unsupported: ${[...chain, workflowId].join(" -> ")}`,
+      );
+      return;
+    }
+
+    let nextWorkflowIds = loadedWorkflowCalls.get(workflowId);
+    if (nextWorkflowIds === undefined) {
+      const loaded = await loadWorkflowByIdFromDisk(workflowId, options);
+      if (!loaded.ok) {
+        targetFailures.add(`${workflowId}: ${loaded.error.message}`);
+        return;
+      }
+      nextWorkflowIds = toSortedArray(
+        (loaded.value.bundle.workflow.workflowCalls ?? []).map(
+          (call) => call.workflowId,
+        ),
+      );
+      loadedWorkflowCalls.set(workflowId, nextWorkflowIds);
+    }
+
+    for (const nextWorkflowId of nextWorkflowIds) {
+      await visitWorkflowCallTarget(nextWorkflowId, [...chain, workflowId]);
+    }
+  }
+
+  for (const workflowId of candidate.targetWorkflowIds) {
+    await visitWorkflowCallTarget(workflowId, [candidate.rootWorkflowId]);
+  }
+
+  return {
+    id: "workflow-feature:workflowCalls",
+    kind: "workflow-feature",
+    label: "workflow-call execution",
+    status: targetFailures.size === 0 ? "available" : "unavailable",
+    detail:
+      targetFailures.size === 0
+        ? `runtime workflow-call execution is available; calls=${candidate.callIds.join(", ")}; targetWorkflows=${candidate.targetWorkflowIds.join(", ")}`
+        : `workflow-call targets must resolve to loadable, non-recursive workflows; failures=${[...targetFailures].join(" | ")}; calls=${candidate.callIds.join(", ")}`,
+    sourceNodeIds: candidate.sourceNodeIds,
+  };
+}
+
 function probeEnvConfiguredBackend(input: {
   readonly backend: "official/openai-sdk" | "official/anthropic-sdk";
   readonly envName: string;
@@ -390,8 +446,9 @@ function collectRequirements(
     })),
     ...(relevantWorkflowCalls.length === 0
       ? {}
-      : {
+        : {
           workflowCall: {
+            rootWorkflowId: bundle.workflow.workflowId,
             callIds: relevantWorkflowCalls.map((call) => call.id),
             targetWorkflowIds: toSortedArray(
               relevantWorkflowCalls.map((call) => call.workflowId),
@@ -451,17 +508,9 @@ export async function inspectWorkflowRuntimeReadiness(
   }
 
   if (collected.workflowCall !== undefined) {
-    requirements.push({
-      id: "workflow-feature:workflowCalls",
-      kind: "workflow-feature",
-      label: "workflow-call execution",
-      status: "unsupported",
-      detail:
-        `authored workflowCalls are loadable, but executable workflow-call runtime is not implemented yet; ` +
-        `calls=${collected.workflowCall.callIds.join(", ")}; ` +
-        `targetWorkflows=${collected.workflowCall.targetWorkflowIds.join(", ")}`,
-      sourceNodeIds: collected.workflowCall.sourceNodeIds,
-    });
+    requirements.push(
+      await probeWorkflowCallRuntime(collected.workflowCall, options),
+    );
   }
 
   if (collected.commandNodeIds.length > 0) {

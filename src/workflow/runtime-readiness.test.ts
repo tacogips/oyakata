@@ -6,6 +6,7 @@ import {
   inspectWorkflowRuntimeReadiness,
   type WorkflowRuntimeRequirement,
 } from "./runtime-readiness";
+import { loadWorkflowFromDisk } from "./load";
 import type { NormalizedWorkflowBundle, NodePayload } from "./types";
 
 const tempDirs: string[] = [];
@@ -183,7 +184,182 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     });
   });
 
-  test("reports workflow-call execution as unsupported until the runtime implements it", async () => {
+  test("reports workflow-call execution as available when target workflows resolve", async () => {
+    const root = await makeTempDir();
+    const workflowDir = path.join(root, "review-flow-bundle");
+    await mkdir(workflowDir, { recursive: true });
+    await writeFile(
+      path.join(workflowDir, "workflow.json"),
+      `${JSON.stringify(
+        {
+          workflowId: "review-flow",
+          description: "review workflow",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          entryNodeId: "reviewer",
+          nodes: [
+            {
+              id: "reviewer",
+              role: "worker",
+              nodeFile: "nodes/node-reviewer.json",
+              completion: { type: "none" },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+    await writeFile(
+      path.join(workflowDir, "nodes", "node-reviewer.json"),
+      `${JSON.stringify(
+        {
+          id: "reviewer",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "review",
+          variables: {},
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const readiness = await inspectWorkflowRuntimeReadiness(
+      makeBundle(
+        {
+          writer: {
+            id: "writer",
+            nodeType: "command",
+            variables: {},
+            command: {
+              scriptPath: "scripts/write.sh",
+            },
+          },
+        },
+        {
+          workflowCalls: [
+            {
+              id: "call-review",
+              workflowId: "review-flow",
+              callerNodeId: "writer",
+            },
+          ],
+        },
+      ),
+      {
+        workflowRoot: root,
+      },
+    );
+
+    expect(readiness.ready).toBe(true);
+    expect(
+      findRequirement(
+        readiness.requirements,
+        "workflow-feature:workflowCalls",
+      ),
+    ).toMatchObject({
+      kind: "workflow-feature",
+      status: "available",
+      sourceNodeIds: ["writer"],
+    });
+  });
+
+  test("reports workflow-call execution as unavailable when a resolved target is invalid", async () => {
+    const root = await makeTempDir();
+    const workflowDir = path.join(root, "review-flow-bundle");
+    await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+    await writeFile(
+      path.join(workflowDir, "workflow.json"),
+      `${JSON.stringify(
+        {
+          workflowId: "review-flow",
+          description: "invalid review workflow",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          entryNodeId: "reviewer",
+          nodes: [
+            {
+              id: "reviewer",
+              role: "worker",
+              nodeFile: "nodes/node-reviewer.json",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(workflowDir, "nodes", "node-reviewer.json"),
+      `${JSON.stringify(
+        {
+          id: "reviewer",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          variables: {},
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const readiness = await inspectWorkflowRuntimeReadiness(
+      makeBundle(
+        {
+          writer: {
+            id: "writer",
+            nodeType: "command",
+            variables: {},
+            command: {
+              scriptPath: "scripts/write.sh",
+            },
+          },
+        },
+        {
+          workflowCalls: [
+            {
+              id: "call-review",
+              workflowId: "review-flow",
+              callerNodeId: "writer",
+            },
+          ],
+        },
+      ),
+      {
+        workflowRoot: root,
+      },
+    );
+
+    expect(readiness.ready).toBe(false);
+    expect(
+      findRequirement(
+        readiness.requirements,
+        "workflow-feature:workflowCalls",
+      ),
+    ).toMatchObject({
+      kind: "workflow-feature",
+      status: "unavailable",
+      sourceNodeIds: ["writer"],
+    });
+    expect(
+      findRequirement(
+        readiness.requirements,
+        "workflow-feature:workflowCalls",
+      ).detail,
+    ).toContain("workflow validation failed");
+  });
+
+  test("reports workflow-call execution as unavailable when targets are missing", async () => {
     const readiness = await inspectWorkflowRuntimeReadiness(
       makeBundle(
         {
@@ -216,8 +392,146 @@ describe("inspectWorkflowRuntimeReadiness", () => {
       ),
     ).toMatchObject({
       kind: "workflow-feature",
-      status: "unsupported",
+      status: "unavailable",
       sourceNodeIds: ["writer"],
     });
+  });
+
+  test("reports workflow-call execution as unavailable when the target graph is recursive", async () => {
+    const root = await makeTempDir();
+    const callerDir = path.join(root, "runtime-ready-bundle");
+    await mkdir(path.join(callerDir, "nodes"), { recursive: true });
+    await writeFile(
+      path.join(callerDir, "workflow.json"),
+      `${JSON.stringify(
+        {
+          workflowId: "runtime-ready",
+          description: "runtime-ready caller",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          managerNodeId: "manager",
+          workflowCalls: [
+            {
+              id: "call-review",
+              workflowId: "review-flow",
+              callerNodeId: "manager",
+            },
+          ],
+          nodes: [
+            {
+              id: "manager",
+              role: "manager",
+              nodeFile: "nodes/node-manager.json",
+              completion: { type: "none" },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(callerDir, "nodes", "node-manager.json"),
+      `${JSON.stringify(
+        {
+          id: "manager",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "manager",
+          variables: {},
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const calleeDir = path.join(root, "review-flow-bundle");
+    await mkdir(path.join(calleeDir, "nodes"), { recursive: true });
+    await writeFile(
+      path.join(calleeDir, "workflow.json"),
+      `${JSON.stringify(
+        {
+          workflowId: "review-flow",
+          description: "recursive review workflow",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          entryNodeId: "reviewer",
+          workflowCalls: [
+            {
+              id: "call-parent",
+              workflowId: "runtime-ready",
+              callerNodeId: "reviewer",
+            },
+          ],
+          nodes: [
+            {
+              id: "reviewer",
+              role: "worker",
+              nodeFile: "nodes/node-reviewer.json",
+              completion: { type: "none" },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(calleeDir, "nodes", "node-reviewer.json"),
+      `${JSON.stringify(
+        {
+          id: "reviewer",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "review",
+          variables: {},
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const loaded = await loadWorkflowFromDisk("runtime-ready-bundle", {
+      workflowRoot: root,
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+
+    const readiness = await inspectWorkflowRuntimeReadiness(
+      loaded.value.bundle,
+      {
+        workflowRoot: root,
+      },
+    );
+
+    expect(readiness.ready).toBe(false);
+    expect(
+      findRequirement(
+        readiness.requirements,
+        "workflow-feature:workflowCalls",
+      ),
+    ).toMatchObject({
+      kind: "workflow-feature",
+      status: "unavailable",
+      sourceNodeIds: ["manager"],
+    });
+    expect(
+      findRequirement(
+        readiness.requirements,
+        "workflow-feature:workflowCalls",
+      ).detail,
+    ).toContain(
+      "recursive workflow-call chains are unsupported: runtime-ready -> review-flow -> runtime-ready",
+    );
   });
 });

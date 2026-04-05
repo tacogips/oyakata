@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { NODE_TEMPLATE_FIELD_SPECS } from "./node-template-fields";
 import {
@@ -72,6 +72,31 @@ async function readTextFile(
       message: `failed reading text file '${filePath}': ${message}`,
     });
   }
+}
+
+async function readWorkflowIdFromDirectory(
+  workflowDirectory: string,
+): Promise<Result<string | undefined, LoadFailure>> {
+  const workflowPath = path.join(workflowDirectory, "workflow.json");
+  const workflowRaw = await readJsonFile(workflowPath);
+  if (!workflowRaw.ok) {
+    return workflowRaw.error.code === "NOT_FOUND"
+      ? ok(undefined)
+      : err(workflowRaw.error);
+  }
+
+  if (
+    typeof workflowRaw.value !== "object" ||
+    workflowRaw.value === null ||
+    Array.isArray(workflowRaw.value)
+  ) {
+    return ok(undefined);
+  }
+
+  const workflowId = (workflowRaw.value as { workflowId?: unknown }).workflowId;
+  return typeof workflowId === "string" && workflowId.length > 0
+    ? ok(workflowId)
+    : ok(undefined);
 }
 
 async function resolvePromptTemplateFileForNode(input: {
@@ -245,4 +270,61 @@ export async function loadWorkflowFromDisk(
     artifactWorkflowRoot,
     bundle: validation.value,
   });
+}
+
+export async function loadWorkflowByIdFromDisk(
+  workflowId: string,
+  options: LoadOptions = {},
+): Promise<Result<LoadedWorkflow, LoadFailure>> {
+  const direct = await loadWorkflowFromDisk(workflowId, options);
+  if (direct.ok && direct.value.bundle.workflow.workflowId === workflowId) {
+    return direct;
+  }
+
+  const roots = resolveEffectiveRoots(options);
+  let directoryEntries: Awaited<ReturnType<typeof readdir>>;
+  try {
+    directoryEntries = await readdir(roots.workflowRoot, { withFileTypes: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    return err({
+      code: "IO",
+      message: `failed listing workflow root '${roots.workflowRoot}': ${message}`,
+    });
+  }
+
+  const candidateDirectories = directoryEntries
+    .filter((entry) => entry.isDirectory() && entry.name !== workflowId)
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const entry of candidateDirectories) {
+    const candidateWorkflowDirectory = path.join(roots.workflowRoot, entry.name);
+    const candidateWorkflowId = await readWorkflowIdFromDirectory(
+      candidateWorkflowDirectory,
+    );
+    if (!candidateWorkflowId.ok) {
+      continue;
+    }
+    if (candidateWorkflowId.value !== workflowId) {
+      continue;
+    }
+
+    return await loadWorkflowFromDisk(entry.name, options);
+  }
+
+  if (direct.ok) {
+    return err({
+      code: "NOT_FOUND",
+      message:
+        `workflow id '${workflowId}' was not found under workflow root '${roots.workflowRoot}'`,
+    });
+  }
+
+  return direct.error.code === "NOT_FOUND"
+    ? err({
+        code: "NOT_FOUND",
+        message:
+          `workflow id '${workflowId}' was not found under workflow root '${roots.workflowRoot}'`,
+      })
+    : direct;
 }

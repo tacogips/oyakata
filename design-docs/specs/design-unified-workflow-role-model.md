@@ -156,7 +156,21 @@ Principles:
 - no special runtime branch exists because the callee is "sub"
 - "sub-workflow" and "sub-manager" remain descriptive terms only
 
-The exact argument/result transport contract for workflow calls should be implemented as runtime-owned call artifacts and bindings, not as structural `input` and `output` nodes embedded into the authored graph.
+Current runtime contract for this transition:
+
+- `workflowCall.workflowId` resolves another workflow bundle under the configured workflow root
+- after `callerNodeId` succeeds, matching workflow calls execute in authored order
+- the callee receives a reserved `runtimeVariables.workflowCall` object containing:
+  - the workflow-call id
+  - the parent workflow id and execution id
+  - the caller node id
+  - the caller business payload as `workflowCall.input`
+- runtime-owned call artifacts are written under the caller execution artifact directory
+- when `resultNodeId` is present, the callee result is delivered to that node as an ordinary upstream communication with transition key `workflow-call:<id>`
+- the callee result is selected from the callee's published workflow output when available, and otherwise falls back to the latest succeeded callee node execution for role-authored worker-only workflows
+- recursive or self-referential workflow-call chains are unsupported in this transition runtime and should fail readiness/execution rather than re-enter indefinitely
+
+This transport stays runtime-owned rather than reintroducing structural `input` and `output` nodes into the authored graph.
 
 ## Validation Rules
 
@@ -169,7 +183,7 @@ The target validator should enforce:
 - `entryNodeId` is required when `managerNodeId` is absent
 - `entryNodeId` and `managerNodeId` must reference existing nodes
 - manager nodes must use the agent execution path only
-- structural `subWorkflows[].managerNodeId`, `inputNodeId`, `outputNodeId`, and boundary `nodeIds` metadata are removed from the authored schema
+- structural `subWorkflows[].managerNodeId`, `inputNodeId`, `outputNodeId`, boundary `nodeIds`, and non-empty structural `subWorkflowConversations[]` metadata are removed from the active role-authored schema
 
 ## Runtime Implications
 
@@ -198,6 +212,7 @@ Workflow authoring tools and template generators should move to:
 - manager nodes hide non-agent execution-type configuration
 - explicit workflow entry selection for manager-less workflows
 - explicit workflow-call authoring instead of sub-workflow boundary editing
+- role-authored examples and prompts should describe grouped lanes or explicit `workflowCalls`, not structural sub-workflow ownership terms, unless the bundle is intentionally documenting legacy compatibility
 
 ## Migration Direction
 

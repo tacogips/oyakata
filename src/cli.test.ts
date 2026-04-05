@@ -194,6 +194,77 @@ async function createManagerlessWorkflowFixture(
   });
 }
 
+async function createWorkflowCallInspectFixture(
+  workflowRoot: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDirectory = path.join(workflowRoot, workflowName);
+  await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+
+  await writeJson(path.join(workflowDirectory, "workflow.json"), {
+    workflowId: workflowName,
+    description: "workflow-call cli fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "divedra-manager",
+    workflowCalls: [
+      {
+        id: "review-call",
+        workflowId: "review",
+        callerNodeId: "main-worker",
+      },
+    ],
+    nodes: [
+      {
+        id: "divedra-manager",
+        role: "manager",
+        nodeFile: "nodes/node-divedra-manager.json",
+      },
+      {
+        id: "main-worker",
+        role: "worker",
+        nodeFile: "nodes/node-main-worker.json",
+      },
+    ],
+  });
+  await writeJson(path.join(workflowDirectory, "nodes", "node-divedra-manager.json"), {
+    id: "divedra-manager",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "manage the workflow",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDirectory, "nodes", "node-main-worker.json"), {
+    id: "main-worker",
+    executionBackend: "codex-agent",
+    model: "gpt-5",
+    promptTemplate: "do the work",
+    variables: {},
+  });
+
+  const reviewDirectory = path.join(workflowRoot, "review");
+  await mkdir(path.join(reviewDirectory, "nodes"), { recursive: true });
+  await writeJson(path.join(reviewDirectory, "workflow.json"), {
+    workflowId: "review",
+    description: "workflow-call cli callee fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryNodeId: "reviewer",
+    nodes: [
+      {
+        id: "reviewer",
+        role: "worker",
+        nodeFile: "nodes/node-reviewer.json",
+      },
+    ],
+  });
+  await writeJson(path.join(reviewDirectory, "nodes", "node-reviewer.json"), {
+    id: "reviewer",
+    executionBackend: "codex-agent",
+    model: "gpt-5",
+    promptTemplate: "review the work",
+    variables: {},
+  });
+}
+
 async function createCompletedCliWorkflowRun(root: string): Promise<{
   readonly workflowName: string;
   readonly artifactsRoot: string;
@@ -686,6 +757,10 @@ describe("runCli", () => {
     expect(code).toBe(0);
 
     const parsed = JSON.parse(capture.stdout.join("\n")) as {
+      compatibility: {
+        usesEffectiveEntryManagerNodeId: boolean;
+        notes: readonly string[];
+      };
       entryNodeId: string;
       hasManagerNode: boolean;
       managerNodeId?: string;
@@ -695,6 +770,70 @@ describe("runCli", () => {
     expect(parsed.managerNodeId).toBeUndefined();
     expect(parsed.entryNodeId).toBe("worker-1");
     expect(parsed.counts.nodes).toBe(2);
+    expect(parsed.compatibility.usesEffectiveEntryManagerNodeId).toBe(true);
+    expect(parsed.compatibility.notes).toContain(
+      "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
+    );
+  });
+
+  test("inspect reports authored workflowCalls in json and text output", async () => {
+    const root = await makeTempDir();
+    await createWorkflowCallInspectFixture(root, "workflow-calls");
+
+    const jsonCapture = createIoCapture();
+    const jsonCode = await runCli(
+      [
+        "workflow",
+        "inspect",
+        "workflow-calls",
+        "--workflow-root",
+        root,
+        "--output",
+        "json",
+      ],
+      jsonCapture.io,
+    );
+    expect(jsonCode).toBe(0);
+
+    const parsed = JSON.parse(jsonCapture.stdout.join("\n")) as {
+      compatibility: {
+        normalizesRoleAuthoredNodesToStructuralKinds: boolean;
+        usesLegacyStructuralSubWorkflows: boolean;
+        notes: readonly string[];
+      };
+      workflowCallIds: readonly string[];
+      counts: { workflowCalls: number; legacySubWorkflows: number };
+      runtime: { ready: boolean };
+    };
+    expect(parsed.workflowCallIds).toEqual(["review-call"]);
+    expect(parsed.counts.workflowCalls).toBe(1);
+    expect(parsed.counts.legacySubWorkflows).toBe(0);
+    expect(parsed.runtime.ready).toBe(true);
+    expect(
+      parsed.compatibility.normalizesRoleAuthoredNodesToStructuralKinds,
+    ).toBe(true);
+    expect(parsed.compatibility.usesLegacyStructuralSubWorkflows).toBe(false);
+    expect(parsed.compatibility.notes).toContain(
+      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
+    );
+
+    const textCapture = createIoCapture();
+    const textCode = await runCli(
+      ["workflow", "inspect", "workflow-calls", "--workflow-root", root],
+      textCapture.io,
+    );
+    expect(textCode).toBe(0);
+    expect(textCapture.stdout.join("\n")).toContain("workflowCalls: 1");
+    expect(textCapture.stdout.join("\n")).toContain(
+      "workflowCallIds: review-call",
+    );
+    expect(textCapture.stdout.join("\n")).toContain("compatibility:");
+    expect(textCapture.stdout.join("\n")).toContain(
+      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
+    );
+    expect(textCapture.stdout.join("\n")).not.toContain("subWorkflows:");
+    expect(textCapture.stdout.join("\n")).not.toContain("legacySubWorkflows:");
+    expect(textCapture.stdout.join("\n")).toContain("runtimeReady: yes");
   });
 
   test("workflow run fails early when required agent backend transport is unavailable", async () => {

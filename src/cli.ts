@@ -1812,10 +1812,14 @@ export async function runCli(
           : 1;
       }
 
-      const summary = await buildInspectionSummary(loaded.value);
+      const summary = await buildInspectionSummary(loaded.value, sharedOptions);
       if (parsed.options.output === "json") {
         emitJson(io, summary);
       } else {
+        const legacySubWorkflowCountSegment =
+          summary.counts.legacySubWorkflows === 0
+            ? ""
+            : `, legacySubWorkflows: ${summary.counts.legacySubWorkflows}`;
         io.stdout(`workflow: ${summary.workflowName}`);
         io.stdout(`workflowId: ${summary.workflowId}`);
         io.stdout(
@@ -1823,8 +1827,17 @@ export async function runCli(
         );
         io.stdout(`entryNodeId: ${summary.entryNodeId}`);
         io.stdout(
-          `nodes: ${summary.counts.nodes}, edges: ${summary.counts.edges}, loops: ${summary.counts.loops}`,
+          `nodes: ${summary.counts.nodes}, edges: ${summary.counts.edges}, loops: ${summary.counts.loops}, workflowCalls: ${summary.counts.workflowCalls}${legacySubWorkflowCountSegment}`,
         );
+        if (summary.workflowCallIds.length > 0) {
+          io.stdout(`workflowCallIds: ${summary.workflowCallIds.join(", ")}`);
+        }
+        if (summary.compatibility.notes.length > 0) {
+          io.stdout("compatibility:");
+          for (const note of summary.compatibility.notes) {
+            io.stdout(`- ${note}`);
+          }
+        }
         io.stdout(
           `defaults: maxLoopIterations=${summary.defaults.maxLoopIterations}, nodeTimeoutMs=${summary.defaults.nodeTimeoutMs}`,
         );

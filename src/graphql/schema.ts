@@ -991,7 +991,7 @@ export function createGraphqlSchema(
         if (!loaded.ok) {
           return null;
         }
-        return buildInspectionSummary(loaded.value);
+        return buildInspectionSummary(loaded.value, context);
       },
 
       async workflowDefinition(

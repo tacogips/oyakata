@@ -1,3 +1,3 @@
-Coordinate the delivery sub-workflow for {{workflowId}}.
+Coordinate the delivery lane for {{workflowId}}.
 
 Translate the parent instruction into one claude-code worker task.

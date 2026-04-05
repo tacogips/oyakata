@@ -137,6 +137,24 @@ export interface SubWorkflowConversation {
   readonly stopWhen: string;
 }
 
+export interface AuthoredWorkflowJson extends Readonly<Record<string, unknown>> {
+  readonly workflowId: string;
+  readonly description?: string;
+  readonly defaults: WorkflowDefaults;
+  readonly prompts?: WorkflowPrompts;
+  readonly managerNodeId?: string;
+  readonly entryNodeId?: string;
+  readonly workflowCalls?: readonly WorkflowCallRef[];
+  readonly subWorkflows?: readonly SubWorkflowRef[];
+  readonly subWorkflowConversations?: readonly SubWorkflowConversation[];
+  readonly nodes: readonly WorkflowNodeRef[];
+  readonly edges?: readonly WorkflowEdge[];
+  readonly loops?: readonly LoopRule[];
+  readonly branching?: {
+    readonly mode: "fan-out";
+  };
+}
+
 export interface WorkflowJson {
   readonly workflowId: string;
   readonly description: string;

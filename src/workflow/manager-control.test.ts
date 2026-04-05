@@ -69,6 +69,48 @@ function makeWorkflow(): WorkflowJson {
   };
 }
 
+function makeRoleWorkflow(): WorkflowJson {
+  return {
+    workflowId: "wf-role",
+    description: "role workflow",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "divedra-manager",
+    workflowCalls: [
+      {
+        id: "call-review",
+        workflowId: "review-target",
+        callerNodeId: "step-1",
+        resultNodeId: "step-2",
+      },
+    ],
+    subWorkflows: [],
+    nodes: [
+      {
+        id: "divedra-manager",
+        nodeFile: "node-divedra-manager.json",
+        role: "manager",
+      },
+      {
+        id: "step-1",
+        nodeFile: "node-step-1.json",
+        role: "worker",
+        execution: {
+          mode: "optional",
+          decisionBy: "owning-manager",
+        },
+      },
+      {
+        id: "step-2",
+        nodeFile: "node-step-2.json",
+        role: "worker",
+      },
+    ],
+    edges: [],
+    loops: [],
+    branching: { mode: "fan-out" },
+  };
+}
+
 describe("parseManagerControlPayload", () => {
   test("returns null when managerControl is absent", () => {
     expect(
@@ -100,6 +142,60 @@ describe("parseManagerControlPayload", () => {
     expect(parsed?.replayCommunicationIds).toEqual([]);
     expect(parsed?.overridesRootSubWorkflowPlanning).toBe(true);
     expect(parsed?.overridesChildInputPlanning).toBe(true);
+  });
+
+  test("accepts role-authored workflow managers as root-manager control scope", () => {
+    const baseWorkflow = makeWorkflow();
+    const workflow = {
+      ...baseWorkflow,
+      nodes: baseWorkflow.nodes.map((node) =>
+        node.id === "divedra-manager"
+          ? {
+              id: "divedra-manager",
+              nodeFile: "node-divedra-manager.json",
+              role: "manager" as const,
+            }
+          : node,
+      ),
+    };
+
+    const parsed = parseManagerControlPayload(
+      {
+        managerControl: {
+          actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+        },
+      },
+      workflow,
+      {
+        managerNodeId: "divedra-manager",
+        managerKind: undefined,
+        managerRole: "manager",
+      },
+    );
+
+    expect(parsed?.startSubWorkflowIds).toEqual(["sw-a"]);
+  });
+
+  test("rejects start-sub-workflow for role-authored workflows that use explicit workflowCalls instead", () => {
+    expect(() =>
+      parseManagerControlPayload(
+        {
+          managerControl: {
+            actions: [
+              { type: "start-sub-workflow", subWorkflowId: "call-review" },
+            ],
+          },
+        },
+        makeRoleWorkflow(),
+        {
+          managerNodeId: "divedra-manager",
+          managerKind: undefined,
+          managerRole: "manager",
+        },
+      ),
+    ).toThrow(
+      "workflow has no structural sub-workflows; explicit workflowCalls run automatically",
+    );
   });
 
   test("parses supported subworkflow-manager child-input and retry actions", () => {

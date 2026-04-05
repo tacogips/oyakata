@@ -100,6 +100,122 @@ async function createWorkerOnlyWorkflowFixture(root: string) {
   };
 }
 
+async function createWorkflowCallWorkflowFixture(root: string) {
+  const workflowDir = path.join(root, "workflow-calls");
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+  await writeFile(
+    path.join(workflowDir, "workflow.json"),
+    `${JSON.stringify(
+      {
+        workflowId: "workflow-calls",
+        description: "workflow-call http fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        managerNodeId: "divedra-manager",
+        workflowCalls: [
+          {
+            id: "review-call",
+            workflowId: "review",
+            callerNodeId: "main-worker",
+          },
+        ],
+        nodes: [
+          {
+            id: "divedra-manager",
+            role: "manager",
+            nodeFile: "nodes/node-divedra-manager.json",
+          },
+          {
+            id: "main-worker",
+            role: "worker",
+            nodeFile: "nodes/node-main-worker.json",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(workflowDir, "nodes", "node-divedra-manager.json"),
+    `${JSON.stringify(
+      {
+        id: "divedra-manager",
+        executionBackend: "claude-code-agent",
+        model: "claude-opus-4-1",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(workflowDir, "nodes", "node-main-worker.json"),
+    `${JSON.stringify(
+      {
+        id: "main-worker",
+        executionBackend: "codex-agent",
+        model: "gpt-5-nano",
+        promptTemplate: "worker",
+        variables: {},
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const reviewDir = path.join(root, "review");
+  await mkdir(path.join(reviewDir, "nodes"), { recursive: true });
+  await writeFile(
+    path.join(reviewDir, "workflow.json"),
+    `${JSON.stringify(
+      {
+        workflowId: "review",
+        description: "workflow-call http callee fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        entryNodeId: "reviewer",
+        nodes: [
+          {
+            id: "reviewer",
+            role: "worker",
+            nodeFile: "nodes/node-reviewer.json",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(reviewDir, "nodes", "node-reviewer.json"),
+    `${JSON.stringify(
+      {
+        id: "reviewer",
+        executionBackend: "codex-agent",
+        model: "gpt-5-nano",
+        promptTemplate: "review",
+        variables: {},
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  return {
+    options: {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    },
+  };
+}
+
 async function createManagerSession(root: string, workflowExecutionId: string) {
   const store = createManagerSessionStore({
     cwd: root,
@@ -138,8 +254,10 @@ describe("GraphQL HTTP transport", () => {
                 hasManagerNode
                 managerNodeId
                 entryNodeId
+                workflowCallIds
                 counts {
                   nodes
+                  workflowCalls
                 }
               }
             }
@@ -160,8 +278,10 @@ describe("GraphQL HTTP transport", () => {
           hasManagerNode: true,
           managerNodeId: "divedra-manager",
           entryNodeId: "divedra-manager",
+          workflowCallIds: [],
           counts: {
             nodes: 2,
+            workflowCalls: 0,
           },
         },
       },
@@ -186,8 +306,10 @@ describe("GraphQL HTTP transport", () => {
                 hasManagerNode
                 managerNodeId
                 entryNodeId
+                workflowCallIds
                 counts {
                   nodes
+                  workflowCalls
                 }
               }
             }
@@ -208,8 +330,56 @@ describe("GraphQL HTTP transport", () => {
           hasManagerNode: false,
           managerNodeId: null,
           entryNodeId: "main-worker",
+          workflowCallIds: [],
           counts: {
             nodes: 1,
+            workflowCalls: 0,
+          },
+        },
+      },
+    });
+  });
+
+  test("exposes authored workflowCalls over /graphql workflow inspection", async () => {
+    const root = await makeTempDir();
+    const { options } = await createWorkflowCallWorkflowFixture(root);
+
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query WorkflowByName($workflowName: String!) {
+              workflow(workflowName: $workflowName) {
+                workflowId
+                workflowCallIds
+                counts {
+                  workflowCalls
+                  legacySubWorkflows
+                }
+              }
+            }
+          `,
+          variables: {
+            workflowName: "workflow-calls",
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        workflow: {
+          workflowId: "workflow-calls",
+          workflowCallIds: ["review-call"],
+          counts: {
+            workflowCalls: 1,
+            legacySubWorkflows: 0,
           },
         },
       },
@@ -581,6 +751,12 @@ describe("GraphQL HTTP transport", () => {
         },
       },
     });
+
+    const savedWorkflowJson = await readFile(
+      path.join(root, "demo", "workflow.json"),
+      "utf8",
+    );
+    expect(savedWorkflowJson).toContain('"description": "Updated through GraphQL"');
 
     const invalidBundle = cloneJson(validBundle) as typeof validBundle;
     invalidBundle.workflow.nodes = [];

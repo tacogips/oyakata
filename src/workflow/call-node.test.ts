@@ -87,6 +87,53 @@ async function createCallNodeFixture(
   });
 }
 
+async function createRoleManagedCallNodeFixture(
+  workflowRoot: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(workflowRoot, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "role-managed call-node fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "divedra-manager",
+    nodes: [
+      {
+        id: "divedra-manager",
+        role: "manager",
+        nodeFile: "node-divedra-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "writer",
+        role: "worker",
+        nodeFile: "node-writer.json",
+        completion: { type: "none" },
+      },
+    ],
+    edges: [],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
+    id: "divedra-manager",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "manager kind={{nodeKind}}",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer.json"), {
+    id: "writer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "write a structured review",
+    variables: {},
+  });
+}
+
 async function createOptionalCallNodeFixture(
   workflowRoot: string,
   workflowName: string,
@@ -169,7 +216,72 @@ afterEach(async () => {
   );
 });
 
+class PromptAndAmbientCaptureAdapter implements NodeAdapter {
+  readonly calls: AdapterExecutionInput[] = [];
+
+  async execute(
+    input: AdapterExecutionInput,
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    this.calls.push(input);
+    return {
+      provider: "capture-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
 describe("callNode", () => {
+  test("treats role-authored managers as managers for prompt assembly and ambient manager context", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-node-role-manager";
+    const sessionId = "sess-call-node-role-manager";
+
+    await createRoleManagedCallNodeFixture(root, workflowName);
+    await createCallNodeSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    const adapter = new PromptAndAmbientCaptureAdapter();
+    const result = await callNode(
+      {
+        workflowRoot: root,
+        artifactRoot: artifactsRoot,
+        rootDataDir: path.join(root, "data"),
+        sessionStoreRoot,
+        workflowId: workflowName,
+        workflowRunId: sessionId,
+        nodeId: "divedra-manager",
+        message: { instruction: "plan the work" },
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.calls).toHaveLength(1);
+    expect(adapter.calls[0]?.promptText).toContain("Node kind: manager");
+    expect(adapter.calls[0]?.ambientManagerContext?.environment).toMatchObject({
+      DIVEDRA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+      DIVEDRA_WORKFLOW_ID: workflowName,
+      DIVEDRA_WORKFLOW_EXECUTION_ID: sessionId,
+      DIVEDRA_MANAGER_NODE_ID: "divedra-manager",
+      DIVEDRA_MANAGER_NODE_EXEC_ID: "exec-000001",
+    });
+  });
+
   test("retries invalid output in the same node session and publishes accepted output", async () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
@@ -272,7 +384,12 @@ describe("callNode", () => {
 
     const mailboxMeta = JSON.parse(
       await readFile(
-        path.join(result.value.outputRef.artifactDir, "mailbox", "inbox", "meta.json"),
+        path.join(
+          result.value.outputRef.artifactDir,
+          "mailbox",
+          "inbox",
+          "meta.json",
+        ),
         "utf8",
       ),
     ) as {
@@ -281,7 +398,12 @@ describe("callNode", () => {
     };
     const mailboxInput = JSON.parse(
       await readFile(
-        path.join(result.value.outputRef.artifactDir, "mailbox", "inbox", "input.json"),
+        path.join(
+          result.value.outputRef.artifactDir,
+          "mailbox",
+          "inbox",
+          "input.json",
+        ),
         "utf8",
       ),
     ) as {
@@ -289,7 +411,9 @@ describe("callNode", () => {
     };
     expect(mailboxMeta.objective.instruction).toBe("write a structured review");
     expect(mailboxMeta.paths.outputPath).toBe("outbox/output.json");
-    expect(mailboxInput.managerMessage?.instruction).toBe("produce review json");
+    expect(mailboxInput.managerMessage?.instruction).toBe(
+      "produce review json",
+    );
 
     const firstAttemptDir = path.join(
       result.value.outputRef.artifactDir,
@@ -505,7 +629,9 @@ describe("callNode", () => {
       return;
     }
     expect(result.error.message).toContain("nodeType='user-action'");
-    expect(result.error.message).toContain("direct call-node execution is not supported");
+    expect(result.error.message).toContain(
+      "direct call-node execution is not supported",
+    );
   });
 
   test("fails deterministically when execution mailbox artifacts cannot be persisted", async () => {
@@ -668,7 +794,12 @@ describe("callNode", () => {
 
     const mailboxInput = JSON.parse(
       await readFile(
-        path.join(result.value.outputRef.artifactDir, "mailbox", "inbox", "input.json"),
+        path.join(
+          result.value.outputRef.artifactDir,
+          "mailbox",
+          "inbox",
+          "input.json",
+        ),
         "utf8",
       ),
     ) as {

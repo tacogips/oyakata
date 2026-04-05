@@ -8,6 +8,8 @@ Important distinction:
 - the normalized runtime bundle still materializes compatibility fields such as an effective `managerNodeId`, `subWorkflows`, synthesized `edges`, and `branching`
 - `src/workflow/types.ts` currently models that normalized runtime shape more closely than the raw authored JSON
 - save/edit surfaces should persist authored workflow JSON, not leak compatibility-only fields such as `hasManagerNode`, an effective manager id for worker-only workflows, or derived structural `kind` values for role-authored nodes
+- starter templates and save round-trips should preserve that authored-minimal omission strategy rather than eagerly writing empty compatibility/default fields back into `workflow.json`
+- the same omission rule applies at node level: authored bundles should not write normalized defaults such as `completion: { "type": "none" }` or `control: "none"` unless the author explicitly needs them
 
 ## Overview
 
@@ -40,6 +42,8 @@ Notes:
 - `workflow.json.nodes[]` order is canonical for editor and runtime vertical ordering.
 - runtime execution artifacts are written outside the workflow-definition directory under the configured artifact root.
 - worker-only workflows are also valid and may omit `managerNodeId` when `entryNodeId` names the first worker node.
+- starter templates should prefer this minimal authored shape, so fields such as `subWorkflows`, `edges`, `loops`, `branching`, and `defaults.containerRuntime` are omitted until the author actually needs them.
+- starter templates should also omit node-level normalized defaults such as `completion: { "type": "none" }`.
 
 ## `node-{id}.json`
 
@@ -76,7 +80,6 @@ Current authored shape:
     "workerSystemPromptTemplate": "Work only on the current node."
   },
   "managerNodeId": "divedra-manager",
-  "subWorkflowConversations": [],
   "entryNodeId": "divedra-manager",
   "nodes": [
     {
@@ -149,8 +152,9 @@ Validation rules:
 - if no manager exists, `entryNodeId` is required
 - omitted `edges` are synthesized sequentially from node order
 - omitted `subWorkflows`, `subWorkflowConversations`, `loops`, and `workflowCalls` normalize to empty arrays
+- non-empty authored `subWorkflows` and `subWorkflowConversations` are legacy structural compatibility fields and must not be combined with authored `role` / `control` nodes
 - omitted `branching` normalizes to `{ "mode": "fan-out" }`
-- authored `workflowCalls` are part of the accepted authored schema, but the current runtime still reports them as an execution-time readiness blocker until workflow-call execution is implemented
+- authored `workflowCalls` are executable: the caller's `output.payload` is exposed to the callee as `runtimeVariables.workflowCall.input`, and `resultNodeId` receives the callee result through a runtime-owned `workflow-call:<id>` communication when configured
 
 Not part of the current schema:
 
@@ -183,7 +187,7 @@ Current compatibility note:
 
 - the validator still accepts structural `kind` metadata where the current runtime needs it
 - the normalized runtime continues to derive structural `kind` values such as `root-manager`, `subworkflow-manager`, `input`, and `output`
-- grouped ordered-node examples still rely on those normalized structural semantics until explicit `workflowCalls` replace structural sub-workflow routing
+- role-authored grouped examples should describe lanes/stages or explicit `workflowCalls`; only explicit legacy compatibility examples should foreground structural sub-workflow vocabulary
 
 Current `NodeKind` values:
 

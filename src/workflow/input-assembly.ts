@@ -1,13 +1,13 @@
 import { buildPromptTemplateVariables } from "./prompt-template-context";
 import { renderPromptTemplate } from "./render";
-import type { ArgumentBinding, NodeKind, NodePayload } from "./types";
+import type { ArgumentBinding, NodePayload } from "./types";
 
 export interface InputAssemblyContext {
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly node: NodePayload;
   readonly workflowId?: string;
   readonly workflowDescription?: string;
-  readonly nodeKind?: NodeKind;
+  readonly nodeKind?: string;
   readonly upstream: readonly Readonly<Record<string, unknown>>[];
   readonly transcript: readonly Readonly<Record<string, unknown>>[];
 }
@@ -159,7 +159,9 @@ export function assembleNodeInput(
       ...(typeof entry["communicationId"] === "string"
         ? { communicationId: entry["communicationId"] }
         : {}),
-      ...(typeof entry["status"] === "string" ? { status: entry["status"] } : {}),
+      ...(typeof entry["status"] === "string"
+        ? { status: entry["status"] }
+        : {}),
       output:
         typeof entry["output"] === "object" &&
         entry["output"] !== null &&

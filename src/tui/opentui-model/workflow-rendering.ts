@@ -18,6 +18,7 @@ import type {
   RuntimeNodeLogEntry,
   RuntimeSessionSummary,
 } from "../../workflow/runtime-db";
+import { describeWorkflowNodeKind } from "../../workflow/node-role";
 import { getNormalizedNodePayload } from "../../workflow/types";
 import type { OpenTuiRichSelectOption } from "../opentui-view-shared";
 import { resolveOpenTuiNodeTypeColor, resolveOpenTuiStatusColor } from "../opentui-view-shared";
@@ -63,6 +64,34 @@ import {
 
 const WORKSPACE_LATEST_RESULT_PREVIEW_LINES = 18;
 
+function buildLegacySubWorkflowCountSegment(count: number): string {
+  return count === 0 ? "" : `  Legacy structural sub-workflows: ${String(count)}`;
+}
+
+function appendWorkflowBoundarySections(input: {
+  readonly append: (value: StyledText) => void;
+  readonly workflow: LoadedWorkflow["bundle"]["workflow"];
+}): void {
+  const workflowCallIds = (input.workflow.workflowCalls ?? []).map(
+    (entry) => entry.id,
+  );
+  const legacySubWorkflowIds = input.workflow.subWorkflows.map(
+    (entry) => entry.id,
+  );
+
+  if (workflowCallIds.length > 0) {
+    input.append(
+      t`\n\n${brightWhite("Workflow Calls")}\n- ${workflowCallIds.join(", ")}`,
+    );
+  }
+
+  if (legacySubWorkflowIds.length > 0) {
+    input.append(
+      t`\n\n${brightWhite("Legacy Structural Sub-Workflows")}\n- ${legacySubWorkflowIds.join(", ")}`,
+    );
+  }
+}
+
 function formatLatestRunResultForDisplay(input: {
   readonly latestRunStatusError?: string;
   readonly result: unknown;
@@ -106,7 +135,7 @@ function buildWorkflowNodePreview(loaded: LoadedWorkflow): StyledText {
       nodeRef === undefined
         ? undefined
         : getNormalizedNodePayload(loaded.bundle, nodeRef.id);
-    const kind = nodeRef?.kind ?? "task";
+    const kind = nodeRef === undefined ? "task" : describeWorkflowNodeKind(nodeRef);
     const visualMetadata = resolveWorkflowNodeVisualMetadata({
       nodeId,
       visualMetadataByNodeId: derivedNodes,
@@ -176,6 +205,7 @@ export function buildWorkflowSummaryPreview(
     workflow.hasManagerNode === false
       ? "none"
       : workflow.managerNodeId;
+  const workflowCallIds = (workflow.workflowCalls ?? []).map((entry) => entry.id);
   const chunks: StyledText["chunks"] = [];
   const append = (value: StyledText): void => {
     chunks.push(...value.chunks);
@@ -185,7 +215,9 @@ export function buildWorkflowSummaryPreview(
     t`${dim(
       `Nodes: ${String(
         workflow.nodes.length,
-      )}  Sub-workflows: ${String(
+      )}  Workflow calls: ${String(
+        workflowCallIds.length,
+      )}${buildLegacySubWorkflowCountSegment(
         workflow.subWorkflows.length,
       )}  Entry: ${entryNodeId}  Manager: ${managerLabel}`,
     )}`,
@@ -193,6 +225,10 @@ export function buildWorkflowSummaryPreview(
   if (hasVisibleText(workflow.description)) {
     append(t`\n\n${brightWhite("Description")}\n${workflow.description}`);
   }
+  appendWorkflowBoundarySections({
+    append,
+    workflow,
+  });
   append(t`\n\n`);
   append(t`${brightWhite(bold("Node Structure"))}\n`);
   append(buildWorkflowNodePreview(loadedWorkflow));
@@ -213,6 +249,7 @@ export function buildWorkflowRunPreview(
     workflow.hasManagerNode === false
       ? "none"
       : workflow.managerNodeId;
+  const workflowCallIds = (workflow.workflowCalls ?? []).map((entry) => entry.id);
   const chunks: StyledText["chunks"] = [];
   const append = (value: StyledText): void => {
     chunks.push(...value.chunks);
@@ -222,13 +259,19 @@ export function buildWorkflowRunPreview(
     t`${brightWhite("Workflow:")} ${bold(loadedWorkflow.workflowName)}\n${dim(
       `ID: ${workflow.workflowId}  Entry: ${entryNodeId}  Manager: ${managerLabel}  Input: ${inputDetection.mode}  Nodes: ${String(
         workflow.nodes.length,
-      )}  Sub-workflows: ${String(workflow.subWorkflows.length)}`,
+      )}  Workflow calls: ${String(
+        workflowCallIds.length,
+      )}${buildLegacySubWorkflowCountSegment(workflow.subWorkflows.length)}`,
     )}`,
   );
 
   if (hasVisibleText(workflow.description)) {
     append(t`\n\n${brightWhite("Description")}\n${workflow.description}`);
   }
+  appendWorkflowBoundarySections({
+    append,
+    workflow,
+  });
 
   append(t`\n\n${brightWhite("Nodes")}`);
   workflow.nodes.forEach((nodeRef) => {
@@ -246,7 +289,7 @@ export function buildWorkflowRunPreview(
         workflow,
       });
     append(
-      t`\n- ${nodeRef.id} (${formatNodeKindLabel(nodeRef.kind ?? "task")})${
+      t`\n- ${nodeRef.id} (${formatNodeKindLabel(describeWorkflowNodeKind(nodeRef))})${
         purpose === undefined ? "" : `: ${truncate(purpose, 88)}`
       }`,
     );
@@ -268,6 +311,7 @@ export function buildWorkflowDefinitionContent(
   const workflow = loadedWorkflow.bundle.workflow;
   const inputDetection = detectWorkflowInputMode(loadedWorkflow);
   const subworkflowIds = workflow.subWorkflows.map((entry) => entry.id);
+  const workflowCallIds = (workflow.workflowCalls ?? []).map((entry) => entry.id);
   return [
     `Workflow: ${workflow.workflowId}`,
     `Workflow name: ${loadedWorkflow.workflowName}`,
@@ -282,11 +326,17 @@ export function buildWorkflowDefinitionContent(
         : workflow.managerNodeId
     }`,
     `Entry node: ${workflow.entryNodeId ?? workflow.managerNodeId}`,
+    `Workflow calls: ${String(workflowCallIds.length)}`,
+    ...(workflowCallIds.length === 0
+      ? []
+      : [`Workflow call ids: ${workflowCallIds.join(", ")}`]),
     `Nodes: ${String(workflow.nodes.length)}`,
-    `Sub-workflows: ${String(workflow.subWorkflows.length)}`,
     ...(subworkflowIds.length === 0
       ? []
-      : [`Sub-workflow ids: ${subworkflowIds.join(", ")}`]),
+      : [
+          `Legacy structural sub-workflows: ${String(subworkflowIds.length)}`,
+          `Legacy structural sub-workflow ids: ${subworkflowIds.join(", ")}`,
+        ]),
     `Input mode hint: ${inputDetection.mode}`,
     "",
     "Use the Nodes pane and press enter to inspect an individual node definition.",
@@ -448,7 +498,7 @@ export function buildWorkflowDefinitionNodeSelectOptions(
       workflow: workflow.bundle.workflow,
     });
     return buildNodeSelectOption({
-      kind: nodeRef.kind ?? "task",
+      kind: describeWorkflowNodeKind(nodeRef),
       nodeId: nodeRef.id,
       payload,
       ...(purpose === undefined ? {} : { purpose }),
@@ -511,6 +561,8 @@ export function buildWorkflowHistoryHeader(
   )
     ? loadedWorkflow.bundle.workflow.description
     : undefined;
+  const workflow = loadedWorkflow.bundle.workflow;
+  const workflowCallCount = (workflow.workflowCalls ?? []).length;
   const scopeLines =
     subworkflow === undefined
       ? []
@@ -530,9 +582,9 @@ export function buildWorkflowHistoryHeader(
   }
   chunks.push(
     ...t`\n${dim(
-      `nodes=${String(loadedWorkflow.bundle.workflow.nodes.length)}  subworkflows=${String(
-        loadedWorkflow.bundle.workflow.subWorkflows.length,
-      )}`,
+      `nodes=${String(workflow.nodes.length)}  workflowCalls=${String(
+        workflowCallCount,
+      )}  legacySubWorkflows=${String(workflow.subWorkflows.length)}`,
     )}`.chunks,
   );
   if (scopeLines.length > 0) {

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { describeWorkflowNodeKind, isManagerNodeRef } from "./node-role";
 import { buildPromptTemplateVariables } from "./prompt-template-context";
 import { renderPromptTemplate } from "./render";
 import {
@@ -7,7 +8,7 @@ import {
   type NodeExecutionMailbox,
   type PromptCompositionUpstreamInput,
 } from "./node-execution-mailbox";
-import type { NodeKind, NodePayload, WorkflowJson, WorkflowNodeRef } from "./types";
+import type { NodePayload, WorkflowJson, WorkflowNodeRef } from "./types";
 
 export interface PromptCompositionInput {
   readonly workflow: WorkflowJson;
@@ -27,25 +28,45 @@ export interface ComposedExecutionPrompts {
   readonly promptText: string;
 }
 
-const DEFAULT_DIVEDRA_SYSTEM_PROMPT = readFileSync(
+const DEFAULT_DIVEDRA_STRUCTURAL_SYSTEM_PROMPT = readFileSync(
   new URL("./prompts/divedra-system-prompt.md", import.meta.url),
   "utf8",
 ).trim();
 
-function isManagerNodeKind(kind: NodeKind | undefined): boolean {
-  return kind === "root-manager" || kind === "subworkflow-manager";
+const DEFAULT_DIVEDRA_ROLE_SYSTEM_PROMPT = readFileSync(
+  new URL("./prompts/divedra-role-system-prompt.md", import.meta.url),
+  "utf8",
+).trim();
+
+function usesStructuralManagerCompatibility(
+  workflow: WorkflowJson,
+  nodeRef: WorkflowNodeRef,
+): boolean {
+  return (
+    nodeRef.kind === "subworkflow-manager" || workflow.subWorkflows.length > 0
+  );
+}
+
+function resolveDefaultManagerSystemPrompt(
+  workflow: WorkflowJson,
+  nodeRef: WorkflowNodeRef,
+): string {
+  return usesStructuralManagerCompatibility(workflow, nodeRef)
+    ? DEFAULT_DIVEDRA_STRUCTURAL_SYSTEM_PROMPT
+    : DEFAULT_DIVEDRA_ROLE_SYSTEM_PROMPT;
 }
 
 function buildPromptVariables(
   input: PromptCompositionInput,
 ): Readonly<Record<string, unknown>> {
+  const nodeKind = describeWorkflowNodeKind(input.nodeRef);
   return buildPromptTemplateVariables({
     nodeVariables: input.node.variables,
     runtimeVariables: input.runtimeVariables,
     workflowId: input.workflow.workflowId,
     workflowDescription: input.workflow.description,
     nodeId: input.nodeRef.id,
-    ...(input.nodeRef.kind === undefined ? {} : { nodeKind: input.nodeRef.kind }),
+    nodeKind,
     prompt: input.basePromptText,
     args: input.assembledArguments,
     upstream: input.upstreamInputs.map((entry) => ({
@@ -98,7 +119,8 @@ export function composeExecutionPrompts(input: {
 }): ComposedExecutionPrompts {
   const mergedVariables = buildPromptVariables(input.promptComposition);
   const workflowPrompt =
-    input.promptComposition.workflow.prompts?.divedraPromptTemplate === undefined
+    input.promptComposition.workflow.prompts?.divedraPromptTemplate ===
+    undefined
       ? ""
       : renderPromptTemplate(
           input.promptComposition.workflow.prompts.divedraPromptTemplate,
@@ -128,8 +150,15 @@ export function composeExecutionPrompts(input: {
           mergedVariables,
         ).trim();
 
-  const systemSections = isManagerNodeKind(input.promptComposition.nodeRef.kind)
-    ? [DEFAULT_DIVEDRA_SYSTEM_PROMPT, workflowPrompt, nodeSystemPrompt]
+  const systemSections = isManagerNodeRef(input.promptComposition.nodeRef)
+    ? [
+        resolveDefaultManagerSystemPrompt(
+          input.promptComposition.workflow,
+          input.promptComposition.nodeRef,
+        ),
+        workflowPrompt,
+        nodeSystemPrompt,
+      ]
     : [workerSystemPrompt, nodeSystemPrompt];
 
   const promptSections = [sessionStartPrompt];

@@ -9,6 +9,7 @@ import {
   buildWorkflowDefinitionContent,
   buildWorkflowHistoryStatusMessage,
   buildWorkflowRunPreview,
+  buildWorkflowSummaryPreview,
   buildWorkflowSelectorHistorySummary,
   describeTuiWorkflowInputSyntax,
   deriveEditorTextFromRuntimeVariables,
@@ -229,17 +230,35 @@ describe("detectWorkflowInputMode", () => {
 
 describe("buildWorkflowDefinitionContent", () => {
   test("shows a concise workflow summary without dumping raw workflow json", () => {
-    const loaded = makeLoadedWorkflow({
+    const baseLoaded = makeLoadedWorkflow({
       id: "workflow-input",
       model: "input-model",
       promptTemplate: "Read the latest human input and summarize it.",
       variables: {},
     });
+    const loaded: LoadedWorkflow = {
+      ...baseLoaded,
+      bundle: {
+        ...baseLoaded.bundle,
+        workflow: {
+          ...baseLoaded.bundle.workflow,
+          workflowCalls: [
+            {
+              id: "review-call",
+              workflowId: "review",
+              callerNodeId: "workflow-output",
+            },
+          ],
+        },
+      },
+    };
 
     const content = buildWorkflowDefinitionContent(loaded);
 
     expect(content).toContain("Workflow: demo");
-    expect(content).toContain("Sub-workflow ids: delivery");
+    expect(content).toContain("Workflow calls: 1");
+    expect(content).toContain("Workflow call ids: review-call");
+    expect(content).toContain("Legacy structural sub-workflow ids: delivery");
     expect(content).toContain(
       "Use the Nodes pane and press enter to inspect an individual node definition.",
     );
@@ -292,6 +311,42 @@ describe("buildWorkflowDefinitionContent", () => {
 
     expect(content).toContain("Manager node: (none; worker-only workflow)");
     expect(content).toContain("Entry node: worker-1");
+    expect(content).not.toContain("Legacy structural sub-workflows:");
+  });
+});
+
+describe("buildWorkflowSummaryPreview", () => {
+  test("surfaces workflow calls separately from legacy structural sub-workflows", () => {
+    const baseLoaded = makeLoadedWorkflow({
+      id: "workflow-input",
+      model: "input-model",
+      promptTemplate: "Read the latest human input and summarize it.",
+      variables: {},
+    });
+    const loaded: LoadedWorkflow = {
+      ...baseLoaded,
+      bundle: {
+        ...baseLoaded.bundle,
+        workflow: {
+          ...baseLoaded.bundle.workflow,
+          workflowCalls: [
+            {
+              id: "review-call",
+              workflowId: "review",
+              callerNodeId: "workflow-output",
+            },
+          ],
+        },
+      },
+    };
+
+    const content = plainStyledText(buildWorkflowSummaryPreview(loaded));
+
+    expect(content).toContain("Workflow calls: 1");
+    expect(content).toContain("Workflow Calls");
+    expect(content).toContain("- review-call");
+    expect(content).toContain("Legacy Structural Sub-Workflows");
+    expect(content).toContain("- delivery");
   });
 });
 
@@ -314,6 +369,139 @@ describe("buildWorkflowRunPreview", () => {
     );
     expect(content).toContain("- workflow-output (OUTPUT): Return output");
     expect(content).not.toContain("Node Structure");
+  });
+
+  test("shows WORKER labels for role-authored worker-only nodes", () => {
+    const loaded: LoadedWorkflow = {
+      workflowName: "worker-only",
+      workflowDirectory: "/tmp/worker-only",
+      artifactWorkflowRoot: "/tmp/artifacts/worker-only",
+      bundle: {
+        workflow: {
+          workflowId: "worker-only",
+          description: "worker-only workflow",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          managerNodeId: "worker-1",
+          hasManagerNode: false,
+          entryNodeId: "worker-1",
+          subWorkflows: [],
+          nodes: [
+            {
+              id: "worker-1",
+              kind: "task",
+              role: "worker",
+              nodeFile: "node-worker-1.json",
+              completion: { type: "none" },
+            },
+          ],
+          edges: [],
+          loops: [],
+          branching: { mode: "fan-out" },
+        },
+        nodePayloads: {
+          "worker-1": {
+            id: "worker-1",
+            executionBackend: "codex-agent",
+            model: "gpt-5",
+            promptTemplate: "do the work",
+            variables: {},
+          },
+        },
+      },
+    };
+
+    const content = plainStyledText(buildWorkflowRunPreview(loaded));
+
+    expect(content).toContain("- worker-1 (WORKER): do the work");
+    expect(content).not.toContain("Legacy structural sub-workflows:");
+  });
+
+  test("surfaces workflow call ids without legacy structural labels for role-authored bundles", () => {
+    const loaded: LoadedWorkflow = {
+      workflowName: "workflow-call-parent",
+      workflowDirectory: "/tmp/workflow-call-parent",
+      artifactWorkflowRoot: "/tmp/artifacts/workflow-call-parent",
+      bundle: {
+        workflow: {
+          workflowId: "workflow-call-parent",
+          description: "workflow-call parent",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          managerNodeId: "divedra-manager",
+          workflowCalls: [
+            {
+              id: "review-call",
+              workflowId: "review-flow",
+              callerNodeId: "main-worker",
+              resultNodeId: "apply-review",
+            },
+          ],
+          subWorkflows: [],
+          nodes: [
+            {
+              id: "divedra-manager",
+              kind: "root-manager",
+              role: "manager",
+              nodeFile: "nodes/node-divedra-manager.json",
+              completion: { type: "none" },
+            },
+            {
+              id: "main-worker",
+              kind: "task",
+              role: "worker",
+              nodeFile: "nodes/node-main-worker.json",
+              completion: { type: "none" },
+            },
+            {
+              id: "apply-review",
+              kind: "task",
+              role: "worker",
+              nodeFile: "nodes/node-apply-review.json",
+              completion: { type: "none" },
+            },
+          ],
+          edges: [{ from: "divedra-manager", to: "main-worker", when: "always" }],
+          loops: [],
+          branching: { mode: "fan-out" },
+        },
+        nodePayloads: {
+          "divedra-manager": {
+            id: "divedra-manager",
+            executionBackend: "claude-code-agent",
+            model: "claude-opus-4-1",
+            promptTemplate: "manage the workflow",
+            variables: {},
+          },
+          "main-worker": {
+            id: "main-worker",
+            executionBackend: "codex-agent",
+            model: "gpt-5",
+            promptTemplate: "draft the change",
+            variables: {},
+          },
+          "apply-review": {
+            id: "apply-review",
+            executionBackend: "codex-agent",
+            model: "gpt-5",
+            promptTemplate: "apply the review",
+            variables: {},
+          },
+        },
+      },
+    };
+
+    const content = plainStyledText(buildWorkflowRunPreview(loaded));
+
+    expect(content).toContain("Workflow calls: 1");
+    expect(content).toContain("Workflow Calls");
+    expect(content).toContain("- review-call");
+    expect(content).not.toContain("Legacy Structural Sub-Workflows");
+    expect(content).not.toContain("Legacy structural sub-workflows:");
   });
 });
 
@@ -594,7 +782,9 @@ describe("workflow preview text helpers", () => {
 
     expect(text).toContain("demo");
     expect(text).not.toContain("demo workflow");
-    expect(text).toContain("nodes=3  subworkflows=1");
+    expect(text).toContain(
+      "nodes=3  workflowCalls=0  legacySubWorkflows=1",
+    );
     expect(text).not.toContain("demo\n\nnodes=");
   });
 });

@@ -19,7 +19,8 @@ const GRAPHQL_SCHEMA_TEXT = `
     nodes: Int!
     edges: Int!
     loops: Int!
-    subWorkflows: Int!
+    workflowCalls: Int!
+    legacySubWorkflows: Int!
   }
 
   type WorkflowView {
@@ -29,6 +30,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     hasManagerNode: Boolean!
     managerNodeId: String
     entryNodeId: String!
+    workflowCallIds: [String!]!
     defaults: WorkflowDefaults!
     counts: WorkflowCounts!
     nodeFiles: [String!]!

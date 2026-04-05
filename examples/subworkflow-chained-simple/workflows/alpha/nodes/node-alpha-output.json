@@ -5,7 +5,7 @@
   "promptTemplateFile": "prompts/alpha-output.md",
   "variables": {},
   "output": {
-    "description": "Publish alpha-lane output for downstream sub-workflows.",
+    "description": "Publish alpha-lane output for downstream grouped lanes.",
     "jsonSchema": {
       "type": "object",
       "required": [

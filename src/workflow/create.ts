@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "./paths";
-import type { LoadOptions } from "./types";
+import type { AuthoredWorkflowJson, LoadOptions } from "./types";
 
 export interface CreateWorkflowSuccess {
   readonly workflowName: string;
@@ -37,11 +37,6 @@ interface TemplateDefinition {
   };
   readonly managerNodeId?: string;
   readonly entryNodeId: string;
-  readonly edges: readonly {
-    readonly from: string;
-    readonly to: string;
-    readonly when: "always";
-  }[];
 }
 
 const MANAGED_TEMPLATE_NODE_DEFINITIONS = [
@@ -85,13 +80,11 @@ function createTemplateWorkflowNode(definition: TemplateNodeDefinition): {
   readonly id: string;
   readonly role: TemplateNodeDefinition["role"];
   readonly nodeFile: string;
-  readonly completion: { readonly type: "none" };
 } {
   return {
     id: definition.id,
     role: definition.role,
     nodeFile: templateNodeFileName(definition.id),
-    completion: { type: "none" },
   };
 }
 
@@ -142,11 +135,10 @@ function resolveTemplateDefinition(
           "Work only on the assigned node task, use the provided workflow context, and return the business JSON payload requested by the node.",
       },
       entryNodeId: workerNode.id,
-      edges: [],
     };
   }
 
-  const [managerNode, workerNode] = MANAGED_TEMPLATE_NODE_DEFINITIONS;
+  const [managerNode] = MANAGED_TEMPLATE_NODE_DEFINITIONS;
   return {
     nodes: MANAGED_TEMPLATE_NODE_DEFINITIONS,
     workflowPrompts: {
@@ -157,7 +149,6 @@ function resolveTemplateDefinition(
     },
     managerNodeId: managerNode.id,
     entryNodeId: managerNode.id,
-    edges: [{ from: managerNode.id, to: workerNode.id, when: "always" }],
   };
 }
 
@@ -208,26 +199,19 @@ export async function createWorkflowTemplate(
     options.templateMode ?? "managed",
   );
 
-  const workflowJson = {
+  const workflowJson: AuthoredWorkflowJson = {
     workflowId,
     description: "New workflow",
     defaults: {
       maxLoopIterations: 3,
       nodeTimeoutMs: 120000,
-      containerRuntime: {
-        runnerKind: "podman",
-      },
     },
     prompts: templateDefinition.workflowPrompts,
     ...(templateDefinition.managerNodeId === undefined
       ? {}
       : { managerNodeId: templateDefinition.managerNodeId }),
     entryNodeId: templateDefinition.entryNodeId,
-    subWorkflows: [],
     nodes: templateDefinition.nodes.map(createTemplateWorkflowNode),
-    edges: templateDefinition.edges,
-    loops: [],
-    branching: { mode: "fan-out" },
   };
 
   const nodePayloads = templateDefinition.nodes.map((definition) =>

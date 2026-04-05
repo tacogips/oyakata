@@ -142,7 +142,7 @@ describe("assembleNodeInput", () => {
             },
           },
           outputRaw:
-            "{\"provider\":\"mock\",\"payload\":{\"request\":\"implement release flow\"}}\n",
+            '{"provider":"mock","payload":{"request":"implement release flow"}}\n',
         },
       ],
       transcript: [],
@@ -166,5 +166,37 @@ describe("assembleNodeInput", () => {
     });
 
     expect(assembled.promptText).toBe("kind=task");
+  });
+
+  test("supports role-authored manager nodeKind values", () => {
+    const assembled = assembleNodeInput({
+      runtimeVariables: {},
+      node: makeNode({
+        promptTemplate: "kind={{nodeKind}}",
+      }),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      nodeKind: "manager",
+      upstream: [],
+      transcript: [],
+    });
+
+    expect(assembled.promptText).toBe("kind=manager");
+  });
+
+  test("supports role-authored worker nodeKind values", () => {
+    const assembled = assembleNodeInput({
+      runtimeVariables: {},
+      node: makeNode({
+        promptTemplate: "kind={{nodeKind}}",
+      }),
+      workflowId: "wf",
+      workflowDescription: "Ship a release safely.",
+      nodeKind: "worker",
+      upstream: [],
+      transcript: [],
+    });
+
+    expect(assembled.promptText).toBe("kind=worker");
   });
 });

@@ -23,7 +23,7 @@ Current runtime behavior:
 - manager nodes run inside the queue-based engine rather than replacing it with a pure external orchestrator
 - authored workflows may use role-based nodes (`manager` / `worker`) and may omit a manager when `entryNodeId` is explicit
 - manager-less workflows execute today, but the normalized runtime still derives an internal effective manager/entry identity for compatibility
-- root and sub-workflow boundaries still exist through `managerNodeId`, `subWorkflows`, and related mailbox routing
+- explicit `workflowCalls` are the active cross-workflow invocation path for role-authored bundles; structural `subWorkflows` and related mailbox routing remain only as legacy compatibility behavior when those fields are still authored
 - `repeat` on a node is supported in the simplified ordered format and synthesizes loop semantics
 - `user-action` nodes are supported and pause execution until an external reply resolves the action
 
@@ -34,9 +34,9 @@ Current execution support by node type:
 - `command`: implemented
 - `container`: implemented
 
-Additional authored shapes that are recognized but not fully executable:
+Additional authored shapes:
 
-- `workflowCalls`: loadable and valid as authored workflow metadata, but runtime readiness blocks execution until workflow-call runtime support lands
+- `workflowCalls`: executable workflow-to-workflow invocations. The caller's business payload is exposed to the callee as `runtimeVariables.workflowCall.input`, and `resultNodeId` can receive the callee result through a runtime-owned `workflow-call:<id>` communication.
 
 ## Quick Start
 
@@ -103,7 +103,7 @@ Primary commands implemented in `src/cli.ts`:
 - `call-node <workflow-id> <workflow-run-id> <node-id>`
 - `export <workflow-id> <workflow-run-id>`
 
-`workflow create <name>` scaffolds a role-based starter with a `claude-code-agent` manager node and a `codex-agent` worker node. Pass `--worker-only` to scaffold a manager-less starter whose explicit `entryNodeId` points at `main-worker`.
+`workflow create <name>` scaffolds a role-based starter with a `claude-code-agent` manager node and a `codex-agent` worker node. The generated `workflow.json` prefers the authored-minimal surface and omits compatibility/default fields such as empty `subWorkflows`, synthesized `edges`, default `branching`, and node-level `completion: { "type": "none" }` unless they are needed. Pass `--worker-only` to scaffold a manager-less starter whose explicit `entryNodeId` points at `main-worker`.
 
 Useful options:
 
@@ -114,6 +114,10 @@ Useful options:
 - `--variables <path>`
 - `--mock-scenario <path>`
 - `--output json`
+
+`workflow inspect` surfaces the active cross-workflow count as `workflowCalls`
+and labels any remaining structural compatibility count as
+`legacySubWorkflows`.
 - `--dry-run`
 - `--max-steps <n>`
 - `--max-loop-iterations <n>`
@@ -230,6 +234,9 @@ Relevant current behavior:
 - if `edges` are omitted, sequential edges are synthesized from node order
 - if exactly one manager-role node exists, `managerNodeId` may be inferred
 - if no manager exists, `entryNodeId` is required and the runtime starts there
+- non-empty authored `subWorkflows` are reserved for legacy structural compatibility and should not be combined with authored role/control nodes
+- non-empty authored `subWorkflowConversations` are also reserved for legacy structural compatibility and should not be combined with authored role/control nodes
+- authored `subWorkflowConversations` remain legacy structural compatibility metadata and are not part of the active role-authored `workflowCalls` path
 - inline node payload authoring is supported through `workflow.nodes[].node` when `nodeFile` is omitted
 - `workflowId` is the runtime namespace key for artifacts and session storage, so it must be filesystem-safe
 
@@ -289,6 +296,7 @@ Important current behavior:
 - `sessionPolicy.mode: "reuse"` lets compatible agent backends continue the same backend session across repeated executions
 - output contracts let the runtime validate business JSON before publishing canonical artifacts and downstream mailbox messages
 - `user-action` nodes write user-action request artifacts and pause the workflow until resolution
+- optional nodes are scheduler-managed and managers may explicitly execute or skip them through `managerControl` decisions
 
 ## Runtime Model
 
@@ -296,18 +304,18 @@ The workflow engine in `src/workflow/engine.ts` currently does the following:
 
 1. Loads and normalizes the workflow bundle from disk.
 2. Creates or resumes a persisted session.
-3. Seeds the execution queue from the root manager.
+3. Seeds the execution queue from the resolved workflow entry node.
 4. Assembles mailbox-backed input and prompt text for each node execution.
 5. Persists `input.json` before execution.
 6. Executes the node with timeout handling and optional backend session reuse.
 7. Validates output contracts before runtime-owned publication.
 8. Persists node execution artifacts and indexes runtime data in SQLite on a best-effort basis.
-9. Publishes downstream communications and rebuilds the queue.
+9. Publishes downstream communications, executes authored `workflowCalls` from successful caller nodes, and rebuilds the queue.
 10. Marks the workflow completed when the queue drains, or paused/failed/cancelled as needed.
 
-Conversation support:
+Legacy structural conversation support:
 
-- `subWorkflowConversations[]` can relay outputs between participant sub-workflow managers
+- `subWorkflowConversations[]` can relay outputs between participant sub-workflow managers for explicitly legacy structural bundles
 - turn emission is gated by newer successful outputs and conversation stop conditions
 
 ## Runtime Storage
@@ -354,17 +362,28 @@ The current example bundles live under `examples/`. See `examples/README.md` for
 
 Available examples:
 
+- `worker-only-single-step`
+- `workflow-call-simple`
+- `workflow-call-review-target`
 - `claude-divedra-codex-coding`
 - `claude-divedra-claude-worker`
 - `same-node-session-echo`
 - `subworkflow-chained-simple`
 - `node-combinations-showcase`
 - `first-four-arithmetic-pipeline`
-- `codex-codex-euthanasia-debate`
+- `codex-codex-euthanasia-debate` (legacy structural compatibility)
 
 Recommended starting point:
 
 - `claude-divedra-codex-coding` shows the preferred mixed-backend split with manager nodes on `claude-code-agent` and implementation work on `codex-agent`
+
+Workflow-call reference:
+
+- `workflow-call-simple` shows the current explicit `workflowCalls` path with a managed parent workflow calling a worker-only sibling workflow and resuming from the returned result
+
+Legacy compatibility reference:
+
+- `codex-codex-euthanasia-debate` remains as an explicitly legacy structural example until `subWorkflowConversations` is migrated away from structural sub-workflow boundaries
 
 Examples that exercise the full node surface:
 

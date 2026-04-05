@@ -99,6 +99,122 @@ async function createWorkerOnlyWorkflowFixture(root: string) {
   };
 }
 
+async function createWorkflowCallWorkflowFixture(root: string) {
+  const workflowDir = path.join(root, "workflow-calls");
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+  await writeFile(
+    path.join(workflowDir, "workflow.json"),
+    `${JSON.stringify(
+      {
+        workflowId: "workflow-calls",
+        description: "workflow-call graphql schema fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        managerNodeId: "divedra-manager",
+        workflowCalls: [
+          {
+            id: "review-call",
+            workflowId: "review",
+            callerNodeId: "main-worker",
+          },
+        ],
+        nodes: [
+          {
+            id: "divedra-manager",
+            role: "manager",
+            nodeFile: "nodes/node-divedra-manager.json",
+          },
+          {
+            id: "main-worker",
+            role: "worker",
+            nodeFile: "nodes/node-main-worker.json",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(workflowDir, "nodes", "node-divedra-manager.json"),
+    `${JSON.stringify(
+      {
+        id: "divedra-manager",
+        executionBackend: "claude-code-agent",
+        model: "claude-opus-4-1",
+        promptTemplate: "manager",
+        variables: {},
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(workflowDir, "nodes", "node-main-worker.json"),
+    `${JSON.stringify(
+      {
+        id: "main-worker",
+        executionBackend: "codex-agent",
+        model: "gpt-5-nano",
+        promptTemplate: "worker",
+        variables: {},
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  const reviewDir = path.join(root, "review");
+  await mkdir(path.join(reviewDir, "nodes"), { recursive: true });
+  await writeFile(
+    path.join(reviewDir, "workflow.json"),
+    `${JSON.stringify(
+      {
+        workflowId: "review",
+        description: "workflow-call graphql schema callee fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        entryNodeId: "reviewer",
+        nodes: [
+          {
+            id: "reviewer",
+            role: "worker",
+            nodeFile: "nodes/node-reviewer.json",
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(reviewDir, "nodes", "node-reviewer.json"),
+    `${JSON.stringify(
+      {
+        id: "reviewer",
+        executionBackend: "codex-agent",
+        model: "gpt-5-nano",
+        promptTemplate: "review",
+        variables: {},
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+
+  return {
+    options: {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    },
+  };
+}
+
 function makeGroupedWorkflowScenario(): MockNodeScenario {
   return {
     "divedra-manager": {
@@ -378,6 +494,35 @@ describe("createGraphqlSchema", () => {
     expect(workflow?.managerNodeId).toBeUndefined();
     expect(workflow?.entryNodeId).toBe("main-worker");
     expect(workflow?.counts.nodes).toBe(1);
+    expect(workflow?.compatibility.usesEffectiveEntryManagerNodeId).toBe(true);
+    expect(workflow?.compatibility.notes).toContain(
+      "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
+    );
+  });
+
+  test("exposes authored workflowCalls through workflow inspection", async () => {
+    const root = await makeTempDir();
+    const { options } = await createWorkflowCallWorkflowFixture(root);
+    const schema = createGraphqlSchema();
+
+    const workflow = await schema.query.workflow(
+      { workflowName: "workflow-calls" },
+      options,
+    );
+
+    expect(workflow?.workflowCallIds).toEqual(["review-call"]);
+    expect(workflow?.counts.workflowCalls).toBe(1);
+    expect(workflow?.counts.legacySubWorkflows).toBe(0);
+    expect(workflow?.runtime.ready).toBe(true);
+    expect(
+      workflow?.compatibility.normalizesRoleAuthoredNodesToStructuralKinds,
+    ).toBe(true);
+    expect(workflow?.compatibility.usesLegacyStructuralSubWorkflows).toBe(
+      false,
+    );
+    expect(workflow?.compatibility.notes).toContain(
+      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
+    );
   });
 
   test("aggregates node detail and communication snapshots by workflow execution id", async () => {
@@ -503,6 +648,14 @@ describe("createGraphqlSchema", () => {
     expect(saved.error).toBeUndefined();
     expect(saved.revision).toEqual(expect.any(String));
 
+    const reloaded = await schema.query.workflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    expect(reloaded?.bundle.workflow.description).toBe(
+      "Updated through GraphQL",
+    );
+
     const invalidBundle = cloneJson(validBundle) as typeof validBundle;
     invalidBundle.workflow.nodes = [];
     const validation = await schema.mutation.validateWorkflowDefinition(
@@ -585,6 +738,127 @@ describe("createGraphqlSchema", () => {
     expect(workflowJsonText).not.toContain('"kind"');
     expect(workflowJsonText).toContain('"entryNodeId": "main-worker"');
     expect(workflowJsonText).toContain('"role": "worker"');
+  });
+
+  test("allows saveWorkflowDefinition to convert an existing managed workflow to worker-only", async () => {
+    const root = await makeTempDir();
+    const schema = createGraphqlSchema();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const created = await schema.mutation.createWorkflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    const workerPayload = created.bundle.nodePayloads["main-worker"];
+    expect(workerPayload).toBeDefined();
+    if (workerPayload === undefined) {
+      return;
+    }
+    const convertedBundle = {
+      workflow: {
+        ...cloneJson(created.bundle.workflow),
+        hasManagerNode: false,
+        entryNodeId: "main-worker",
+        edges: [],
+        nodes: cloneJson(created.bundle.workflow.nodes).filter(
+          (node) => node.id === "main-worker",
+        ),
+      },
+      nodePayloads: {
+        "main-worker": workerPayload,
+      },
+    };
+
+    const saved = await schema.mutation.saveWorkflowDefinition(
+      {
+        workflowName: "demo",
+        bundle: convertedBundle,
+      },
+      options,
+    );
+    expect(saved.error).toBeUndefined();
+
+    const reloaded = await schema.query.workflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    expect(reloaded?.bundle.workflow.hasManagerNode).toBe(false);
+    expect(reloaded?.bundle.workflow.managerNodeId).toBe("main-worker");
+    expect(reloaded?.bundle.workflow.entryNodeId).toBe("main-worker");
+    expect(reloaded?.bundle.workflow.nodes).toHaveLength(1);
+
+    const workflowJsonText = await readFile(
+      path.join(root, "demo", "workflow.json"),
+      "utf8",
+    );
+    expect(workflowJsonText).not.toContain('"managerNodeId"');
+    expect(workflowJsonText).toContain('"entryNodeId": "main-worker"');
+    expect(workflowJsonText).not.toContain('"role": "manager"');
+  });
+
+  test("allows saveWorkflowDefinition to convert an existing managed workflow to worker-only with expectedRevision", async () => {
+    const root = await makeTempDir();
+    const schema = createGraphqlSchema();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const created = await schema.mutation.createWorkflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    const workerPayload = created.bundle.nodePayloads["main-worker"];
+    expect(workerPayload).toBeDefined();
+    if (workerPayload === undefined) {
+      return;
+    }
+    expect(created.revision).toEqual(expect.any(String));
+    if (created.revision === null) {
+      return;
+    }
+
+    const convertedBundle = {
+      workflow: {
+        ...cloneJson(created.bundle.workflow),
+        hasManagerNode: false,
+        entryNodeId: "main-worker",
+        edges: [],
+        nodes: cloneJson(created.bundle.workflow.nodes).filter(
+          (node) => node.id === "main-worker",
+        ),
+      },
+      nodePayloads: {
+        "main-worker": workerPayload,
+      },
+    };
+
+    const saved = await schema.mutation.saveWorkflowDefinition(
+      {
+        workflowName: "demo",
+        expectedRevision: created.revision,
+        bundle: convertedBundle,
+      },
+      options,
+    );
+    expect(saved.error).toBeUndefined();
+    expect(saved.revision).toEqual(expect.any(String));
+
+    const reloaded = await schema.query.workflowDefinition(
+      { workflowName: "demo" },
+      options,
+    );
+    expect(reloaded?.bundle.workflow.hasManagerNode).toBe(false);
+    expect(reloaded?.bundle.workflow.managerNodeId).toBe("main-worker");
+    expect(reloaded?.bundle.workflow.entryNodeId).toBe("main-worker");
+    expect(reloaded?.bundle.workflow.nodes).toHaveLength(1);
   });
 
   test("authenticates managerSession and sendManagerMessage through the shared manager services", async () => {

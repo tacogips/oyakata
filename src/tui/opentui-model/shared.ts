@@ -17,6 +17,7 @@ import type {
   CliAgentBackend,
   NodePayload,
 } from "../../workflow/types";
+import { describeWorkflowNodeKind } from "../../workflow/node-role";
 import { deriveWorkflowVisualization } from "../../workflow/visualization";
 import type { OpenTuiRichSelectOption } from "../opentui-view-shared";
 import {
@@ -89,7 +90,8 @@ export function resolveNodeKind(
   workflow: LoadedWorkflow["bundle"]["workflow"],
   nodeId: string,
 ): string {
-  return workflow.nodes.find((entry) => entry.id === nodeId)?.kind ?? "task";
+  const node = workflow.nodes.find((entry) => entry.id === nodeId);
+  return node === undefined ? "task" : describeWorkflowNodeKind(node);
 }
 
 export function findLatestNodeExecution(
@@ -294,7 +296,10 @@ export function buildWorkflowNodeVisualMetadata(
     workflow: loaded.bundle.workflow,
   });
   const nodeKindById = new Map(
-    loaded.bundle.workflow.nodes.map((node) => [node.id, node.kind ?? "task"] as const),
+    loaded.bundle.workflow.nodes.map((node) => [
+      node.id,
+      describeWorkflowNodeKind(node),
+    ] as const),
   );
   const subworkflowScopeNodeIds = new Set<string>();
   loaded.bundle.workflow.subWorkflows.forEach((subworkflow) => {

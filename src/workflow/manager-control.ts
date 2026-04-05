@@ -1,5 +1,5 @@
 import type { CommunicationRecord } from "./session";
-import type { NodeKind, WorkflowJson } from "./types";
+import type { NodeKind, NodeRole, WorkflowJson } from "./types";
 
 export type ManagerControlActionType =
   | "planner-note"
@@ -70,6 +70,7 @@ export interface ParsedManagerControl {
 export interface ManagerControlParseContext {
   readonly managerNodeId: string;
   readonly managerKind: NodeKind | undefined;
+  readonly managerRole?: NodeRole;
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -174,6 +175,10 @@ function dedupe(values: readonly string[]): readonly string[] {
   return values.filter((value, index, all) => all.indexOf(value) === index);
 }
 
+function hasStructuralSubWorkflows(workflow: WorkflowJson): boolean {
+  return workflow.subWorkflows.length > 0;
+}
+
 function findOwnedSubWorkflow(workflow: WorkflowJson, managerNodeId: string) {
   return workflow.subWorkflows.find(
     (entry) => entry.managerNodeId === managerNodeId,
@@ -182,6 +187,23 @@ function findOwnedSubWorkflow(workflow: WorkflowJson, managerNodeId: string) {
 
 function getOwnedSubWorkflowForNode(workflow: WorkflowJson, nodeId: string) {
   return workflow.subWorkflows.find((entry) => entry.nodeIds.includes(nodeId));
+}
+
+function isRootManagerControlContext(
+  workflow: WorkflowJson,
+  context: ManagerControlParseContext,
+): boolean {
+  return (
+    context.managerNodeId === workflow.managerNodeId &&
+    context.managerKind !== "subworkflow-manager" &&
+    context.managerRole !== "worker"
+  );
+}
+
+function isSubworkflowManagerControlContext(
+  context: ManagerControlParseContext,
+): boolean {
+  return context.managerKind === "subworkflow-manager";
 }
 
 function assertOptionalNodeDecisionScope(
@@ -207,7 +229,7 @@ function assertOptionalNodeDecisionScope(
     );
   }
 
-  if (context.managerNodeId === workflow.managerNodeId) {
+  if (isRootManagerControlContext(workflow, context)) {
     const ownedSubWorkflow = getOwnedSubWorkflowForNode(workflow, nodeId);
     if (ownedSubWorkflow !== undefined) {
       throw new Error(
@@ -217,7 +239,7 @@ function assertOptionalNodeDecisionScope(
     return;
   }
 
-  if (context.managerKind === "subworkflow-manager") {
+  if (isSubworkflowManagerControlContext(context)) {
     const ownedSubWorkflow = findOwnedSubWorkflow(
       workflow,
       context.managerNodeId,
@@ -270,7 +292,7 @@ export function assertCommunicationInManagerScope(
     workflow,
   );
 
-  if (context.managerKind === "subworkflow-manager") {
+  if (isSubworkflowManagerControlContext(context)) {
     const ownedSubWorkflow = findOwnedSubWorkflow(
       workflow,
       context.managerNodeId,
@@ -291,7 +313,7 @@ export function assertCommunicationInManagerScope(
     return;
   }
 
-  if (context.managerNodeId === workflow.managerNodeId) {
+  if (isRootManagerControlContext(workflow, context)) {
     if (
       effectiveScope.fromSubWorkflowId !== undefined ||
       effectiveScope.toSubWorkflowId !== undefined
@@ -313,17 +335,21 @@ export function parseManagerControlActions(
   workflow: WorkflowJson,
   context: ManagerControlParseContext,
 ): ParsedManagerControl {
-  const actions = actionsRaw.map((entry) => parseManagerControlActionInput(entry));
+  const actions = actionsRaw.map((entry) =>
+    parseManagerControlActionInput(entry),
+  );
   for (const action of actions) {
     if (action.type === "planner-note") {
       continue;
     }
 
     if (action.type === "start-sub-workflow") {
-      if (
-        context.managerNodeId !== workflow.managerNodeId ||
-        context.managerKind !== "root-manager"
-      ) {
+      if (!hasStructuralSubWorkflows(workflow)) {
+        throw new Error(
+          "managerControl start-sub-workflow is unavailable when the workflow has no structural sub-workflows; explicit workflowCalls run automatically from their caller nodes",
+        );
+      }
+      if (!isRootManagerControlContext(workflow, context)) {
         throw new Error(
           "managerControl start-sub-workflow is only allowed for the root manager",
         );
@@ -340,7 +366,7 @@ export function parseManagerControlActions(
     }
 
     if (action.type === "deliver-to-child-input") {
-      if (context.managerKind !== "subworkflow-manager") {
+      if (!isSubworkflowManagerControlContext(context)) {
         throw new Error(
           "managerControl deliver-to-child-input is only allowed for a subworkflow-manager",
         );
@@ -398,7 +424,7 @@ export function parseManagerControlActions(
         `managerControl retry node '${action.nodeId}' cannot target the manager node itself`,
       );
     }
-    if (context.managerNodeId === workflow.managerNodeId) {
+    if (isRootManagerControlContext(workflow, context)) {
       const ownedSubWorkflow = getOwnedSubWorkflowForNode(
         workflow,
         action.nodeId,
@@ -409,7 +435,7 @@ export function parseManagerControlActions(
         );
       }
     }
-    if (context.managerKind === "subworkflow-manager") {
+    if (isSubworkflowManagerControlContext(context)) {
       const ownedSubWorkflow = findOwnedSubWorkflow(
         workflow,
         context.managerNodeId,

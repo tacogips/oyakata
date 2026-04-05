@@ -15,10 +15,12 @@ Implement two authoring improvements in the current runtime-compatible path:
   workflow root
 
 This plan also explores reusable child workflow authoring under `workflows/`.
-Because executable workflow-call support is still blocked in the runtime, the
-first implementation pass will focus on the inline-node and nested-`nodes/`
-parts first, then decide whether reusable `workflows/` can land as a clean
-compile-time include in the same session.
+At plan-creation time, executable workflow-call support was still blocked in
+the runtime, so the first implementation pass focused on the inline-node and
+nested-`nodes/` parts first. Subsequent role-unification work has since added
+workflow-call execution, but this completed plan still covers only the
+inline-node and nested-layout slice plus the `workflows/` authoring-layout
+spike that was shipped in that earlier runtime phase.
 
 ## Modules
 

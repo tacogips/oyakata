@@ -30,11 +30,11 @@ export function isSafeWorkflowRelativePath(relativePath: string): boolean {
 
 export function isReservedWorkflowDefinitionPath(relativePath: string): boolean {
   const segments = splitWorkflowRelativePath(relativePath);
-  if (segments.length !== 1) {
+  if (segments.length === 0) {
     return false;
   }
 
-  const fileName = segments[0];
+  const fileName = segments.at(-1);
   if (fileName === undefined) {
     return false;
   }

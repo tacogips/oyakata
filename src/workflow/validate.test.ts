@@ -562,6 +562,68 @@ describe("validateWorkflowBundle", () => {
     ]);
   });
 
+  test("rejects structural subWorkflows for role-authored bundles", () => {
+    const raw = makeUnifiedRoleRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      subWorkflows: [
+        {
+          id: "legacy-lane",
+          description: "legacy lane",
+          managerNodeId: "divedra-manager",
+          inputNodeId: "worker-1",
+          outputNodeId: "worker-2",
+          nodeIds: ["worker-1", "worker-2"],
+          inputSources: [{ type: "human-input" }],
+          block: { type: "plain" },
+        },
+      ],
+    };
+
+    const result = validateWorkflowBundleDetailed(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflows" &&
+          issue.message.includes("legacy compatibility only"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects structural subWorkflowConversations for role-authored bundles", () => {
+    const raw = makeUnifiedRoleRaw();
+    raw.workflow = {
+      ...(raw.workflow as Record<string, unknown>),
+      subWorkflowConversations: [
+        {
+          id: "legacy-conversation",
+          participants: ["legacy-a", "legacy-b"],
+          maxTurns: 2,
+          stopWhen: "always",
+        },
+      ],
+    };
+
+    const result = validateWorkflowBundleDetailed(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.subWorkflowConversations" &&
+          issue.message.includes("legacy compatibility only"),
+      ),
+    ).toBe(true);
+  });
+
   test("accepts manager-less worker-only workflows with explicit entryNodeId", () => {
     const raw = makeUnifiedRoleRaw();
     raw.workflow = {
@@ -1196,6 +1258,33 @@ describe("validateWorkflowBundle", () => {
       model: "claude-opus-4-1",
       promptTemplate: "worker",
       promptTemplateFile: "workflow.json",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.promptTemplateFile" &&
+          issue.message.includes(
+            "must not target canonical workflow definition files",
+          ),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects promptTemplateFile paths that target nested canonical node payload files", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      executionBackend: "claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "worker",
+      promptTemplateFile: "nodes/node-worker-1.json",
       variables: {},
     };
 

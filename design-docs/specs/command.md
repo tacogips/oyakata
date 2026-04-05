@@ -13,11 +13,13 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 - `cli workflow create <name>`
   - Create `<workflow-root>/<name>/` with `workflow.json`, prompt templates, and default `nodes/node-{id}.json` payload files.
   - The current starter template uses a `claude-code-agent` manager node and a `codex-agent` worker node.
+  - The generated `workflow.json` should prefer the authored-minimal role-based shape and omit compatibility/default fields such as empty `subWorkflows`, synthesized sequential `edges`, default `branching`, unrelated `containerRuntime` defaults, and node-level `completion: { "type": "none" }` unless the authored bundle needs them.
   - `--worker-only` switches the starter to a manager-less template whose explicit `entryNodeId` points at `main-worker`.
 - `cli workflow validate <name>`
   - Validate `<workflow-root>/<name>/` structure and semantic constraints.
 - `cli workflow inspect <name>`
   - Print normalized node graph, fan-out branch rules, loop defaults, timeout defaults, and node file references.
+  - Active inspection output should label structural compatibility counts as `legacySubWorkflows` rather than presenting raw `subWorkflows` as a peer concept to authored `workflowCalls`.
 - `cli workflow run <name>`
   - Execute `<workflow-root>/<name>/workflow.json` and all referenced workflow-local node payload files.
 - `session progress <session-id>`

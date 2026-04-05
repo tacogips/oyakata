@@ -37,6 +37,7 @@ import {
   hashManagerAuthToken,
   mintManagerAuthToken,
 } from "./manager-session-store";
+import { describeWorkflowNodeKind, isManagerNodeRef } from "./node-role";
 import { composeExecutionPrompts } from "./prompt-composition";
 import { err, ok, type Result } from "./result";
 import { inspectWorkflowRuntimeReadiness } from "./runtime-readiness";
@@ -57,7 +58,6 @@ import type {
   AgentNodePayload,
   JsonObject,
   LoadOptions,
-  NodeKind,
   NodePayload,
   WorkflowJson,
 } from "./types";
@@ -120,10 +120,6 @@ function resolveTimeoutMs(
     return overrideTimeoutMs;
   }
   return workflowTimeoutMs;
-}
-
-function isManagerNodeKind(kind: NodeKind | undefined): boolean {
-  return kind === "root-manager" || kind === "subworkflow-manager";
 }
 
 function resolveOutputValidationAttempts(node: NodePayload): number {
@@ -410,7 +406,10 @@ async function executeNativeNodeWithTimeout(input: {
       return err({ code: error.code, message: error.message });
     }
     if (error instanceof DOMException && error.name === "AbortError") {
-      return err({ code: "timeout", message: "native node execution timed out" });
+      return err({
+        code: "timeout",
+        message: "native node execution timed out",
+      });
     }
     return err({
       code: "provider_error",
@@ -849,15 +848,15 @@ class ExecutionDispatcher {
         return err({
           session,
           exitCode: 1,
-          message:
-            `workflow runtime readiness failed: ${readiness.blockers.join("; ")}`,
+          message: `workflow runtime readiness failed: ${readiness.blockers.join("; ")}`,
         });
       }
     }
     const agentNodePayload = asAgentNodePayload(nodePayload);
     const nativeNodePayload =
       agentNodePayload === null &&
-      (nodePayload.nodeType === "command" || nodePayload.nodeType === "container")
+      (nodePayload.nodeType === "command" ||
+        nodePayload.nodeType === "container")
         ? nodePayload
         : null;
     const executionNodePayload = agentNodePayload ?? nodePayload;
@@ -892,7 +891,7 @@ class ExecutionDispatcher {
       node: executionNodePayload,
       workflowId: workflow.workflowId,
       workflowDescription: workflow.description,
-      ...(nodeRef.kind === undefined ? {} : { nodeKind: nodeRef.kind }),
+      nodeKind: describeWorkflowNodeKind(nodeRef),
       upstream: [],
       transcript: (session.conversationTurns ?? []).map((turn) => ({
         conversationId: turn.conversationId,
@@ -914,9 +913,7 @@ class ExecutionDispatcher {
       basePromptText: assembled.promptText,
       assembledArguments: assembled.arguments,
       upstreamInputs: [],
-      ...(input.message === undefined
-        ? {}
-        : { managerMessage: input.message }),
+      ...(input.message === undefined ? {} : { managerMessage: input.message }),
     });
     try {
       await writeNodeExecutionMailboxArtifacts(artifactDir, executionMailbox);
@@ -937,8 +934,7 @@ class ExecutionDispatcher {
         session: failedSession,
         exitCode: 1,
         message: persisted.ok
-          ? failedSession.lastError ??
-            "failed to persist execution mailbox"
+          ? (failedSession.lastError ?? "failed to persist execution mailbox")
           : persisted.error.message,
       });
     }
@@ -979,7 +975,7 @@ class ExecutionDispatcher {
     let managerSessionId: string | undefined;
     const managerSessionStore = createManagerSessionStore(input);
 
-    if (isManagerNodeKind(nodeRef.kind) && input.dryRun !== true) {
+    if (isManagerNodeRef(nodeRef) && input.dryRun !== true) {
       managerSessionId = nextManagerSessionId(nodeExecId);
       const managerAuthToken = mintManagerAuthToken();
       ambientManagerContext = {
@@ -1146,7 +1142,9 @@ class ExecutionDispatcher {
                   nodeExecId,
                   node: agentNodePayload,
                   mergedVariables,
-                  ...(systemPromptText === undefined ? {} : { systemPromptText }),
+                  ...(systemPromptText === undefined
+                    ? {}
+                    : { systemPromptText }),
                   promptText: executionPromptText,
                   arguments: assembled.arguments,
                   executionIndex,
@@ -1164,10 +1162,15 @@ class ExecutionDispatcher {
                         output: {
                           ...(agentNodePayload.output.description === undefined
                             ? {}
-                            : { description: agentNodePayload.output.description }),
+                            : {
+                                description:
+                                  agentNodePayload.output.description,
+                              }),
                           ...(agentNodePayload.output.jsonSchema === undefined
                             ? {}
-                            : { jsonSchema: agentNodePayload.output.jsonSchema }),
+                            : {
+                                jsonSchema: agentNodePayload.output.jsonSchema,
+                              }),
                           maxValidationAttempts: maxAttempts,
                           attempt,
                           candidatePath,
@@ -1222,7 +1225,8 @@ class ExecutionDispatcher {
                 provider: "deterministic-local",
                 model:
                   agentNodePayload?.model ??
-                  (executionNodePayload.nodeType ?? "node"),
+                  executionNodePayload.nodeType ??
+                  "node",
                 promptText,
                 completionPassed: false,
                 when: {},
@@ -1238,7 +1242,8 @@ class ExecutionDispatcher {
               provider: "deterministic-local",
               model:
                 agentNodePayload?.model ??
-                (executionNodePayload.nodeType ?? "node"),
+                executionNodePayload.nodeType ??
+                "node",
               promptText,
               completionPassed: false,
               when: {},
@@ -1371,7 +1376,7 @@ class ExecutionDispatcher {
 
     const nextNodeBackendSessions =
       agentNodePayload === null
-        ? session.nodeBackendSessions ?? {}
+        ? (session.nodeBackendSessions ?? {})
         : persistNodeBackendSession({
             session,
             node: agentNodePayload,

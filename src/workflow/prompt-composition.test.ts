@@ -70,6 +70,48 @@ function makeWorkflow(): WorkflowJson {
   };
 }
 
+function makeRoleWorkflow(): WorkflowJson {
+  return {
+    workflowId: "role-wf",
+    description: "Coordinate a direct manager-worker workflow.",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    prompts: {
+      divedraPromptTemplate: "Plan {{topic}} carefully.",
+      workerSystemPromptTemplate: "Execute {{topic}} precisely.",
+    },
+    managerNodeId: "divedra-manager",
+    workflowCalls: [
+      {
+        id: "review-call",
+        workflowId: "review-target",
+        callerNodeId: "implement",
+        resultNodeId: "publish",
+      },
+    ],
+    subWorkflows: [],
+    nodes: [
+      {
+        id: "divedra-manager",
+        nodeFile: "node-divedra-manager.json",
+        role: "manager",
+      },
+      {
+        id: "implement",
+        nodeFile: "node-implement.json",
+        role: "worker",
+      },
+      {
+        id: "publish",
+        nodeFile: "node-publish.json",
+        role: "worker",
+      },
+    ],
+    edges: [{ from: "implement", to: "publish", when: "always" }],
+    loops: [],
+    branching: { mode: "fan-out" },
+  };
+}
+
 function makeNode(overrides: Partial<NodePayload> = {}): NodePayload {
   return {
     id: "implement",
@@ -249,9 +291,131 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain(
       "expectedReturn=Return the completed release package summary.",
     );
-    expect(prompt).not.toContain("- Child node: main-divedra (subworkflow-manager)");
+    expect(prompt).not.toContain(
+      "- Child node: main-divedra (subworkflow-manager)",
+    );
     expect(prompt).not.toContain("- Child node: workflow-input (input)");
     expect(prompt).not.toContain("- Child node: workflow-output (output)");
+  });
+
+  test("treats role-authored managers as manager prompts instead of worker prompts", () => {
+    const workflow = makeRoleWorkflow();
+    const prompts = composeExecutionPrompts({
+      promptComposition: {
+        workflow,
+        nodeRef: {
+          id: "divedra-manager",
+          nodeFile: "node-divedra-manager.json",
+          role: "manager",
+        },
+        node: makeNodePayloads()["divedra-manager"] as NodePayload,
+        nodePayloads: {
+          "divedra-manager": makeNodePayloads()["divedra-manager"] as NodePayload,
+          implement: makeNode(),
+          publish: {
+            id: "publish",
+            executionBackend: "codex-agent",
+            model: "gpt-5-nano",
+            promptTemplate: "Publish the reviewed release.",
+            variables: {},
+          },
+        },
+        runtimeVariables: { topic: "release" },
+        basePromptText: "Plan the overall workflow.",
+        assembledArguments: null,
+        upstreamInputs: [],
+      },
+      includeSessionStartPrompt: false,
+    });
+
+    expect(prompts.systemPromptText).toContain("Plan release carefully.");
+    expect(prompts.systemPromptText).not.toContain(
+      "Execute release precisely.",
+    );
+    expect(prompts.systemPromptText).toContain(
+      "Manage only the current workflow execution.",
+    );
+    expect(prompts.systemPromptText).not.toContain(
+      "sub-workflow manager to treat the received instruction",
+    );
+    expect(prompts.promptText).toContain("Manager control payload:");
+    expect(prompts.promptText).toContain("Managed children in current scope:");
+    expect(prompts.promptText).toContain("Node kind: manager");
+  });
+
+  test("uses role-local manager control guidance for role-authored workflows", () => {
+    const workflow = makeRoleWorkflow();
+    const prompt = composeExecutionPrompt({
+      workflow,
+      nodeRef: {
+        id: "divedra-manager",
+        nodeFile: "node-divedra-manager.json",
+        role: "manager",
+      },
+      node: makeNodePayloads()["divedra-manager"] as NodePayload,
+      nodePayloads: {
+        "divedra-manager": makeNodePayloads()["divedra-manager"] as NodePayload,
+        implement: makeNode(),
+        publish: {
+          id: "publish",
+          executionBackend: "codex-agent",
+          model: "gpt-5-nano",
+          promptTemplate: "Publish the reviewed release.",
+          variables: {},
+        },
+      },
+      runtimeVariables: { topic: "release" },
+      basePromptText: "Plan the overall workflow.",
+      assembledArguments: null,
+      upstreamInputs: [],
+    });
+
+    expect(prompt).toContain(
+      "workflow-call decisions, output assessment, and retry decisions",
+    );
+    expect(prompt).toContain('"type":"retry-node","nodeId":"<node-id>"');
+    expect(prompt).toContain(
+      '"type":"replay-communication","communicationId":"<communication-id>"',
+    );
+    expect(prompt).toContain(
+      '"type":"execute-optional-node","nodeId":"<node-id>"',
+    );
+    expect(prompt).toContain(
+      '"type":"skip-optional-node","nodeId":"<node-id>"',
+    );
+    expect(prompt).toContain(
+      "Explicit `workflowCalls` run automatically from authored caller nodes",
+    );
+    expect(prompt).not.toContain('"type":"start-sub-workflow"');
+    expect(prompt).not.toContain('"type":"deliver-to-child-input"');
+    expect(prompt).not.toContain("sub-workflow dispatch");
+  });
+
+  test("keeps structural manager system guidance for explicit subworkflow compatibility bundles", () => {
+    const prompts = composeExecutionPrompts({
+      promptComposition: {
+        workflow: makeWorkflow(),
+        nodeRef: makeNodeRef({
+          id: "divedra-manager",
+          nodeFile: "node-divedra-manager.json",
+          kind: "root-manager",
+        }),
+        node: makeNodePayloads()["divedra-manager"] as NodePayload,
+        nodePayloads: makeNodePayloads(),
+        runtimeVariables: { topic: "release" },
+        basePromptText: "Plan the overall workflow.",
+        assembledArguments: null,
+        upstreamInputs: [],
+      },
+      includeSessionStartPrompt: false,
+    });
+
+    expect(prompts.systemPromptText).toContain(
+      "current workflow or sub-workflow scope",
+    );
+    expect(prompts.systemPromptText).toContain(
+      "Treat a sub-workflow as one node from the parent perspective",
+    );
   });
 
   test("includes managed child node catalog for a subworkflow-manager", () => {
@@ -310,6 +474,38 @@ describe("composeExecutionPrompt", () => {
 
     expect(prompts.systemPromptText).toContain(
       "Execute workflow=wf purpose=Ship a release safely. node=workflow-input kind=input.",
+    );
+  });
+
+  test("uses worker for role-authored worker nodeKind metadata", () => {
+    const workflow = makeWorkflow();
+    const prompts = composeExecutionPrompts({
+      promptComposition: {
+        workflow: {
+          ...workflow,
+          prompts: {
+            ...workflow.prompts,
+            workerSystemPromptTemplate:
+              "Execute workflow={{workflowId}} node={{nodeId}} kind={{nodeKind}}.",
+          },
+        },
+        nodeRef: {
+          id: "implement",
+          nodeFile: "node-implement.json",
+          role: "worker",
+        },
+        node: makeNode(),
+        nodePayloads: makeNodePayloads(),
+        runtimeVariables: {},
+        basePromptText: "Implement the release step.",
+        assembledArguments: null,
+        upstreamInputs: [],
+      },
+      includeSessionStartPrompt: false,
+    });
+
+    expect(prompts.systemPromptText).toContain(
+      "Execute workflow=wf node=implement kind=worker.",
     );
   });
 
@@ -395,7 +591,7 @@ describe("composeExecutionPrompt", () => {
               },
             },
             outputRaw:
-              "{\"provider\":\"mock\",\"payload\":{\"request\":\"ship the release\"}}\n",
+              '{"provider":"mock","payload":{"request":"ship the release"}}\n',
           },
         ],
       },
@@ -414,8 +610,7 @@ describe("composeExecutionPrompt", () => {
         nodeRef: makeNodeRef(),
         node: makeNode({
           systemPromptTemplate: "Take the {{stance}} position.",
-          sessionStartPromptTemplate:
-            "##prompt\n{{prompt}}\n## args\n{{args}}",
+          sessionStartPromptTemplate: "##prompt\n{{prompt}}\n## args\n{{args}}",
           variables: { stance: "affirmative" },
         }),
         nodePayloads: makeNodePayloads(),
@@ -431,8 +626,12 @@ describe("composeExecutionPrompt", () => {
       includeSessionStartPrompt: true,
     });
 
-    expect(prompts.systemPromptText).toContain("Take the affirmative position.");
-    expect(prompts.promptText).toContain("##prompt\nImplement the release step.");
+    expect(prompts.systemPromptText).toContain(
+      "Take the affirmative position.",
+    );
+    expect(prompts.promptText).toContain(
+      "##prompt\nImplement the release step.",
+    );
     expect(prompts.promptText).toContain('"repository":"divedra"');
   });
 

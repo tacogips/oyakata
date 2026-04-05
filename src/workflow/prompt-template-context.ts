@@ -1,5 +1,3 @@
-import type { NodeKind } from "./types";
-
 export interface PromptTemplateUpstreamEntry {
   readonly fromNodeId: string;
   readonly fromSubWorkflowId?: string;
@@ -24,7 +22,7 @@ export interface PromptTemplateVariableInput {
   readonly workflowId?: string;
   readonly workflowDescription?: string;
   readonly nodeId?: string;
-  readonly nodeKind?: NodeKind;
+  readonly nodeKind?: string;
   readonly upstream?: readonly PromptTemplateUpstreamEntry[];
   readonly prompt?: string;
   readonly args?: Readonly<Record<string, unknown>> | null;
@@ -38,7 +36,8 @@ function buildPromptTemplateInboxContext(
   return {
     count: messages.length,
     hasMessages: messages.length > 0,
-    latest: messages.length === 0 ? null : (messages[messages.length - 1] ?? null),
+    latest:
+      messages.length === 0 ? null : (messages[messages.length - 1] ?? null),
     messages,
   };
 }
@@ -51,9 +50,7 @@ export function buildPromptTemplateVariables(
   return {
     ...input.nodeVariables,
     ...input.runtimeVariables,
-    ...(input.workflowId === undefined
-      ? {}
-      : { workflowId: input.workflowId }),
+    ...(input.workflowId === undefined ? {} : { workflowId: input.workflowId }),
     ...(input.workflowDescription === undefined
       ? {}
       : { workflowDescription: input.workflowDescription }),

@@ -77,7 +77,9 @@ Important validation facts:
 
 - authored workflows may use `role: "manager" | "worker"` plus `control`
 - worker-only workflows are valid when `entryNodeId` is explicit
-- authored `workflowCalls` are accepted and loaded, but current runtime readiness marks them unsupported before execution starts
+- authored `workflowCalls` are accepted, loaded, and executable when their target workflow bundles resolve under the configured workflow root
+- non-empty authored `subWorkflows[]` are treated as legacy structural compatibility input and are rejected when combined with authored `role` / `control` nodes
+- non-empty authored `subWorkflowConversations[]` are treated the same way and are rejected when combined with authored `role` / `control` nodes
 - the validator still normalizes authored roles into legacy structural `kind` values and an effective runtime `managerNodeId` so the current engine can execute transitional bundles
 - `root-manager`, `subworkflow-manager`, `input`, and `output` remain the structural roles enforced by the current runtime compatibility layer
 - cross-scope edges must target manager boundaries
@@ -97,8 +99,10 @@ Responsibilities:
 - resolve `argumentBindings`
 - expose inbox/upstream payloads to templates
 - compose manager and worker system prompt layers
+- choose the default manager system prompt by active execution model, so role-authored workflows without structural compatibility use current-workflow and explicit-`workflowCalls` guidance while structural sub-workflow wording remains limited to compatibility bundles that still author those boundaries
 - prepend node-authored session-start prompts only when a backend session is first created
 - inject workflow and sub-workflow structure summaries
+- keep manager mailbox/control guidance aligned with the active execution model, so role-authored workflows advertise current-workflow retry/replay/optional-node actions while legacy structural sub-workflow actions remain documented only for compatibility paths
 
 The runtime distinguishes:
 
@@ -142,7 +146,7 @@ Responsibilities:
 
 The queue is deduplicated after each scheduling pass. Multiple matched branch edges still fan out to multiple recipients, but duplicate node ids are collapsed in the queue view.
 
-### Sub-Workflow Planning
+### Workflow Invocation and Legacy Structural Planning
 
 Source:
 
@@ -152,6 +156,8 @@ Source:
 
 Responsibilities:
 
+- execute explicit authored `workflowCalls` as ordinary child workflow runs
+- deliver workflow-call results back through runtime-owned communications when configured
 - auto-start eligible `plain` sub-workflows
 - map parent manager outputs into child input deliveries
 - allow validated manager override actions
@@ -159,10 +165,13 @@ Responsibilities:
 
 Current planning behavior:
 
+- authored `workflowCalls` execute immediately after their caller node succeeds and stay on the active role-authored path
+- workflow-call result delivery is runtime-owned and uses ordinary upstream communications keyed by `workflow-call:<id>`
 - root manager can auto-start `plain` sub-workflows when `inputSources` are satisfied
 - sub-workflow managers can auto-deliver to their owned `input` node
 - manager output payloads may include `managerControl.actions`
 - the runtime validates control scope before honoring those actions
+- the structural sub-workflow bullets above remain compatibility behavior for explicitly legacy-authored bundles and are the next cleanup target
 
 ### Server and GraphQL Control Plane
 
@@ -241,7 +250,7 @@ Current structural node kinds:
 - `input`
 - `output`
 
-The engine still executes against these normalized structural kinds today. Manager-less authored workflows currently work by normalizing the authored `entryNodeId` into an effective runtime entry/manager identity, while structural sub-workflow boundaries remain in place until workflow-call execution replaces them.
+The engine still executes against these normalized structural kinds today. Manager-less authored workflows currently work by normalizing the authored `entryNodeId` into an effective runtime entry/manager identity. Explicit authored `workflowCalls` now execute as ordinary child workflow runs, but structural sub-workflow boundaries and their dedicated runtime semantics still remain and are the next removal target.
 
 Role split:
 
@@ -252,10 +261,11 @@ Role split:
 - judge nodes: emit branch/loop decisions
 - task: ordinary business work
 
-Planned extension:
+Current execution policies:
 
-- `user-action` should be added as a new `nodeType`, not a new manager boundary, so human approval/input remains a runtime-owned execution flavor rather than a second structural control-flow system
-- optional node execution should be added as scheduler policy on `workflow.json.nodes[]`, with decisions owned by the already-scoped root manager or subworkflow-manager
+- `user-action` is implemented as a `nodeType`, not as a new manager boundary, so human approval/input remains a runtime-owned execution flavor rather than a second structural control-flow system
+- optional node execution is implemented as scheduler policy on `workflow.json.nodes[]`
+- the current workflow manager may explicitly choose `execute-optional-node` or `skip-optional-node`, while legacy structural `subworkflow-manager` scope remains limited to its owned compatibility boundary
 - detailed design: `design-docs/specs/design-user-action-and-optional-node-execution.md`
 
 ## Current Execution Flow
@@ -378,13 +388,17 @@ Currently supported actions:
 - `deliver-to-child-input`
 - `retry-node`
 - `replay-communication`
+- `execute-optional-node`
+- `skip-optional-node`
 
 Scope enforcement:
 
-- only the root manager may start sub-workflows
-- only a sub-workflow manager may deliver to its owned child input node
+- explicit authored `workflowCalls` run automatically from their caller nodes; managers do not emit `start-sub-workflow` or `deliver-to-child-input` for the active role-authored path
+- only the root manager of an explicitly legacy structural bundle may start sub-workflows
+- only a legacy structural sub-workflow manager may deliver to its owned child input node
 - retries must stay within the manager's allowed scope
 - communication replay must stay within the manager's allowed scope
+- optional-node decisions must stay within the manager's allowed scope
 
 Manager sessions are minted per manager-node execution and expire when that node execution finishes.
 

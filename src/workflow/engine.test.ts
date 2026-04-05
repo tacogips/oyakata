@@ -728,6 +728,7 @@ class ExplicitNewSessionPolicyAdapter implements NodeAdapter {
 class ManagerAmbientContextCaptureAdapter implements NodeAdapter {
   readonly calls: Array<{
     readonly nodeId: string;
+    readonly promptText: string;
     readonly ambientManagerContext?: Parameters<
       NodeAdapter["execute"]
     >[0]["ambientManagerContext"];
@@ -740,6 +741,7 @@ class ManagerAmbientContextCaptureAdapter implements NodeAdapter {
   > {
     this.calls.push({
       nodeId: input.nodeId,
+      promptText: input.promptText,
       ...(input.ambientManagerContext === undefined
         ? {}
         : { ambientManagerContext: input.ambientManagerContext }),
@@ -853,7 +855,7 @@ async function createWorkflowFixture(
     id: "divedra-manager",
     executionBackend: "codex-agent",
     model: "gpt-5-nano",
-    promptTemplate: "manager {{topic}}",
+    promptTemplate: "manager kind={{nodeKind}} {{topic}}",
     variables: { topic: "A" },
   });
 
@@ -923,6 +925,53 @@ async function createManagerlessWorkflowFixture(
   });
 }
 
+async function createRoleManagedWorkflowFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "role-managed fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "divedra-manager",
+    nodes: [
+      {
+        id: "divedra-manager",
+        role: "manager",
+        nodeFile: "node-divedra-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "step-1",
+        role: "worker",
+        nodeFile: "node-step-1.json",
+        completion: { type: "none" },
+      },
+    ],
+    edges: [{ from: "divedra-manager", to: "step-1", when: "always" }],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
+    id: "divedra-manager",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "manager {{topic}}",
+    variables: { topic: "A" },
+  });
+
+  await writeJson(path.join(workflowDir, "node-step-1.json"), {
+    id: "step-1",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "step {{topic}}",
+    variables: {},
+  });
+}
+
 async function createWorkflowCallFixture(
   root: string,
   workflowName: string,
@@ -940,6 +989,7 @@ async function createWorkflowCallFixture(
         id: "call-review",
         workflowId: "review-flow",
         callerNodeId: "writer",
+        resultNodeId: "review-result",
       },
     ],
     nodes: [
@@ -949,6 +999,12 @@ async function createWorkflowCallFixture(
         nodeFile: "node-writer.json",
         completion: { type: "none" },
       },
+      {
+        id: "review-result",
+        role: "worker",
+        nodeFile: "node-review-result.json",
+        completion: { type: "none" },
+      },
     ],
     edges: [],
     branching: { mode: "fan-out" },
@@ -956,10 +1012,111 @@ async function createWorkflowCallFixture(
 
   await writeJson(path.join(workflowDir, "node-writer.json"), {
     id: "writer",
-    nodeType: "command",
-    command: {
-      scriptPath: "scripts/write.sh",
-    },
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-review-result.json"), {
+    id: "review-result",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review result",
+    variables: {},
+  });
+}
+
+async function createWorkflowCallCalleeFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "workflow call callee fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryNodeId: "reviewer",
+    nodes: [
+      {
+        id: "reviewer",
+        role: "worker",
+        nodeFile: "node-reviewer.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "done",
+        kind: "output",
+        nodeFile: "node-done.json",
+        completion: { type: "none" },
+      },
+    ],
+    edges: [{ from: "reviewer", to: "done", when: "always" }],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "node-reviewer.json"), {
+    id: "reviewer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-done.json"), {
+    id: "done",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "done",
+    variables: {},
+  });
+}
+
+async function createManagedWorkflowCallCalleeWithoutOutputFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "managed workflow call callee without published output",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerNodeId: "divedra-manager",
+    nodes: [
+      {
+        id: "divedra-manager",
+        role: "manager",
+        nodeFile: "node-divedra-manager.json",
+        completion: { type: "none" },
+      },
+      {
+        id: "reviewer",
+        role: "worker",
+        nodeFile: "node-reviewer.json",
+        completion: { type: "none" },
+      },
+    ],
+    edges: [{ from: "divedra-manager", to: "reviewer", when: "always" }],
+    branching: { mode: "fan-out" },
+  });
+
+  await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
+    id: "divedra-manager",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "manager",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-reviewer.json"), {
+    id: "reviewer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review",
     variables: {},
   });
 }
@@ -1613,13 +1770,45 @@ describe("runWorkflow", () => {
 
     expect(result.value.exitCode).toBe(0);
     expect(result.value.session.status).toBe("completed");
-    expect(result.value.session.nodeExecutions.map((entry) => entry.nodeId)).toEqual([
-      "step-1",
-      "step-2",
-    ]);
+    expect(
+      result.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["step-1", "step-2"]);
   });
 
-  test("fails early when authored workflowCalls need unsupported runtime execution", async () => {
+  test("executes authored workflowCalls and delivers child workflow results", async () => {
+    const root = await makeTempDir();
+    await createWorkflowCallFixture(root, "workflow-call-fixture");
+    await createWorkflowCallCalleeFixture(root, "review-flow");
+
+    const result = await runWorkflow(
+      "workflow-call-fixture",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.exitCode).toBe(0);
+    expect(result.value.session.nodeExecutions.map((entry) => entry.nodeId)).toEqual([
+      "writer",
+      "review-result",
+    ]);
+    const workflowCallCommunication = result.value.session.communications.find(
+      (entry) => entry.transitionWhen === "workflow-call:call-review",
+    );
+    expect(workflowCallCommunication).toBeDefined();
+    expect(workflowCallCommunication?.toNodeId).toBe("review-result");
+    expect(workflowCallCommunication?.payloadRef.workflowId).toBe("review-flow");
+  });
+
+  test("fails early when workflow-call targets are missing", async () => {
     const root = await makeTempDir();
     await createWorkflowCallFixture(root, "workflow-call-fixture");
 
@@ -1635,7 +1824,77 @@ describe("runWorkflow", () => {
     }
 
     expect(result.error.message).toContain("workflow runtime readiness failed");
-    expect(result.error.message).toContain("workflow-call execution");
+    expect(result.error.message).toContain("workflow-call targets");
+    expect(result.error.message).toContain("review-flow");
+  });
+
+  test("fails workflow-call result delivery when a managed callee has no published output", async () => {
+    const root = await makeTempDir();
+    await createWorkflowCallFixture(root, "workflow-call-fixture");
+    await createManagedWorkflowCallCalleeWithoutOutputFixture(
+      root,
+      "review-flow",
+    );
+
+    const result = await runWorkflow(
+      "workflow-call-fixture",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.message).toContain("workflow-call 'call-review'");
+    expect(result.error.message).toContain(
+      "completed without a result execution for 'review-result'",
+    );
+  });
+
+  test("runs the checked-in workflow-call example through a worker-only callee", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.resolve(process.cwd(), "examples");
+    const scenario = JSON.parse(
+      await readFile(
+        path.join(examplesRoot, "workflow-call-simple", "mock-scenario.json"),
+        "utf8",
+      ),
+    ) as MockNodeScenario;
+
+    const result = await runWorkflow(
+      "workflow-call-simple",
+      {
+        workflowRoot: examplesRoot,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter(scenario),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.exitCode).toBe(0);
+    expect(result.value.session.nodeExecutions.map((entry) => entry.nodeId)).toEqual([
+      "divedra-manager",
+      "draft-write",
+      "apply-review",
+    ]);
+    const workflowCallCommunication = result.value.session.communications.find(
+      (entry) => entry.transitionWhen === "workflow-call:call-review",
+    );
+    expect(workflowCallCommunication?.toNodeId).toBe("apply-review");
+    expect(workflowCallCommunication?.payloadRef.workflowId).toBe(
+      "workflow-call-review-target",
+    );
   });
 
   test("executes linear workflow and writes artifacts", async () => {
@@ -1855,9 +2114,7 @@ describe("runWorkflow", () => {
           {
             payload: {
               managerControl: {
-                actions: [
-                  { type: "execute-optional-node", nodeId: "step-1" },
-                ],
+                actions: [{ type: "execute-optional-node", nodeId: "step-1" }],
               },
             },
           },
@@ -1891,7 +2148,10 @@ describe("runWorkflow", () => {
     }
 
     const stepOutput = JSON.parse(
-      await readFile(path.join(stepExecution.artifactDir, "output.json"), "utf8"),
+      await readFile(
+        path.join(stepExecution.artifactDir, "output.json"),
+        "utf8",
+      ),
     ) as { payload: { summary: string } };
     expect(stepOutput.payload.summary).toBe("optional executed");
   });
@@ -1935,7 +2195,10 @@ describe("runWorkflow", () => {
     }
 
     const outputJson = JSON.parse(
-      await readFile(path.join(stepExecution.artifactDir, "output.json"), "utf8"),
+      await readFile(
+        path.join(stepExecution.artifactDir, "output.json"),
+        "utf8",
+      ),
     ) as { payload: { optionalNodeSkipped: boolean; reason: string } };
     expect(outputJson.payload.optionalNodeSkipped).toBe(true);
     expect(outputJson.payload.reason).toBe("manager judged unnecessary");
@@ -1994,7 +2257,10 @@ describe("runWorkflow", () => {
     }
 
     const outputJson = JSON.parse(
-      await readFile(path.join(stepExecution.artifactDir, "output.json"), "utf8"),
+      await readFile(
+        path.join(stepExecution.artifactDir, "output.json"),
+        "utf8",
+      ),
     ) as { payload: { optionalNodeSkipped: boolean; reason: string } };
     expect(outputJson.payload.optionalNodeSkipped).toBe(true);
     expect(outputJson.payload.reason).toBe(
@@ -2045,7 +2311,10 @@ describe("runWorkflow", () => {
     expect(approvalInput.promptText).toContain("Please approve the release.");
 
     const requestJson = JSON.parse(
-      await readFile(path.join(activeUserAction.artifactDir, "request.json"), "utf8"),
+      await readFile(
+        path.join(activeUserAction.artifactDir, "request.json"),
+        "utf8",
+      ),
     ) as { status: string; userAction: { messageToolIds: readonly string[] } };
     const resolutionJson = JSON.parse(
       await readFile(
@@ -2378,6 +2647,42 @@ describe("runWorkflow", () => {
           : { now: persisted.authTokenExpiresAt }),
       }),
     ).toBeNull();
+  });
+
+  test("treats role-authored managers as manager-node executions for ambient GraphQL context", async () => {
+    const root = await makeTempDir();
+    const workflowName = "role-manager-session-runtime";
+    await createRoleManagedWorkflowFixture(root, workflowName);
+
+    const adapter = new ManagerAmbientContextCaptureAdapter();
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        rootDataDir: path.join(root, "data"),
+        cwd: root,
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      throw new Error(result.error.message);
+    }
+
+    expect(adapter.calls).toHaveLength(2);
+    expect(adapter.calls[0]?.nodeId).toBe("divedra-manager");
+    expect(adapter.calls[0]?.promptText).toContain("Node kind: manager");
+    expect(adapter.calls[0]?.ambientManagerContext?.environment).toMatchObject({
+      DIVEDRA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
+      DIVEDRA_WORKFLOW_ID: workflowName,
+      DIVEDRA_WORKFLOW_EXECUTION_ID: result.value.session.sessionId,
+      DIVEDRA_MANAGER_NODE_ID: "divedra-manager",
+      DIVEDRA_MANAGER_NODE_EXEC_ID: "exec-000001",
+    });
+    expect(adapter.calls[1]?.nodeId).toBe("step-1");
+    expect(adapter.calls[1]?.ambientManagerContext).toBeUndefined();
   });
 
   test("fails a manager step that mixes GraphQL manager messages with payload managerControl", async () => {
@@ -3019,11 +3324,22 @@ describe("runWorkflow", () => {
     expect(managerInput.systemPromptText).toContain(
       "You are `divedra`, the orchestration manager",
     );
-    expect(managerInput.systemPromptText).toContain("Plan and audit work for B.");
+    expect(managerInput.systemPromptText).toContain(
+      "Plan and audit work for B.",
+    );
     expect(managerInput.promptText).toContain("Execution context:");
     expect(managerInput.promptText).toContain("Given data:");
     expect(managerInput.promptText).toContain("Manager control payload:");
-    expect(managerInput.promptText).toContain('"type":"start-sub-workflow"');
+    expect(managerInput.promptText).toContain(
+      '"type":"retry-node","nodeId":"<node-id>"',
+    );
+    expect(managerInput.promptText).toContain(
+      "Explicit `workflowCalls` run automatically from authored caller nodes",
+    );
+    expect(managerInput.promptText).not.toContain('"type":"start-sub-workflow"');
+    expect(managerInput.promptText).not.toContain(
+      '"type":"deliver-to-child-input"',
+    );
     expect(managerInput.promptText).toContain("Node-specific instruction:");
     expect(managerInput.promptText).toContain("manager B");
 

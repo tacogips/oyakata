@@ -11,13 +11,15 @@ Most example bundles now use the simplified authored shape:
 - ordered `nodes[]` are the canonical flow
 - authored `edges` are omitted
 - authored `subWorkflows` are omitted
+- authored `workflowCalls` model cross-workflow invocation without structural
+  child-boundary metadata
 - worker-only bundles use explicit `entryNodeId` instead of an authored manager
 - repeat-style examples use node-local `repeat`
 - node payload files live under `nodes/` by default
 - grouped lane payloads may live under `workflows/*/nodes/`
 - inline node payload authoring is exercised by `same-node-session-echo`
 
-Current exception:
+Explicit legacy-compatibility exception:
 
 - `codex-codex-euthanasia-debate` still uses the structural sub-workflow form
   because `subWorkflowConversations` has not yet been migrated to the
@@ -52,6 +54,71 @@ Run it with the bundled deterministic scenario:
 bun run src/main.ts workflow run worker-only-single-step \
   --workflow-root ./examples \
   --mock-scenario ./examples/worker-only-single-step/mock-scenario.json \
+  --output json
+```
+
+### `workflow-call-simple`
+
+Managed parent workflow reference for explicit workflow invocation:
+
+- `divedra-manager` stays on `claude-code-agent`
+- `draft-write` and `apply-review` stay on `codex-agent`
+- authored `workflowCalls` invoke the sibling workflow
+  `workflow-call-review-target`
+- the parent bundle only authors the manager edge; `apply-review` runs when the
+  workflow-call result is delivered back through `workflow-call:call-review`
+- the bundled deterministic mock scenario covers both the parent and callee
+  node ids so the full call chain can be run from one command
+
+Validate it:
+
+```bash
+bun run src/main.ts workflow validate workflow-call-simple --workflow-root ./examples
+```
+
+Inspect it:
+
+```bash
+bun run src/main.ts workflow inspect workflow-call-simple --workflow-root ./examples --output json
+```
+
+Run it with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run workflow-call-simple \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/workflow-call-simple/mock-scenario.json \
+  --output json
+```
+
+### `workflow-call-review-target`
+
+Worker-only callee bundle used by `workflow-call-simple`:
+
+- no authored `managerNodeId`
+- explicit `entryNodeId: "reviewer"`
+- returns its latest succeeded worker result to the caller workflow-call
+  contract
+- can also be validated, inspected, and run standalone
+
+Validate it:
+
+```bash
+bun run src/main.ts workflow validate workflow-call-review-target --workflow-root ./examples
+```
+
+Inspect it:
+
+```bash
+bun run src/main.ts workflow inspect workflow-call-review-target --workflow-root ./examples --output json
+```
+
+Run it standalone with the bundled deterministic scenario:
+
+```bash
+bun run src/main.ts workflow run workflow-call-review-target \
+  --workflow-root ./examples \
+  --mock-scenario ./examples/workflow-call-review-target/mock-scenario.json \
   --output json
 ```
 
@@ -167,11 +234,12 @@ Validation-oriented arithmetic pipeline reference:
   stage 1 result by the third number
 - stage 3 uses a `command` worker to divide the stage 2 result by the fourth
   number
-- managers treat each stage as opaque and only move scoped payloads forward
+- managers treat each stage as an opaque grouped lane and only move scoped
+  payloads forward
 - stage payloads live under `workflows/add`, `workflows/multiply`, and
   `workflows/divide`
-- those nested stage payloads reuse the parent-level
-  `prompts/subworkflow-manager.md`, which demonstrates workflow-local asset
+- those nested stage payloads reuse the parent-level `prompts/stage-manager.md`,
+  which demonstrates workflow-local asset
   reuse across nested directories
 
 Important current limitation:
@@ -273,7 +341,7 @@ Live execution note:
 
 ### `codex-codex-euthanasia-debate`
 
-Reference debate bundle for the new node-local prompt split:
+Legacy compatibility debate bundle for the new node-local prompt split:
 
 - two `codex-agent` speaker nodes debate euthanasia from opposing positions
 - the affirmative speaker uses a node-local `systemPromptTemplateFile`

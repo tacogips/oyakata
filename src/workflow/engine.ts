@@ -23,7 +23,7 @@ import {
   validateJsonValueAgainstSchema,
   type JsonSchemaValidationError,
 } from "./json-schema";
-import { loadWorkflowFromDisk } from "./load";
+import { loadWorkflowByIdFromDisk, loadWorkflowFromDisk } from "./load";
 import {
   buildNodeExecutionMailbox,
   writeNodeExecutionMailboxArtifacts,
@@ -34,6 +34,11 @@ import {
   parseManagerControlPayload,
   type ParsedManagerControl,
 } from "./manager-control";
+import {
+  describeWorkflowNodeKind,
+  isManagerNodeRef,
+  isSubworkflowManagerNodeRef,
+} from "./node-role";
 import { err, ok, type Result } from "./result";
 import { saveNodeExecutionToRuntimeDb } from "./runtime-db";
 import { executeConversationRound } from "./conversation";
@@ -656,12 +661,6 @@ function outputRefForExecution(
   };
 }
 
-function isManagerNodeKind(
-  kind: WorkflowJson["nodes"][number]["kind"],
-): boolean {
-  return kind === "root-manager" || kind === "subworkflow-manager";
-}
-
 function findOwningSubWorkflowByInputNodeId(
   workflow: WorkflowJson,
   nodeId: string,
@@ -728,9 +727,9 @@ function findPendingOptionalNodeDecision(
   );
 }
 
-function buildOptionalSkipOutput(reason = "manager judged unnecessary"): Readonly<
-  Record<string, unknown>
-> {
+function buildOptionalSkipOutput(
+  reason = "manager judged unnecessary",
+): Readonly<Record<string, unknown>> {
   return {
     provider: "runtime-optional-skip",
     completionPassed: true,
@@ -951,6 +950,324 @@ function findLatestPublishedWorkflowResult(
         entry.status === "succeeded" &&
         isRootScopeOutputNode(workflow, entry.nodeId),
     );
+}
+
+function findLatestWorkflowCallResultExecution(
+  workflow: WorkflowJson,
+  session: WorkflowSessionState,
+): NodeExecutionRecord | undefined {
+  const published = findLatestPublishedWorkflowResult(workflow, session);
+  if (published !== undefined) {
+    return published;
+  }
+
+  if (workflow.hasManagerNode !== false) {
+    return undefined;
+  }
+
+  return [...session.nodeExecutions]
+    .reverse()
+    .find((entry) => entry.status === "succeeded");
+}
+
+function buildWorkflowCallRuntimeVariables(input: {
+  readonly parentRuntimeVariables: Readonly<Record<string, unknown>>;
+  readonly parentWorkflowId: string;
+  readonly parentWorkflowExecutionId: string;
+  readonly callerNodeId: string;
+  readonly workflowCallId: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}): Readonly<Record<string, unknown>> {
+  const filteredParentRuntimeVariables = Object.fromEntries(
+    Object.entries(input.parentRuntimeVariables).filter(
+      ([key]) =>
+        key !== "humanInput" &&
+        key !== "workflowOutput" &&
+        key !== "workflowCall",
+    ),
+  );
+
+  return {
+    ...filteredParentRuntimeVariables,
+    workflowCall: {
+      id: input.workflowCallId,
+      parentWorkflowId: input.parentWorkflowId,
+      parentWorkflowExecutionId: input.parentWorkflowExecutionId,
+      callerNodeId: input.callerNodeId,
+      input: input.payload,
+    },
+  };
+}
+
+function buildChildWorkflowCallOptions(
+  options: WorkflowRunOptions,
+  runtimeVariables: Readonly<Record<string, unknown>>,
+): WorkflowRunOptions {
+  return {
+    ...(options.workflowRoot === undefined
+      ? {}
+      : { workflowRoot: options.workflowRoot }),
+    ...(options.artifactRoot === undefined
+      ? {}
+      : { artifactRoot: options.artifactRoot }),
+    ...(options.rootDataDir === undefined
+      ? {}
+      : { rootDataDir: options.rootDataDir }),
+    ...(options.sessionStoreRoot === undefined
+      ? {}
+      : { sessionStoreRoot: options.sessionStoreRoot }),
+    ...(options.env === undefined ? {} : { env: options.env }),
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    runtimeVariables,
+    ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
+    ...(options.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: options.maxLoopIterations }),
+    ...(options.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: options.defaultTimeoutMs }),
+    ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun }),
+    ...(options.mockScenario === undefined
+      ? {}
+      : { mockScenario: options.mockScenario }),
+    ...(options.restartOnStuck === undefined
+      ? {}
+      : { restartOnStuck: options.restartOnStuck }),
+    ...(options.maxStuckRestarts === undefined
+      ? {}
+      : { maxStuckRestarts: options.maxStuckRestarts }),
+    ...(options.stuckRestartBackoffMs === undefined
+      ? {}
+      : { stuckRestartBackoffMs: options.stuckRestartBackoffMs }),
+  };
+}
+
+async function persistWorkflowCallArtifact(input: {
+  readonly artifactDir: string;
+  readonly callId: string;
+  readonly workflowId: string;
+  readonly callerNodeId: string;
+  readonly childWorkflowName: string;
+  readonly childWorkflowId: string;
+  readonly childSession: WorkflowSessionState;
+  readonly parentNodeExecId: string;
+  readonly resultNodeId?: string;
+  readonly resultOutputRef?: OutputRef;
+}): Promise<void> {
+  await mkdir(path.join(input.artifactDir, "workflow-calls"), {
+    recursive: true,
+  });
+  await writeJsonFile(
+    path.join(input.artifactDir, "workflow-calls", `${input.callId}.json`),
+    {
+      workflowCallId: input.callId,
+      workflowId: input.workflowId,
+      callerNodeId: input.callerNodeId,
+      parentNodeExecId: input.parentNodeExecId,
+      childWorkflowName: input.childWorkflowName,
+      childWorkflowId: input.childWorkflowId,
+      childSessionId: input.childSession.sessionId,
+      childSessionStatus: input.childSession.status,
+      ...(input.resultNodeId === undefined
+        ? {}
+        : { resultNodeId: input.resultNodeId }),
+      ...(input.resultOutputRef === undefined
+        ? {}
+        : { resultOutputRef: input.resultOutputRef }),
+    },
+  );
+}
+
+interface WorkflowCallExecutionResult {
+  readonly communications: readonly CommunicationRecord[];
+  readonly communicationCounter: number;
+  readonly queuedNodeIds: readonly string[];
+  readonly transitions: readonly {
+    readonly from: string;
+    readonly to: string;
+    readonly when: string;
+  }[];
+}
+
+async function executeWorkflowCallsForNode(input: {
+  readonly workflow: WorkflowJson;
+  readonly workflowName: string;
+  readonly session: WorkflowSessionState;
+  readonly options: WorkflowRunOptions;
+  readonly artifactWorkflowRoot: string;
+  readonly callerNodeId: string;
+  readonly callerNodeExecId: string;
+  readonly callerArtifactDir: string;
+  readonly callerOutputPayload: Readonly<Record<string, unknown>>;
+  readonly callerOutputRaw: string;
+  readonly createdAt: string;
+  readonly communicationCounter: number;
+  readonly currentCommunications: readonly CommunicationRecord[];
+  readonly adapter: NodeAdapter;
+  readonly guards: EngineExecutionGuards | undefined;
+  readonly workflowCallAncestors: readonly string[];
+}): Promise<Result<WorkflowCallExecutionResult, string>> {
+  const relevantCalls = (input.workflow.workflowCalls ?? []).filter(
+    (entry) => entry.callerNodeId === input.callerNodeId,
+  );
+  if (relevantCalls.length === 0) {
+    return ok({
+      communications: input.currentCommunications,
+      communicationCounter: input.communicationCounter,
+      queuedNodeIds: [],
+      transitions: [],
+    });
+  }
+
+  let currentCommunications = [...input.currentCommunications];
+  let currentCommunicationCounter = input.communicationCounter;
+  const queuedNodeIds: string[] = [];
+  const transitions: Array<{
+    readonly from: string;
+    readonly to: string;
+    readonly when: string;
+  }> = [];
+
+  for (const workflowCall of relevantCalls) {
+    if (
+      input.workflowCallAncestors.includes(workflowCall.workflowId) ||
+      input.workflow.workflowId === workflowCall.workflowId
+    ) {
+      return err(
+        `workflow-call '${workflowCall.id}' would recurse into '${workflowCall.workflowId}', which is not supported`,
+      );
+    }
+
+    const loadedChild = await loadWorkflowByIdFromDisk(
+      workflowCall.workflowId,
+      input.options,
+    );
+    if (!loadedChild.ok) {
+      return err(
+        `workflow-call '${workflowCall.id}' target '${workflowCall.workflowId}' could not be loaded: ${loadedChild.error.message}`,
+      );
+    }
+
+    const childResult = await runWorkflowInternal(
+      loadedChild.value.workflowName,
+      buildChildWorkflowCallOptions(
+        input.options,
+        buildWorkflowCallRuntimeVariables({
+          parentRuntimeVariables: input.session.runtimeVariables,
+          parentWorkflowId: input.workflow.workflowId,
+          parentWorkflowExecutionId: input.session.sessionId,
+          callerNodeId: input.callerNodeId,
+          workflowCallId: workflowCall.id,
+          payload: input.callerOutputPayload["payload"] as Readonly<
+            Record<string, unknown>
+          >,
+        }),
+      ),
+      input.adapter,
+      input.guards,
+      [...input.workflowCallAncestors, input.workflow.workflowId],
+    );
+    if (!childResult.ok) {
+      return err(
+        `workflow-call '${workflowCall.id}' failed: ${childResult.error.message}`,
+      );
+    }
+
+    const childWorkflow = loadedChild.value.bundle.workflow;
+    const childResultExecution = findLatestWorkflowCallResultExecution(
+      childWorkflow,
+      childResult.value.session,
+    );
+    const childOutputRef =
+      childResultExecution === undefined
+        ? undefined
+        : outputRefForExecution(
+            childWorkflow,
+            childResult.value.session,
+            childResultExecution,
+            childResultExecution.nodeId,
+          );
+
+    await persistWorkflowCallArtifact({
+      artifactDir: input.callerArtifactDir,
+      callId: workflowCall.id,
+      workflowId: workflowCall.workflowId,
+      callerNodeId: input.callerNodeId,
+      childWorkflowName: loadedChild.value.workflowName,
+      childWorkflowId: childWorkflow.workflowId,
+      childSession: childResult.value.session,
+      parentNodeExecId: input.callerNodeExecId,
+      ...(workflowCall.resultNodeId === undefined
+        ? {}
+        : { resultNodeId: workflowCall.resultNodeId }),
+      ...(childOutputRef === undefined ? {} : { resultOutputRef: childOutputRef }),
+    });
+
+    if (workflowCall.resultNodeId === undefined) {
+      continue;
+    }
+
+    if (childResultExecution === undefined || childOutputRef === undefined) {
+      return err(
+        `workflow-call '${workflowCall.id}' completed without a result execution for '${workflowCall.resultNodeId}'`,
+      );
+    }
+
+    const childOutput = await readOutputPayloadArtifact(
+      childResultExecution.artifactDir,
+    );
+    if (!childOutput.ok) {
+      return err(
+        `workflow-call '${workflowCall.id}' produced an unreadable result: ${childOutput.error}`,
+      );
+    }
+
+    const boundary = resolveCommunicationBoundary({
+      workflow: input.workflow,
+      fromNodeId: input.callerNodeId,
+      toNodeId: workflowCall.resultNodeId,
+    });
+    const communication = await persistCommunicationArtifact({
+      artifactWorkflowRoot: input.artifactWorkflowRoot,
+      workflowId: input.workflow.workflowId,
+      workflowExecutionId: input.session.sessionId,
+      communicationCounter: currentCommunicationCounter,
+      fromNodeId: input.callerNodeId,
+      toNodeId: workflowCall.resultNodeId,
+      ...(boundary.fromSubWorkflowId === undefined
+        ? {}
+        : { fromSubWorkflowId: boundary.fromSubWorkflowId }),
+      ...(boundary.toSubWorkflowId === undefined
+        ? {}
+        : { toSubWorkflowId: boundary.toSubWorkflowId }),
+      routingScope: boundary.routingScope,
+      deliveryKind: "edge-transition",
+      transitionWhen: `workflow-call:${workflowCall.id}`,
+      sourceNodeExecId: input.callerNodeExecId,
+      payloadRef: childOutputRef,
+      outputRaw: childOutput.value.raw,
+      deliveredByNodeId: mailboxDeliveryManagerNodeId(
+        input.workflow,
+        workflowCall.resultNodeId,
+      ),
+      createdAt: input.createdAt,
+    });
+    currentCommunicationCounter += 1;
+    currentCommunications.push(communication);
+    queuedNodeIds.push(workflowCall.resultNodeId);
+    transitions.push({
+      from: input.callerNodeId,
+      to: workflowCall.resultNodeId,
+      when: `workflow-call:${workflowCall.id}`,
+    });
+  }
+
+  return ok({
+    communications: currentCommunications,
+    communicationCounter: currentCommunicationCounter,
+    queuedNodeIds,
+    transitions,
+  });
 }
 
 function buildUpstreamOutputRefs(
@@ -1521,11 +1838,12 @@ function buildScenarioExecutableNodePayload(
   };
 }
 
-export async function runWorkflow(
+async function runWorkflowInternal(
   workflowName: string,
   options: WorkflowRunOptions = {},
   adapter?: NodeAdapter,
   guards?: EngineExecutionGuards,
+  workflowCallAncestors: readonly string[] = [],
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
   const loaded = await loadWorkflowFromDisk(workflowName, options);
   if (!loaded.ok) {
@@ -1565,8 +1883,7 @@ export async function runWorkflow(
     if (!readiness.ready) {
       return err({
         exitCode: 1,
-        message:
-          `workflow runtime readiness failed: ${readiness.blockers.join("; ")}`,
+        message: `workflow runtime readiness failed: ${readiness.blockers.join("; ")}`,
       });
     }
   }
@@ -1692,7 +2009,10 @@ export async function runWorkflow(
   const maxStuckRestarts = options.maxStuckRestarts ?? 2;
   const stuckRestartBackoffMs = options.stuckRestartBackoffMs ?? 250;
 
-  if ((session.activeUserActions?.length ?? 0) > 0 && session.status === "paused") {
+  if (
+    (session.activeUserActions?.length ?? 0) > 0 &&
+    session.status === "paused"
+  ) {
     return ok({ session, exitCode: 4 });
   }
 
@@ -1809,7 +2129,8 @@ export async function runWorkflow(
     const agentNodePayload = executableNodePayload;
     const nativeNodePayload =
       executableNodePayload === null &&
-      (nodePayload.nodeType === "command" || nodePayload.nodeType === "container")
+      (nodePayload.nodeType === "command" ||
+        nodePayload.nodeType === "container")
         ? nodePayload
         : null;
     if (
@@ -1924,7 +2245,7 @@ export async function runWorkflow(
           node: executionNodePayload,
           workflowId: workflow.workflowId,
           workflowDescription: workflow.description,
-          ...(nodeRef.kind === undefined ? {} : { nodeKind: nodeRef.kind }),
+          nodeKind: describeWorkflowNodeKind(nodeRef),
           upstream: upstreamBindingInputs,
           transcript: transcriptInput,
         });
@@ -1993,8 +2314,7 @@ export async function runWorkflow(
         await saveSession(failed, options);
         return err({
           exitCode: 1,
-          message:
-            failed.lastError ?? "execution mailbox persistence failed",
+          message: failed.lastError ?? "execution mailbox persistence failed",
         });
       }
 
@@ -2146,13 +2466,21 @@ export async function runWorkflow(
           startedAt,
           endedAt,
         };
-        const outputRef = outputRefForExecution(workflow, session, nodeExecution, nodeId);
+        const outputRef = outputRefForExecution(
+          workflow,
+          session,
+          nodeExecution,
+          nodeId,
+        );
         const outputJson = stableJson(outputPayload);
         const outputRaw = `${outputJson}\n`;
         const inputHash = sha256Hex(inputJson);
         const outputHash = sha256Hex(outputJson);
         const nextNodes = selected.map((edge) => edge.to);
-        await writeRawTextFile(path.join(artifactDir, "output.json"), outputRaw);
+        await writeRawTextFile(
+          path.join(artifactDir, "output.json"),
+          outputRaw,
+        );
         await writeJsonFile(path.join(artifactDir, "meta.json"), {
           nodeId,
           nodeExecId,
@@ -2378,7 +2706,7 @@ export async function runWorkflow(
       let ambientManagerContext: AdapterAmbientManagerContext | undefined;
       let managerSessionId: string | undefined;
 
-      if (isManagerNodeKind(nodeRef.kind) && options.dryRun !== true) {
+      if (isManagerNodeRef(nodeRef) && options.dryRun !== true) {
         managerSessionId = nextManagerSessionId(nodeExecId);
         const managerAuthToken = mintManagerAuthToken();
         const activeManagerSessionExpiresAt = addMillisecondsToIso(
@@ -2569,7 +2897,9 @@ export async function runWorkflow(
                       artifactDir,
                       upstreamCommunicationIds,
                       executionMailbox,
-                      ...(backendSession === undefined ? {} : { backendSession }),
+                      ...(backendSession === undefined
+                        ? {}
+                        : { backendSession }),
                       ...(ambientManagerContext === undefined
                         ? {}
                         : { ambientManagerContext }),
@@ -2619,7 +2949,8 @@ export async function runWorkflow(
                     provider: "deterministic-local",
                     model:
                       agentNodePayload?.model ??
-                      (executionNodePayload.nodeType ?? "node"),
+                      executionNodePayload.nodeType ??
+                      "node",
                     promptText: effectivePromptText,
                     completionPassed: false,
                     when: {},
@@ -2640,7 +2971,8 @@ export async function runWorkflow(
                 provider: "deterministic-local",
                 model:
                   agentNodePayload?.model ??
-                  (executionNodePayload.nodeType ?? "node"),
+                  executionNodePayload.nodeType ??
+                  "node",
                 promptText: effectivePromptText,
                 completionPassed: false,
                 when: {},
@@ -2788,8 +3120,7 @@ export async function runWorkflow(
         outputPayload = finalizedOutput ?? {
           provider: "deterministic-local",
           model:
-            agentNodePayload?.model ??
-            (executionNodePayload.nodeType ?? "node"),
+            agentNodePayload?.model ?? executionNodePayload.nodeType ?? "node",
           promptText: effectivePromptText,
           completionPassed: false,
           when: {},
@@ -2801,7 +3132,7 @@ export async function runWorkflow(
       const endedAt = nowIso();
       const nextNodeBackendSessions =
         agentNodePayload === null
-          ? session.nodeBackendSessions ?? {}
+          ? (session.nodeBackendSessions ?? {})
           : persistNodeBackendSession({
               session,
               node: agentNodePayload,
@@ -2869,7 +3200,7 @@ export async function runWorkflow(
         });
       };
       let managerControl = null;
-      if (isManagerNodeKind(nodeRef.kind)) {
+      if (isManagerNodeRef(nodeRef)) {
         try {
           const businessPayload = readBusinessPayload(outputPayload);
           managerControl =
@@ -2878,6 +3209,9 @@ export async function runWorkflow(
               : parseManagerControlPayload(businessPayload, workflow, {
                   managerNodeId: nodeId,
                   managerKind: nodeRef.kind,
+                  ...(nodeRef.role === undefined
+                    ? {}
+                    : { managerRole: nodeRef.role }),
                 });
         } catch (error: unknown) {
           nodeStatus = "failed";
@@ -3103,7 +3437,7 @@ export async function runWorkflow(
         }
 
         if (
-          nodeRef.kind !== "subworkflow-manager" &&
+          !isSubworkflowManagerNodeRef(nodeRef) &&
           (managerControl?.childInputNodeIds.length ?? 0) > 0
         ) {
           nodeStatus = "failed";
@@ -3194,20 +3528,23 @@ export async function runWorkflow(
             message: failed.lastError ?? "failed to finalize manager session",
           });
         }
-        await saveSession({
-          ...session,
-          queue,
-          status: "failed",
-          currentNodeId: nodeId,
-          endedAt,
-          nodeExecutionCounter: nextExecutionCounter,
-          nodeExecutionCounts: updatedCounts,
-          nodeExecutions,
-          communicationCounter: session.communicationCounter,
-          communications: session.communications,
-          nodeBackendSessions: nextNodeBackendSessions,
-          lastError: optionalManagerDecisionsResult.error,
-        }, options);
+        await saveSession(
+          {
+            ...session,
+            queue,
+            status: "failed",
+            currentNodeId: nodeId,
+            endedAt,
+            nodeExecutionCounter: nextExecutionCounter,
+            nodeExecutionCounts: updatedCounts,
+            nodeExecutions,
+            communicationCounter: session.communicationCounter,
+            communications: session.communications,
+            nodeBackendSessions: nextNodeBackendSessions,
+            lastError: optionalManagerDecisionsResult.error,
+          },
+          options,
+        );
         return err({
           exitCode: 5,
           message: optionalManagerDecisionsResult.error,
@@ -3626,6 +3963,55 @@ export async function runWorkflow(
       ];
       currentCommunicationCounter += transitionCommunications.length;
 
+      const workflowCallResult = await executeWorkflowCallsForNode({
+        workflow,
+        workflowName,
+        session: {
+          ...session,
+          nodeExecutions,
+          communicationCounter: currentCommunicationCounter,
+          communications: currentCommunications,
+          runtimeVariables: currentRuntimeVariables,
+        },
+        options,
+        artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+        callerNodeId: nodeId,
+        callerNodeExecId: nodeExecId,
+        callerArtifactDir: artifactDir,
+        callerOutputPayload: outputPayload,
+        callerOutputRaw: outputRaw,
+        createdAt: endedAt,
+        communicationCounter: currentCommunicationCounter,
+        currentCommunications,
+        adapter: effectiveAdapter,
+        guards,
+        workflowCallAncestors,
+      });
+      if (!workflowCallResult.ok) {
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt,
+          nodeExecutionCounter: nextExecutionCounter,
+          nodeExecutionCounts: updatedCounts,
+          nodeExecutions,
+          loopIterationCounts: updatedLoopIterationCounts,
+          communicationCounter: currentCommunicationCounter,
+          communications: currentCommunications,
+          nodeBackendSessions: nextNodeBackendSessions,
+          lastError: workflowCallResult.error,
+        };
+        await saveSession(failed, options);
+        return err({
+          exitCode: 1,
+          message: failed.lastError ?? "workflow-call execution failed",
+        });
+      }
+      currentCommunications = workflowCallResult.value.communications;
+      currentCommunicationCounter = workflowCallResult.value.communicationCounter;
+
       const transitions = [
         ...session.transitions,
         ...selected.map((edge) => ({
@@ -3633,11 +4019,16 @@ export async function runWorkflow(
           to: edge.to,
           when: edge.when,
         })),
+        ...workflowCallResult.value.transitions,
       ];
       const transitionNextNodes = selected.map((edge) => edge.to);
       const pendingSessionState: WorkflowSessionState = {
         ...session,
-        queue: [...queue, ...transitionNextNodes].filter(
+        queue: [
+          ...queue,
+          ...transitionNextNodes,
+          ...workflowCallResult.value.queuedNodeIds,
+        ].filter(
           (value, index, all) => all.indexOf(value) === index,
         ),
         nodeExecutions,
@@ -3645,8 +4036,8 @@ export async function runWorkflow(
         communications: currentCommunications,
         runtimeVariables: currentRuntimeVariables,
       };
-      let managerPlannedInputs = isManagerNodeKind(nodeRef.kind)
-        ? nodeRef.kind === "subworkflow-manager"
+      let managerPlannedInputs = isManagerNodeRef(nodeRef)
+        ? isSubworkflowManagerNodeRef(nodeRef)
           ? [
               ...((managerControl?.overridesChildInputPlanning ?? false)
                 ? (managerControl?.childInputNodeIds ?? [])
@@ -3748,7 +4139,7 @@ export async function runWorkflow(
           ...persistedStarts,
           ...persistedChildInputs,
         ];
-      } else if (nodeRef.kind === "subworkflow-manager") {
+      } else if (isSubworkflowManagerNodeRef(nodeRef)) {
         const forwardedPayloads = [{ payloadRef: outputRef, outputRaw }];
         const persistedChildInputs: CommunicationRecord[] = [];
         for (const inputNodeId of managerPlannedInputs) {
@@ -3785,7 +4176,7 @@ export async function runWorkflow(
 
       let conversationTurns = [...(session.conversationTurns ?? [])];
       let conversationPlannedInputs: string[] = [];
-      if (isManagerNodeKind(nodeRef.kind)) {
+      if (isManagerNodeRef(nodeRef)) {
         const conversationRound = await executeConversationRound({
           workflow,
           workflowExecutionId: session.sessionId,
@@ -3908,6 +4299,7 @@ export async function runWorkflow(
       const nextQueue = [
         ...queue,
         ...transitionNextNodes,
+        ...workflowCallResult.value.queuedNodeIds,
         ...managerPlannedInputs,
         ...conversationPlannedInputs,
         ...queuedOptionalDecisionNodeIds,
@@ -4027,4 +4419,13 @@ export async function runWorkflow(
     return err({ exitCode: 1, message: persistedCompleted.error });
   }
   return ok({ session: completed, exitCode: 0 });
+}
+
+export async function runWorkflow(
+  workflowName: string,
+  options: WorkflowRunOptions = {},
+  adapter?: NodeAdapter,
+  guards?: EngineExecutionGuards,
+): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
+  return runWorkflowInternal(workflowName, options, adapter, guards, []);
 }
