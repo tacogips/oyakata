@@ -14,9 +14,7 @@ import type {
   RetryCommunicationDeliveryResult,
 } from "../workflow/communication-service";
 import type { WorkflowInspectionSummary } from "../workflow/inspect";
-import type {
-  ManagerControlAction,
-} from "../workflow/manager-control";
+import type { ManagerControlAction } from "../workflow/manager-control";
 import type {
   DataDirFileRef,
   ManagerMessageService,
@@ -33,12 +31,16 @@ import type {
   RuntimeNodeLogEntry,
 } from "../workflow/runtime-db";
 import type { SessionStoreOptions } from "../workflow/session-store";
-import type { NodeExecutionRecord, WorkflowSessionState } from "../workflow/session";
-import type { LoadOptions } from "../workflow/types";
-import type { NormalizedWorkflowBundle, ValidationIssue } from "../workflow/types";
 import type {
-  CommunicationService,
-} from "../workflow/communication-service";
+  NodeExecutionRecord,
+  WorkflowSessionState,
+} from "../workflow/session";
+import type { LoadOptions } from "../workflow/types";
+import type {
+  NormalizedWorkflowBundle,
+  ValidationIssue,
+} from "../workflow/types";
+import type { CommunicationService } from "../workflow/communication-service";
 
 export interface GraphqlRequestContext extends SessionStoreOptions {
   readonly authToken?: string;
@@ -164,6 +166,7 @@ export interface ManagerSessionView {
 export interface ExecuteWorkflowInput {
   readonly workflowName: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly workingDirectory?: string;
   readonly mockScenario?: MockNodeScenario;
   readonly async?: boolean;
   readonly dryRun?: boolean;
@@ -201,8 +204,7 @@ export interface ValidateWorkflowDefinitionInput {
   readonly bundle?: NormalizedWorkflowBundle;
 }
 
-export interface ValidateWorkflowDefinitionPayload
-  extends ValidationResponse {}
+export interface ValidateWorkflowDefinitionPayload extends ValidationResponse {}
 
 export interface ExecuteWorkflowPayload {
   readonly workflowExecutionId: string;
@@ -214,6 +216,11 @@ export interface ExecuteWorkflowPayload {
 
 export interface ResumeWorkflowExecutionInput {
   readonly workflowExecutionId: string;
+  readonly workingDirectory?: string;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
 }
 
 export interface ResumeWorkflowExecutionPayload {
@@ -227,6 +234,7 @@ export interface RerunWorkflowExecutionInput {
   readonly workflowExecutionId: string;
   readonly nodeId: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly workingDirectory?: string;
   readonly dryRun?: boolean;
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
@@ -275,8 +283,7 @@ export interface ReplayCommunicationInput extends CommunicationLookupInput {
   readonly managerSessionId?: string;
 }
 
-export interface ReplayCommunicationPayload
-  extends ReplayCommunicationResult {}
+export interface ReplayCommunicationPayload extends ReplayCommunicationResult {}
 
 export interface RetryCommunicationDeliveryInput
   extends CommunicationLookupInput {

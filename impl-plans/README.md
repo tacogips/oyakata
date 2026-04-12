@@ -33,6 +33,7 @@ impl-plans/
 | Plan                                               | Completed  | Design Reference                                                                                    |
 | -------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
 | `root-data-dir-project-root-scoping`               | 2026-03-26 | `command`, `architecture`                                                                           |
+| `workflow-execution-working-directory`             | 2026-04-12 | `design-workflow-working-directory`, `command`, `architecture`                                      |
 | `hook-command-review-follow-up`                    | 2026-04-09 | `design-hook-command`                                                                               |
 | `hook-command-cross-vendor-alignment`              | 2026-04-09 | `design-hook-command`, `command`                                                                    |
 | `hook-command-hardening`                           | 2026-04-09 | `design-hook-command`, `command`                                                                    |

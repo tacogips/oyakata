@@ -62,6 +62,7 @@ export interface SaveWorkflowRequest<TBundle = NormalizedWorkflowBundle> {
 
 export interface WorkflowRunRequest {
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
+  readonly workingDirectory?: string;
   readonly mockScenario?: Readonly<Record<string, unknown>>;
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;

@@ -479,6 +479,41 @@ describe("GraphQL HTTP transport", () => {
     });
   });
 
+  test("exposes workingDirectory on resume workflow execution GraphQL input", async () => {
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query ResumeWorkflowExecutionInputFields {
+              __type(name: "ResumeWorkflowExecutionInput") {
+                inputFields {
+                  name
+                }
+              }
+            }
+          `,
+        }),
+      }),
+      {},
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        __type: {
+          inputFields: expect.arrayContaining([
+            { name: "workflowExecutionId" },
+            { name: "workingDirectory" },
+          ]),
+        },
+      },
+    });
+  });
+
   test("exposes workflow execution overview over /graphql", async () => {
     const root = await makeTempDir();
     const { options, session } = await createCompletedWorkflowFixture(root);
@@ -565,7 +600,9 @@ describe("GraphQL HTTP transport", () => {
     );
     expect(payload.data?.workflowExecutionOverview?.workflowId).toBe("demo");
     expect(payload.data?.workflowExecutionOverview?.workflowName).toBe("demo");
-    expect(payload.data?.workflowExecutionOverview?.status).toBe(session.status);
+    expect(payload.data?.workflowExecutionOverview?.status).toBe(
+      session.status,
+    );
     expect(
       payload.data?.workflowExecutionOverview?.communications.totalCount,
     ).toBeGreaterThan(0);
@@ -704,9 +741,7 @@ describe("GraphQL HTTP transport", () => {
       },
     });
 
-    const validBundle = cloneJson(
-      loadJson.data.workflowDefinition.bundle,
-    ) as {
+    const validBundle = cloneJson(loadJson.data.workflowDefinition.bundle) as {
       workflow: {
         description: string;
         nodes: unknown[];
@@ -756,7 +791,9 @@ describe("GraphQL HTTP transport", () => {
       path.join(root, "demo", "workflow.json"),
       "utf8",
     );
-    expect(savedWorkflowJson).toContain('"description": "Updated through GraphQL"');
+    expect(savedWorkflowJson).toContain(
+      '"description": "Updated through GraphQL"',
+    );
 
     const invalidBundle = cloneJson(validBundle) as typeof validBundle;
     invalidBundle.workflow.nodes = [];

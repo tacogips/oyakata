@@ -6,6 +6,7 @@ import { AdapterExecutionError, type AdapterExecutionOutput } from "./adapter";
 import type { NodeExecutionMailbox } from "./node-execution-mailbox";
 import { buildPromptTemplateVariables } from "./prompt-template-context";
 import { renderPromptTemplate } from "./render";
+import { resolveNodeExecutionWorkingDirectory } from "./working-directory";
 import type {
   ContainerExecution,
   ContainerRunnerKind,
@@ -21,6 +22,7 @@ interface NativeNodeExecutionContext {
 
 export interface NativeNodeExecutionInput {
   readonly workflowDirectory: string;
+  readonly workflowWorkingDirectory: string;
   readonly artifactWorkflowRoot: string;
   readonly workflowId: string;
   readonly workflowDescription: string;
@@ -365,10 +367,10 @@ async function executeCommandNode(
     ...(input.env === undefined ? {} : { ambientEnv: input.env }),
   });
   const scriptPath = path.join(input.workflowDirectory, commandConfig.scriptPath);
-  const cwd =
-    commandConfig.workingDirectory === undefined
-      ? input.workflowDirectory
-      : path.join(input.workflowDirectory, commandConfig.workingDirectory);
+  const cwd = resolveNodeExecutionWorkingDirectory(
+    input.workflowWorkingDirectory,
+    input.node.workingDirectory ?? commandConfig.workingDirectory,
+  );
   const command =
     path.extname(scriptPath) === ".sh" ? "sh" : scriptPath;
   const args = command === "sh" ? [scriptPath, ...argv] : [...argv];
@@ -514,7 +516,10 @@ async function executeContainerNode(
   const result = await runSpawnedProcess({
     command: runnerCommand,
     args: runArgs,
-    cwd: input.workflowDirectory,
+    cwd: resolveNodeExecutionWorkingDirectory(
+      input.workflowWorkingDirectory,
+      input.node.workingDirectory,
+    ),
     env: {
       ...process.env,
       ...(input.env === undefined ? {} : input.env),

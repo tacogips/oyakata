@@ -310,6 +310,7 @@ const GRAPHQL_SCHEMA_TEXT = `
   input ExecuteWorkflowInput {
     workflowName: String!
     runtimeVariables: JSON
+    workingDirectory: String
     mockScenario: JSON
     async: Boolean
     dryRun: Boolean
@@ -341,12 +342,18 @@ const GRAPHQL_SCHEMA_TEXT = `
 
   input ResumeWorkflowExecutionInput {
     workflowExecutionId: String!
+    workingDirectory: String
+    dryRun: Boolean
+    maxSteps: Int
+    maxLoopIterations: Int
+    defaultTimeoutMs: Int
   }
 
   input RerunWorkflowExecutionInput {
     workflowExecutionId: String!
     nodeId: String!
     runtimeVariables: JSON
+    workingDirectory: String
     dryRun: Boolean
     maxSteps: Int
     maxLoopIterations: Int
@@ -610,7 +617,10 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.saveWorkflowDefinition(args.input as never, context);
+          return schema.mutation.saveWorkflowDefinition(
+            args.input as never,
+            context,
+          );
         },
         validateWorkflowDefinition(
           _parent: unknown,
@@ -622,7 +632,10 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.validateWorkflowDefinition(args.input as never, context);
+          return schema.mutation.validateWorkflowDefinition(
+            args.input as never,
+            context,
+          );
         },
         executeWorkflow(
           _parent: unknown,
@@ -630,6 +643,7 @@ export function createExecutableGraphqlSchema(
             readonly input: {
               readonly workflowName: string;
               readonly runtimeVariables?: unknown;
+              readonly workingDirectory?: string;
               readonly mockScenario?: unknown;
               readonly async?: boolean;
               readonly dryRun?: boolean;
@@ -644,7 +658,16 @@ export function createExecutableGraphqlSchema(
         },
         resumeWorkflowExecution(
           _parent: unknown,
-          args: { readonly input: { readonly workflowExecutionId: string } },
+          args: {
+            readonly input: {
+              readonly workflowExecutionId: string;
+              readonly workingDirectory?: string;
+              readonly dryRun?: boolean;
+              readonly maxSteps?: number;
+              readonly maxLoopIterations?: number;
+              readonly defaultTimeoutMs?: number;
+            };
+          },
           context: GraphqlRequestContext,
         ) {
           return schema.mutation.resumeWorkflowExecution(args.input, context);
@@ -656,6 +679,7 @@ export function createExecutableGraphqlSchema(
               readonly workflowExecutionId: string;
               readonly nodeId: string;
               readonly runtimeVariables?: unknown;
+              readonly workingDirectory?: string;
               readonly dryRun?: boolean;
               readonly maxSteps?: number;
               readonly maxLoopIterations?: number;
@@ -664,7 +688,10 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.rerunWorkflowExecution(args.input as never, context);
+          return schema.mutation.rerunWorkflowExecution(
+            args.input as never,
+            context,
+          );
         },
         sendManagerMessage(
           _parent: unknown,
@@ -683,7 +710,10 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.sendManagerMessage(args.input as never, context);
+          return schema.mutation.sendManagerMessage(
+            args.input as never,
+            context,
+          );
         },
         retryCommunicationDelivery(
           _parent: unknown,
@@ -718,7 +748,10 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.replayCommunication(args.input as never, context);
+          return schema.mutation.replayCommunication(
+            args.input as never,
+            context,
+          );
         },
         cancelWorkflowExecution(
           _parent: unknown,

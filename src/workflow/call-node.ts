@@ -47,6 +47,10 @@ import {
   saveSession,
   type SessionStoreOptions,
 } from "./session-store";
+import {
+  resolveNodeExecutionWorkingDirectory,
+  resolveWorkflowExecutionWorkingDirectory,
+} from "./working-directory";
 import type {
   NodeBackendSessionRecord,
   NodeExecutionRecord,
@@ -67,6 +71,7 @@ export interface CallNodeInput extends LoadOptions, SessionStoreOptions {
   readonly workflowId: string;
   readonly workflowRunId: string;
   readonly nodeId: string;
+  readonly workflowWorkingDirectory?: string;
   readonly message?: unknown;
   readonly mockScenario?: MockNodeScenario;
   readonly dryRun?: boolean;
@@ -346,6 +351,7 @@ async function executeAdapterWithTimeout(
 
 async function executeNativeNodeWithTimeout(input: {
   readonly workflowDirectory: string;
+  readonly workflowWorkingDirectory: string;
   readonly artifactWorkflowRoot: string;
   readonly workflowId: string;
   readonly workflowDescription: string;
@@ -378,6 +384,7 @@ async function executeNativeNodeWithTimeout(input: {
       executeNativeNode(
         {
           workflowDirectory: input.workflowDirectory,
+          workflowWorkingDirectory: input.workflowWorkingDirectory,
           artifactWorkflowRoot: input.artifactWorkflowRoot,
           workflowId: input.workflowId,
           workflowDescription: input.workflowDescription,
@@ -867,6 +874,24 @@ class ExecutionDispatcher {
         message: `node '${input.nodeId}' is missing executable node fields`,
       });
     }
+    let workflowWorkingDirectory: string;
+    try {
+      workflowWorkingDirectory = resolveWorkflowExecutionWorkingDirectory({
+        ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+        ...(input.workflowWorkingDirectory === undefined
+          ? {}
+          : { workflowWorkingDirectory: input.workflowWorkingDirectory }),
+      });
+    } catch (error: unknown) {
+      return err({
+        session,
+        exitCode: 2,
+        message:
+          error instanceof Error
+            ? error.message
+            : "workingDirectory must be a non-empty path when provided",
+      });
+    }
 
     const nextExecutionCounter = session.nodeExecutionCounter + 1;
     const executionIndex = (session.nodeExecutionCounts[input.nodeId] ?? 0) + 1;
@@ -1141,6 +1166,10 @@ class ExecutionDispatcher {
                   nodeId: input.nodeId,
                   nodeExecId,
                   node: agentNodePayload,
+                  workingDirectory: resolveNodeExecutionWorkingDirectory(
+                    workflowWorkingDirectory,
+                    agentNodePayload.workingDirectory,
+                  ),
                   mergedVariables,
                   ...(systemPromptText === undefined
                     ? {}
@@ -1185,6 +1214,7 @@ class ExecutionDispatcher {
               )
             : await executeNativeNodeWithTimeout({
                 workflowDirectory: loaded.value.workflowDirectory,
+                workflowWorkingDirectory,
                 artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
                 workflowId: workflow.workflowId,
                 workflowDescription: workflow.description,

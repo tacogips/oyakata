@@ -57,6 +57,14 @@ It owns:
 - manager-control validation
 - final workflow-output publication
 
+Execution-time working directory is resolved separately from workflow/artifact/session root resolution.
+
+- default workflow execution working directory: command invocation `cwd`
+- run-scoped override: explicit execution input working directory
+- node-scoped override: `nodePayload.workingDirectory`, resolved from the effective workflow execution working directory
+
+Supporting design: `design-docs/specs/design-workflow-working-directory.md`.
+
 ## Primary Components
 
 ### Workflow Loader and Validator

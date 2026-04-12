@@ -29,11 +29,13 @@ import {
 import type { WorkflowSessionState } from "./workflow/session";
 import type { MockNodeScenario } from "./workflow/adapter";
 import type { LoadOptions } from "./workflow/types";
+import { normalizeWorkflowWorkingDirectoryOverride } from "./workflow/working-directory";
 
 export type DivedraOptions = LoadOptions & SessionStoreOptions;
 
 export interface ExecuteWorkflowInput extends DivedraOptions {
   readonly workflowName: string;
+  readonly workflowWorkingDirectory?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly mockScenario?: MockNodeScenario;
   readonly dryRun?: boolean;
@@ -44,12 +46,14 @@ export interface ExecuteWorkflowInput extends DivedraOptions {
 
 export interface ResumeWorkflowInput extends DivedraOptions {
   readonly sessionId: string;
+  readonly workflowWorkingDirectory?: string;
   readonly mockScenario?: MockNodeScenario;
 }
 
 export interface RerunWorkflowInput extends DivedraOptions {
   readonly sourceSessionId: string;
   readonly fromNodeId: string;
+  readonly workflowWorkingDirectory?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly mockScenario?: MockNodeScenario;
   readonly maxSteps?: number;
@@ -84,6 +88,7 @@ export interface WorkflowExecutionClientOptions extends DivedraOptions {
 
 export interface WorkflowExecutionClientRequest {
   readonly input?: Readonly<Record<string, unknown>>;
+  readonly workingDirectory?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly mockScenario?: MockNodeScenario;
   readonly async?: boolean;
@@ -109,9 +114,7 @@ export interface WorkflowExecutionClient {
   ): Promise<WorkflowExecutionClientResult>;
 }
 
-function isRecord(
-  value: unknown,
-): value is Readonly<Record<string, unknown>> {
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -125,17 +128,17 @@ function requireObjectField(
   return value;
 }
 
-function requireStringField(
-  value: unknown,
-  label: string,
-): string {
+function requireStringField(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
 }
 
-function optionalBooleanField(value: unknown, label: string): boolean | undefined {
+function optionalBooleanField(
+  value: unknown,
+  label: string,
+): boolean | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -145,7 +148,10 @@ function optionalBooleanField(value: unknown, label: string): boolean | undefine
   return value;
 }
 
-function optionalNumberField(value: unknown, label: string): number | undefined {
+function optionalNumberField(
+  value: unknown,
+  label: string,
+): number | undefined {
   if (value === undefined || value === null) {
     return undefined;
   }
@@ -158,10 +164,7 @@ function optionalNumberField(value: unknown, label: string): number | undefined 
 function resolveRuntimeVariables(
   request: WorkflowExecutionClientRequest | undefined,
 ): Readonly<Record<string, unknown>> | undefined {
-  if (
-    request?.input !== undefined &&
-    request.runtimeVariables !== undefined
-  ) {
+  if (request?.input !== undefined && request.runtimeVariables !== undefined) {
     throw new Error("use only one of input or runtimeVariables");
   }
   return request?.runtimeVariables ?? request?.input;
@@ -175,6 +178,9 @@ async function executeWorkflowThroughGraphqlClient(
     throw new Error("endpoint is required for GraphQL execution");
   }
   const runtimeVariables = resolveRuntimeVariables(request);
+  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    request?.workingDirectory,
+  );
   const response = await executeGraphqlRequest({
     endpoint: options.endpoint,
     document: `
@@ -192,12 +198,15 @@ async function executeWorkflowThroughGraphqlClient(
       input: {
         workflowName: options.workflowName,
         ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
+        ...(workingDirectory === undefined ? {} : { workingDirectory }),
         ...(request?.mockScenario === undefined
           ? {}
           : { mockScenario: request.mockScenario }),
         ...(request?.async === undefined ? {} : { async: request.async }),
         ...(request?.dryRun === undefined ? {} : { dryRun: request.dryRun }),
-        ...(request?.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
+        ...(request?.maxSteps === undefined
+          ? {}
+          : { maxSteps: request.maxSteps }),
         ...(request?.maxLoopIterations === undefined
           ? {}
           : { maxLoopIterations: request.maxLoopIterations }),
@@ -206,18 +215,25 @@ async function executeWorkflowThroughGraphqlClient(
           : { defaultTimeoutMs: request.defaultTimeoutMs }),
       },
     },
-    ...(options.authToken === undefined ? {} : { authToken: options.authToken }),
+    ...(options.authToken === undefined
+      ? {}
+      : { authToken: options.authToken }),
     ...(options.managerSessionId === undefined
       ? {}
       : { managerSessionId: options.managerSessionId }),
-    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+    ...(options.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: options.fetchImpl }),
   });
   if (response.errors !== undefined && response.errors.length > 0) {
     throw new Error(response.errors.map((entry) => entry.message).join("; "));
   }
 
   const data = requireObjectField(response.data, "GraphQL response.data");
-  const payload = requireObjectField(data["executeWorkflow"], "executeWorkflow");
+  const payload = requireObjectField(
+    data["executeWorkflow"],
+    "executeWorkflow",
+  );
   const accepted = optionalBooleanField(
     payload["accepted"],
     "executeWorkflow.accepted",
@@ -247,18 +263,24 @@ async function executeWorkflowThroughLibraryClient(
   request: WorkflowExecutionClientRequest | undefined,
 ): Promise<WorkflowExecutionClientResult> {
   const runtimeVariables = resolveRuntimeVariables(request);
+  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    request?.workingDirectory,
+  );
   if (request?.async === true) {
     const schema = createGraphqlSchema();
     const payload = await schema.mutation.executeWorkflow(
       {
         workflowName: options.workflowName,
         ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
+        ...(workingDirectory === undefined ? {} : { workingDirectory }),
         ...(request.mockScenario === undefined
           ? {}
           : { mockScenario: request.mockScenario }),
         async: true,
         ...(request.dryRun === undefined ? {} : { dryRun: request.dryRun }),
-        ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
+        ...(request.maxSteps === undefined
+          ? {}
+          : { maxSteps: request.maxSteps }),
         ...(request.maxLoopIterations === undefined
           ? {}
           : { maxLoopIterations: request.maxLoopIterations }),
@@ -281,6 +303,9 @@ async function executeWorkflowThroughLibraryClient(
   const result = await executeWorkflow({
     ...options,
     workflowName: options.workflowName,
+    ...(workingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory: workingDirectory }),
     ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
     ...(request?.mockScenario === undefined
       ? {}
@@ -335,6 +360,9 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
   readonly status: WorkflowSessionState["status"];
   readonly exitCode: number;
 }> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workflowWorkingDirectory,
+  );
   const options: WorkflowRunOptions = {
     ...(input.workflowRoot === undefined
       ? {}
@@ -342,12 +370,17 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
-    ...(input.rootDataDir === undefined ? {} : { rootDataDir: input.rootDataDir }),
+    ...(input.rootDataDir === undefined
+      ? {}
+      : { rootDataDir: input.rootDataDir }),
     ...(input.sessionStoreRoot === undefined
       ? {}
       : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
@@ -379,6 +412,9 @@ export async function resumeWorkflow(input: ResumeWorkflowInput): Promise<{
   readonly status: WorkflowSessionState["status"];
   readonly exitCode: number;
 }> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workflowWorkingDirectory,
+  );
   const existing = await loadSession(input.sessionId, input);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -390,12 +426,17 @@ export async function resumeWorkflow(input: ResumeWorkflowInput): Promise<{
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
-    ...(input.rootDataDir === undefined ? {} : { rootDataDir: input.rootDataDir }),
+    ...(input.rootDataDir === undefined
+      ? {}
+      : { rootDataDir: input.rootDataDir }),
     ...(input.sessionStoreRoot === undefined
       ? {}
       : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
     ...(input.mockScenario === undefined
       ? {}
       : { mockScenario: input.mockScenario }),
@@ -416,6 +457,9 @@ export async function rerunWorkflow(input: RerunWorkflowInput): Promise<{
   readonly status: WorkflowSessionState["status"];
   readonly exitCode: number;
 }> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workflowWorkingDirectory,
+  );
   const source = await loadSession(input.sourceSessionId, input);
   if (!source.ok) {
     throw new Error(source.error.message);
@@ -427,12 +471,17 @@ export async function rerunWorkflow(input: RerunWorkflowInput): Promise<{
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
-    ...(input.rootDataDir === undefined ? {} : { rootDataDir: input.rootDataDir }),
+    ...(input.rootDataDir === undefined
+      ? {}
+      : { rootDataDir: input.rootDataDir }),
     ...(input.sessionStoreRoot === undefined
       ? {}
       : { sessionStoreRoot: input.sessionStoreRoot }),
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),

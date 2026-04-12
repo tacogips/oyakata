@@ -12,6 +12,7 @@ import {
   synthesizeInlineNodeFile,
 } from "./authored-node";
 import { isSafeWorkflowId } from "./paths";
+import { normalizeWorkingDirectoryPath } from "./working-directory";
 import {
   normalizeCliAgentBackend,
   normalizeNodeExecutionBackend,
@@ -115,6 +116,31 @@ function makeIssue(
   message: string,
 ): ValidationIssue {
   return { severity, path, message };
+}
+
+function normalizeWorkingDirectoryField(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    try {
+      return normalizeWorkingDirectoryPath(value);
+    } catch {
+      // Validation reports the normalized issue below.
+    }
+  }
+  issues.push(
+    makeIssue(
+      "error",
+      path,
+      "must be a non-empty absolute or relative path when provided",
+    ),
+  );
+  return undefined;
 }
 
 function normalizeNodeKind(value: unknown): NodeKind | undefined {
@@ -514,24 +540,11 @@ function normalizeCommandExecution(
   );
 
   const workingDirectoryRaw = value["workingDirectory"];
-  let workingDirectory: string | undefined;
-  if (workingDirectoryRaw !== undefined) {
-    if (
-      typeof workingDirectoryRaw === "string" &&
-      workingDirectoryRaw.length > 0 &&
-      isSafeWorkflowRelativePath(workingDirectoryRaw)
-    ) {
-      workingDirectory = workingDirectoryRaw;
-    } else {
-      issues.push(
-        makeIssue(
-          "error",
-          `${path}.workingDirectory`,
-          "must be a workflow-relative path without '.' or '..' segments when provided",
-        ),
-      );
-    }
-  }
+  const workingDirectory = normalizeWorkingDirectoryField(
+    workingDirectoryRaw,
+    `${path}.workingDirectory`,
+    issues,
+  );
 
   if (scriptPath === null || !isSafeWorkflowRelativePath(scriptPath)) {
     return undefined;
@@ -2635,6 +2648,11 @@ function normalizeNodePayload(
   const templateEngineRaw = payload["templateEngine"];
   const templateEngine =
     typeof templateEngineRaw === "string" ? templateEngineRaw : undefined;
+  const workingDirectory = normalizeWorkingDirectoryField(
+    payload["workingDirectory"],
+    `${path}.workingDirectory`,
+    issues,
+  );
 
   const outputContract = normalizeNodeOutputContract(
     payload["output"],
@@ -2768,6 +2786,7 @@ function normalizeNodePayload(
     id,
     ...(description === undefined ? {} : { description }),
     ...(nodeType === "agent" ? {} : { nodeType }),
+    ...(workingDirectory === undefined ? {} : { workingDirectory }),
     ...(model === undefined ? {} : { model }),
     ...(executionBackend === undefined ? {} : { executionBackend }),
     ...(sessionPolicy === undefined ? {} : { sessionPolicy }),

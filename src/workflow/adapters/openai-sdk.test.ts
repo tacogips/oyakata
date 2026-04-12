@@ -17,6 +17,7 @@ const baseInput: AdapterExecutionInput = {
     promptTemplate: "test",
     variables: {},
   },
+  workingDirectory: "/tmp/project",
   mergedVariables: {},
   promptText: "hello",
   arguments: null,

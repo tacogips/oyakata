@@ -17,6 +17,7 @@ const baseInput: AdapterExecutionInput = {
     promptTemplate: "test",
     variables: {},
   },
+  workingDirectory: "/tmp/project",
   mergedVariables: {},
   promptText: "hello",
   arguments: { key: "value" },
@@ -161,6 +162,7 @@ describe("CodexAgentAdapter", () => {
     expect(fixture.startSession).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "system\n\nhello",
+        cwd: "/tmp/project",
         model: "gpt-5-nano",
         streamGranularity: "event",
       }),

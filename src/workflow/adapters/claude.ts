@@ -190,13 +190,13 @@ function resolveLocalSessionConfig(
     promptText,
     sessionConfig: {
       prompt: input.promptText,
-      projectPath: config.cwd ?? process.cwd(),
+      projectPath: config.cwd ?? input.workingDirectory,
       ...(input.systemPromptText === undefined
         ? {}
         : { systemPrompt: input.systemPromptText }),
     },
     runnerOptions: {
-      cwd: config.cwd ?? process.cwd(),
+      cwd: config.cwd ?? input.workingDirectory,
       model: input.node.model,
       ...(config.permissionMode === undefined
         ? {}

@@ -13,7 +13,7 @@ import { SUPPORTED_HOOK_VENDORS } from "./hook/types";
 import { startServe, type StartedServe } from "./server/serve";
 import type { MockNodeScenario } from "./workflow/adapter";
 import { createWorkflowTemplate } from "./workflow/create";
-import { callNode } from "./workflow/call-node";
+import { callNode, type CallNodeInput } from "./workflow/call-node";
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import { loadWorkflowFromDisk, type LoadedWorkflow } from "./workflow/load";
 import {
@@ -39,6 +39,7 @@ import {
 import { createManagerSessionStore } from "./workflow/manager-session-store";
 import { deleteWorkflowSessionHistory } from "./workflow/session-history";
 import { deleteWorkflowHistory as deleteWorkflowHistoryForWorkflow } from "./workflow/history";
+import { normalizeWorkflowWorkingDirectoryOverride } from "./workflow/working-directory";
 
 export interface CliIo {
   readonly stdout: (line: string) => void;
@@ -77,6 +78,7 @@ interface ParsedOptions {
   readonly workflowRoot?: string;
   readonly artifactRoot?: string;
   readonly sessionStoreRoot?: string;
+  readonly workingDirectory?: string;
   readonly workerOnly: boolean;
   readonly output: "text" | "json";
   readonly variablesPath?: string;
@@ -197,6 +199,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let workflowRoot: string | undefined;
   let artifactRoot: string | undefined;
   let sessionStoreRoot: string | undefined;
+  let workingDirectory: string | undefined;
   let workerOnly = false;
   let output: "text" | "json" = "text";
   let variablesPath: string | undefined;
@@ -248,6 +251,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         break;
       case "--session-store":
         sessionStoreRoot = readNext();
+        break;
+      case "--working-dir":
+      case "--working-directory":
+        workingDirectory = readNext();
         break;
       case "--worker-only":
         workerOnly = true;
@@ -327,6 +334,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(workflowRoot === undefined ? {} : { workflowRoot }),
       ...(artifactRoot === undefined ? {} : { artifactRoot }),
       ...(sessionStoreRoot === undefined ? {} : { sessionStoreRoot }),
+      ...(workingDirectory === undefined ? {} : { workingDirectory }),
       workerOnly,
       ...(variablesPath === undefined ? {} : { variablesPath }),
       ...(mockScenarioPath === undefined ? {} : { mockScenarioPath }),
@@ -694,7 +702,11 @@ async function executeCliGraphqlOperation(args: {
 function buildRemoteExecutionInput(
   parsedOptions: ParsedOptions,
 ): Readonly<Record<string, unknown>> {
+  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    parsedOptions.workingDirectory,
+  );
   return {
+    ...(workingDirectory === undefined ? {} : { workingDirectory }),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
     ...(parsedOptions.maxSteps === undefined
       ? {}
@@ -786,15 +798,45 @@ function buildLocalWorkflowRunOverrides(
   parsedOptions: ParsedOptions,
 ): Pick<
   WorkflowRunOptions,
-  "defaultTimeoutMs" | "dryRun" | "maxLoopIterations" | "maxSteps"
+  | "defaultTimeoutMs"
+  | "dryRun"
+  | "maxLoopIterations"
+  | "maxSteps"
+  | "workflowWorkingDirectory"
 > {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    parsedOptions.workingDirectory,
+  );
   return {
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
     ...(parsedOptions.maxSteps === undefined
       ? {}
       : { maxSteps: parsedOptions.maxSteps }),
     ...(parsedOptions.maxLoopIterations === undefined
       ? {}
       : { maxLoopIterations: parsedOptions.maxLoopIterations }),
+    ...(parsedOptions.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
+    ...(parsedOptions.dryRun ? { dryRun: true } : {}),
+  };
+}
+
+function buildLocalCallNodeOverrides(
+  parsedOptions: ParsedOptions,
+): Pick<
+  CallNodeInput,
+  "defaultTimeoutMs" | "dryRun" | "workflowWorkingDirectory"
+> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    parsedOptions.workingDirectory,
+  );
+  return {
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
     ...(parsedOptions.defaultTimeoutMs === undefined
       ? {}
       : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
@@ -1697,12 +1739,9 @@ export async function runCli(
       workflowId,
       workflowRunId,
       nodeId,
+      ...buildLocalCallNodeOverrides(parsed.options),
       ...mockScenarioOptions,
       ...(message === undefined ? {} : { message }),
-      ...(parsed.options.defaultTimeoutMs === undefined
-        ? {}
-        : { defaultTimeoutMs: parsed.options.defaultTimeoutMs }),
-      ...(parsed.options.dryRun ? { dryRun: true } : {}),
     });
 
     if (!result.ok) {
@@ -2134,6 +2173,7 @@ export async function runCli(
             variables: {
               input: {
                 workflowExecutionId: target,
+                ...buildRemoteExecutionInput(parsed.options),
               },
             },
           });
@@ -2193,6 +2233,7 @@ export async function runCli(
 
       const result = await runWorkflow(session.value.workflowName, {
         ...sharedOptions,
+        ...buildLocalWorkflowRunOverrides(parsed.options),
         resumeSessionId: session.value.sessionId,
         ...mockScenarioOptions,
       });
@@ -2310,6 +2351,7 @@ export async function runCli(
 
       const result = await runWorkflow(source.value.workflowName, {
         ...sharedOptions,
+        ...buildLocalWorkflowRunOverrides(parsed.options),
         rerunFromSessionId: source.value.sessionId,
         rerunFromNodeId: fromNodeId,
         ...mockScenarioOptions,

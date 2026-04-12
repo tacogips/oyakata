@@ -280,6 +280,7 @@ export interface NodePayload {
   readonly id: string;
   readonly description?: string;
   readonly nodeType?: NodeType;
+  readonly workingDirectory?: string;
   readonly model?: string;
   readonly executionBackend?: NodeExecutionBackend;
   readonly sessionPolicy?: NodeSessionPolicy;

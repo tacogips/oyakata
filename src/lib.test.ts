@@ -241,6 +241,7 @@ describe("library api", () => {
           input: {
             workflowName: string;
             runtimeVariables: Readonly<Record<string, unknown>>;
+            workingDirectory?: string;
             async: boolean;
             dryRun: boolean;
           };
@@ -252,6 +253,7 @@ describe("library api", () => {
           request: "remote fixed client",
         },
       });
+      expect(payload.variables.input.workingDirectory).toBe("apps/reviewer");
       expect(payload.variables.input.async).toBe(true);
       expect(payload.variables.input.dryRun).toBe(true);
       return new Response(
@@ -287,6 +289,7 @@ describe("library api", () => {
           request: "remote fixed client",
         },
       },
+      workingDirectory: " apps/reviewer ",
       async: true,
       dryRun: true,
     });

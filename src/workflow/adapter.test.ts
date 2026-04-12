@@ -74,6 +74,7 @@ function makeExecutionInput(
       model: "gpt-5-nano",
       variables: {},
     } as AdapterExecutionInput["node"],
+    workingDirectory: "/tmp/project",
     mergedVariables: {},
     promptText: "prompt",
     arguments: null,

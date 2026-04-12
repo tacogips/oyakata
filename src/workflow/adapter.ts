@@ -28,6 +28,7 @@ export interface AdapterExecutionInput {
   readonly nodeId: string;
   readonly nodeExecId: string;
   readonly node: AgentNodePayload;
+  readonly workingDirectory: string;
   readonly mergedVariables: Readonly<Record<string, unknown>>;
   readonly systemPromptText?: string;
   readonly promptText: string;

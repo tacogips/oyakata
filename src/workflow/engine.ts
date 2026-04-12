@@ -73,6 +73,10 @@ import {
   saveSession,
   type SessionStoreOptions,
 } from "./session-store";
+import {
+  resolveNodeExecutionWorkingDirectory,
+  resolveWorkflowExecutionWorkingDirectory,
+} from "./working-directory";
 import type {
   AgentNodePayload,
   JsonObject,
@@ -88,6 +92,7 @@ import { asAgentNodePayload } from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
+  readonly workflowWorkingDirectory?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
@@ -267,6 +272,7 @@ async function executeAdapterWithTimeout(
 
 async function executeNativeNodeWithTimeout(input: {
   readonly workflowDirectory: string;
+  readonly workflowWorkingDirectory: string;
   readonly artifactWorkflowRoot: string;
   readonly workflowId: string;
   readonly workflowDescription: string;
@@ -299,6 +305,7 @@ async function executeNativeNodeWithTimeout(input: {
       executeNativeNode(
         {
           workflowDirectory: input.workflowDirectory,
+          workflowWorkingDirectory: input.workflowWorkingDirectory,
           artifactWorkflowRoot: input.artifactWorkflowRoot,
           workflowId: input.workflowId,
           workflowDescription: input.workflowDescription,
@@ -1018,6 +1025,9 @@ function buildChildWorkflowCallOptions(
       : { sessionStoreRoot: options.sessionStoreRoot }),
     ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory: options.workflowWorkingDirectory }),
     runtimeVariables,
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
     ...(options.maxLoopIterations === undefined
@@ -1200,7 +1210,9 @@ async function executeWorkflowCallsForNode(input: {
       ...(workflowCall.resultNodeId === undefined
         ? {}
         : { resultNodeId: workflowCall.resultNodeId }),
-      ...(childOutputRef === undefined ? {} : { resultOutputRef: childOutputRef }),
+      ...(childOutputRef === undefined
+        ? {}
+        : { resultOutputRef: childOutputRef }),
     });
 
     if (workflowCall.resultNodeId === undefined) {
@@ -1845,6 +1857,23 @@ async function runWorkflowInternal(
   guards?: EngineExecutionGuards,
   workflowCallAncestors: readonly string[] = [],
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
+  let workflowWorkingDirectory: string;
+  try {
+    workflowWorkingDirectory = resolveWorkflowExecutionWorkingDirectory({
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      ...(options.workflowWorkingDirectory === undefined
+        ? {}
+        : { workflowWorkingDirectory: options.workflowWorkingDirectory }),
+    });
+  } catch (error: unknown) {
+    return err({
+      exitCode: 2,
+      message:
+        error instanceof Error
+          ? error.message
+          : "workingDirectory must be a non-empty path when provided",
+    });
+  }
   const loaded = await loadWorkflowFromDisk(workflowName, options);
   if (!loaded.ok) {
     return err({
@@ -2887,6 +2916,10 @@ async function runWorkflowInternal(
                       nodeId,
                       nodeExecId,
                       node: agentNodePayload,
+                      workingDirectory: resolveNodeExecutionWorkingDirectory(
+                        workflowWorkingDirectory,
+                        agentNodePayload.workingDirectory,
+                      ),
                       mergedVariables,
                       ...(systemPromptText === undefined
                         ? {}
@@ -2911,6 +2944,7 @@ async function runWorkflowInternal(
                   )
                 : await executeNativeNodeWithTimeout({
                     workflowDirectory: loaded.value.workflowDirectory,
+                    workflowWorkingDirectory,
                     artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
                     workflowId: workflow.workflowId,
                     workflowDescription: workflow.description,
@@ -4010,7 +4044,8 @@ async function runWorkflowInternal(
         });
       }
       currentCommunications = workflowCallResult.value.communications;
-      currentCommunicationCounter = workflowCallResult.value.communicationCounter;
+      currentCommunicationCounter =
+        workflowCallResult.value.communicationCounter;
 
       const transitions = [
         ...session.transitions,
@@ -4028,9 +4063,7 @@ async function runWorkflowInternal(
           ...queue,
           ...transitionNextNodes,
           ...workflowCallResult.value.queuedNodeIds,
-        ].filter(
-          (value, index, all) => all.indexOf(value) === index,
-        ),
+        ].filter((value, index, all) => all.indexOf(value) === index),
         nodeExecutions,
         communicationCounter: currentCommunicationCounter,
         communications: currentCommunications,

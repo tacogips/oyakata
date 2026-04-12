@@ -17,6 +17,7 @@ const baseInput: AdapterExecutionInput = {
     promptTemplate: "test",
     variables: {},
   },
+  workingDirectory: "/tmp/project",
   mergedVariables: {},
   promptText: "hello",
   arguments: { key: "value" },
@@ -150,9 +151,14 @@ describe("ClaudeCodeAgentAdapter", () => {
     expect(output.promptText).toBe("system\n\nhello");
     expect(output.payload).toEqual({ text: "local claude reply" });
     expect(output.backendSession?.sessionId).toBe("claude-session-1");
+    expect(fixture.createRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/tmp/project",
+      }),
+    );
     expect(fixture.startSession).toHaveBeenCalledWith({
       prompt: "hello",
-      projectPath: process.cwd(),
+      projectPath: "/tmp/project",
       systemPrompt: "system",
     });
   });

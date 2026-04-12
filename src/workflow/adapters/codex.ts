@@ -142,7 +142,7 @@ function resolveLocalSessionConfig(
     promptText,
     sessionConfig: {
       prompt: promptText,
-      cwd: config.cwd ?? process.cwd(),
+      cwd: config.cwd ?? input.workingDirectory,
       model: input.node.model,
       ...(config.sandbox === undefined ? {} : { sandbox: config.sandbox }),
       ...(config.approvalMode === undefined

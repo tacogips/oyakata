@@ -18,6 +18,9 @@ import {
   shouldFallbackFromOpenTuiError,
 } from "./cli";
 import type { CliDependencies } from "./cli";
+import * as workflowCallNode from "./workflow/call-node";
+import * as workflowEngine from "./workflow/engine";
+import { ok } from "./workflow/result";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
 
@@ -30,6 +33,7 @@ async function makeTempDir(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     tempDirs
       .splice(0)
@@ -1502,6 +1506,8 @@ describe("runCli", () => {
         "sess-remote-001",
         "--endpoint",
         "http://example.test/graphql",
+        "--working-dir",
+        " apps/reviewer ",
         "--output",
         "json",
       ],
@@ -1536,6 +1542,7 @@ describe("runCli", () => {
       variables: {
         input: {
           workflowExecutionId: "sess-remote-001",
+          workingDirectory: "apps/reviewer",
         },
       },
     });
@@ -1603,6 +1610,216 @@ describe("runCli", () => {
       rerunFromNodeId: "workflow-output",
       exitCode: 0,
     });
+  });
+
+  test("local session resume forwards normalized workflow run overrides", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-local-resume",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "main-worker",
+      runtimeVariables: {},
+    });
+    await saveSession(session, { sessionStoreRoot });
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue(
+        ok({
+          session: {
+            ...session,
+            status: "completed",
+          },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult),
+      );
+
+    const code = await runCli(
+      [
+        "session",
+        "resume",
+        "sess-local-resume",
+        "--session-store",
+        sessionStoreRoot,
+        "--working-dir",
+        " apps/reviewer ",
+        "--dry-run",
+        "--max-steps",
+        "5",
+        "--max-loop-iterations",
+        "3",
+        "--default-timeout-ms",
+        "900",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        sessionStoreRoot,
+        resumeSessionId: "sess-local-resume",
+        workflowWorkingDirectory: "apps/reviewer",
+        dryRun: true,
+        maxSteps: 5,
+        maxLoopIterations: 3,
+        defaultTimeoutMs: 900,
+      }),
+    );
+  });
+
+  test("local session rerun forwards normalized workflow run overrides", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-local-rerun",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "main-worker",
+      runtimeVariables: {},
+    });
+    await saveSession(session, { sessionStoreRoot });
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue(
+        ok({
+          session: {
+            ...session,
+            sessionId: "sess-local-rerun-2",
+            status: "running",
+          },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult),
+      );
+
+    const code = await runCli(
+      [
+        "session",
+        "rerun",
+        "sess-local-rerun",
+        "workflow-output",
+        "--session-store",
+        sessionStoreRoot,
+        "--working-dir",
+        " apps/reviewer ",
+        "--dry-run",
+        "--max-steps",
+        "7",
+        "--max-loop-iterations",
+        "4",
+        "--default-timeout-ms",
+        "1200",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        sessionStoreRoot,
+        rerunFromSessionId: "sess-local-rerun",
+        rerunFromNodeId: "workflow-output",
+        workflowWorkingDirectory: "apps/reviewer",
+        dryRun: true,
+        maxSteps: 7,
+        maxLoopIterations: 4,
+        defaultTimeoutMs: 1200,
+      }),
+    );
+  });
+
+  test("local call-node forwards normalized working directory overrides", async () => {
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-call-node-local",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "writer",
+      runtimeVariables: {},
+    });
+
+    const callNodeSpy = vi
+      .spyOn(workflowCallNode, "callNode")
+      .mockResolvedValue(
+        ok({
+          session,
+          nodeExecution: {
+            nodeId: "writer",
+            nodeExecId: "exec-1",
+            status: "succeeded",
+          },
+          output: { ok: true },
+          outputRef: {
+            type: "json",
+            path: "artifacts/output.json",
+          },
+          exitCode: 0,
+        } as unknown as workflowCallNode.CallNodeSuccess),
+      );
+
+    const code = await runCli(
+      [
+        "call-node",
+        "demo",
+        "sess-call-node-local",
+        "writer",
+        "--working-dir",
+        " apps/reviewer ",
+        "--default-timeout-ms",
+        "750",
+        "--dry-run",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(callNodeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflowId: "demo",
+        workflowRunId: "sess-call-node-local",
+        nodeId: "writer",
+        workflowWorkingDirectory: "apps/reviewer",
+        defaultTimeoutMs: 750,
+        dryRun: true,
+      }),
+    );
   });
 
   test("workflow run rejects --mock-scenario when using remote GraphQL transport", async () => {

@@ -22,14 +22,17 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Active inspection output should label structural compatibility counts as `legacySubWorkflows` rather than presenting raw `subWorkflows` as a peer concept to authored `workflowCalls`.
 - `cli workflow run <name>`
   - Execute `<workflow-root>/<name>/workflow.json` and all referenced workflow-local node payload files.
+  - Accepts `--working-dir` / `--working-directory` to override the workflow execution working directory for that run.
 - `session progress <session-id>`
   - Show queue, execution counts, and per-node restart/execution summary.
 - `session status <session-id>`
   - Show the persisted workflow-session snapshot.
 - `session resume <session-id>`
   - Continue an interrupted session from persisted state.
+  - Accepts `--working-dir` / `--working-directory` to override the execution working directory used for resumed node execution.
 - `session rerun <session-id> <node-id>`
   - Start a new run from a chosen node in an existing session.
+  - Accepts `--working-dir` / `--working-directory` to override the workflow execution working directory for the rerun.
 - `call-node <workflow-id> <workflow-run-id> <node-id>`
   - Execute one node directly against an existing run context for local debugging.
 - `export <workflow-id> <workflow-run-id>`
@@ -64,6 +67,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | `--workflow-root`       | string (path) | nearest ancestor `./.divedra`                                     | Root directory containing workflow definitions                                                                                                             |
 | `--artifact-root`       | string (path) | derived from `DIVEDRA_ARTIFACT_DIR` (see env) / `{root}/workflow` | Root directory for execution artifacts                                                                                                                     |
 | `--session-store`       | string (path) | derived from `DIVEDRA_SESSION_STORE` / `{root}/sessions`          | Root directory for persisted workflow sessions                                                                                                             |
+| `--working-dir`         | string (path) | command invocation `cwd`                                          | Workflow execution working directory override; relative values resolve from the command invocation directory                                               |
 | `--workflow`            | string        | none                                                              | Workflow name for direct TUI launch (skip workflow chooser)                                                                                                |
 | `--resume-session`      | string        | none                                                              | Session id to preselect for interactive TUI resume/inspection, or to resume immediately in non-interactive fallback mode                                   |
 | `--mock-scenario`       | string (path) | none                                                              | Deterministic node-output fixture map for local execution/testing paths                                                                                    |

@@ -126,6 +126,7 @@ function workflowRunRequestOptionsFromBody(
   body: JsonObject,
 ): WorkflowRunRequestOptions {
   const runtimeVariables = optionalObjectField(body, "runtimeVariables") ?? {};
+  const workingDirectory = optionalTrimmedStringField(body, "workingDirectory");
   const mockScenario = readMockScenario(body, "mockScenario");
   const maxSteps = optionalNumberField(body, "maxSteps");
   const maxLoopIterations = optionalNumberField(body, "maxLoopIterations");
@@ -133,6 +134,7 @@ function workflowRunRequestOptionsFromBody(
 
   return {
     runtimeVariables,
+    ...(workingDirectory === undefined ? {} : { workingDirectory }),
     ...(mockScenario === undefined ? {} : { mockScenario }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),

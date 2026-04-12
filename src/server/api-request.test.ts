@@ -28,6 +28,7 @@ describe("api-request", () => {
   test("parses shared workflow execute request options", () => {
     const parsed = readWorkflowExecuteRequestOptions({
       runtimeVariables: { topic: "demo" },
+      workingDirectory: " apps/reviewer ",
       mockScenario: { "worker-1": { mode: "success", output: { ok: true } } },
       async: true,
       maxSteps: 12,
@@ -38,6 +39,7 @@ describe("api-request", () => {
 
     expect(parsed).toEqual({
       runtimeVariables: { topic: "demo" },
+      workingDirectory: "apps/reviewer",
       mockScenario: { "worker-1": { mode: "success", output: { ok: true } } },
       asyncMode: true,
       maxSteps: 12,

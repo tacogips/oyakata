@@ -48,6 +48,7 @@ import { createSessionId } from "../workflow/session";
 import type { WorkflowExecutionSummary } from "../shared/ui-contract";
 import { validateWorkflowBundleDetailed } from "../workflow/validate";
 import { deriveWorkflowVisualization } from "../workflow/visualization";
+import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import type {
   CreateWorkflowDefinitionInput,
   CommunicationConnection,
@@ -156,7 +157,9 @@ function resolveScopedManagerSessionId(
   return resolveAmbientManagerExecutionContext(context.env)?.managerSessionId;
 }
 
-function resolveScopedAuthToken(context: GraphqlRequestContext): string | undefined {
+function resolveScopedAuthToken(
+  context: GraphqlRequestContext,
+): string | undefined {
   if (context.authToken !== undefined) {
     return context.authToken;
   }
@@ -183,7 +186,11 @@ async function listWorkflowDefinitionNames(
     if (!entry.isDirectory()) {
       continue;
     }
-    const workflowPath = path.join(roots.workflowRoot, entry.name, "workflow.json");
+    const workflowPath = path.join(
+      roots.workflowRoot,
+      entry.name,
+      "workflow.json",
+    );
     try {
       const details = await stat(workflowPath);
       if (details.isFile()) {
@@ -223,7 +230,9 @@ function assertWorkflowDefinitionWritable(
     context.fixedWorkflowName !== undefined &&
     context.fixedWorkflowName !== workflowName
   ) {
-    throw new Error("cannot write workflows outside fixed workflow mode target");
+    throw new Error(
+      "cannot write workflows outside fixed workflow mode target",
+    );
   }
 }
 
@@ -236,7 +245,9 @@ async function buildWorkflowDefinitionView(
   if (!loaded.ok) {
     return null;
   }
-  const nodeFiles = loaded.value.bundle.workflow.nodes.map((node) => node.nodeFile);
+  const nodeFiles = loaded.value.bundle.workflow.nodes.map(
+    (node) => node.nodeFile,
+  );
   const revision = await computeWorkflowRevisionFromFiles(
     loaded.value.workflowDirectory,
     nodeFiles,
@@ -275,9 +286,14 @@ async function createWorkflowDefinitionMutation(
   if (!created.ok) {
     throw new Error(created.error.message);
   }
-  const loaded = await buildWorkflowDefinitionView(created.value.workflowName, context);
+  const loaded = await buildWorkflowDefinitionView(
+    created.value.workflowName,
+    context,
+  );
   if (loaded === null) {
-    throw new Error(`workflow '${created.value.workflowName}' was not found after creation`);
+    throw new Error(
+      `workflow '${created.value.workflowName}' was not found after creation`,
+    );
   }
   return loaded;
 }
@@ -335,9 +351,12 @@ async function validateWorkflowDefinitionMutation(
 ): Promise<ValidateWorkflowDefinitionPayload> {
   if (input.bundle !== undefined) {
     const validation = validateWorkflowBundleDetailed({
-      workflow: input.bundle.workflow as unknown as Readonly<Record<string, unknown>>,
-      nodePayloads:
-        input.bundle.nodePayloads as unknown as Readonly<Record<string, unknown>>,
+      workflow: input.bundle.workflow as unknown as Readonly<
+        Record<string, unknown>
+      >,
+      nodePayloads: input.bundle.nodePayloads as unknown as Readonly<
+        Record<string, unknown>
+      >,
     });
     if (!validation.ok) {
       return {
@@ -381,11 +400,15 @@ async function authenticateManagerScope(
     context,
   );
   if (managerSessionId === undefined) {
-    throw new Error("managerSessionId is required for manager-scoped GraphQL operations");
+    throw new Error(
+      "managerSessionId is required for manager-scoped GraphQL operations",
+    );
   }
   const authToken = resolveScopedAuthToken(context);
   if (authToken === undefined) {
-    throw new Error("manager auth token is required for manager-scoped GraphQL operations");
+    throw new Error(
+      "manager auth token is required for manager-scoped GraphQL operations",
+    );
   }
 
   const managerStore = resolveManagerStore(context, deps);
@@ -413,7 +436,9 @@ function assertWorkflowExecutionScope(
     scope.session.workflowId !== workflowId ||
     scope.session.workflowExecutionId !== workflowExecutionId
   ) {
-    throw new Error("manager session scope does not match the requested workflow execution");
+    throw new Error(
+      "manager session scope does not match the requested workflow execution",
+    );
   }
 }
 
@@ -425,13 +450,17 @@ function assertManagerIdentity(
     input.managerNodeId !== undefined &&
     input.managerNodeId !== scope.session.managerNodeId
   ) {
-    throw new Error("managerNodeId does not match the authenticated manager session");
+    throw new Error(
+      "managerNodeId does not match the authenticated manager session",
+    );
   }
   if (
     input.managerNodeExecId !== undefined &&
     input.managerNodeExecId !== scope.session.managerNodeExecId
   ) {
-    throw new Error("managerNodeExecId does not match the authenticated manager session");
+    throw new Error(
+      "managerNodeExecId does not match the authenticated manager session",
+    );
   }
 }
 
@@ -468,8 +497,11 @@ async function buildNodeExecutionViewFromState(
   );
   const logLimit = recentLogLimit ?? 20;
   const recentLogs =
-    logLimit <= 0 ? [] : matchingLogs.slice(Math.max(matchingLogs.length - logLimit, 0));
-  const artifactDir = runtimeExecution?.artifactDir ?? sessionRecord.artifactDir;
+    logLimit <= 0
+      ? []
+      : matchingLogs.slice(Math.max(matchingLogs.length - logLimit, 0));
+  const artifactDir =
+    runtimeExecution?.artifactDir ?? sessionRecord.artifactDir;
 
   return {
     workflowId: session.workflowId,
@@ -479,7 +511,9 @@ async function buildNodeExecutionViewFromState(
     status: sessionRecord.status,
     startedAt: sessionRecord.startedAt,
     endedAt: sessionRecord.endedAt,
-    ...(sessionRecord.attempt === undefined ? {} : { attempt: sessionRecord.attempt }),
+    ...(sessionRecord.attempt === undefined
+      ? {}
+      : { attempt: sessionRecord.attempt }),
     ...(sessionRecord.outputAttemptCount === undefined
       ? {}
       : { outputAttemptCount: sessionRecord.outputAttemptCount }),
@@ -500,7 +534,11 @@ async function buildNodeExecutionViewFromState(
       runtimeExecution?.outputJson ??
       (await readOptionalText(path.join(artifactDir, "output.json"))),
     meta: await readOptionalText(path.join(artifactDir, "meta.json")),
-    terminalMessage: findTerminalMessage(session, sessionRecord.nodeExecId, matchingLogs),
+    terminalMessage: findTerminalMessage(
+      session,
+      sessionRecord.nodeExecId,
+      matchingLogs,
+    ),
     recentLogs,
   };
 }
@@ -517,7 +555,8 @@ async function buildNodeExecutionView(
   const session = loaded.value;
   const sessionRecord = session.nodeExecutions.find(
     (execution) =>
-      execution.nodeId === input.nodeId && execution.nodeExecId === input.nodeExecId,
+      execution.nodeId === input.nodeId &&
+      execution.nodeExecId === input.nodeExecId,
   );
   if (sessionRecord === undefined) {
     return null;
@@ -529,9 +568,13 @@ async function buildNodeExecutionView(
   );
   const runtimeExecution = runtimeExecutions.find(
     (execution) =>
-      execution.nodeId === input.nodeId && execution.nodeExecId === input.nodeExecId,
+      execution.nodeId === input.nodeId &&
+      execution.nodeExecId === input.nodeExecId,
   );
-  const runtimeLogs = await listRuntimeNodeLogs(input.workflowExecutionId, context);
+  const runtimeLogs = await listRuntimeNodeLogs(
+    input.workflowExecutionId,
+    context,
+  );
 
   return buildNodeExecutionViewFromState(
     session,
@@ -577,9 +620,7 @@ async function buildWorkflowExecutionConnection(
   );
 
   const filtered = loadedSessions
-    .filter(
-      (entry): entry is WorkflowExecutionSummary => entry !== undefined,
-    )
+    .filter((entry): entry is WorkflowExecutionSummary => entry !== undefined)
     .filter((entry) =>
       input.workflowName === undefined
         ? true
@@ -601,7 +642,9 @@ async function buildWorkflowExecutionConnection(
         );
   const totalCount = filtered.length;
   const pageSize =
-    input.first === undefined || input.first <= 0 ? filtered.length : input.first;
+    input.first === undefined || input.first <= 0
+      ? filtered.length
+      : input.first;
   const items = filtered.slice(startIndex, startIndex + pageSize);
   const nextCursor =
     startIndex + pageSize < filtered.length && items.length > 0
@@ -627,7 +670,10 @@ async function buildWorkflowExecutionView(
     input.workflowExecutionId,
     context,
   );
-  const nodeLogs = await listRuntimeNodeLogs(input.workflowExecutionId, context);
+  const nodeLogs = await listRuntimeNodeLogs(
+    input.workflowExecutionId,
+    context,
+  );
   return {
     workflowExecutionId: input.workflowExecutionId,
     session: loaded.value,
@@ -704,10 +750,16 @@ async function buildCommunicationConnection(
     if (communication.workflowId !== input.workflowId) {
       return false;
     }
-    if (input.fromNodeId !== undefined && communication.fromNodeId !== input.fromNodeId) {
+    if (
+      input.fromNodeId !== undefined &&
+      communication.fromNodeId !== input.fromNodeId
+    ) {
       return false;
     }
-    if (input.toNodeId !== undefined && communication.toNodeId !== input.toNodeId) {
+    if (
+      input.toNodeId !== undefined &&
+      communication.toNodeId !== input.toNodeId
+    ) {
       return false;
     }
     if (input.status !== undefined && communication.status !== input.status) {
@@ -718,7 +770,8 @@ async function buildCommunicationConnection(
 
   if (input.afterCommunicationId !== undefined) {
     const cursorIndex = records.findIndex(
-      (communication) => communication.communicationId === input.afterCommunicationId,
+      (communication) =>
+        communication.communicationId === input.afterCommunicationId,
     );
     if (cursorIndex >= 0) {
       records = records.slice(cursorIndex + 1);
@@ -806,8 +859,14 @@ async function executeWorkflowMutation(
   input: ExecuteWorkflowInput,
   context: GraphqlRequestContext,
 ): Promise<ExecuteWorkflowPayload> {
+  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workingDirectory,
+  );
   if (input.async === true) {
-    const loadedWorkflow = await loadWorkflowFromDisk(input.workflowName, context);
+    const loadedWorkflow = await loadWorkflowFromDisk(
+      input.workflowName,
+      context,
+    );
     if (!loadedWorkflow.ok) {
       throw new Error(loadedWorkflow.error.message);
     }
@@ -817,6 +876,9 @@ async function executeWorkflowMutation(
     void runWorkflow(input.workflowName, {
       ...context,
       sessionId: workflowExecutionId,
+      ...(workingDirectory === undefined
+        ? {}
+        : { workflowWorkingDirectory: workingDirectory }),
       ...(input.runtimeVariables === undefined
         ? {}
         : { runtimeVariables: input.runtimeVariables }),
@@ -842,6 +904,9 @@ async function executeWorkflowMutation(
 
   const result = await runWorkflow(input.workflowName, {
     ...context,
+    ...(workingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory: workingDirectory }),
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
@@ -872,6 +937,9 @@ async function resumeWorkflowExecutionMutation(
   input: ResumeWorkflowExecutionInput,
   context: GraphqlRequestContext,
 ): Promise<ResumeWorkflowExecutionPayload> {
+  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workingDirectory,
+  );
   const existing = await loadSession(input.workflowExecutionId, context);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -879,6 +947,17 @@ async function resumeWorkflowExecutionMutation(
   const result = await runWorkflow(existing.value.workflowName, {
     ...context,
     resumeSessionId: input.workflowExecutionId,
+    ...(workingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory: workingDirectory }),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+    ...(input.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: input.defaultTimeoutMs }),
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -895,6 +974,9 @@ async function rerunWorkflowExecutionMutation(
   input: RerunWorkflowExecutionInput,
   context: GraphqlRequestContext,
 ): Promise<RerunWorkflowExecutionPayload> {
+  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workingDirectory,
+  );
   const existing = await loadSession(input.workflowExecutionId, context);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -903,6 +985,9 @@ async function rerunWorkflowExecutionMutation(
     ...context,
     rerunFromSessionId: input.workflowExecutionId,
     rerunFromNodeId: input.nodeId,
+    ...(workingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory: workingDirectory }),
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
@@ -951,7 +1036,7 @@ async function cancelWorkflowExecutionMutation(
   const cancelled: WorkflowSessionState = {
     ...loaded.value,
     status: "cancelled",
-    endedAt: (nowIso)(),
+    endedAt: nowIso(),
     lastError: "cancelled by GraphQL mutation",
   };
   const saved = await saveSession(cancelled, context);
@@ -1160,11 +1245,7 @@ export function createGraphqlSchema(
           input.workflowExecutionId,
           scope,
         );
-        await loadScopedCommunicationForManagerMutation(
-          input,
-          scope,
-          context,
-        );
+        await loadScopedCommunicationForManagerMutation(input, scope, context);
 
         const payloadInput: ServiceRetryCommunicationInput = {
           workflowId: input.workflowId,
@@ -1196,11 +1277,7 @@ export function createGraphqlSchema(
           input.workflowExecutionId,
           scope,
         );
-        await loadScopedCommunicationForManagerMutation(
-          input,
-          scope,
-          context,
-        );
+        await loadScopedCommunicationForManagerMutation(input, scope, context);
 
         const payloadInput: ServiceReplayCommunicationInput = {
           workflowId: input.workflowId,
@@ -1212,10 +1289,10 @@ export function createGraphqlSchema(
             ? {}
             : { idempotencyKey: input.idempotencyKey }),
         };
-        return resolveCommunicationService(
+        return resolveCommunicationService(context, deps).replayCommunication(
+          payloadInput,
           context,
-          deps,
-        ).replayCommunication(payloadInput, context);
+        );
       },
 
       async cancelWorkflowExecution(

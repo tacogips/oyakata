@@ -1250,6 +1250,77 @@ describe("validateWorkflowBundle", () => {
     ).toBe(true);
   });
 
+  test("accepts node-level workingDirectory as a trimmed relative path", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      executionBackend: "claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "worker",
+      workingDirectory: " apps/reviewer ",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.nodePayloads["worker-1"]?.workingDirectory).toBe(
+      "apps/reviewer",
+    );
+  });
+
+  test("trims legacy command.workingDirectory values", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      nodeType: "command",
+      variables: {},
+      command: {
+        scriptPath: "scripts/run.sh",
+        workingDirectory: " legacy-worker ",
+      },
+    };
+
+    const result = validateWorkflowBundle(raw);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(
+      result.value.nodePayloads["worker-1"]?.command?.workingDirectory,
+    ).toBe("legacy-worker");
+  });
+
+  test("rejects empty node-level workingDirectory values", () => {
+    const raw = makeValidRaw();
+    raw.nodePayloads["node-worker-1.json"] = {
+      id: "worker-1",
+      executionBackend: "claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "worker",
+      workingDirectory: "   ",
+      variables: {},
+    };
+
+    const result = validateWorkflowBundle(raw);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "nodePayloads.node-worker-1.json.workingDirectory" &&
+          issue.message.includes("absolute or relative path"),
+      ),
+    ).toBe(true);
+  });
+
   test("rejects promptTemplateFile paths that target canonical workflow definition files", () => {
     const raw = makeValidRaw();
     raw.nodePayloads["node-worker-1.json"] = {
