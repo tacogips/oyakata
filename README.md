@@ -115,6 +115,7 @@ Primary commands implemented in `src/cli.ts`:
 - `session resume <session-id>`
 - `session rerun <session-id> <node-id>`
 - `serve [workflow-name]`
+- `web serve [workflow-name]`
 - `gql <graphql-document>`
 - `tui [workflow-name]`
 - `call-node <workflow-id> <workflow-run-id> <node-id>`
@@ -122,6 +123,8 @@ Primary commands implemented in `src/cli.ts`:
 - `hook [--vendor claude-code|codex]`
 
 `workflow create <name>` scaffolds a role-based starter with a `claude-code-agent` manager node and a `codex-agent` worker node. The generated `workflow.json` prefers the authored-minimal surface and omits compatibility/default fields such as empty `subWorkflows`, synthesized `edges`, default `branching`, and node-level `completion: { "type": "none" }` unless they are needed. Pass `--worker-only` to scaffold a manager-less starter whose explicit `entryNodeId` points at `main-worker`.
+
+`serve` and `web serve` start the local Bun HTTP server. The root page serves a read-only Solid workflow viewer with the workflow node graph, execution run list, and selected run logs.
 
 Useful options:
 
@@ -136,6 +139,7 @@ Useful options:
 `workflow inspect` surfaces the active cross-workflow count as `workflowCalls`
 and labels any remaining structural compatibility count as
 `legacySubWorkflows`.
+
 - `--dry-run`
 - `--max-steps <n>`
 - `--max-loop-iterations <n>`

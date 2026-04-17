@@ -1912,6 +1912,50 @@ describe("runCli", () => {
     expect(payload.port).toBe(7777);
   });
 
+  test("web serve command uses the serve backend", async () => {
+    const capture = createIoCapture();
+    const started: Array<{
+      host?: string;
+      port?: number;
+      fixedWorkflowName?: string;
+    }> = [];
+
+    const code = await runCli(
+      [
+        "web",
+        "serve",
+        "demo",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "7777",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async (options) => {
+          started.push(options);
+          return {
+            host: options.host ?? "127.0.0.1",
+            port: options.port ?? 7777,
+            stop: () => {},
+          };
+        },
+        isInteractiveTerminal: () => true,
+        waitForServeShutdown: async () => {},
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(started).toHaveLength(1);
+    expect(started[0]?.fixedWorkflowName).toBe("demo");
+    expect(JSON.parse(capture.stdout.join("\n"))).toMatchObject({
+      fixedWorkflowName: "demo",
+      port: 7777,
+    });
+  });
+
   test("serve reports the actual bound port returned by the server", async () => {
     const capture = createIoCapture();
 

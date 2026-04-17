@@ -196,10 +196,12 @@ Responsibilities:
 
 Serve-mode behavior:
 
-- `divedra serve` runs a local HTTP control plane only
+- `divedra serve` and `divedra web serve` run the same local HTTP control plane
+- `/`, `/web`, and `/ui` serve a read-only Solid workflow viewer shell
+- `/assets/workflow-viewer.js` serves the bundled browser viewer asset, falling back to a source build in development
 - an optional fixed workflow name constrains GraphQL workflow-definition access to that authored bundle
 - `readOnly` is enforced for write mutations
-- no browser asset serving or bootstrap REST surface remains in the current implementation
+- legacy workflow/session REST routes remain removed; browser data access goes through `/graphql`
 
 Manager scope rules:
 

@@ -376,6 +376,9 @@ function printHelp(io: CliIo): void {
     "  divedra serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]",
   );
   io.stdout(
+    "  divedra web serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]",
+  );
+  io.stdout(
     "  divedra gql <graphql-document> [--variables <json|@file>] [--endpoint <url>] [--auth-token <token>]",
   );
   io.stdout(
@@ -1623,7 +1626,8 @@ export async function runCli(
     });
   }
 
-  if (scope === "serve") {
+  if (scope === "serve" || (scope === "web" && command === "serve")) {
+    const serveWorkflowName = scope === "web" ? target : command;
     try {
       const started = await deps.startServe({
         ...sharedOptions,
@@ -1633,7 +1637,9 @@ export async function runCli(
         ...(parsed.options.port === undefined
           ? {}
           : { port: parsed.options.port }),
-        ...(command === undefined ? {} : { fixedWorkflowName: command }),
+        ...(serveWorkflowName === undefined
+          ? {}
+          : { fixedWorkflowName: serveWorkflowName }),
         ...(parsed.options.readOnly ? { readOnly: true } : {}),
         ...(parsed.options.noExec ? { noExec: true } : {}),
       });
@@ -1642,7 +1648,7 @@ export async function runCli(
         emitJson(io, {
           host: started.host,
           port: started.port,
-          fixedWorkflowName: command,
+          fixedWorkflowName: serveWorkflowName,
           readOnly: parsed.options.readOnly,
           noExec: parsed.options.noExec,
         });

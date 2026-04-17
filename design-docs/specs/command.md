@@ -46,7 +46,10 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - If `workflow-name` is provided, workflow-definition access is constrained to that workflow.
   - Exposes `/graphql` for workflow-definition, execution, communication, and manager-control operations.
   - Exposes `/healthz` for liveness checks.
-  - Does not serve browser assets or workflow/session REST routes.
+  - Serves the read-only browser workflow viewer at `/`, `/web`, and `/ui`; the viewer uses `/graphql` for data.
+  - Does not restore legacy workflow/session REST routes.
+- `web serve [workflow-name]`
+  - Alias for `serve [workflow-name]` for users who want to start the browser viewer explicitly.
 - `tui`
   - Start interactive terminal UI for workflow selection and execution.
   - Interactive OpenTUI mode opens the unified workspace/history/run app directly; workflow selection happens inside that workspace screen.

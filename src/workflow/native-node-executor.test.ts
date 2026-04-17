@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -16,9 +16,9 @@ async function makeTempDir(): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -41,6 +41,23 @@ async function writeReportCwdScript(
     { encoding: "utf8", mode: 0o755 },
   );
   return path.join(relativeDirectory, fileName);
+}
+
+function readPayloadCwd(payload: Readonly<Record<string, unknown>>): string {
+  const cwd = payload["cwd"];
+  if (typeof cwd !== "string") {
+    throw new Error("native node test payload did not include a string cwd");
+  }
+  return cwd;
+}
+
+async function expectPayloadCwd(
+  payload: Readonly<Record<string, unknown>>,
+  expectedPath: string,
+): Promise<void> {
+  expect(await realpath(readPayloadCwd(payload))).toBe(
+    await realpath(expectedPath),
+  );
 }
 
 function makeExecutionMailbox() {
@@ -124,7 +141,7 @@ describe("executeNativeNode", () => {
       },
     );
 
-    expect(output.payload).toEqual({ cwd: workflowWorkingDirectory });
+    await expectPayloadCwd(output.payload, workflowWorkingDirectory);
   });
 
   test("resolves node-level relative working directory from the workflow working directory", async () => {
@@ -173,7 +190,7 @@ describe("executeNativeNode", () => {
       },
     );
 
-    expect(output.payload).toEqual({ cwd: nodeWorkingDirectory });
+    await expectPayloadCwd(output.payload, nodeWorkingDirectory);
   });
 
   test("keeps command.workingDirectory as a compatibility override", async () => {
@@ -221,6 +238,6 @@ describe("executeNativeNode", () => {
       },
     );
 
-    expect(output.payload).toEqual({ cwd: commandWorkingDirectory });
+    await expectPayloadCwd(output.payload, commandWorkingDirectory);
   });
 });

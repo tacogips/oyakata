@@ -15,8 +15,9 @@
   },
   "scripts": {
     "dev": "bun run --watch src/main.ts",
-    "build": "bun run build:server",
+    "build": "bun run build:server && bun run build:web",
     "build:server": "bun build src/main.ts --outdir dist --target bun",
+    "build:web": "bun scripts/build-web.mjs",
     "typecheck:server": "tsc --noEmit",
     "start": "bun run src/main.ts",
     "test": "bash ./scripts/run-bun-tests.sh",
@@ -47,7 +48,10 @@
     "solid-js": "1.9.11"
   },
   "devDependencies": {
+    "@babel/core": "7.28.0",
+    "@babel/preset-typescript": "7.27.1",
     "@types/bun": "1.1.14",
+    "babel-preset-solid": "1.9.10",
     "prettier": "3.4.2",
     "typescript": "5.7.2",
     "vitest": "2.1.8"
