@@ -1240,7 +1240,7 @@ describe("runCli", () => {
     expect(exportCapture.stderr.join("\n")).toContain("unknown scope: export");
   });
 
-  test("session logs prints runtime node logs as jsonl", async () => {
+  test("session logs prints runtime node and communication logs as jsonl", async () => {
     const root = await makeTempDir();
     const run = await createCompletedCliWorkflowRun(root);
 
@@ -1265,14 +1265,57 @@ describe("runCli", () => {
     expect(logsCode).toBe(0);
     const lines = logsCapture.stdout.filter((line) => line.length > 0);
     expect(lines.length).toBeGreaterThan(0);
-    const firstLog = JSON.parse(lines[0] ?? "{}") as {
+    const logs = lines.map((line) => JSON.parse(line)) as Array<{
       sessionId: string;
-      nodeId: string;
+      nodeId: string | null;
+      nodeExecId: string | null;
       message: string;
+      payloadJson: string | null;
+    }>;
+    expect(logs.every((entry) => entry.sessionId === run.sessionId)).toBe(true);
+    expect(
+      logs.some(
+        (entry) =>
+          entry.nodeId !== null &&
+          entry.message.includes("finished with status"),
+      ),
+    ).toBe(true);
+
+    const communicationLog = logs.find((entry) => {
+      if (entry.payloadJson === null) {
+        return false;
+      }
+      const payload = JSON.parse(entry.payloadJson) as {
+        eventType?: string;
+        deliveryKind?: string;
+        transitionWhen?: string;
+      };
+      return (
+        payload.eventType === "communication" &&
+        payload.deliveryKind === "edge-transition" &&
+        payload.transitionWhen === "always"
+      );
+    });
+    expect(communicationLog).toBeTruthy();
+    expect(communicationLog?.message).toContain(
+      "transition divedra-manager -> main-worker when always",
+    );
+    const communicationPayload = JSON.parse(
+      communicationLog?.payloadJson ?? "{}",
+    ) as {
+      eventType: string;
+      fromNodeId: string;
+      toNodeId: string;
+      transitionWhen: string;
+      communicationId: string;
     };
-    expect(firstLog.sessionId).toBe(run.sessionId);
-    expect(firstLog.nodeId).toBeTruthy();
-    expect(firstLog.message).toContain("finished with status");
+    expect(communicationPayload).toMatchObject({
+      eventType: "communication",
+      fromNodeId: "divedra-manager",
+      toNodeId: "main-worker",
+      transitionWhen: "always",
+    });
+    expect(communicationPayload.communicationId).toMatch(/^comm-/);
   });
 
   test("workflow run keeps the runtime db aligned with explicit storage roots", async () => {

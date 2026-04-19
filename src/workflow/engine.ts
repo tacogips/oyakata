@@ -44,6 +44,7 @@ import {
 } from "./node-role";
 import { err, ok, type Result } from "./result";
 import {
+  saveCommunicationEventToRuntimeDb,
   saveNodeExecutionToRuntimeDb,
   saveProcessLogsToRuntimeDb,
 } from "./runtime-db";
@@ -1099,6 +1100,7 @@ async function executeWorkflowCallsForNode(input: {
     });
     const communication = await persistCommunicationArtifact({
       artifactWorkflowRoot: input.artifactWorkflowRoot,
+      runtimeLogOptions: input.options,
       workflowId: input.workflow.workflowId,
       workflowExecutionId: input.session.sessionId,
       communicationCounter: currentCommunicationCounter,
@@ -1266,6 +1268,7 @@ function buildCommitMessageTemplate(
 
 interface CreateCommunicationInput {
   readonly artifactWorkflowRoot: string;
+  readonly runtimeLogOptions?: LoadOptions;
   readonly workflowId: string;
   readonly workflowExecutionId: string;
   readonly communicationCounter: number;
@@ -1387,7 +1390,7 @@ async function persistCommunicationArtifact(
   );
   await writeJsonFile(path.join(communicationDir, "meta.json"), meta);
 
-  return {
+  const communication: CommunicationRecord = {
     workflowId: input.workflowId,
     workflowExecutionId: input.workflowExecutionId,
     communicationId,
@@ -1411,10 +1414,24 @@ async function persistCommunicationArtifact(
     deliveredAt: input.createdAt,
     artifactDir: communicationDir,
   };
+
+  if (input.runtimeLogOptions !== undefined) {
+    try {
+      await saveCommunicationEventToRuntimeDb(
+        communication,
+        input.runtimeLogOptions,
+      );
+    } catch {
+      // runtime DB event logs are best-effort
+    }
+  }
+
+  return communication;
 }
 
 async function persistExternalMailboxInputCommunication(input: {
   readonly artifactWorkflowRoot: string;
+  readonly runtimeLogOptions?: LoadOptions;
   readonly workflowId: string;
   readonly workflowExecutionId: string;
   readonly communicationCounter: number;
@@ -1448,6 +1465,9 @@ async function persistExternalMailboxInputCommunication(input: {
 
   return persistCommunicationArtifact({
     artifactWorkflowRoot: input.artifactWorkflowRoot,
+    ...(input.runtimeLogOptions === undefined
+      ? {}
+      : { runtimeLogOptions: input.runtimeLogOptions }),
     workflowId: input.workflowId,
     workflowExecutionId: input.workflowExecutionId,
     communicationCounter: input.communicationCounter,
@@ -1473,6 +1493,7 @@ async function persistExternalMailboxInputCommunication(input: {
 
 async function persistExternalMailboxOutputCommunication(input: {
   readonly artifactWorkflowRoot: string;
+  readonly runtimeLogOptions?: LoadOptions;
   readonly workflow: WorkflowJson;
   readonly session: WorkflowSessionState;
   readonly execution: NodeExecutionRecord;
@@ -1482,6 +1503,9 @@ async function persistExternalMailboxOutputCommunication(input: {
 }): Promise<CommunicationRecord> {
   return persistCommunicationArtifact({
     artifactWorkflowRoot: input.artifactWorkflowRoot,
+    ...(input.runtimeLogOptions === undefined
+      ? {}
+      : { runtimeLogOptions: input.runtimeLogOptions }),
     workflowId: input.workflow.workflowId,
     workflowExecutionId: input.session.sessionId,
     communicationCounter: input.communicationCounter,
@@ -1861,6 +1885,7 @@ async function runWorkflowInternal(
       const bootstrapCommunication =
         await persistExternalMailboxInputCommunication({
           artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+          runtimeLogOptions: options,
           workflowId: workflow.workflowId,
           workflowExecutionId: session.sessionId,
           communicationCounter: session.communicationCounter,
@@ -2445,6 +2470,7 @@ async function runWorkflowInternal(
             });
             return persistCommunicationArtifact({
               artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              runtimeLogOptions: options,
               workflowId: workflow.workflowId,
               workflowExecutionId: session.sessionId,
               communicationCounter: session.communicationCounter + index,
@@ -3849,6 +3875,7 @@ async function runWorkflowInternal(
           });
           return persistCommunicationArtifact({
             artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+            runtimeLogOptions: options,
             workflowId: workflow.workflowId,
             workflowExecutionId: session.sessionId,
             communicationCounter: currentCommunicationCounter + index,
@@ -3990,6 +4017,7 @@ async function runWorkflowInternal(
           }
           const communication = await persistCommunicationArtifact({
             artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+            runtimeLogOptions: options,
             workflowId: workflow.workflowId,
             workflowExecutionId: session.sessionId,
             communicationCounter: currentCommunicationCounter,
@@ -4027,6 +4055,7 @@ async function runWorkflowInternal(
           for (const forwarded of forwardedPayloads) {
             const communication = await persistCommunicationArtifact({
               artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              runtimeLogOptions: options,
               workflowId: workflow.workflowId,
               workflowExecutionId: session.sessionId,
               communicationCounter: currentCommunicationCounter,
@@ -4060,6 +4089,7 @@ async function runWorkflowInternal(
           for (const forwarded of forwardedPayloads) {
             const communication = await persistCommunicationArtifact({
               artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              runtimeLogOptions: options,
               workflowId: workflow.workflowId,
               workflowExecutionId: session.sessionId,
               communicationCounter: currentCommunicationCounter,
@@ -4168,6 +4198,7 @@ async function runWorkflowInternal(
             }
             const communication = await persistCommunicationArtifact({
               artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+              runtimeLogOptions: options,
               workflowId: workflow.workflowId,
               workflowExecutionId: session.sessionId,
               communicationCounter: currentCommunicationCounter,
@@ -4294,6 +4325,7 @@ async function runWorkflowInternal(
       externalOutputCommunication =
         await persistExternalMailboxOutputCommunication({
           artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+          runtimeLogOptions: options,
           workflow,
           session: completed,
           execution: publishedResultExecution,

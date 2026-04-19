@@ -3,6 +3,7 @@ import path from "node:path";
 import { Database } from "bun:sqlite";
 import { resolveRootDataDir } from "./paths";
 import type {
+  CommunicationRecord,
   NodeExecutionRecord,
   SessionStatus,
   WorkflowSessionState,
@@ -410,6 +411,61 @@ export async function saveProcessLogsToRuntimeDb(
       }
     });
     insertLogs(input.processLogs);
+  });
+}
+
+function formatCommunicationEventMessage(
+  communication: CommunicationRecord,
+): string {
+  return [
+    `transition ${communication.fromNodeId} -> ${communication.toNodeId}`,
+    `when ${communication.transitionWhen}`,
+    `delivered communication ${communication.communicationId}`,
+    `as ${communication.deliveryKind}`,
+  ].join(" ");
+}
+
+export async function saveCommunicationEventToRuntimeDb(
+  communication: CommunicationRecord,
+  options: LoadOptions = {},
+): Promise<void> {
+  await withDatabase(options, (db) => {
+    insertNodeLog(
+      db,
+      toNodeLogRow({
+        sessionId: communication.workflowExecutionId,
+        nodeId: communication.fromNodeId,
+        nodeExecId: communication.sourceNodeExecId,
+        level:
+          communication.status === "delivery_failed" ? "warning" : "info",
+        message: formatCommunicationEventMessage(communication),
+        payload: {
+          eventType: "communication",
+          workflowId: communication.workflowId,
+          workflowExecutionId: communication.workflowExecutionId,
+          communicationId: communication.communicationId,
+          fromNodeId: communication.fromNodeId,
+          toNodeId: communication.toNodeId,
+          ...(communication.fromSubWorkflowId === undefined
+            ? {}
+            : { fromSubWorkflowId: communication.fromSubWorkflowId }),
+          ...(communication.toSubWorkflowId === undefined
+            ? {}
+            : { toSubWorkflowId: communication.toSubWorkflowId }),
+          routingScope: communication.routingScope,
+          deliveryKind: communication.deliveryKind,
+          transitionWhen: communication.transitionWhen,
+          sourceNodeExecId: communication.sourceNodeExecId,
+          status: communication.status,
+          artifactDir: communication.artifactDir,
+          createdAt: communication.createdAt,
+          ...(communication.deliveredAt === undefined
+            ? {}
+            : { deliveredAt: communication.deliveredAt }),
+        },
+        at: communication.deliveredAt ?? communication.createdAt,
+      }),
+    );
   });
 }
 
