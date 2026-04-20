@@ -139,9 +139,11 @@ listener adapters, `events list` reads persisted receipt records from the
 runtime database, and `events replay` re-dispatches a stored normalized event
 with replay-specific event and dedupe identifiers. Event dispatch commands can
 use `--mock-scenario <path>` to execute local workflows deterministically
-without a GraphQL endpoint or real agent backend transports. `events replay`
-also accepts `--dry-run` and `--reason <text>` for operator verification and
-receipt audit metadata.
+without a GraphQL endpoint or real agent backend transports. Set
+`DIVEDRA_EVENTS_READ_ONLY=true` or pass `--read-only` to validate and persist
+event receipts without dispatching workflow execution. `events replay` also
+accepts `--dry-run` and `--reason <text>` for operator verification and receipt
+audit metadata.
 
 Useful options:
 

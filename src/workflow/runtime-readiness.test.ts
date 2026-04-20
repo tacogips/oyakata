@@ -19,10 +19,7 @@ async function makeTempDir(): Promise<string> {
   return directory;
 }
 
-async function writeExecutable(
-  filePath: string,
-  body: string,
-): Promise<void> {
+async function writeExecutable(filePath: string, body: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${body}\n`, { mode: 0o755 });
 }
@@ -99,7 +96,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     );
     await writeExecutable(
       path.join(root, "node_modules", ".bin", "claude-code-agent"),
-      "#!/usr/bin/env bash\ncat <<'EOF'\n{\"agent\":\"0.1.0\",\"tools\":{\"claude\":{\"version\":\"2.1.86\",\"error\":null},\"codex\":{\"version\":\"0.116.0\",\"error\":null},\"git\":{\"version\":\"2.53.0\",\"error\":null}}}\nEOF",
+      '#!/usr/bin/env bash\ncat <<\'EOF\'\n{"agent":"0.1.0","tools":{"claude":{"version":"2.1.86","error":null},"codex":{"version":"0.116.0","error":null},"git":{"version":"2.53.0","error":null}}}\nEOF',
     );
 
     const readiness = await inspectWorkflowRuntimeReadiness(
@@ -259,10 +256,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
 
     expect(readiness.ready).toBe(true);
     expect(
-      findRequirement(
-        readiness.requirements,
-        "workflow-feature:workflowCalls",
-      ),
+      findRequirement(readiness.requirements, "workflow-feature:workflowCalls"),
     ).toMatchObject({
       kind: "workflow-feature",
       status: "available",
@@ -342,20 +336,15 @@ describe("inspectWorkflowRuntimeReadiness", () => {
 
     expect(readiness.ready).toBe(false);
     expect(
-      findRequirement(
-        readiness.requirements,
-        "workflow-feature:workflowCalls",
-      ),
+      findRequirement(readiness.requirements, "workflow-feature:workflowCalls"),
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unavailable",
       sourceNodeIds: ["writer"],
     });
     expect(
-      findRequirement(
-        readiness.requirements,
-        "workflow-feature:workflowCalls",
-      ).detail,
+      findRequirement(readiness.requirements, "workflow-feature:workflowCalls")
+        .detail,
     ).toContain("workflow validation failed");
   });
 
@@ -386,10 +375,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
 
     expect(readiness.ready).toBe(false);
     expect(
-      findRequirement(
-        readiness.requirements,
-        "workflow-feature:workflowCalls",
-      ),
+      findRequirement(readiness.requirements, "workflow-feature:workflowCalls"),
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unavailable",
@@ -516,20 +502,15 @@ describe("inspectWorkflowRuntimeReadiness", () => {
 
     expect(readiness.ready).toBe(false);
     expect(
-      findRequirement(
-        readiness.requirements,
-        "workflow-feature:workflowCalls",
-      ),
+      findRequirement(readiness.requirements, "workflow-feature:workflowCalls"),
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unavailable",
       sourceNodeIds: ["manager"],
     });
     expect(
-      findRequirement(
-        readiness.requirements,
-        "workflow-feature:workflowCalls",
-      ).detail,
+      findRequirement(readiness.requirements, "workflow-feature:workflowCalls")
+        .detail,
     ).toContain(
       "recursive workflow-call chains are unsupported: runtime-ready -> review-flow -> runtime-ready",
     );

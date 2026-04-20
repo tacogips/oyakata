@@ -166,9 +166,7 @@ async function runCommand(
         stdout,
         stderr,
         message:
-          stderrText.length > 0
-            ? stderrText
-            : `${command} failed (${reason})`,
+          stderrText.length > 0 ? stderrText : `${command} failed (${reason})`,
       });
     });
 
@@ -217,7 +215,12 @@ async function probeClaudeBackend(
   options: Pick<RequirementProbeOptions, "cwd" | "env">,
 ): Promise<WorkflowRuntimeRequirement> {
   const commandCandidates = toSortedArray([
-    path.join(resolveProbeCwd(options.cwd), "node_modules", ".bin", "claude-code-agent"),
+    path.join(
+      resolveProbeCwd(options.cwd),
+      "node_modules",
+      ".bin",
+      "claude-code-agent",
+    ),
     path.join(process.cwd(), "node_modules", ".bin", "claude-code-agent"),
     "claude-code-agent",
   ]);
@@ -233,13 +236,16 @@ async function probeClaudeBackend(
       ) {
         continue;
       }
-      commandSummary = result.message ?? "claude-code-agent version probe failed";
+      commandSummary =
+        result.message ?? "claude-code-agent version probe failed";
       break;
     }
     try {
       const parsed = JSON.parse(result.stdout) as {
         readonly agent?: string;
-        readonly tools?: Readonly<Record<string, { version: string | null; error: string | null }>>;
+        readonly tools?: Readonly<
+          Record<string, { version: string | null; error: string | null }>
+        >;
       };
       claudeAvailable =
         parsed.tools?.["claude"]?.version !== null &&
@@ -383,7 +389,11 @@ function collectRequirements(
   >();
   const containerRunners = new Map<
     string,
-    { runnerKind: ContainerRunnerKind; runnerPath?: string; nodeIds: Set<string> }
+    {
+      runnerKind: ContainerRunnerKind;
+      runnerPath?: string;
+      nodeIds: Set<string>;
+    }
   >();
   const commandNodeIds = new Set<string>();
   const containerNodeIds = new Set<string>();
@@ -441,12 +451,14 @@ function collectRequirements(
     })),
     containerRunners: [...containerRunners.values()].map((entry) => ({
       runnerKind: entry.runnerKind,
-      ...(entry.runnerPath === undefined ? {} : { runnerPath: entry.runnerPath }),
+      ...(entry.runnerPath === undefined
+        ? {}
+        : { runnerPath: entry.runnerPath }),
       sourceNodeIds: toSortedArray(entry.nodeIds),
     })),
     ...(relevantWorkflowCalls.length === 0
       ? {}
-        : {
+      : {
           workflowCall: {
             rootWorkflowId: bundle.workflow.workflowId,
             callIds: relevantWorkflowCalls.map((call) => call.id),

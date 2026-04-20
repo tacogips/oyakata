@@ -62,9 +62,7 @@ function toExecutionFailure(
   return {
     code: "provider_error",
     message:
-      error instanceof Error
-        ? error.message
-        : input.unknownFailureMessage,
+      error instanceof Error ? error.message : input.unknownFailureMessage,
   };
 }
 

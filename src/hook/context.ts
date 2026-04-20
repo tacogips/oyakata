@@ -58,9 +58,13 @@ export function resolveHookRecordingControls(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): HookRecordingControls {
   return {
-    recordingMode: parseRecordingMode(readEnvValue(env, "DIVEDRA_HOOK_RECORDING")),
+    recordingMode: parseRecordingMode(
+      readEnvValue(env, "DIVEDRA_HOOK_RECORDING"),
+    ),
     strict: parseBoolean(readEnvValue(env, "DIVEDRA_HOOK_STRICT")),
-    captureMode: parseCaptureMode(readEnvValue(env, "DIVEDRA_HOOK_CAPTURE_RAW")),
+    captureMode: parseCaptureMode(
+      readEnvValue(env, "DIVEDRA_HOOK_CAPTURE_RAW"),
+    ),
   };
 }
 

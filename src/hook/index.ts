@@ -53,22 +53,28 @@ export function createReadHookStdin(
   return () => readHookStdin(stream);
 }
 
-function hookRuntimeOptions(
-  deps: HookCommandDependencies,
-): LoadOptions & { readonly captureMode: HookRecordingControls["captureMode"] } {
+function hookRuntimeOptions(deps: HookCommandDependencies): LoadOptions & {
+  readonly captureMode: HookRecordingControls["captureMode"];
+} {
   const env = deps.env ?? process.env;
   const controls = resolveHookRecordingControls(env);
   return {
     env,
     cwd: deps.cwd ?? process.cwd(),
-    ...(deps.rootDataDir === undefined ? {} : { rootDataDir: deps.rootDataDir }),
-    ...(deps.artifactRoot === undefined ? {} : { artifactRoot: deps.artifactRoot }),
+    ...(deps.rootDataDir === undefined
+      ? {}
+      : { rootDataDir: deps.rootDataDir }),
+    ...(deps.artifactRoot === undefined
+      ? {}
+      : { artifactRoot: deps.artifactRoot }),
     captureMode: controls.captureMode,
   };
 }
 
 function recordingErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "unknown hook recording error";
+  return error instanceof Error
+    ? error.message
+    : "unknown hook recording error";
 }
 
 async function recordSuccess(input: {

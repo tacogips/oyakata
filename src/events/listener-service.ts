@@ -1,5 +1,4 @@
-import { isJsonObject } from "../shared/json";
-import { isEventSourceEnabled, loadEventConfiguration } from "./config";
+import { isEventSourceEnabled } from "./config";
 import {
   createDefaultEventSourceRegistry,
   type EventSourceRegistry,
@@ -10,8 +9,12 @@ import {
   type WorkflowTriggerRunnerOptions,
 } from "./trigger-runner";
 import { loadAndValidateEventConfiguration } from "./validate";
-import { verifyWebhookRequest } from "./adapters/webhook";
 import { normalizeS3RepositoryRawEvent } from "./adapters/s3-repository";
+import { verifyWebhookRequest } from "./adapters/webhook";
+import {
+  buildWebhookVerificationSource,
+  resolveEventSourceHttpPath,
+} from "./http-routes";
 import { createEventReplyDispatcher } from "./reply-dispatcher";
 import type { EventSourceAdapter, RawExternalEvent } from "./source-adapter";
 import type {
@@ -19,7 +22,6 @@ import type {
   EventConfiguration,
   EventSourceConfig,
   S3RepositorySourceConfig,
-  WebhookSourceConfig,
 } from "./types";
 
 export interface EventListenerServeOptions
@@ -76,65 +78,70 @@ function requestHeadersToRecord(
   return Object.fromEntries([...headers.entries()]);
 }
 
-function defaultSourcePath(source: EventSourceConfig): string {
-  return `/events/${encodeURIComponent(source.id)}`;
-}
-
-function routePathForSource(source: EventSourceConfig): string | undefined {
-  if (source.kind === "webhook" && typeof source["path"] === "string") {
-    return source["path"];
-  }
-  if (source.kind === "s3-repository") {
-    const eventReceiver = source["eventReceiver"];
-    if (
-      isJsonObject(eventReceiver) &&
-      typeof eventReceiver["path"] === "string"
-    ) {
-      return eventReceiver["path"];
-    }
-    return defaultSourcePath(source);
-  }
-  return undefined;
-}
-
 function isS3RepositorySource(
   source: EventSourceConfig,
 ): source is S3RepositorySourceConfig {
   return source.kind === "s3-repository";
 }
 
-function buildWebhookVerificationSource(
-  source: EventSourceConfig,
-): WebhookSourceConfig | undefined {
-  if (source.kind === "webhook") {
-    return source as WebhookSourceConfig;
+function parseEventListenerPort(rawPort: number | string): number {
+  const port = typeof rawPort === "number" ? rawPort : Number(rawPort);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error(`invalid event listener port '${String(rawPort)}'`);
   }
-  if (source.kind !== "s3-repository") {
-    return undefined;
-  }
-  const eventReceiver = source["eventReceiver"];
-  if (!isJsonObject(eventReceiver)) {
-    return undefined;
-  }
-  return {
-    id: source.id,
-    kind: "webhook",
-    path: routePathForSource(source) ?? defaultSourcePath(source),
-    ...(typeof eventReceiver["signingSecretEnv"] === "string"
-      ? { signingSecretEnv: eventReceiver["signingSecretEnv"] }
-      : {}),
-  };
+  return port;
 }
 
-async function parseRequestBody(request: Request): Promise<{
-  readonly bodyText: string;
-  readonly body: unknown;
-}> {
-  const bodyText = await request.text();
-  return {
-    bodyText,
-    body: bodyText.length === 0 ? {} : (JSON.parse(bodyText) as unknown),
-  };
+function resolveEventListenerPort(input: {
+  readonly optionPort?: number;
+  readonly env: Readonly<Record<string, string | undefined>>;
+}): number {
+  const envPort = input.env["DIVEDRA_EVENTS_PORT"];
+  return parseEventListenerPort(
+    input.optionPort ??
+      (envPort === undefined || envPort.length === 0 ? 43_174 : envPort),
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "unknown error";
+}
+
+async function stopEventListenerResources(input: {
+  readonly abortController: AbortController;
+  readonly handles: readonly Awaited<ReturnType<EventSourceAdapter["start"]>>[];
+  readonly server?: EventListenerServer;
+}): Promise<void> {
+  input.abortController.abort();
+  const failures: string[] = [];
+  const handleResults = await Promise.allSettled(
+    input.handles.map((handle) => handle.stop()),
+  );
+  handleResults.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const sourceId = input.handles[index]?.sourceId ?? "unknown";
+      failures.push(`${sourceId}: ${errorMessage(result.reason)}`);
+    }
+  });
+  try {
+    input.server?.stop();
+  } catch (error: unknown) {
+    failures.push(`http-server: ${errorMessage(error)}`);
+  }
+  if (failures.length > 0) {
+    throw new Error(
+      `failed stopping event listener resources: ${failures.join("; ")}`,
+    );
+  }
+}
+
+function parseRequestJsonBody(bodyText: string): unknown {
+  try {
+    return bodyText.length === 0 ? {} : (JSON.parse(bodyText) as unknown);
+  } catch (error: unknown) {
+    const message = errorMessage(error);
+    throw new Error(`event request body must be valid JSON: ${message}`);
+  }
 }
 
 async function normalizeRouteEvent(input: {
@@ -166,30 +173,38 @@ export async function handleEventHttpRequest(
   if (route === undefined) {
     return json({ error: "event source not found" }, 404);
   }
-  const parsed = await parseRequestBody(request);
-  const verificationSource = buildWebhookVerificationSource(route.source);
-  if (verificationSource !== undefined) {
-    const verified = verifyWebhookRequest({
-      source: verificationSource,
-      headers: requestHeadersToRecord(request.headers),
-      bodyText: parsed.bodyText,
-      env: input.env,
-      now: input.now(),
-    });
-    if (!verified.ok) {
-      return json(
-        { error: "event signature rejected", reason: verified.reason },
-        401,
-      );
+  let body: unknown;
+  let event: Awaited<ReturnType<typeof normalizeRouteEvent>>;
+  try {
+    const bodyText = await request.text();
+    const verificationSource = buildWebhookVerificationSource(route.source);
+    if (verificationSource !== undefined) {
+      const verified = verifyWebhookRequest({
+        source: verificationSource,
+        headers: requestHeadersToRecord(request.headers),
+        bodyText,
+        env: input.env,
+        now: input.now(),
+      });
+      if (!verified.ok) {
+        return json(
+          { error: "event signature rejected", reason: verified.reason },
+          401,
+        );
+      }
     }
+    body = parseRequestJsonBody(bodyText);
+    const raw: RawExternalEvent = {
+      sourceId: route.source.id,
+      receivedAt: input.now().toISOString(),
+      headers: requestHeadersToRecord(request.headers),
+      body,
+    };
+    event = await normalizeRouteEvent({ route, raw });
+  } catch (error: unknown) {
+    return json({ error: errorMessage(error) }, 400);
   }
-  const raw: RawExternalEvent = {
-    sourceId: route.source.id,
-    receivedAt: input.now().toISOString(),
-    headers: requestHeadersToRecord(request.headers),
-    body: parsed.body,
-  };
-  const event = await normalizeRouteEvent({ route, raw });
+
   const eventReplyDispatcher =
     input.triggerOptions.eventReplyDispatcher ??
     createEventReplyDispatcher({
@@ -206,28 +221,32 @@ export async function handleEventHttpRequest(
     eventReplyDispatcher,
   };
   const runner = createWorkflowTriggerRunner(triggerOptions);
-  const results = await dispatchEventToMatchingBindings(
-    {
-      configuration: input.configuration,
-      event,
-      raw: parsed.body,
-      runner,
-    },
-    triggerOptions,
-  );
-  return json(
-    {
-      accepted: true,
-      sourceId: route.source.id,
-      receipts: results.map((result) => ({
-        receiptId: result.receipt.receiptId,
-        status: result.receipt.status,
-        duplicate: result.duplicate,
-        workflowExecutionId: result.workflowExecutionId ?? null,
-      })),
-    },
-    202,
-  );
+  try {
+    const results = await dispatchEventToMatchingBindings(
+      {
+        configuration: input.configuration,
+        event,
+        raw: body,
+        runner,
+      },
+      triggerOptions,
+    );
+    return json(
+      {
+        accepted: true,
+        sourceId: route.source.id,
+        receipts: results.map((result) => ({
+          receiptId: result.receipt.receiptId,
+          status: result.receipt.status,
+          duplicate: result.duplicate,
+          workflowExecutionId: result.workflowExecutionId ?? null,
+        })),
+      },
+      202,
+    );
+  } catch (error: unknown) {
+    return json({ error: errorMessage(error) }, 500);
+  }
 }
 
 export function createEventListenerService(
@@ -247,15 +266,16 @@ export function createEventListenerService(
             .join("; "),
         );
       }
-      const configuration = await loadEventConfiguration(options);
+      const configuration = validation.configuration;
       const abortController = new AbortController();
       const now = (): Date => new Date();
+      const env = options.env ?? process.env;
       const eventReplyDispatcher =
         options.eventReplyDispatcher ??
         createEventReplyDispatcher({
           configuration,
           registry,
-          env: options.env ?? process.env,
+          env,
           ...(options.fetchImpl === undefined
             ? {}
             : { fetchImpl: options.fetchImpl }),
@@ -268,71 +288,84 @@ export function createEventListenerService(
       const runner = createWorkflowTriggerRunner(triggerOptions);
       const handles: Awaited<ReturnType<EventSourceAdapter["start"]>>[] = [];
       const routes: EventHttpRoute[] = [];
-      const enabledSources = configuration.sources.filter(isEventSourceEnabled);
-      for (const source of enabledSources) {
-        const adapter = registry.get(source.kind);
-        if (adapter === undefined) {
-          throw new Error(
-            `no event source adapter registered for '${source.kind}'`,
-          );
+      let server: EventListenerServer | undefined;
+      try {
+        const enabledSources =
+          configuration.sources.filter(isEventSourceEnabled);
+        for (const source of enabledSources) {
+          const adapter = registry.get(source.kind);
+          if (adapter === undefined) {
+            throw new Error(
+              `no event source adapter registered for '${source.kind}'`,
+            );
+          }
+          const routePath = resolveEventSourceHttpPath(source);
+          if (routePath !== undefined) {
+            routes.push({ source, adapter, path: routePath });
+          }
+          if (adapter.capabilities.supportsStart) {
+            handles.push(
+              await adapter.start({
+                source,
+                signal: abortController.signal,
+                now,
+                dispatch: async (event, raw) => {
+                  await dispatchEventToMatchingBindings(
+                    {
+                      configuration,
+                      event,
+                      ...(raw === undefined ? {} : { raw }),
+                      runner,
+                    },
+                    triggerOptions,
+                  );
+                },
+              }),
+            );
+          }
         }
-        const routePath = routePathForSource(source);
-        if (routePath !== undefined) {
-          routes.push({ source, adapter, path: routePath });
-        }
-        if (adapter.capabilities.supportsStart) {
-          handles.push(
-            await adapter.start({
-              source,
-              signal: abortController.signal,
-              now,
-              dispatch: async (event, raw) => {
-                await dispatchEventToMatchingBindings(
-                  {
+
+        const host = options.host ?? env["DIVEDRA_EVENTS_HOST"] ?? "127.0.0.1";
+        const port = resolveEventListenerPort({
+          ...(options.port === undefined ? {} : { optionPort: options.port }),
+          env,
+        });
+        server =
+          routes.length === 0
+            ? undefined
+            : runtime.serve({
+                hostname: host,
+                port,
+                fetch: (request) =>
+                  handleEventHttpRequest(request, {
                     configuration,
-                    event,
-                    ...(raw === undefined ? {} : { raw }),
-                    runner,
-                  },
-                  triggerOptions,
-                );
-              },
-            }),
-          );
-        }
-      }
+                    routes,
+                    triggerOptions,
+                    registry,
+                    env,
+                    now,
+                  }),
+              });
 
-      const host =
-        options.host ?? options.env?.["DIVEDRA_EVENTS_HOST"] ?? "127.0.0.1";
-      const rawPort =
-        options.port ?? options.env?.["DIVEDRA_EVENTS_PORT"] ?? 43174;
-      const port = typeof rawPort === "number" ? rawPort : Number(rawPort);
-      const server =
-        routes.length === 0
-          ? undefined
-          : runtime.serve({
-              hostname: host,
-              port,
-              fetch: (request) =>
-                handleEventHttpRequest(request, {
-                  configuration,
-                  routes,
-                  triggerOptions,
-                  registry,
-                  env: options.env ?? process.env,
-                  now,
-                }),
+        return {
+          ...(server === undefined ? {} : { host, port: server.port }),
+          sources: enabledSources.map((source) => source.id),
+          stop: async () => {
+            await stopEventListenerResources({
+              abortController,
+              handles,
+              ...(server === undefined ? {} : { server }),
             });
-
-      return {
-        ...(server === undefined ? {} : { host, port: server.port }),
-        sources: enabledSources.map((source) => source.id),
-        stop: async () => {
-          abortController.abort();
-          await Promise.all(handles.map((handle) => handle.stop()));
-          server?.stop();
-        },
-      };
+          },
+        };
+      } catch (error: unknown) {
+        await stopEventListenerResources({
+          abortController,
+          handles,
+          ...(server === undefined ? {} : { server }),
+        }).catch(() => {});
+        throw error;
+      }
     },
   };
 }

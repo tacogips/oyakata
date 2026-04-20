@@ -325,11 +325,7 @@ function normalizeContainerBuild(
     return undefined;
   }
 
-  const allowedKeys = new Set([
-    "contextPath",
-    "containerfilePath",
-    "target",
-  ]);
+  const allowedKeys = new Set(["contextPath", "containerfilePath", "target"]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       issues.push(
@@ -986,7 +982,11 @@ function normalizeNodeRef(
   const nodeFileRaw = value["nodeFile"];
   const inlineNodeRaw = value[INLINE_NODE_FIELD];
   const addonRaw = value["addon"];
-  const addon = normalizeWorkflowNodeAddonRef(addonRaw, `${path}.addon`, issues);
+  const addon = normalizeWorkflowNodeAddonRef(
+    addonRaw,
+    `${path}.addon`,
+    issues,
+  );
   let nodeFile: string | null = null;
   if (nodeFileRaw === undefined) {
     if (inlineNodeRaw === undefined && addonRaw === undefined) {
@@ -2249,10 +2249,7 @@ function normalizeWorkflow(
         .filter((entry): entry is SubWorkflowConversation => entry !== null)
     : undefined;
 
-  if (
-    usesAuthoredRoleModel &&
-    (subWorkflowConversations?.length ?? 0) > 0
-  ) {
+  if (usesAuthoredRoleModel && (subWorkflowConversations?.length ?? 0) > 0) {
     issues.push(
       makeIssue(
         "error",
@@ -2521,7 +2518,8 @@ function normalizeNodePayload(
     nodeType === "agent" &&
     model !== undefined &&
     requiresSeparatedModel(executionBackend) &&
-    (normalizeCliAgentBackend(model) !== null || isLegacyCliModelIdentifier(model))
+    (normalizeCliAgentBackend(model) !== null ||
+      isLegacyCliModelIdentifier(model))
   ) {
     issues.push(
       makeIssue(

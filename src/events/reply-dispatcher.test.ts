@@ -109,6 +109,77 @@ describe("event reply dispatcher", () => {
     expect(calls).toBe(1);
   });
 
+  test("shares only in-flight reply dispatches before relying on persistence", async () => {
+    const rootDataDir = await makeTempDir();
+    let calls = 0;
+    let releaseDispatch: (() => void) | undefined;
+    let notifyDispatchStarted: (() => void) | undefined;
+    const dispatchStarted = new Promise<void>((resolve) => {
+      notifyDispatchStarted = resolve;
+    });
+    const adapter: EventSourceAdapter = {
+      kind: "webhook",
+      capabilities: {
+        eventTypes: ["chat.message"],
+        supportsStart: false,
+        webhook: true,
+        chatReply: true,
+      },
+      async start(input) {
+        return { sourceId: input.source.id, stop: async () => {} };
+      },
+      async normalize() {
+        throw new Error("not used");
+      },
+      async dispatchChatReply(input) {
+        calls += 1;
+        notifyDispatchStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseDispatch = resolve;
+        });
+        return {
+          status: "sent",
+          provider: input.source.provider ?? input.source.kind,
+          providerMessageId: `message-${String(calls)}`,
+        };
+      },
+    };
+    const dispatcher = createEventReplyDispatcher({
+      configuration: {
+        eventRoot: "/events",
+        sources: [
+          {
+            id: "webhook",
+            kind: "webhook",
+            provider: "chat-webhook",
+            path: "/events/webhook",
+          },
+        ],
+        bindings: [],
+      },
+      registry: createEventSourceRegistry([adapter]),
+      env: {},
+      fetchImpl: async () => new Response(null, { status: 204 }),
+      runtimeOptions: { rootDataDir },
+    });
+
+    const request = makeReplyRequest("concurrent-reply-key");
+    const first = dispatcher.dispatchChatReply(request);
+    const second = dispatcher.dispatchChatReply(request);
+    await dispatchStarted;
+    releaseDispatch?.();
+
+    const firstResult = await first;
+    expect(firstResult).toEqual({
+      status: "sent",
+      provider: "chat-webhook",
+      providerMessageId: "message-1",
+    });
+    expect(await second).toEqual(firstResult);
+    expect(await dispatcher.dispatchChatReply(request)).toEqual(firstResult);
+    expect(calls).toBe(1);
+  });
+
   test("persists successful replies and reuses them across dispatcher instances", async () => {
     const rootDataDir = await makeTempDir();
     let calls = 0;

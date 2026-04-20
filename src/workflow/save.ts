@@ -50,9 +50,7 @@ export interface SaveWorkflowFailure {
 const LEGACY_WORKFLOW_VISUALIZATION_FILE = "workflow-vis.json";
 const WORKFLOW_DEFINITION_FILE = "workflow.json";
 
-function isRecord(
-  value: unknown,
-): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -63,9 +61,7 @@ function hasOwnKey(
   return value !== undefined && Object.hasOwn(value, key);
 }
 
-function stripPersistedWorkflowNodeCompatibilityFields(
-  node: unknown,
-): unknown {
+function stripPersistedWorkflowNodeCompatibilityFields(node: unknown): unknown {
   if (typeof node !== "object" || node === null) {
     return node;
   }
@@ -77,9 +73,7 @@ function stripPersistedWorkflowNodeCompatibilityFields(
   return nodeRecord;
 }
 
-function stripPersistedWorkflowCompatibilityFields(
-  workflow: unknown,
-): unknown {
+function stripPersistedWorkflowCompatibilityFields(workflow: unknown): unknown {
   if (typeof workflow !== "object" || workflow === null) {
     return workflow;
   }
@@ -194,15 +188,17 @@ function collectAuthoredNodeFiles(
     return [];
   }
 
-  return [...new Set(
-    authoredNodes.flatMap((node) =>
-      isRecord(node)
-        ? [resolveAuthoredNodeFileReference(node)].filter(
-            (nodeFile): nodeFile is string => nodeFile !== undefined,
-          )
-        : [],
+  return [
+    ...new Set(
+      authoredNodes.flatMap((node) =>
+        isRecord(node)
+          ? [resolveAuthoredNodeFileReference(node)].filter(
+              (nodeFile): nodeFile is string => nodeFile !== undefined,
+            )
+          : [],
+      ),
     ),
-  )];
+  ];
 }
 
 function buildAuthoredWorkflowNodesById(
@@ -231,9 +227,7 @@ function hasNonEmptyStringRecordValue(
   );
 }
 
-function isDefaultContainerRuntime(
-  value: unknown,
-): boolean {
+function isDefaultContainerRuntime(value: unknown): boolean {
   return (
     isRecord(value) &&
     value["runnerKind"] === "podman" &&
@@ -241,9 +235,7 @@ function isDefaultContainerRuntime(
   );
 }
 
-function hasManagerRoleNode(
-  nodes: readonly unknown[],
-): boolean {
+function hasManagerRoleNode(nodes: readonly unknown[]): boolean {
   return nodes.some(
     (node) =>
       isRecord(node) &&
@@ -453,15 +445,14 @@ function prepareAuthoredWorkflowForSave(input: {
   }
 
   const synthesizedEdges = createSequentialEdgesFromNodes(incomingNodes);
-  const keepEdges =
-    shouldPersistTopLevelField({
-      existingAuthoredWorkflow,
-      incomingWorkflow,
-      key: "edges",
-      keepWhenMeaningful:
-        Array.isArray(preparedWorkflow["edges"]) &&
-        !edgesMatch(preparedWorkflow["edges"], synthesizedEdges),
-    });
+  const keepEdges = shouldPersistTopLevelField({
+    existingAuthoredWorkflow,
+    incomingWorkflow,
+    key: "edges",
+    keepWhenMeaningful:
+      Array.isArray(preparedWorkflow["edges"]) &&
+      !edgesMatch(preparedWorkflow["edges"], synthesizedEdges),
+  });
   if (!keepEdges) {
     delete preparedWorkflow["edges"];
   }
@@ -477,7 +468,8 @@ function prepareAuthoredWorkflowForSave(input: {
       incomingWorkflow,
       key,
       keepWhenMeaningful:
-        Array.isArray(preparedWorkflow[key]) && preparedWorkflow[key].length > 0,
+        Array.isArray(preparedWorkflow[key]) &&
+        preparedWorkflow[key].length > 0,
     });
     if (!keepField) {
       delete preparedWorkflow[key];
@@ -634,8 +626,7 @@ async function readExistingAuthoredWorkflow(
     }
     return err({
       code: "IO",
-      message:
-        `failed reading existing workflow definition '${workflowPath}' while preparing save: ${message}`,
+      message: `failed reading existing workflow definition '${workflowPath}' while preparing save: ${message}`,
     });
   }
 }
@@ -690,7 +681,9 @@ async function collectExistingPromptTemplateFiles(input: {
       input.workflowDirectory,
       nodeFile,
     );
-    for (const templateFile of collectPayloadPromptTemplateFiles(existingPayload)) {
+    for (const templateFile of collectPayloadPromptTemplateFiles(
+      existingPayload,
+    )) {
       existingPromptTemplateFiles.add(templateFile);
     }
   }
@@ -701,12 +694,21 @@ async function collectExistingPromptTemplateFiles(input: {
 async function loadExistingAuthoredWorkflowFileState(input: {
   readonly workflowDirectory: string;
   readonly existingAuthoredWorkflow: unknown;
-}): Promise<Result<{
-  readonly existingAuthoredWorkflowRecord: Record<string, unknown> | undefined;
-  readonly existingNodeFiles: readonly string[];
-  readonly existingPromptTemplateFiles: ReadonlySet<string>;
-}, SaveWorkflowFailure>> {
-  const existingAuthoredWorkflowRecord = isRecord(input.existingAuthoredWorkflow)
+}): Promise<
+  Result<
+    {
+      readonly existingAuthoredWorkflowRecord:
+        | Record<string, unknown>
+        | undefined;
+      readonly existingNodeFiles: readonly string[];
+      readonly existingPromptTemplateFiles: ReadonlySet<string>;
+    },
+    SaveWorkflowFailure
+  >
+> {
+  const existingAuthoredWorkflowRecord = isRecord(
+    input.existingAuthoredWorkflow,
+  )
     ? input.existingAuthoredWorkflow
     : undefined;
   const existingNodeFiles = collectAuthoredNodeFiles(
@@ -714,10 +716,11 @@ async function loadExistingAuthoredWorkflowFileState(input: {
   );
 
   try {
-    const existingPromptTemplateFiles = await collectExistingPromptTemplateFiles({
-      workflowDirectory: input.workflowDirectory,
-      existingNodeFiles,
-    });
+    const existingPromptTemplateFiles =
+      await collectExistingPromptTemplateFiles({
+        workflowDirectory: input.workflowDirectory,
+        existingNodeFiles,
+      });
     return ok({
       existingAuthoredWorkflowRecord,
       existingNodeFiles,
@@ -727,8 +730,7 @@ async function loadExistingAuthoredWorkflowFileState(input: {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({
       code: "IO",
-      message:
-        `failed reading existing workflow files while preparing save: ${message}`,
+      message: `failed reading existing workflow files while preparing save: ${message}`,
     });
   }
 }
@@ -744,7 +746,9 @@ async function removeStaleWorkflowFiles(input: {
   const staleNodeFiles = input.existingNodeFiles.filter(
     (nodeFile) => !persistedNodeFileSet.has(nodeFile),
   );
-  const stalePromptTemplateFiles = [...input.existingPromptTemplateFiles].filter(
+  const stalePromptTemplateFiles = [
+    ...input.existingPromptTemplateFiles,
+  ].filter(
     (templateFile) => !input.persistedPromptTemplateFiles.has(templateFile),
   );
 
@@ -864,7 +868,10 @@ async function hydratePromptTemplateFilesForValidation(input: {
       }
 
       try {
-        hydratedPayload[spec.textField] = await readFile(resolvedPath.value, "utf8");
+        hydratedPayload[spec.textField] = await readFile(
+          resolvedPath.value,
+          "utf8",
+        );
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "unknown error";
@@ -876,8 +883,7 @@ async function hydratePromptTemplateFilesForValidation(input: {
               {
                 severity: "error",
                 path: `bundle.nodePayloads.${nodeFile}.${spec.textField}`,
-                message:
-                  `must be provided inline or by an existing ${spec.fileField} '${templateFile}'`,
+                message: `must be provided inline or by an existing ${spec.fileField} '${templateFile}'`,
               },
             ],
           });
@@ -885,8 +891,7 @@ async function hydratePromptTemplateFilesForValidation(input: {
 
         return err({
           code: "IO",
-          message:
-            `failed reading ${spec.fileField} '${templateFile}' for validation: ${message}`,
+          message: `failed reading ${spec.fileField} '${templateFile}' for validation: ${message}`,
         });
       }
     }
@@ -911,9 +916,8 @@ export async function saveWorkflowToDisk(
 
   const roots = resolveEffectiveRoots(options);
   const workflowDirectory = path.join(roots.workflowRoot, workflowName);
-  const existingAuthoredWorkflow = await readExistingAuthoredWorkflow(
-    workflowDirectory,
-  );
+  const existingAuthoredWorkflow =
+    await readExistingAuthoredWorkflow(workflowDirectory);
   if (!existingAuthoredWorkflow.ok) {
     return err(existingAuthoredWorkflow.error);
   }
@@ -958,10 +962,12 @@ export async function saveWorkflowToDisk(
     workflow: validation.value.workflow,
     nodePayloads: normalizedNodePayloads,
   });
-  const existingWorkflowFileState = await loadExistingAuthoredWorkflowFileState({
-    workflowDirectory,
-    existingAuthoredWorkflow: existingAuthoredWorkflow.value,
-  });
+  const existingWorkflowFileState = await loadExistingAuthoredWorkflowFileState(
+    {
+      workflowDirectory,
+      existingAuthoredWorkflow: existingAuthoredWorkflow.value,
+    },
+  );
   if (!existingWorkflowFileState.ok) {
     return err(existingWorkflowFileState.error);
   }
@@ -1036,10 +1042,9 @@ export async function saveWorkflowToDisk(
         referencedNodePayloads,
       ),
     });
-    await rm(
-      path.join(workflowDirectory, LEGACY_WORKFLOW_VISUALIZATION_FILE),
-      { force: true },
-    );
+    await rm(path.join(workflowDirectory, LEGACY_WORKFLOW_VISUALIZATION_FILE), {
+      force: true,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({

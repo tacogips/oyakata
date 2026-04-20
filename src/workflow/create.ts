@@ -56,10 +56,7 @@ const MANAGED_TEMPLATE_NODE_DEFINITIONS = [
     prompt: "Complete the assigned workflow step for {{workflowId}}",
     includeWorkflowId: true,
   },
-] as const satisfies readonly [
-  TemplateNodeDefinition,
-  TemplateNodeDefinition,
-];
+] as const satisfies readonly [TemplateNodeDefinition, TemplateNodeDefinition];
 
 const WORKER_ONLY_TEMPLATE_NODE_DEFINITIONS = [
   {

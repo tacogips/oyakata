@@ -310,7 +310,9 @@ describe("composeExecutionPrompt", () => {
         },
         node: makeNodePayloads()["divedra-manager"] as NodePayload,
         nodePayloads: {
-          "divedra-manager": makeNodePayloads()["divedra-manager"] as NodePayload,
+          "divedra-manager": makeNodePayloads()[
+            "divedra-manager"
+          ] as NodePayload,
           implement: makeNode(),
           publish: {
             id: "publish",

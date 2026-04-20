@@ -72,27 +72,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeClaudeRunnerFixture(input: {
-  readonly sessionId?: string;
-  readonly messages?: readonly object[];
-  readonly success?: boolean;
-} = {}): {
+function makeClaudeRunnerFixture(
+  input: {
+    readonly sessionId?: string;
+    readonly messages?: readonly object[];
+    readonly success?: boolean;
+  } = {},
+): {
   readonly createRunner: ReturnType<typeof vi.fn>;
   readonly startSession: ReturnType<typeof vi.fn>;
   readonly resumeSession: ReturnType<typeof vi.fn>;
 } {
   const sessionId = input.sessionId ?? "claude-session-1";
-  const messages =
-    input.messages ??
-    [
-      {
-        type: "assistant",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "local claude reply" }],
-        },
+  const messages = input.messages ?? [
+    {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "local claude reply" }],
       },
-    ];
+    },
+  ];
 
   const session = {
     sessionId,
@@ -171,7 +171,7 @@ describe("ClaudeCodeAgentAdapter", () => {
           type: "assistant",
           message: {
             role: "assistant",
-            content: [{ type: "text", text: "{\"summary\":\"ok\"}" }],
+            content: [{ type: "text", text: '{"summary":"ok"}' }],
           },
         },
       ],

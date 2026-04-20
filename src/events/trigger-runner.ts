@@ -53,9 +53,6 @@ export function createWorkflowTriggerRunner(
     async dispatch(
       input: WorkflowTriggerDispatchInput,
     ): Promise<WorkflowTriggerResult> {
-      if (options.readOnly === true) {
-        throw new Error("event dispatch is disabled in read-only mode");
-      }
       const begin = await beginEventReceipt(
         {
           event: input.event,
@@ -72,11 +69,32 @@ export function createWorkflowTriggerRunner(
         };
       }
 
-      const mapping = mapEventToWorkflowInput(
-        input.binding,
-        input.event,
-        input.source,
-      );
+      let mapping: ReturnType<typeof mapEventToWorkflowInput>;
+      try {
+        mapping = mapEventToWorkflowInput(
+          input.binding,
+          input.event,
+          input.source,
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        const failed = await updateEventReceipt(
+          {
+            record: begin.record,
+            artifactDir: begin.artifactDir,
+            status: "failed",
+            error: message,
+          },
+          options,
+        );
+        return {
+          receipt: failed,
+          duplicate: false,
+          workflowName: input.binding.workflowName,
+        };
+      }
+
       let receipt = await updateEventReceipt(
         {
           record: begin.record,
@@ -86,6 +104,23 @@ export function createWorkflowTriggerRunner(
         },
         options,
       );
+      if (options.readOnly === true) {
+        const skipped = await updateEventReceipt(
+          {
+            record: receipt,
+            artifactDir: begin.artifactDir,
+            status: "skipped",
+            error: "event dispatch skipped in read-only mode",
+          },
+          options,
+        );
+        return {
+          receipt: skipped,
+          duplicate: false,
+          workflowName: input.binding.workflowName,
+        };
+      }
+
       try {
         receipt = await updateEventReceipt(
           {

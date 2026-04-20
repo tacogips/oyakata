@@ -2986,6 +2986,87 @@ describe("runCli", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  test("events emit honors DIVEDRA_EVENTS_READ_ONLY", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    const artifactRoot = path.join(root, "data", "workflow");
+    const eventFile = path.join(root, "event.json");
+    await mkdir(path.join(workflowRoot, "demo"), { recursive: true });
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await mkdir(path.join(eventRoot, "sources"), { recursive: true });
+    await writeJson(path.join(eventRoot, "sources", "webhook.json"), {
+      id: "webhook",
+      kind: "webhook",
+      path: "/events/webhook",
+    });
+    await mkdir(path.join(eventRoot, "bindings"), { recursive: true });
+    await writeJson(path.join(eventRoot, "bindings", "demo.json"), {
+      id: "demo",
+      sourceId: "webhook",
+      workflowName: "demo",
+      match: { eventType: "chat.message" },
+      inputMapping: {
+        mode: "template",
+        template: { request: "{{event.input.text}}" },
+      },
+    });
+    await writeJson(eventFile, {
+      eventId: "evt-cli-read-only",
+      eventType: "chat.message",
+      input: { text: "hello read-only cli" },
+    });
+    const fetchImpl = vi.fn(async () =>
+      createJsonResponse({ errors: [{ message: "unexpected dispatch" }] }),
+    ) as typeof fetch;
+    const capture = createIoCapture();
+
+    const code = await runCli(
+      [
+        "events",
+        "emit",
+        "webhook",
+        "--workflow-root",
+        workflowRoot,
+        "--artifact-root",
+        artifactRoot,
+        "--event-root",
+        eventRoot,
+        "--event-file",
+        eventFile,
+        "--endpoint",
+        "http://example.test/graphql",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        env: { DIVEDRA_EVENTS_READ_ONLY: "true" },
+        fetchImpl,
+      },
+    );
+    const payload = JSON.parse(capture.stdout.join("\n")) as {
+      receipts: readonly {
+        status: string;
+        workflowExecutionId: string | null;
+      }[];
+    };
+
+    expect(code).toBe(0);
+    expect(capture.stderr).toEqual([]);
+    expect(payload.receipts[0]?.status).toBe("skipped");
+    expect(payload.receipts[0]?.workflowExecutionId).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   test("events reject mock scenario with remote endpoint", async () => {
     const root = await makeTempDir();
     const mockScenarioPath = path.join(root, "mock-scenario.json");

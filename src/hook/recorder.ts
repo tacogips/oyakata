@@ -66,7 +66,10 @@ async function writePayloadArtifact(input: {
   readonly captureMode: HookPayloadCaptureMode;
   readonly options: LoadOptions;
 }): Promise<string | undefined> {
-  if (input.ctx.divedra === undefined || input.captureMode === "metadata-only") {
+  if (
+    input.ctx.divedra === undefined ||
+    input.captureMode === "metadata-only"
+  ) {
     return undefined;
   }
 
@@ -161,7 +164,8 @@ export async function recordHookEvent(
     options,
   });
   const status =
-    input.status ?? (input.response?.decision === "block" ? "blocked" : "recorded");
+    input.status ??
+    (input.response?.decision === "block" ? "blocked" : "recorded");
   const row = buildHookEventRow({
     ctx: input.ctx,
     hookEventId,

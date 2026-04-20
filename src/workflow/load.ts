@@ -131,8 +131,7 @@ async function resolvePromptTemplateFileForNode(input: {
     if (!promptText.ok) {
       return err({
         code: promptText.error.code,
-        message:
-          `failed resolving ${spec.fileField} for '${input.nodeFile}': ${promptText.error.message}`,
+        message: `failed resolving ${spec.fileField} for '${input.nodeFile}': ${promptText.error.message}`,
       });
     }
 
@@ -284,7 +283,9 @@ export async function loadWorkflowByIdFromDisk(
   const roots = resolveEffectiveRoots(options);
   let directoryEntries: Awaited<ReturnType<typeof readdir>>;
   try {
-    directoryEntries = await readdir(roots.workflowRoot, { withFileTypes: true });
+    directoryEntries = await readdir(roots.workflowRoot, {
+      withFileTypes: true,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({
@@ -298,7 +299,10 @@ export async function loadWorkflowByIdFromDisk(
     .sort((left, right) => left.name.localeCompare(right.name));
 
   for (const entry of candidateDirectories) {
-    const candidateWorkflowDirectory = path.join(roots.workflowRoot, entry.name);
+    const candidateWorkflowDirectory = path.join(
+      roots.workflowRoot,
+      entry.name,
+    );
     const candidateWorkflowId = await readWorkflowIdFromDirectory(
       candidateWorkflowDirectory,
     );
@@ -315,16 +319,14 @@ export async function loadWorkflowByIdFromDisk(
   if (direct.ok) {
     return err({
       code: "NOT_FOUND",
-      message:
-        `workflow id '${workflowId}' was not found under workflow root '${roots.workflowRoot}'`,
+      message: `workflow id '${workflowId}' was not found under workflow root '${roots.workflowRoot}'`,
     });
   }
 
   return direct.error.code === "NOT_FOUND"
     ? err({
         code: "NOT_FOUND",
-        message:
-          `workflow id '${workflowId}' was not found under workflow root '${roots.workflowRoot}'`,
+        message: `workflow id '${workflowId}' was not found under workflow root '${roots.workflowRoot}'`,
       })
     : direct;
 }

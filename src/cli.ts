@@ -225,6 +225,14 @@ function parseNumericOption(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function parseEnvBooleanFlag(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 function parseReplyDispatchStatus(
   value: string | undefined,
 ): RuntimeEventReplyDispatchStatus | undefined {
@@ -1792,6 +1800,9 @@ export async function runCli(
   }
 
   if (scope === "events") {
+    const eventsReadOnly =
+      parsed.options.readOnly ||
+      parseEnvBooleanFlag(env["DIVEDRA_EVENTS_READ_ONLY"]);
     let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
     if (parsed.options.mockScenarioPath !== undefined) {
       if (parsed.options.endpoint !== undefined) {
@@ -1832,7 +1843,7 @@ export async function runCli(
         ? {}
         : { authToken: graphqlCliTransport.authToken }),
       ...(deps.fetchImpl === undefined ? {} : { fetchImpl: deps.fetchImpl }),
-      ...(parsed.options.readOnly ? { readOnly: true } : {}),
+      ...(eventsReadOnly ? { readOnly: true } : {}),
     };
 
     if (command === "validate") {

@@ -360,6 +360,46 @@ ledger with SQLite indexing, input mapping, workflow dispatch, `events validate`
 and `events emit`. Verified with `bun run typecheck`, focused event/CLI tests,
 and the full `bun test` suite.
 
+### Session: 2026-04-20 18:06
+
+**Tasks Completed**: Post-completion review fixes for TASK-002, TASK-004, and
+TASK-005
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Tightened event HTTP route validation to reject duplicate enabled
+listener paths, centralized route resolution between validation and serving,
+aligned read-only event dispatch with the command design by recording mapped
+skipped receipts instead of throwing before persistence, and documented the
+event listener host/port/read-only environment behavior. Verified with
+`bun run typecheck`, focused event/CLI tests, and the full `bun test` suite.
+
+### Session: 2026-04-20 19:05
+
+**Tasks Completed**: Review hardening for TASK-003 and TASK-004 listener
+runtime behavior
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Reviewed the current diff against the event-listener foundation
+architecture and did not find a design mismatch requiring a new design or plan.
+Fixed two cleanup gaps: cron dispatch failures are now contained so a single
+failed dispatch does not create an unhandled rejection or stop future scheduling,
+and event listener shutdown now attempts all adapter and HTTP-server cleanup
+before reporting stop failures. Added regression tests for both cases.
+
+### Session: 2026-04-20 19:15
+
+**Tasks Completed**: Follow-up code quality review for TASK-002 and TASK-004
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: Confirmed the event trigger architecture still matches the existing
+design, so no new design document or implementation plan was needed. Tightened
+unsafe synchronous execution validation so every HTTP-backed event source,
+including S3 repository webhook receivers, is covered by the async-by-default
+policy. Also changed reply dispatch in-flight dedupe to release completed
+promise entries and rely on durable idempotency afterward, avoiding unbounded
+memory growth in long-lived listener processes. Added regression tests for both
+changes.
+
 ## Related Plans
 
 - **Previous**: None

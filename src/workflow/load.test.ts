@@ -183,9 +183,9 @@ describe("resolveSafeScopedPath", () => {
 
 describe("resolveWorkflowScopedPath", () => {
   test("scopes safe workflow ids under the target root", () => {
-    expect(resolveWorkflowScopedPath("/tmp/root", "demo-id", "executions")).toBe(
-      path.join("/tmp/root", "demo-id", "executions"),
-    );
+    expect(
+      resolveWorkflowScopedPath("/tmp/root", "demo-id", "executions"),
+    ).toBe(path.join("/tmp/root", "demo-id", "executions"));
   });
 
   test("rejects unsafe workflow ids before joining filesystem paths", () => {
@@ -196,13 +196,17 @@ describe("resolveWorkflowScopedPath", () => {
 describe("project path encoding for default root data dir", () => {
   test("encodeProjectPathForDivedraScope joins segments with double underscore", () => {
     if (process.platform !== "win32") {
-      expect(encodeProjectPathForDivedraScope("/tmp/project")).toBe("tmp__project");
+      expect(encodeProjectPathForDivedraScope("/tmp/project")).toBe(
+        "tmp__project",
+      );
       expect(encodeProjectPathForDivedraScope("/g/gits/tacogips/divedra")).toBe(
         "g__gits__tacogips__divedra",
       );
     }
     const nested = path.join(os.tmpdir(), "divedra-encode", "nested");
-    expect(encodeProjectPathForDivedraScope(nested)).toMatch(/divedra-encode__nested$/);
+    expect(encodeProjectPathForDivedraScope(nested)).toMatch(
+      /divedra-encode__nested$/,
+    );
   });
 
   test("computeDefaultRootDataDir nests under ~/.divedra/project/.../divedra-artifact", () => {
@@ -219,9 +223,9 @@ describe("project path encoding for default root data dir", () => {
   });
 
   test("encodeProjectPathForDivedraScope normalizes path-hostile characters", () => {
-    expect(encodeProjectPathForDivedraScope("/tmp/project:feature branch")).toBe(
-      "tmp__project_feature_branch",
-    );
+    expect(
+      encodeProjectPathForDivedraScope("/tmp/project:feature branch"),
+    ).toBe("tmp__project_feature_branch");
   });
 });
 
@@ -365,9 +369,9 @@ describe("loadWorkflowFromDisk", () => {
     expect(result.value.bundle.workflow.nodes[0]?.nodeFile).toBe(
       "nodes/node-divedra-manager.json",
     );
-    expect(result.value.bundle.nodePayloads["divedra-manager"]?.promptTemplate).toBe(
-      "inline manager prompt\n",
-    );
+    expect(
+      result.value.bundle.nodePayloads["divedra-manager"]?.promptTemplate,
+    ).toBe("inline manager prompt\n");
   });
 
   test("loads node payload files from nodes/ paths", async () => {
@@ -417,9 +421,9 @@ describe("loadWorkflowFromDisk", () => {
     expect(result.value.bundle.workflow.nodes[0]?.nodeFile).toBe(
       "nodes/node-divedra-manager.json",
     );
-    expect(result.value.bundle.nodePayloads["divedra-manager"]?.promptTemplate).toBe(
-      "nested manager",
-    );
+    expect(
+      result.value.bundle.nodePayloads["divedra-manager"]?.promptTemplate,
+    ).toBe("nested manager");
   });
 
   test("rejects nodeFile paths that escape the workflow directory before reading them", async () => {
@@ -1081,7 +1085,8 @@ describe("loadWorkflowFromDisk", () => {
 
     await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
       id: "divedra-manager",
-      description: "Coordinate the workflow and route work to downstream lanes.",
+      description:
+        "Coordinate the workflow and route work to downstream lanes.",
       executionBackend: "codex-agent",
       model: "gpt-5-nano",
       promptTemplate: "manager",
@@ -1098,9 +1103,9 @@ describe("loadWorkflowFromDisk", () => {
       return;
     }
 
-    expect(result.value.bundle.nodePayloads["divedra-manager"]?.description).toBe(
-      "Coordinate the workflow and route work to downstream lanes.",
-    );
+    expect(
+      result.value.bundle.nodePayloads["divedra-manager"]?.description,
+    ).toBe("Coordinate the workflow and route work to downstream lanes.");
   });
 
   test("loads the claude worker example with an explicit claude-code-agent worker node", async () => {
@@ -1151,9 +1156,9 @@ describe("loadWorkflowFromDisk", () => {
     expect(
       result.value.bundle.nodePayloads["main-worker"]?.executionBackend,
     ).toBe("codex-agent");
-    expect(result.value.bundle.nodePayloads["main-worker"]?.promptTemplate).toContain(
-      "Complete the assigned workflow step",
-    );
+    expect(
+      result.value.bundle.nodePayloads["main-worker"]?.promptTemplate,
+    ).toContain("Complete the assigned workflow step");
   });
 
   test("loads the workflow-call examples with explicit parent call metadata and a worker-only callee", async () => {
@@ -1196,9 +1201,9 @@ describe("loadWorkflowFromDisk", () => {
 
     expect(calleeResult.value.bundle.workflow.hasManagerNode).toBe(false);
     expect(calleeResult.value.bundle.workflow.entryNodeId).toBe("reviewer");
-    expect(calleeResult.value.bundle.workflow.nodes.map((node) => node.id)).toEqual([
-      "reviewer",
-    ]);
+    expect(
+      calleeResult.value.bundle.workflow.nodes.map((node) => node.id),
+    ).toEqual(["reviewer"]);
   });
 
   test("keeps structural sub-workflow authoring limited to the legacy example", async () => {
@@ -1229,11 +1234,7 @@ describe("loadWorkflowFromDisk", () => {
     }
 
     const legacyWorkflowText = await readFile(
-      path.join(
-        examplesRoot,
-        "codex-codex-euthanasia-debate",
-        "workflow.json",
-      ),
+      path.join(examplesRoot, "codex-codex-euthanasia-debate", "workflow.json"),
       "utf8",
     );
     const legacyWorkflowJson = JSON.parse(legacyWorkflowText) as {
@@ -1241,9 +1242,9 @@ describe("loadWorkflowFromDisk", () => {
       readonly subWorkflowConversations?: readonly unknown[];
     };
     expect(legacyWorkflowJson.subWorkflows?.length).toBeGreaterThan(0);
-    expect(
-      legacyWorkflowJson.subWorkflowConversations?.length,
-    ).toBeGreaterThan(0);
+    expect(legacyWorkflowJson.subWorkflowConversations?.length).toBeGreaterThan(
+      0,
+    );
   });
 
   test("resolves workflow ids from a directory whose name differs from workflowId", async () => {
@@ -1264,13 +1265,16 @@ describe("loadWorkflowFromDisk", () => {
         },
       ],
     });
-    await writeJson(path.join(workflowDirectory, "nodes", "node-reviewer.json"), {
-      id: "reviewer",
-      executionBackend: "codex-agent",
-      model: "gpt-5",
-      promptTemplate: "review",
-      variables: {},
-    });
+    await writeJson(
+      path.join(workflowDirectory, "nodes", "node-reviewer.json"),
+      {
+        id: "reviewer",
+        executionBackend: "codex-agent",
+        model: "gpt-5",
+        promptTemplate: "review",
+        variables: {},
+      },
+    );
 
     const result = await loadWorkflowByIdFromDisk("review-flow", {
       workflowRoot: root,
@@ -1303,12 +1307,15 @@ describe("loadWorkflowFromDisk", () => {
         },
       ],
     });
-    await writeJson(path.join(workflowDirectory, "nodes", "node-reviewer.json"), {
-      id: "reviewer",
-      executionBackend: "codex-agent",
-      model: "gpt-5",
-      variables: {},
-    });
+    await writeJson(
+      path.join(workflowDirectory, "nodes", "node-reviewer.json"),
+      {
+        id: "reviewer",
+        executionBackend: "codex-agent",
+        model: "gpt-5",
+        variables: {},
+      },
+    );
 
     const result = await loadWorkflowByIdFromDisk("review-flow", {
       workflowRoot: root,

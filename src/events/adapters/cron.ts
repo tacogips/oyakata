@@ -7,6 +7,38 @@ import type {
   ExternalEventEnvelope,
 } from "../types";
 
+const CRON_LOOKAHEAD_MINUTES = 366 * 24 * 60;
+const WEEKDAY_VALUES = new Map([
+  ["Sun", 0],
+  ["Mon", 1],
+  ["Tue", 2],
+  ["Wed", 3],
+  ["Thu", 4],
+  ["Fri", 5],
+  ["Sat", 6],
+]);
+const CRON_NUMBER_PATTERN = /^\d+$/;
+
+interface ParsedCronSchedule {
+  readonly minutes: ReadonlySet<number>;
+  readonly hours: ReadonlySet<number>;
+  readonly days: ReadonlySet<number>;
+  readonly months: ReadonlySet<number>;
+  readonly weekdays: ReadonlySet<number>;
+}
+
+interface CronDateParts {
+  readonly minute: number;
+  readonly hour: number;
+  readonly day: number;
+  readonly month: number;
+  readonly weekday: number;
+}
+
+interface CronDatePartsReader {
+  read(date: Date): CronDateParts;
+}
+
 function isCronSource(source: EventSourceConfig): source is CronSourceConfig {
   return source.kind === "cron";
 }
@@ -15,69 +47,181 @@ function hashDedupeKey(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function parseCronNumber(value: string, min: number, max: number): number {
+  if (!CRON_NUMBER_PATTERN.test(value)) {
+    throw new Error(`cron value '${value}' must be an integer`);
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`cron value '${value}' must be between ${min} and ${max}`);
+  }
+  return parsed;
+}
+
+function parseCronStep(value: string | undefined): number {
+  if (value === undefined) {
+    return 1;
+  }
+  if (!CRON_NUMBER_PATTERN.test(value)) {
+    throw new Error(`cron step '${value}' must be an integer`);
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`cron step '${value}' must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseCronRange(
+  value: string,
+  min: number,
+  max: number,
+): { readonly start: number; readonly end: number } {
+  if (value === "*") {
+    return { start: min, end: max };
+  }
+  const rangeParts = value.split("-");
+  if (rangeParts.length === 1) {
+    const exact = parseCronNumber(value, min, max);
+    return { start: exact, end: exact };
+  }
+  if (rangeParts.length !== 2) {
+    throw new Error(`cron range '${value}' is invalid`);
+  }
+  const start = parseCronNumber(rangeParts[0] ?? "", min, max);
+  const end = parseCronNumber(rangeParts[1] ?? "", min, max);
+  if (start > end) {
+    throw new Error(`cron range '${value}' must be ascending`);
+  }
+  return { start, end };
+}
+
 function parseCronField(field: string, min: number, max: number): Set<number> {
   const values = new Set<number>();
   for (const part of field.split(",")) {
-    if (part === "*") {
-      for (let value = min; value <= max; value += 1) {
-        values.add(value);
-      }
-      continue;
+    const trimmed = part.trim();
+    if (trimmed.length === 0) {
+      throw new Error("cron fields must not contain empty segments");
     }
-    if (part.startsWith("*/")) {
-      const step = Number(part.slice(2));
-      if (Number.isInteger(step) && step > 0) {
-        for (let value = min; value <= max; value += step) {
-          values.add(value);
-        }
-      }
-      continue;
+    const stepParts = trimmed.split("/");
+    if (stepParts.length > 2) {
+      throw new Error(`cron segment '${trimmed}' has too many step markers`);
     }
-    const numeric = Number(part);
-    if (Number.isInteger(numeric) && numeric >= min && numeric <= max) {
-      values.add(numeric);
+    const range = parseCronRange(stepParts[0] ?? "", min, max);
+    const step = parseCronStep(stepParts[1]);
+    for (let value = range.start; value <= range.end; value += step) {
+      values.add(value);
     }
+  }
+  if (values.size === 0) {
+    throw new Error(`cron field '${field}' did not select any values`);
   }
   return values;
 }
 
-function parseSchedule(schedule: string): {
-  readonly minutes: ReadonlySet<number>;
-  readonly hours: ReadonlySet<number>;
-  readonly days: ReadonlySet<number>;
-  readonly months: ReadonlySet<number>;
-  readonly weekdays: ReadonlySet<number>;
-} {
+export function parseCronSchedule(schedule: string): ParsedCronSchedule {
   const fields = schedule.trim().split(/\s+/);
+  if (fields.length !== 5) {
+    throw new Error("cron schedule must have exactly five fields");
+  }
   return {
-    minutes: parseCronField(fields[0] ?? "*", 0, 59),
-    hours: parseCronField(fields[1] ?? "*", 0, 23),
-    days: parseCronField(fields[2] ?? "*", 1, 31),
-    months: parseCronField(fields[3] ?? "*", 1, 12),
-    weekdays: parseCronField(fields[4] ?? "*", 0, 6),
+    minutes: parseCronField(fields[0] ?? "", 0, 59),
+    hours: parseCronField(fields[1] ?? "", 0, 23),
+    days: parseCronField(fields[2] ?? "", 1, 31),
+    months: parseCronField(fields[3] ?? "", 1, 12),
+    weekdays: parseCronField(fields[4] ?? "", 0, 6),
+  };
+}
+
+export function isValidCronSchedule(schedule: string): boolean {
+  try {
+    parseCronSchedule(schedule);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readDatePart(
+  parts: readonly Intl.DateTimeFormatPart[],
+  type: Intl.DateTimeFormatPartTypes,
+): string {
+  const value = parts.find((part) => part.type === type)?.value;
+  if (value === undefined) {
+    throw new Error(`failed to read ${type} from cron timezone formatter`);
+  }
+  return value;
+}
+
+function createCronDatePartsReader(timeZone: string): CronDatePartsReader {
+  const formatter = new Intl.DateTimeFormat("en-US-u-ca-gregory", {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  return {
+    read(date: Date): CronDateParts {
+      const parts = formatter.formatToParts(date);
+      const weekdayLabel = readDatePart(parts, "weekday");
+      const weekday = WEEKDAY_VALUES.get(weekdayLabel);
+      if (weekday === undefined) {
+        throw new Error(`unsupported cron weekday label '${weekdayLabel}'`);
+      }
+      return {
+        minute: Number(readDatePart(parts, "minute")),
+        hour: Number(readDatePart(parts, "hour")),
+        day: Number(readDatePart(parts, "day")),
+        month: Number(readDatePart(parts, "month")),
+        weekday,
+      };
+    },
   };
 }
 
 function dateMatchesSchedule(
   date: Date,
-  schedule: ReturnType<typeof parseSchedule>,
+  schedule: ParsedCronSchedule,
+  datePartsReader: CronDatePartsReader,
 ): boolean {
+  const parts = datePartsReader.read(date);
   return (
-    schedule.minutes.has(date.getUTCMinutes()) &&
-    schedule.hours.has(date.getUTCHours()) &&
-    schedule.days.has(date.getUTCDate()) &&
-    schedule.months.has(date.getUTCMonth() + 1) &&
-    schedule.weekdays.has(date.getUTCDay())
+    schedule.minutes.has(parts.minute) &&
+    schedule.hours.has(parts.hour) &&
+    schedule.days.has(parts.day) &&
+    schedule.months.has(parts.month) &&
+    schedule.weekdays.has(parts.weekday)
   );
 }
 
-export function computeNextCronFireTime(schedule: string, after: Date): Date {
-  const parsed = parseSchedule(schedule);
+export function computeNextCronFireTime(
+  schedule: string,
+  after: Date,
+  timeZone = "UTC",
+): Date {
+  if (!isValidTimeZone(timeZone)) {
+    throw new Error(`invalid cron timezone '${timeZone}'`);
+  }
+  const parsed = parseCronSchedule(schedule);
+  const datePartsReader = createCronDatePartsReader(timeZone);
   const cursor = new Date(after.getTime());
   cursor.setUTCSeconds(0, 0);
   cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
-  for (let attempt = 0; attempt < 366 * 24 * 60; attempt += 1) {
-    if (dateMatchesSchedule(cursor, parsed)) {
+  for (let attempt = 0; attempt < CRON_LOOKAHEAD_MINUTES; attempt += 1) {
+    if (dateMatchesSchedule(cursor, parsed, datePartsReader)) {
       return cursor;
     }
     cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
@@ -131,20 +275,30 @@ export function createCronEventSourceAdapter(): EventSourceAdapter {
           return;
         }
         const now = input.now();
-        const scheduled = computeNextCronFireTime(source.schedule, now);
+        const scheduled = computeNextCronFireTime(
+          source.schedule,
+          now,
+          source.timezone,
+        );
         const waitMs = Math.max(0, scheduled.getTime() - now.getTime());
         timer = setTimeout(() => {
           const firedAt = input.now().toISOString();
-          void input
-            .dispatch(
-              buildCronEnvelope({
-                source,
-                scheduledAt: scheduled.toISOString(),
-                firedAt,
-                receivedAt: firedAt,
-              }),
-            )
-            .finally(scheduleNext);
+          void (async () => {
+            try {
+              await input.dispatch(
+                buildCronEnvelope({
+                  source,
+                  scheduledAt: scheduled.toISOString(),
+                  firedAt,
+                  receivedAt: firedAt,
+                }),
+              );
+            } catch {
+              // Keep cron sources alive even if one dispatch path fails.
+            } finally {
+              scheduleNext();
+            }
+          })();
         }, waitMs);
       };
       const stop = (): void => {

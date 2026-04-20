@@ -72,36 +72,36 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeCodexRunnerFixture(input: {
-  readonly sessionId?: string;
-  readonly messages?: readonly unknown[];
-  readonly success?: boolean;
-  readonly exitCode?: number;
-} = {}): {
+function makeCodexRunnerFixture(
+  input: {
+    readonly sessionId?: string;
+    readonly messages?: readonly unknown[];
+    readonly success?: boolean;
+    readonly exitCode?: number;
+  } = {},
+): {
   readonly createRunner: ReturnType<typeof vi.fn>;
   readonly startSession: ReturnType<typeof vi.fn>;
   readonly resumeSession: ReturnType<typeof vi.fn>;
   readonly cancel: ReturnType<typeof vi.fn>;
 } {
   const sessionId = input.sessionId ?? "codex-session-1";
-  const chunks =
-    input.messages ??
-    [
-      {
-        type: "session_meta",
-        payload: {
-          meta: { id: sessionId },
-        },
+  const chunks = input.messages ?? [
+    {
+      type: "session_meta",
+      payload: {
+        meta: { id: sessionId },
       },
-      {
-        type: "response_item",
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "local codex reply" }],
-        },
+    },
+    {
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "local codex reply" }],
       },
-    ];
+    },
+  ];
   const cancel = vi.fn(async () => {
     return;
   });
@@ -184,7 +184,7 @@ describe("CodexAgentAdapter", () => {
           payload: {
             type: "message",
             role: "assistant",
-            content: [{ type: "output_text", text: "{\"summary\":\"ok\"}" }],
+            content: [{ type: "output_text", text: '{"summary":"ok"}' }],
           },
         },
       ],

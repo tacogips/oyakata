@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { isEventSourceEnabled, loadEventConfiguration } from "./config";
+import { isEventSourceEnabled } from "./config";
 import { createDefaultEventSourceRegistry } from "./adapter-registry";
 import { normalizeS3RepositoryRawEvent } from "./adapters/s3-repository";
 import { createEventReplyDispatcher } from "./reply-dispatcher";
@@ -42,7 +42,7 @@ export async function emitEventFile(
         .join("; "),
     );
   }
-  const configuration = await loadEventConfiguration(input);
+  const configuration = validation.configuration;
   const source = configuration.sources.find(
     (entry) => entry.id === input.sourceId && isEventSourceEnabled(entry),
   );

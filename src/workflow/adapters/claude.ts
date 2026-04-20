@@ -19,11 +19,7 @@ import {
   resolveRetryPolicy,
 } from "./shared";
 
-type PermissionMode =
-  | "default"
-  | "acceptEdits"
-  | "plan"
-  | "bypassPermissions";
+type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
 
 interface ClaudeSessionConfig {
   readonly prompt: string;
@@ -219,10 +215,8 @@ async function executeLocalClaudeCodeAgent(
 ): Promise<AdapterExecutionOutput> {
   throwIfAborted(context.signal, "claude adapter aborted before start");
 
-  const { promptText, sessionConfig, runnerOptions } = resolveLocalSessionConfig(
-    config,
-    input,
-  );
+  const { promptText, sessionConfig, runnerOptions } =
+    resolveLocalSessionConfig(config, input);
   const runner = await (config.createRunner ?? createDefaultRunner)(
     runnerOptions,
   );

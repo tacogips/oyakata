@@ -158,7 +158,8 @@ export interface SubWorkflowConversation {
   readonly stopWhen: string;
 }
 
-export interface AuthoredWorkflowJson extends Readonly<Record<string, unknown>> {
+export interface AuthoredWorkflowJson
+  extends Readonly<Record<string, unknown>> {
   readonly workflowId: string;
   readonly description?: string;
   readonly defaults: WorkflowDefaults;

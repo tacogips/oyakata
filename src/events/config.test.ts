@@ -119,4 +119,115 @@ describe("event configuration", () => {
       ]),
     );
   });
+
+  test("rejects duplicate event HTTP paths", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    await writeJson(path.join(eventRoot, "sources", "first-webhook.json"), {
+      id: "first-webhook",
+      kind: "webhook",
+      path: "/events/shared",
+    });
+    await writeJson(path.join(eventRoot, "sources", "second-webhook.json"), {
+      id: "second-webhook",
+      kind: "webhook",
+      path: "/events/shared",
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      workflowRoot,
+      eventRoot,
+      cwd: root,
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues.map((issue) => issue.path)).toContain(
+      "sources.second-webhook.path",
+    );
+  });
+
+  test("rejects unsafe synchronous S3 event receiver bindings", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "incoming-docs.json"), {
+      id: "incoming-docs",
+      kind: "s3-repository",
+      provider: "s3-compatible",
+      bucket: "docs",
+      eventReceiver: {
+        mode: "webhook-bridge",
+        path: "/events/incoming-docs",
+      },
+      objectAccess: {
+        mode: "metadata-only",
+      },
+    });
+    await writeJson(path.join(eventRoot, "bindings", "docs-demo.json"), {
+      id: "docs-demo",
+      sourceId: "incoming-docs",
+      workflowName: "demo",
+      inputMapping: {
+        mode: "event-input",
+      },
+      execution: {
+        async: false,
+      },
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      workflowRoot,
+      eventRoot,
+      cwd: root,
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues).toContainEqual(
+      expect.objectContaining({
+        path: "bindings.docs-demo.execution.async",
+        message: expect.stringContaining("HTTP-backed"),
+      }),
+    );
+  });
+
+  test("rejects cron schedules and timezones the scheduler cannot execute", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "bad-cron.json"), {
+      id: "bad-cron",
+      kind: "cron",
+      schedule: "*/0 2 * * *",
+      timezone: "Mars/Base",
+    });
+    await writeJson(path.join(eventRoot, "bindings", "to-demo.json"), {
+      id: "to-demo",
+      sourceId: "bad-cron",
+      workflowName: "demo",
+      inputMapping: {
+        mode: "event-input",
+      },
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      workflowRoot,
+      eventRoot,
+      cwd: root,
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues.map((issue) => issue.path)).toEqual(
+      expect.arrayContaining([
+        "sources.bad-cron.schedule",
+        "sources.bad-cron.timezone",
+      ]),
+    );
+  });
 });

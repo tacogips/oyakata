@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -124,5 +124,67 @@ describe("manual event emit", () => {
     expect(first[0]?.workflowExecutionId).toBe("sess-event");
     expect(second[0]?.receipt.status).toBe("duplicate");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test("records mapped receipts without dispatching in read-only mode", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    const rootDataDir = path.join(root, "data");
+    const eventFile = path.join(root, "event.json");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "webhook.json"), {
+      id: "webhook",
+      kind: "webhook",
+      path: "/events/webhook",
+    });
+    await writeJson(path.join(eventRoot, "bindings", "webhook-demo.json"), {
+      id: "webhook-demo",
+      sourceId: "webhook",
+      workflowName: "demo",
+      match: { eventType: "chat.message" },
+      inputMapping: {
+        mode: "template",
+        template: {
+          request: "{{event.input.text}}",
+        },
+      },
+    });
+    await writeJson(eventFile, {
+      eventId: "evt-read-only",
+      eventType: "chat.message",
+      input: { text: "hello readonly" },
+    });
+
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const results = await emitEventFile({
+      sourceId: "webhook",
+      eventFile,
+      workflowRoot,
+      eventRoot,
+      rootDataDir,
+      endpoint: "http://example.test/graphql",
+      fetchImpl,
+      cwd: root,
+      readOnly: true,
+    });
+
+    const inputRef = results[0]?.receipt.inputRef;
+    expect(results[0]?.receipt.status).toBe("skipped");
+    expect(results[0]?.receipt.error).toContain("read-only mode");
+    expect(inputRef).toBeDefined();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    if (inputRef === undefined) {
+      return;
+    }
+    expect(
+      JSON.parse(await readFile(path.join(rootDataDir, inputRef.path), "utf8")),
+    ).toMatchObject({
+      workflowInput: {
+        request: "hello readonly",
+      },
+    });
   });
 });

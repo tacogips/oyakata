@@ -4,6 +4,11 @@ import { isJsonObject } from "../shared/json";
 import { resolveEffectiveRoots } from "../workflow/paths";
 import { isSafeWorkflowName } from "../workflow/paths";
 import { isEventSourceEnabled, loadEventConfiguration } from "./config";
+import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
+import {
+  isValidEventHttpPath,
+  resolveEventSourceHttpPath,
+} from "./http-routes";
 import type {
   EventBinding,
   EventConfigLoadOptions,
@@ -51,13 +56,28 @@ function validateUniqueIds(
   }
 }
 
-function isValidCronField(field: string): boolean {
-  return /^[0-9*/,.-]+$/.test(field);
-}
-
-export function isValidCronSchedule(schedule: string): boolean {
-  const fields = schedule.trim().split(/\s+/);
-  return fields.length === 5 && fields.every(isValidCronField);
+function validateUniqueEventHttpPaths(
+  sources: readonly EventSourceConfig[],
+  issues: EventConfigValidationIssue[],
+): void {
+  const seenByPath = new Map<string, string>();
+  for (const source of sources) {
+    const routePath = resolveEventSourceHttpPath(source);
+    if (routePath === undefined) {
+      continue;
+    }
+    const existingSourceId = seenByPath.get(routePath);
+    if (existingSourceId !== undefined) {
+      issues.push(
+        error(
+          `sources.${source.id}.path`,
+          `event HTTP path '${routePath}' is already used by source '${existingSourceId}'`,
+        ),
+      );
+      continue;
+    }
+    seenByPath.set(routePath, source.id);
+  }
 }
 
 function validateTemplateValue(
@@ -159,13 +179,26 @@ function validateSource(
       issues.push(
         error(`sources.${source.id}.timezone`, "timezone is required"),
       );
+    } else if (!isValidTimeZone(source["timezone"])) {
+      issues.push(
+        error(
+          `sources.${source.id}.timezone`,
+          "timezone must be a valid IANA time zone",
+        ),
+      );
     }
   }
 
   if (source.kind === "webhook") {
-    if (!isNonEmptyString(source["path"]) || !source["path"].startsWith("/")) {
+    if (
+      !isNonEmptyString(source["path"]) ||
+      !isValidEventHttpPath(source["path"])
+    ) {
       issues.push(
-        error(`sources.${source.id}.path`, "webhook path must start with '/'"),
+        error(
+          `sources.${source.id}.path`,
+          "webhook path must start with '/' and must not contain whitespace, '?' or '#'",
+        ),
       );
     }
     validateSecretEnvName(
@@ -199,6 +232,18 @@ function validateSource(
           error(
             `sources.${source.id}.eventReceiver.mode`,
             "polling receiver mode is not supported",
+          ),
+        );
+      }
+      const receiverPath = eventReceiver["path"];
+      if (
+        receiverPath !== undefined &&
+        (!isNonEmptyString(receiverPath) || !isValidEventHttpPath(receiverPath))
+      ) {
+        issues.push(
+          error(
+            `sources.${source.id}.eventReceiver.path`,
+            "event receiver path must start with '/' and must not contain whitespace, '?' or '#'",
           ),
         );
       }
@@ -304,15 +349,19 @@ function validateBinding(
       ),
     );
   }
+  const isHttpBackedSource =
+    source === undefined
+      ? false
+      : resolveEventSourceHttpPath(source) !== undefined;
   if (
-    source?.kind === "webhook" &&
+    isHttpBackedSource &&
     binding.execution?.async === false &&
     binding.execution.allowUnsafeSyncWebhook !== true
   ) {
     issues.push(
       error(
         `bindings.${binding.id}.execution.async`,
-        "webhook-backed bindings must be async unless explicitly allowed",
+        "HTTP-backed event bindings must be async unless explicitly allowed",
       ),
     );
   }
@@ -335,6 +384,10 @@ export async function validateEventConfiguration(
       issues.push(warning(`sources.${source.id}`, "source is disabled"));
     }
   }
+  validateUniqueEventHttpPaths(
+    configuration.sources.filter(isEventSourceEnabled),
+    issues,
+  );
 
   const sourcesById = new Map(
     configuration.sources.map((source) => [source.id, source] as const),

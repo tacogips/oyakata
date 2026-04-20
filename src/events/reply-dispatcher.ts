@@ -57,8 +57,9 @@ export function createEventReplyDispatcher(
       try {
         return await pending;
       } catch (error: unknown) {
-        pendingByIdempotencyKey.delete(request.idempotencyKey);
         throw error;
+      } finally {
+        pendingByIdempotencyKey.delete(request.idempotencyKey);
       }
     },
   };
