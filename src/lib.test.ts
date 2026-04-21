@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -143,6 +143,54 @@ async function createThirdPartyAddonWorkflowFixture(input: {
       variables: {},
     });
   }
+}
+
+async function writeLocalAddonManifest(input: {
+  readonly addonRoot: string;
+  readonly name: string;
+  readonly version: string;
+  readonly prompt: string;
+}): Promise<void> {
+  const [namespace, addonName] = input.name.split("/");
+  if (namespace === undefined || addonName === undefined) {
+    throw new Error(`invalid test add-on name '${input.name}'`);
+  }
+  const addonDirectory = path.join(
+    input.addonRoot,
+    namespace,
+    addonName,
+    input.version,
+  );
+  await mkdir(path.join(addonDirectory, "prompts"), { recursive: true });
+  await writeFile(
+    path.join(addonDirectory, "prompts", "worker.md"),
+    `${input.prompt}\n`,
+    "utf8",
+  );
+  await writeJson(path.join(addonDirectory, "addon.json"), {
+    name: input.name,
+    version: input.version,
+    description: "Local echo worker",
+    allowedRoles: ["worker"],
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      additionalProperties: false,
+      properties: {
+        message: { type: "string", minLength: 1 },
+      },
+    },
+    resolution: {
+      kind: "node-payload-template",
+      nodeType: "agent",
+      executionBackend: "official/openai-sdk",
+      model: "gpt-5-nano",
+      promptTemplateFile: "prompts/worker.md",
+      variables: {
+        renderedMessage: "{{addon.inputs.message}}",
+      },
+    },
+  });
 }
 
 function createThirdPartyAddonDefinition(): NodeAddonDefinition {
@@ -364,6 +412,122 @@ describe("library api", () => {
 
     expect(result.status).toBe("completed");
     expect(result.exitCode).toBe(0);
+  });
+
+  test("executes user-scope workflows through library wrappers", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user-scope");
+    const created = await createWorkflowTemplate("scoped-demo", {
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+
+    const summary = await inspectWorkflow("scoped-demo", {
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+    });
+    expect(summary.workflowName).toBe("scoped-demo");
+
+    const result = await executeWorkflow({
+      workflowName: "scoped-demo",
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+      mockScenario: makeDefaultTemplateScenario(),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.exitCode).toBe(0);
+    const session = await getSession(result.sessionId, {
+      rootDataDir: path.join(userRoot, "artifacts"),
+      env: {},
+    });
+    expect(session.status).toBe("completed");
+  });
+
+  test("reports scoped local add-on sources through library inspection", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user-scope");
+    const workflowName = "local-addon-library";
+    const addonName = "acme/local-echo-worker";
+    await createThirdPartyAddonWorkflowFixture({
+      workflowRoot: path.join(userRoot, "workflows"),
+      workflowName,
+    });
+    await writeLocalAddonManifest({
+      addonRoot: path.join(userRoot, "addons"),
+      name: addonName,
+      version: "1",
+      prompt: "Local library {{renderedMessage}}",
+    });
+    const workflowPath = path.join(
+      userRoot,
+      "workflows",
+      workflowName,
+      "workflow.json",
+    );
+    const workflowJson = JSON.parse(
+      await readFile(workflowPath, "utf8"),
+    ) as Record<string, unknown>;
+    workflowJson["nodes"] = [
+      {
+        id: "addon-worker",
+        role: "worker",
+        addon: {
+          name: addonName,
+          version: "1",
+          inputs: { message: "from local library" },
+        },
+        completion: { type: "none" },
+      },
+    ];
+    await writeJson(workflowPath, workflowJson);
+
+    const summary = await inspectWorkflow(workflowName, {
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+    });
+
+    expect(summary.addonSources).toEqual([
+      expect.objectContaining({
+        nodeId: "addon-worker",
+        name: addonName,
+        version: "1",
+        scope: "user",
+        manifestPath: path.join(
+          userRoot,
+          "addons",
+          "acme",
+          "local-echo-worker",
+          "1",
+          "addon.json",
+        ),
+      }),
+    ]);
+  });
+
+  test("rejects invalid workflow scope environment values through library wrappers", async () => {
+    const root = await makeTempDir();
+
+    await expect(
+      inspectWorkflow("scoped-demo", {
+        cwd: root,
+        env: {
+          DIVEDRA_WORKFLOW_SCOPE: "global",
+        },
+      }),
+    ).rejects.toThrow("DIVEDRA_WORKFLOW_SCOPE");
   });
 
   test("passes third-party add-on definitions through execution wrappers", async () => {

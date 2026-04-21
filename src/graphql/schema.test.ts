@@ -117,6 +117,62 @@ function createThirdPartyAddonBundle(): NormalizedWorkflowBundle {
   };
 }
 
+async function writeLocalAddonManifest(input: {
+  readonly addonRoot: string;
+  readonly name: string;
+  readonly version: string;
+  readonly prompt: string;
+}): Promise<void> {
+  const [namespace, addonName] = input.name.split("/");
+  if (namespace === undefined || addonName === undefined) {
+    throw new Error(`invalid test add-on name '${input.name}'`);
+  }
+  const addonDirectory = path.join(
+    input.addonRoot,
+    namespace,
+    addonName,
+    input.version,
+  );
+  await mkdir(path.join(addonDirectory, "prompts"), { recursive: true });
+  await writeFile(
+    path.join(addonDirectory, "prompts", "worker.md"),
+    `${input.prompt}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(addonDirectory, "addon.json"),
+    `${JSON.stringify(
+      {
+        name: input.name,
+        version: input.version,
+        description: "Local echo worker",
+        allowedRoles: ["worker"],
+        inputSchema: {
+          type: "object",
+          required: ["message"],
+          additionalProperties: false,
+          properties: {
+            message: { type: "string", minLength: 1 },
+          },
+        },
+        resolution: {
+          kind: "node-payload-template",
+          nodeType: "agent",
+          executionBackend: "official/openai-sdk",
+          model: "gpt-5-nano",
+          promptTemplateFile: "prompts/worker.md",
+          variables: {
+            renderedMessage: "{{addon.inputs.message}}",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
+
 async function createCompletedWorkflowFixture(root: string) {
   const created = await createWorkflowTemplate("demo", {
     workflowRoot: root,
@@ -788,6 +844,97 @@ describe("createGraphqlSchema", () => {
     expect(validation.issues?.length ?? 0).toBeGreaterThan(0);
   });
 
+  test("resolves scoped user workflows through GraphQL schema operations", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user-scope");
+    const created = await createWorkflowTemplate("scoped-demo", {
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
+    const schema = createGraphqlSchema();
+    const options: GraphqlRequestContext = {
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+    };
+
+    const workflows = await schema.query.workflows({}, options);
+    expect(workflows).toContain("scoped-demo");
+
+    const inspection = await schema.query.workflow(
+      { workflowName: "scoped-demo" },
+      options,
+    );
+    expect(inspection?.workflowName).toBe("scoped-demo");
+
+    const definition = await schema.query.workflowDefinition(
+      { workflowName: "scoped-demo" },
+      options,
+    );
+    expect(definition?.workflowDirectory).toBe(
+      path.join(userRoot, "workflows", "scoped-demo"),
+    );
+
+    if (definition === null) {
+      throw new Error("expected scoped workflow definition");
+    }
+    const bundle = cloneJson(definition.bundle) as typeof definition.bundle & {
+      workflow: { description: string };
+    };
+    bundle.workflow.description = "Updated through scoped GraphQL";
+    const saved = await schema.mutation.saveWorkflowDefinition(
+      {
+        workflowName: "scoped-demo",
+        bundle,
+        ...(definition.revision === null
+          ? {}
+          : { expectedRevision: definition.revision }),
+      },
+      options,
+    );
+    expect(saved.error).toBeUndefined();
+
+    const payload = await schema.mutation.executeWorkflow(
+      {
+        workflowName: "scoped-demo",
+        runtimeVariables: {
+          humanInput: {
+            request: "start scoped workflow",
+          },
+        },
+        mockScenario: makeDefaultTemplateScenario(),
+      },
+      options,
+    );
+    expect(payload.status).toBe("completed");
+    expect(payload.exitCode).toBe(0);
+  });
+
+  test("rejects invalid workflow scope environment values through GraphQL operations", async () => {
+    const root = await makeTempDir();
+    const schema = createGraphqlSchema();
+
+    await expect(
+      schema.query.workflows(
+        {},
+        {
+          cwd: root,
+          env: {
+            DIVEDRA_WORKFLOW_SCOPE: "global",
+          },
+        },
+      ),
+    ).rejects.toThrow("DIVEDRA_WORKFLOW_SCOPE");
+  });
+
   test("passes third-party add-on resolvers through GraphQL validation", async () => {
     const root = await makeTempDir();
     const schema = createGraphqlSchema();
@@ -836,6 +983,77 @@ describe("createGraphqlSchema", () => {
     expect(
       validation.issues?.some((issue) => issue.severity === "error") ?? false,
     ).toBe(false);
+  });
+
+  test("reports scoped local add-on sources through GraphQL validation and inspection", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user-scope");
+    const addonName = "acme/local-echo-worker";
+    const workflowName = "local-addon-graphql";
+    const workflowDirectory = path.join(userRoot, "workflows", workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+    await writeFile(
+      path.join(workflowDirectory, "workflow.json"),
+      `${JSON.stringify(
+        {
+          ...createThirdPartyAddonBundle().workflow,
+          workflowId: workflowName,
+          nodes: [
+            {
+              id: "addon-worker",
+              role: "worker",
+              addon: {
+                name: addonName,
+                version: "1",
+                inputs: { message: "from local graphql" },
+              },
+              completion: { type: "none" },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeLocalAddonManifest({
+      addonRoot: path.join(userRoot, "addons"),
+      name: addonName,
+      version: "1",
+      prompt: "Local GraphQL {{renderedMessage}}",
+    });
+
+    const schema = createGraphqlSchema();
+    const options: GraphqlRequestContext = {
+      cwd: root,
+      workflowScope: "user",
+      userRoot,
+      env: {},
+    };
+    const validation = await schema.mutation.validateWorkflowDefinition(
+      { workflowName },
+      options,
+    );
+    expect(validation.valid).toBe(true);
+    expect(validation.addonSources).toEqual([
+      expect.objectContaining({
+        nodeId: "addon-worker",
+        name: addonName,
+        version: "1",
+        scope: "user",
+        manifestPath: path.join(
+          userRoot,
+          "addons",
+          "acme",
+          "local-echo-worker",
+          "1",
+          "addon.json",
+        ),
+      }),
+    ]);
+
+    const inspection = await schema.query.workflow({ workflowName }, options);
+    expect(inspection?.addonSources).toEqual(validation.addonSources);
   });
 
   test("computes workflow definition revisions for third-party add-on refs", async () => {

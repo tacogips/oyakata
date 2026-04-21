@@ -5,18 +5,22 @@ import type {
   MailGatewayAddonConfig,
   MailGatewayReadAddonConfig,
   AsyncNodeAddonPayloadResolver,
+  LoadOptions,
   NodeAddonDefinition,
   NodeAddonPayloadResolver,
   NodeAddonResolveInput,
   NodeAddonResolveResult,
   NodeOutputContract,
   NodePayload,
+  ResolvedWorkflowSource,
   ResolvedNodeAddon,
   ValidationIssue,
   WorkflowNodeAddonRef,
   XGatewayAddonConfig,
   XGatewayReadAddonConfig,
 } from "./types";
+import { resolveAddonSource } from "./catalog";
+import { resolveLocalNodeAddonPayload } from "./local-node-addons";
 
 export const CHAT_REPLY_WORKER_ADDON_NAME = "divedra/chat-reply-worker";
 export const CHAT_REPLY_WORKER_ADDON_VERSION = "1";
@@ -1457,6 +1461,8 @@ export function resolveNodeAddonPayload(input: {
   readonly nodeId: string;
   readonly addon: WorkflowNodeAddonRef;
   readonly path: string;
+  readonly workflowSource?: ResolvedWorkflowSource;
+  readonly options?: LoadOptions;
   readonly thirdPartyResolvers?: readonly NodeAddonPayloadResolver[];
 }): NodeAddonResolveResult {
   if (isBuiltinAddonNamespace(input.addon.name)) {
@@ -1488,6 +1494,17 @@ export function resolveNodeAddonPayload(input: {
     }
   }
 
+  if (requiresAsyncLocalAddonResolution(input)) {
+    return {
+      issues: [
+        makeIssue(
+          `${input.path}.name`,
+          `local node add-on '${input.addon.name}' requires async workflow loading or validation`,
+        ),
+      ],
+    };
+  }
+
   return {
     issues: [
       makeIssue(
@@ -1498,14 +1515,56 @@ export function resolveNodeAddonPayload(input: {
   };
 }
 
+function requiresAsyncLocalAddonResolution(input: {
+  readonly addon: WorkflowNodeAddonRef;
+  readonly workflowSource?: ResolvedWorkflowSource;
+  readonly options?: LoadOptions;
+}): boolean {
+  if (input.addon.version === undefined || input.addon.version.length === 0) {
+    return false;
+  }
+  const env = input.options?.env ?? process.env;
+  return (
+    input.options?.addonRoot !== undefined ||
+    (env["DIVEDRA_ADDON_ROOT"] ?? "").length > 0 ||
+    (input.workflowSource !== undefined &&
+      input.workflowSource.scope !== "direct")
+  );
+}
+
 export async function resolveNodeAddonPayloadAsync(input: {
   readonly nodeId: string;
   readonly addon: WorkflowNodeAddonRef;
   readonly path: string;
+  readonly workflowSource?: ResolvedWorkflowSource;
+  readonly options?: LoadOptions;
   readonly thirdPartyResolvers?: readonly AsyncNodeAddonPayloadResolver[];
 }): Promise<NodeAddonResolveResult> {
   if (isBuiltinAddonNamespace(input.addon.name)) {
     return resolveBuiltinNodeAddonPayload(input);
+  }
+
+  let deferredLocalIssue: ValidationIssue | undefined;
+  const localSource = await resolveAddonSource({
+    addon: input.addon,
+    ...(input.workflowSource === undefined
+      ? {}
+      : { workflowSource: input.workflowSource }),
+    ...(input.options === undefined ? {} : { options: input.options }),
+  });
+  if (localSource.ok) {
+    return await resolveLocalNodeAddonPayload({
+      nodeId: input.nodeId,
+      addon: input.addon,
+      path: input.path,
+      source: localSource.value,
+    });
+  }
+  if (localSource.error.code !== "NOT_FOUND") {
+    deferredLocalIssue = makeIssue(input.path, localSource.error.message);
+    if ((input.thirdPartyResolvers ?? []).length === 0) {
+      return { issues: [deferredLocalIssue] };
+    }
   }
 
   for (const resolver of input.thirdPartyResolvers ?? []) {
@@ -1531,6 +1590,10 @@ export async function resolveNodeAddonPayloadAsync(input: {
     if (resolved.payload !== undefined || (resolved.issues ?? []).length > 0) {
       return resolved;
     }
+  }
+
+  if (deferredLocalIssue !== undefined) {
+    return { issues: [deferredLocalIssue] };
   }
 
   return {

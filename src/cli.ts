@@ -1,4 +1,4 @@
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import readline from "node:readline/promises";
 import os from "node:os";
 import path from "node:path";
@@ -23,13 +23,15 @@ import type { MockNodeScenario } from "./workflow/adapter";
 import { createWorkflowTemplate } from "./workflow/create";
 import { callNode, type CallNodeInput } from "./workflow/call-node";
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
-import { loadWorkflowFromDisk, type LoadedWorkflow } from "./workflow/load";
+import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
 import {
-  inferRootDataDirFromExplicitStorageRoots,
-  resolveEffectiveRoots,
-} from "./workflow/paths";
+  listWorkflowCatalogSources,
+  withResolvedWorkflowSourceOptions,
+} from "./workflow/catalog";
+import { inferRootDataDirFromExplicitStorageRoots } from "./workflow/paths";
 import { createSessionId, type WorkflowSessionState } from "./workflow/session";
 import { buildInspectionSummary } from "./workflow/inspect";
+import { collectWorkflowAddonSourceSummaries } from "./workflow/addon-source-summary";
 import { loadSession } from "./workflow/session-store";
 import { createCommunicationService } from "./workflow/communication-service";
 import { selectTuiRuntimeMode } from "./tui/runtime";
@@ -51,6 +53,10 @@ import { createManagerSessionStore } from "./workflow/manager-session-store";
 import { deleteWorkflowSessionHistory } from "./workflow/session-history";
 import { deleteWorkflowHistory as deleteWorkflowHistoryForWorkflow } from "./workflow/history";
 import { normalizeWorkflowWorkingDirectoryOverride } from "./workflow/working-directory";
+import type {
+  ResolvedWorkflowSource,
+  WorkflowScopeSelector,
+} from "./workflow/types";
 
 export interface CliIo {
   readonly stdout: (line: string) => void;
@@ -62,6 +68,7 @@ export interface CliDependencies {
     host?: string;
     port?: number;
     workflowRoot?: string;
+    addonRoot?: string;
     artifactRoot?: string;
     sessionStoreRoot?: string;
     readOnly?: boolean;
@@ -83,13 +90,30 @@ export interface CliDependencies {
 
 interface CliStorageOptions {
   readonly workflowRoot?: string;
+  readonly workflowScope?: WorkflowScopeSelector;
+  readonly userRoot?: string;
+  readonly projectRoot?: string;
+  readonly addonRoot?: string;
   readonly artifactRoot?: string;
+  readonly rootDataDir?: string;
   readonly sessionStoreRoot?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
+interface WorkflowSourceOutput {
+  readonly scope: ResolvedWorkflowSource["scope"];
+  readonly workflowRoot: string;
+  readonly workflowDirectory: string;
+  readonly scopeRoot?: string;
+  readonly legacyProjectRoot?: boolean;
+}
+
 interface ParsedOptions {
   readonly workflowRoot?: string;
+  readonly workflowScope?: WorkflowScopeSelector;
+  readonly userRoot?: string;
+  readonly projectRoot?: string;
+  readonly addonRoot?: string;
   readonly artifactRoot?: string;
   readonly sessionStoreRoot?: string;
   readonly workingDirectory?: string;
@@ -126,6 +150,7 @@ interface ParsedOptions {
 interface ParsedArgs {
   readonly positionals: string[];
   readonly options: ParsedOptions;
+  readonly error?: string;
 }
 
 function normalizeCliPositionals(positionals: readonly string[]): string[] {
@@ -233,6 +258,14 @@ function parseEnvBooleanFlag(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
+function parseWorkflowScopeOption(
+  value: string | undefined,
+): WorkflowScopeSelector | undefined {
+  return value === "auto" || value === "project" || value === "user"
+    ? value
+    : undefined;
+}
+
 function parseReplyDispatchStatus(
   value: string | undefined,
 ): RuntimeEventReplyDispatchStatus | undefined {
@@ -250,6 +283,10 @@ function parseReplyDispatchStatus(
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   let workflowRoot: string | undefined;
+  let workflowScope: WorkflowScopeSelector | undefined;
+  let userRoot: string | undefined;
+  let projectRoot: string | undefined;
+  let addonRoot: string | undefined;
   let artifactRoot: string | undefined;
   let sessionStoreRoot: string | undefined;
   let workingDirectory: string | undefined;
@@ -281,6 +318,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let status: string | undefined;
   let limit: number | undefined;
   let reason: string | undefined;
+  let parseError: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -305,6 +343,29 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     switch (token) {
       case "--workflow-root":
         workflowRoot = readNext();
+        break;
+      case "--scope":
+        {
+          const rawScope = readNext();
+          const parsedScope = parseWorkflowScopeOption(rawScope);
+          if (parsedScope === undefined) {
+            parseError =
+              rawScope === undefined
+                ? "--scope requires a value: auto, project, or user"
+                : `invalid --scope value '${rawScope}'; expected auto, project, or user`;
+          } else {
+            workflowScope = parsedScope;
+          }
+        }
+        break;
+      case "--user-root":
+        userRoot = readNext();
+        break;
+      case "--project-root":
+        projectRoot = readNext();
+        break;
+      case "--addon-root":
+        addonRoot = readNext();
         break;
       case "--artifact-root":
         artifactRoot = readNext();
@@ -421,6 +482,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     positionals,
     options: {
       ...(workflowRoot === undefined ? {} : { workflowRoot }),
+      ...(workflowScope === undefined ? {} : { workflowScope }),
+      ...(userRoot === undefined ? {} : { userRoot }),
+      ...(projectRoot === undefined ? {} : { projectRoot }),
+      ...(addonRoot === undefined ? {} : { addonRoot }),
       ...(artifactRoot === undefined ? {} : { artifactRoot }),
       ...(sessionStoreRoot === undefined ? {} : { sessionStoreRoot }),
       ...(workingDirectory === undefined ? {} : { workingDirectory }),
@@ -453,6 +518,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(limit === undefined ? {} : { limit }),
       ...(reason === undefined ? {} : { reason }),
     },
+    ...(parseError === undefined ? {} : { error: parseError }),
   };
 }
 
@@ -488,6 +554,15 @@ function printHelp(io: CliIo): void {
   io.stdout("");
   io.stdout("Create options:");
   io.stdout("  --worker-only  Scaffold a manager-less starter workflow");
+  io.stdout("");
+  io.stdout("Workflow scope options:");
+  io.stdout(
+    "  --workflow-root <path>  Use a direct workflow root and bypass scoped lookup",
+  );
+  io.stdout("  --scope <scope>         Select auto, project, or user scope");
+  io.stdout("  --user-root <path>      Override the user scope root");
+  io.stdout("  --project-root <path>   Override the project scope root");
+  io.stdout("  --addon-root <path>     Use a direct add-on root override");
   io.stdout("");
   io.stdout("Session options:");
   io.stdout(
@@ -987,32 +1062,67 @@ function buildLocalCallNodeOverrides(
 
 async function listWorkflowNames(options: {
   workflowRoot?: string;
+  workflowScope?: WorkflowScopeSelector;
+  userRoot?: string;
+  projectRoot?: string;
+  addonRoot?: string;
   artifactRoot?: string;
   sessionStoreRoot?: string;
   env?: Readonly<Record<string, string | undefined>>;
 }): Promise<readonly string[]> {
-  const roots = resolveEffectiveRoots(options);
-  const entries = await readdir(roots.workflowRoot, { withFileTypes: true });
-  const names: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const workflowPath = path.join(
-      roots.workflowRoot,
-      entry.name,
-      "workflow.json",
-    );
-    try {
-      const details = await stat(workflowPath);
-      if (details.isFile()) {
-        names.push(entry.name);
-      }
-    } catch {
-      // skip incomplete directories
-    }
+  const catalogSources = await listWorkflowCatalogSources(options);
+  if (!catalogSources.ok) {
+    return [];
   }
-  return names.sort((a, b) => a.localeCompare(b));
+  return [
+    ...new Set(catalogSources.value.map((source) => source.workflowName)),
+  ].sort((a, b) => a.localeCompare(b));
+}
+
+function optionsForLoadedWorkflow<T extends CliStorageOptions>(
+  loadedWorkflow: LoadedWorkflow,
+  options: T,
+): T {
+  return loadedWorkflow.source === undefined
+    ? options
+    : withResolvedWorkflowSourceOptions(loadedWorkflow.source, options);
+}
+
+function formatWorkflowSource(
+  source: ResolvedWorkflowSource | undefined,
+): string | undefined {
+  if (source === undefined) {
+    return undefined;
+  }
+  const legacySuffix = source.legacyProjectRoot === true ? " legacy-root" : "";
+  return `${source.scope}${legacySuffix} ${source.workflowDirectory}`;
+}
+
+function workflowSourceJson(
+  source: ResolvedWorkflowSource | undefined,
+): WorkflowSourceOutput | undefined {
+  if (source === undefined) {
+    return undefined;
+  }
+  return {
+    scope: source.scope,
+    workflowRoot: source.workflowRoot,
+    workflowDirectory: source.workflowDirectory,
+    ...(source.scopeRoot === undefined ? {} : { scopeRoot: source.scopeRoot }),
+    ...(source.legacyProjectRoot === undefined
+      ? {}
+      : { legacyProjectRoot: source.legacyProjectRoot }),
+  };
+}
+
+function formatAddonSource(source: {
+  readonly nodeId: string;
+  readonly name: string;
+  readonly version: string;
+  readonly scope: string;
+  readonly manifestPath: string;
+}): string {
+  return `${source.nodeId}: ${source.name}@${source.version} ${source.scope} ${source.manifestPath}`;
 }
 
 export async function loadOpenTuiScreenImplementations(
@@ -1090,7 +1200,7 @@ export function createOpenTuiWorkflowAppOptions(
   const loadWorkflowDefinitionOrThrow = async (
     workflowName: string,
   ): Promise<LoadedWorkflow> => {
-    const loaded = await loadWorkflowFromDisk(
+    const loaded = await loadWorkflowFromCatalog(
       workflowName,
       input.sharedOptions,
     );
@@ -1236,24 +1346,36 @@ async function runTui(
     resumeSessionId: string | undefined,
   ): Promise<number> => {
     let sessionId = resumeSessionId;
-    if (sessionId === undefined) {
-      const loadedWorkflow = await loadWorkflowFromDisk(
-        workflowName,
-        sharedOptions,
-      );
-      if (!loadedWorkflow.ok) {
+    let workflowOptions = sharedOptions;
+    const loadedWorkflow = await loadWorkflowFromCatalog(
+      workflowName,
+      sharedOptions,
+    );
+    if (!loadedWorkflow.ok) {
+      if (resumeSessionId === undefined) {
         io.stderr(loadedWorkflow.error.message);
         return 1;
       }
+    } else {
+      workflowOptions = optionsForLoadedWorkflow(
+        loadedWorkflow.value,
+        sharedOptions,
+      );
+    }
+    if (sessionId === undefined && loadedWorkflow.ok) {
       sessionId = createSessionId({
         workflowId: loadedWorkflow.value.bundle.workflow.workflowId,
       });
+    }
+    if (sessionId === undefined) {
+      io.stderr("cannot start workflow without a session id");
+      return 1;
     }
     io.stdout(
       `${resumeSessionId === undefined ? "Starting" : "Resuming"} session ${sessionId}`,
     );
     const runPromise = runWorkflow(workflowName, {
-      ...sharedOptions,
+      ...workflowOptions,
       sessionId,
       runtimeVariables,
       ...(mockScenario === undefined ? {} : { mockScenario }),
@@ -1304,7 +1426,7 @@ async function runTui(
     if (parsedOptions.mockScenarioPath !== undefined) {
       return readMockScenario(parsedOptions.mockScenarioPath);
     }
-    const loaded = await loadWorkflowFromDisk(workflowName, sharedOptions);
+    const loaded = await loadWorkflowFromCatalog(workflowName, sharedOptions);
     if (!loaded.ok) {
       throw new Error(loaded.error.message);
     }
@@ -1593,11 +1715,15 @@ async function runTui(
       if (parsedOptions.mockScenarioPath !== undefined) {
         mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
       } else {
-        const loaded = await loadWorkflowFromDisk(workflowName, sharedOptions);
+        const loaded = await loadWorkflowFromCatalog(
+          workflowName,
+          sharedOptions,
+        );
         if (!loaded.ok) {
           io.stderr(loaded.error.message);
           return loaded.error.code === "VALIDATION" ||
-            loaded.error.code === "INVALID_WORKFLOW_NAME"
+            loaded.error.code === "INVALID_WORKFLOW_NAME" ||
+            loaded.error.code === "INVALID_SCOPE"
             ? 2
             : 1;
         }
@@ -1640,9 +1766,25 @@ export async function runCli(
   deps: CliDependencies = DEFAULT_DEPS,
 ): Promise<number> {
   const parsed = parseArgs(argv);
+  if (parsed.error !== undefined) {
+    io.stderr(parsed.error);
+    return 2;
+  }
   const positionals = normalizeCliPositionals(parsed.positionals);
   const [scope, command, target] = positionals;
   const env = resolveCliEnv(deps);
+  const envWorkflowScope = env["DIVEDRA_WORKFLOW_SCOPE"];
+  if (
+    parsed.options.workflowScope === undefined &&
+    envWorkflowScope !== undefined &&
+    envWorkflowScope.length > 0 &&
+    parseWorkflowScopeOption(envWorkflowScope) === undefined
+  ) {
+    io.stderr(
+      `invalid DIVEDRA_WORKFLOW_SCOPE value '${envWorkflowScope}'; expected auto, project, or user`,
+    );
+    return 2;
+  }
   const inferredRootDataDir = inferRootDataDirFromExplicitStorageRoots({
     ...(parsed.options.artifactRoot === undefined
       ? {}
@@ -1656,6 +1798,18 @@ export async function runCli(
     ...(parsed.options.workflowRoot === undefined
       ? {}
       : { workflowRoot: parsed.options.workflowRoot }),
+    ...(parsed.options.workflowScope === undefined
+      ? {}
+      : { workflowScope: parsed.options.workflowScope }),
+    ...(parsed.options.userRoot === undefined
+      ? {}
+      : { userRoot: parsed.options.userRoot }),
+    ...(parsed.options.projectRoot === undefined
+      ? {}
+      : { projectRoot: parsed.options.projectRoot }),
+    ...(parsed.options.addonRoot === undefined
+      ? {}
+      : { addonRoot: parsed.options.addonRoot }),
     ...(parsed.options.artifactRoot === undefined
       ? {}
       : { artifactRoot: parsed.options.artifactRoot }),
@@ -2285,7 +2439,10 @@ export async function runCli(
       });
       if (!created.ok) {
         io.stderr(created.error.message);
-        return created.error.code === "INVALID_WORKFLOW_NAME" ? 2 : 1;
+        return created.error.code === "INVALID_WORKFLOW_NAME" ||
+          created.error.code === "INVALID_SCOPE"
+          ? 2
+          : 1;
       }
       if (parsed.options.output === "json") {
         emitJson(io, {
@@ -2299,7 +2456,7 @@ export async function runCli(
     }
 
     if (command === "validate") {
-      const loaded = await loadWorkflowFromDisk(target, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(target, sharedOptions);
       if (!loaded.ok) {
         if (parsed.options.output === "json") {
           emitJson(io, loaded.error);
@@ -2310,44 +2467,83 @@ export async function runCli(
           }
         }
         return loaded.error.code === "VALIDATION" ||
-          loaded.error.code === "INVALID_WORKFLOW_NAME"
+          loaded.error.code === "INVALID_WORKFLOW_NAME" ||
+          loaded.error.code === "INVALID_SCOPE"
           ? 2
           : 1;
       }
+      const loadedWorkflowOptions = optionsForLoadedWorkflow(
+        loaded.value,
+        sharedOptions,
+      );
+      const addonSources = await collectWorkflowAddonSourceSummaries({
+        workflow: loaded.value.bundle.workflow,
+        options: loadedWorkflowOptions,
+        ...(loaded.value.source === undefined
+          ? {}
+          : { workflowSource: loaded.value.source }),
+      });
       if (parsed.options.output === "json") {
         emitJson(io, {
           workflowName: loaded.value.workflowName,
           workflowId: loaded.value.bundle.workflow.workflowId,
+          source: workflowSourceJson(loaded.value.source),
+          addonSources,
           valid: true,
         });
       } else {
         io.stdout(`workflow '${loaded.value.workflowName}' is valid`);
+        const sourceLine = formatWorkflowSource(loaded.value.source);
+        if (sourceLine !== undefined) {
+          io.stdout(`source: ${sourceLine}`);
+        }
+        for (const addonSource of addonSources) {
+          io.stdout(`addonSource: ${formatAddonSource(addonSource)}`);
+        }
       }
       return 0;
     }
 
     if (command === "inspect") {
-      const loaded = await loadWorkflowFromDisk(target, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(target, sharedOptions);
       if (!loaded.ok) {
         io.stderr(`inspect failed: ${loaded.error.message}`);
         if (loaded.error.issues) {
           io.stderr(formatValidationIssues(loaded.error.issues));
         }
         return loaded.error.code === "VALIDATION" ||
-          loaded.error.code === "INVALID_WORKFLOW_NAME"
+          loaded.error.code === "INVALID_WORKFLOW_NAME" ||
+          loaded.error.code === "INVALID_SCOPE"
           ? 2
           : 1;
       }
 
-      const summary = await buildInspectionSummary(loaded.value, sharedOptions);
+      const loadedWorkflowOptions = optionsForLoadedWorkflow(
+        loaded.value,
+        sharedOptions,
+      );
+      const summary = await buildInspectionSummary(
+        loaded.value,
+        loadedWorkflowOptions,
+      );
       if (parsed.options.output === "json") {
-        emitJson(io, summary);
+        emitJson(io, {
+          ...summary,
+          source: workflowSourceJson(loaded.value.source),
+        });
       } else {
         const legacySubWorkflowCountSegment =
           summary.counts.legacySubWorkflows === 0
             ? ""
             : `, legacySubWorkflows: ${summary.counts.legacySubWorkflows}`;
         io.stdout(`workflow: ${summary.workflowName}`);
+        const sourceLine = formatWorkflowSource(loaded.value.source);
+        if (sourceLine !== undefined) {
+          io.stdout(`source: ${sourceLine}`);
+        }
+        for (const addonSource of summary.addonSources) {
+          io.stdout(`addonSource: ${formatAddonSource(addonSource)}`);
+        }
         io.stdout(`workflowId: ${summary.workflowId}`);
         io.stdout(
           `managerNodeId: ${summary.managerNodeId ?? "(none; worker-only workflow)"}`,
@@ -2474,8 +2670,32 @@ export async function runCli(
         return 1;
       }
 
+      const loadedWorkflow = await loadWorkflowFromCatalog(
+        target,
+        sharedOptions,
+      );
+      if (!loadedWorkflow.ok) {
+        if (parsed.options.output === "json") {
+          emitJson(io, loadedWorkflow.error);
+        } else {
+          io.stderr(`run failed: ${loadedWorkflow.error.message}`);
+          if (loadedWorkflow.error.issues) {
+            io.stderr(formatValidationIssues(loadedWorkflow.error.issues));
+          }
+        }
+        return loadedWorkflow.error.code === "VALIDATION" ||
+          loadedWorkflow.error.code === "INVALID_WORKFLOW_NAME" ||
+          loadedWorkflow.error.code === "INVALID_SCOPE"
+          ? 2
+          : 1;
+      }
+      const workflowRunOptions = optionsForLoadedWorkflow(
+        loadedWorkflow.value,
+        sharedOptions,
+      );
+
       const result = await runWorkflow(target, {
-        ...sharedOptions,
+        ...workflowRunOptions,
         runtimeVariables,
         ...mockScenarioOptions,
         dryRun: parsed.options.dryRun,
@@ -2505,11 +2725,16 @@ export async function runCli(
           status: result.value.session.status,
           workflowName: result.value.session.workflowName,
           workflowId: result.value.session.workflowId,
+          source: workflowSourceJson(loadedWorkflow.value.source),
           nodeExecutions: result.value.session.nodeExecutions.length,
           transitions: result.value.session.transitions.length,
           exitCode: result.value.exitCode,
         });
       } else {
+        const sourceLine = formatWorkflowSource(loadedWorkflow.value.source);
+        if (sourceLine !== undefined) {
+          io.stdout(`source: ${sourceLine}`);
+        }
         io.stdout(`run session: ${result.value.session.sessionId}`);
         io.stdout(`status: ${result.value.session.status}`);
         io.stdout(

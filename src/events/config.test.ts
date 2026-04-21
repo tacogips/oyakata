@@ -79,6 +79,79 @@ describe("event configuration", () => {
     ).toEqual([]);
   });
 
+  test("validates bindings against user-scope workflow catalog entries", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user-scope");
+    const eventRoot = path.join(root, ".divedra-events");
+
+    await writeJson(
+      path.join(userRoot, "workflows", "user-demo", "workflow.json"),
+      {
+        workflowId: "user-demo",
+      },
+    );
+    await writeJson(path.join(eventRoot, "sources", "local-webhook.json"), {
+      id: "local-webhook",
+      kind: "webhook",
+      path: "/events/local",
+    });
+    await writeJson(path.join(eventRoot, "bindings", "to-user-demo.json"), {
+      id: "to-user-demo",
+      sourceId: "local-webhook",
+      workflowName: "user-demo",
+      inputMapping: {
+        mode: "event-input",
+      },
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      eventRoot,
+      workflowScope: "user",
+      userRoot,
+      cwd: root,
+      env: {},
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(
+      validation.issues.filter((issue) => issue.severity === "error"),
+    ).toEqual([]);
+  });
+
+  test("reports invalid workflow scope environment values during validation", async () => {
+    const root = await makeTempDir();
+    const eventRoot = path.join(root, ".divedra-events");
+
+    await writeJson(path.join(eventRoot, "sources", "local-webhook.json"), {
+      id: "local-webhook",
+      kind: "webhook",
+      path: "/events/local",
+    });
+    await writeJson(path.join(eventRoot, "bindings", "to-demo.json"), {
+      id: "to-demo",
+      sourceId: "local-webhook",
+      workflowName: "demo",
+      inputMapping: {
+        mode: "event-input",
+      },
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      eventRoot,
+      cwd: root,
+      env: {
+        DIVEDRA_WORKFLOW_SCOPE: "global",
+      },
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(
+      validation.issues.some((issue) =>
+        issue.message.includes("DIVEDRA_WORKFLOW_SCOPE"),
+      ),
+    ).toBe(true);
+  });
+
   test("reports invalid binding and unsafe webhook sync execution", async () => {
     const root = await makeTempDir();
     const workflowRoot = path.join(root, ".divedra");

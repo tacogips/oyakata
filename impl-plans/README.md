@@ -31,6 +31,12 @@ impl-plans/
 
 | Plan                                               | Completed  | Design Reference                                                                                    |
 | -------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| `scoped-local-addons`                              | 2026-04-21 | `design-node-addon-catalog-and-chat-reply-worker`, `design-user-scope-workflows`                    |
+| `scoped-workflow-catalog-safety-follow-up`         | 2026-04-21 | `design-user-scope-workflows`, `architecture`                                                       |
+| `scoped-workflow-source-visibility`                | 2026-04-21 | `design-user-scope-workflows`, `command`                                                            |
+| `scoped-workflow-graphql-server`                   | 2026-04-21 | `design-user-scope-workflows`                                                                       |
+| `scoped-workflow-runtime-follow-up`                | 2026-04-21 | `design-user-scope-workflows`, `command`                                                            |
+| `scoped-workflow-catalog`                          | 2026-04-21 | `design-user-scope-workflows`                                                                       |
 | `third-party-addon-async-resolution`               | 2026-04-21 | `design-node-addon-catalog-and-chat-reply-worker`                                                   |
 | `third-party-addon-definition-registry`            | 2026-04-21 | `design-node-addon-catalog-and-chat-reply-worker`                                                   |
 | `third-party-addon-resolver-ergonomics`            | 2026-04-20 | `design-node-addon-catalog-and-chat-reply-worker`                                                   |

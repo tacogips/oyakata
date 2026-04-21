@@ -14,9 +14,14 @@ import {
   resolveWorkflowScopedPath,
 } from "./paths";
 import { validateWorkflowBundleAsync } from "./validate";
+import {
+  resolveWorkflowSource,
+  withResolvedWorkflowSourceOptions,
+} from "./catalog";
 import type {
   LoadOptions,
   NormalizedWorkflowBundle,
+  ResolvedWorkflowSource,
   ValidationIssue,
 } from "./types";
 
@@ -25,10 +30,16 @@ export interface LoadedWorkflow {
   readonly workflowDirectory: string;
   readonly artifactWorkflowRoot: string;
   readonly bundle: NormalizedWorkflowBundle;
+  readonly source?: ResolvedWorkflowSource;
 }
 
 export interface LoadFailure {
-  readonly code: "INVALID_WORKFLOW_NAME" | "NOT_FOUND" | "IO" | "VALIDATION";
+  readonly code:
+    | "INVALID_WORKFLOW_NAME"
+    | "INVALID_SCOPE"
+    | "NOT_FOUND"
+    | "IO"
+    | "VALIDATION";
   readonly message: string;
   readonly issues?: readonly ValidationIssue[];
 }
@@ -271,6 +282,39 @@ export async function loadWorkflowFromDisk(
     workflowDirectory,
     artifactWorkflowRoot,
     bundle: validation.value,
+  });
+}
+
+export async function loadWorkflowFromCatalog(
+  workflowName: string,
+  options: LoadOptions = {},
+): Promise<Result<LoadedWorkflow, LoadFailure>> {
+  const source = await resolveWorkflowSource(workflowName, options);
+  if (!source.ok) {
+    return err({
+      code:
+        source.error.code === "INVALID_WORKFLOW_NAME"
+          ? "INVALID_WORKFLOW_NAME"
+          : source.error.code === "INVALID_SCOPE"
+            ? "INVALID_SCOPE"
+            : source.error.code === "IO"
+              ? "IO"
+              : "NOT_FOUND",
+      message: source.error.message,
+    });
+  }
+
+  const loaded = await loadWorkflowFromDisk(
+    workflowName,
+    withResolvedWorkflowSourceOptions(source.value, options),
+  );
+  if (!loaded.ok) {
+    return loaded;
+  }
+
+  return ok({
+    ...loaded.value,
+    source: source.value,
   });
 }
 

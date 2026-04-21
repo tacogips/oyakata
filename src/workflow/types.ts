@@ -565,13 +565,42 @@ export function getNormalizedNodePayload(
 
 export interface LoadOptions {
   readonly workflowRoot?: string;
+  readonly workflowScope?: WorkflowScopeSelector;
+  readonly userRoot?: string;
+  readonly projectRoot?: string;
+  readonly addonRoot?: string;
+  readonly resolvedWorkflowSource?: ResolvedWorkflowSource;
   readonly artifactRoot?: string;
   readonly rootDataDir?: string;
+  readonly sessionStoreRoot?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly cwd?: string;
   readonly nodeAddons?: readonly NodeAddonDefinition[];
   readonly asyncNodeAddonResolvers?: readonly AsyncNodeAddonPayloadResolver[];
   readonly nodeAddonResolvers?: readonly NodeAddonPayloadResolver[];
+}
+
+export type WorkflowScopeSelector = "auto" | "project" | "user";
+export type WorkflowSourceScope = "direct" | "project" | "user";
+export type AddonSourceScope = "direct" | "project" | "user";
+
+export interface ResolvedWorkflowSource {
+  readonly scope: WorkflowSourceScope;
+  readonly workflowRoot: string;
+  readonly workflowName: string;
+  readonly workflowDirectory: string;
+  readonly scopeRoot?: string;
+  readonly legacyProjectRoot?: boolean;
+}
+
+export interface ResolvedAddonSource {
+  readonly scope: AddonSourceScope;
+  readonly addonRoot: string;
+  readonly addonName: string;
+  readonly version: string;
+  readonly addonDirectory: string;
+  readonly manifestPath: string;
+  readonly scopeRoot?: string;
 }
 
 export interface EffectiveRoots {

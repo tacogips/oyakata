@@ -16,7 +16,8 @@ import {
   buildInspectionSummary,
   type WorkflowInspectionSummary,
 } from "./workflow/inspect";
-import { loadWorkflowFromDisk } from "./workflow/load";
+import { loadWorkflowFromCatalog } from "./workflow/load";
+import { withResolvedWorkflowSourceOptions } from "./workflow/catalog";
 import {
   listEventReplyDispatchesFromRuntimeDb,
   listRuntimeHookEvents,
@@ -184,6 +185,19 @@ function resolveRuntimeVariables(
   return request?.runtimeVariables ?? request?.input;
 }
 
+async function resolveWorkflowCatalogOptions<T extends DivedraOptions>(
+  workflowName: string,
+  options: T,
+): Promise<T> {
+  const loaded = await loadWorkflowFromCatalog(workflowName, options);
+  if (!loaded.ok) {
+    throw new Error(loaded.error.message);
+  }
+  return loaded.value.source === undefined
+    ? options
+    : withResolvedWorkflowSourceOptions(loaded.value.source, options);
+}
+
 async function executeWorkflowThroughGraphqlClient(
   options: WorkflowExecutionClientOptions,
   request: WorkflowExecutionClientRequest | undefined,
@@ -282,6 +296,10 @@ async function executeWorkflowThroughLibraryClient(
   );
   if (request?.async === true) {
     const schema = createGraphqlSchema();
+    const executionOptions = await resolveWorkflowCatalogOptions(
+      options.workflowName,
+      options,
+    );
     const payload = await schema.mutation.executeWorkflow(
       {
         workflowName: options.workflowName,
@@ -302,7 +320,7 @@ async function executeWorkflowThroughLibraryClient(
           ? {}
           : { defaultTimeoutMs: request.defaultTimeoutMs }),
       },
-      options,
+      executionOptions,
     );
     return {
       workflowName: options.workflowName,
@@ -362,11 +380,15 @@ export async function inspectWorkflow(
   workflowName: string,
   options: DivedraOptions = {},
 ): Promise<WorkflowInspectionSummary> {
-  const loaded = await loadWorkflowFromDisk(workflowName, options);
+  const loaded = await loadWorkflowFromCatalog(workflowName, options);
   if (!loaded.ok) {
     throw new Error(loaded.error.message);
   }
-  return await buildInspectionSummary(loaded.value, options);
+  const inspectionOptions =
+    loaded.value.source === undefined
+      ? options
+      : withResolvedWorkflowSourceOptions(loaded.value.source, options);
+  return await buildInspectionSummary(loaded.value, inspectionOptions);
 }
 
 export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
@@ -381,6 +403,13 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
     ...(input.workflowRoot === undefined
       ? {}
       : { workflowRoot: input.workflowRoot }),
+    ...(input.workflowScope === undefined
+      ? {}
+      : { workflowScope: input.workflowScope }),
+    ...(input.userRoot === undefined ? {} : { userRoot: input.userRoot }),
+    ...(input.projectRoot === undefined
+      ? {}
+      : { projectRoot: input.projectRoot }),
     ...(input.artifactRoot === undefined
       ? {}
       : { artifactRoot: input.artifactRoot }),
@@ -420,7 +449,11 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
       ? {}
       : { defaultTimeoutMs: input.defaultTimeoutMs }),
   };
-  const result = await runWorkflow(input.workflowName, options);
+  const executionOptions = await resolveWorkflowCatalogOptions(
+    input.workflowName,
+    options,
+  );
+  const result = await runWorkflow(input.workflowName, executionOptions);
   if (!result.ok) {
     throw new Error(result.error.message);
   }
@@ -667,8 +700,11 @@ export type {
   NodeAddonResolveInput,
   NodeAddonResolveResult,
   NodePayload,
+  ResolvedWorkflowSource,
   ValidationIssue,
   WorkflowNodeAddonRef,
+  WorkflowScopeSelector,
+  WorkflowSourceScope,
 } from "./workflow/types";
 export {
   createAsyncNodeAddonPayloadResolver,
@@ -676,7 +712,13 @@ export {
   createNodeAddonPayloadResolver,
   createNodeAddonRegistry,
 } from "./workflow/node-addons";
-export { loadWorkflowFromDisk } from "./workflow/load";
+export { loadWorkflowFromCatalog, loadWorkflowFromDisk } from "./workflow/load";
+export {
+  listWorkflowCatalogSources,
+  resolveWorkflowCreateSource,
+  resolveWorkflowScopeSelector,
+  resolveWorkflowSource,
+} from "./workflow/catalog";
 export { runWorkflow } from "./workflow/engine";
 export { callNode } from "./workflow/call-node";
 export { deriveWorkflowVisualization } from "./workflow/visualization";

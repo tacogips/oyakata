@@ -101,6 +101,53 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+async function writeLocalAddonManifest(input: {
+  readonly addonRoot: string;
+  readonly name: string;
+  readonly version: string;
+}): Promise<void> {
+  const [namespace, addonName] = input.name.split("/");
+  if (namespace === undefined || addonName === undefined) {
+    throw new Error(`invalid test add-on name '${input.name}'`);
+  }
+  const addonDirectory = path.join(
+    input.addonRoot,
+    namespace,
+    addonName,
+    input.version,
+  );
+  await mkdir(path.join(addonDirectory, "prompts"), { recursive: true });
+  await writeFile(
+    path.join(addonDirectory, "prompts", "worker.md"),
+    "CLI local {{renderedMessage}}\n",
+    "utf8",
+  );
+  await writeJson(path.join(addonDirectory, "addon.json"), {
+    name: input.name,
+    version: input.version,
+    description: "Local echo worker",
+    allowedRoles: ["worker"],
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      additionalProperties: false,
+      properties: {
+        message: { type: "string", minLength: 1 },
+      },
+    },
+    resolution: {
+      kind: "node-payload-template",
+      nodeType: "agent",
+      executionBackend: "official/openai-sdk",
+      model: "gpt-5-nano",
+      promptTemplateFile: "prompts/worker.md",
+      variables: {
+        renderedMessage: "{{addon.inputs.message}}",
+      },
+    },
+  });
+}
+
 async function createCallNodeFixture(
   workflowRoot: string,
   workflowName: string,
@@ -707,6 +754,271 @@ describe("runCli", () => {
     expect(parsed.managerNodeId).toBe("divedra-manager");
     expect(parsed.counts.nodes).toBe(2);
     expect(parsed.runtime.ready).toBe(true);
+  });
+
+  test("workflow commands resolve explicit user scope", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user");
+    const workflowDirectory = path.join(userRoot, "workflows", "demo");
+
+    const createCapture = createIoCapture();
+    const createCode = await runCli(
+      [
+        "workflow",
+        "create",
+        "demo",
+        "--scope",
+        "user",
+        "--user-root",
+        userRoot,
+      ],
+      createCapture.io,
+    );
+    expect(createCode).toBe(0);
+    expect(createCapture.stdout.join("\n")).toContain(workflowDirectory);
+
+    const validateCapture = createIoCapture();
+    const validateCode = await runCli(
+      [
+        "workflow",
+        "validate",
+        "demo",
+        "--scope",
+        "user",
+        "--user-root",
+        userRoot,
+      ],
+      validateCapture.io,
+    );
+    expect(validateCode).toBe(0);
+    expect(validateCapture.stdout.join("\n")).toContain("is valid");
+    expect(validateCapture.stdout.join("\n")).toContain(
+      `source: user ${workflowDirectory}`,
+    );
+
+    const inspectCapture = createIoCapture();
+    const inspectCode = await runCli(
+      [
+        "workflow",
+        "inspect",
+        "demo",
+        "--scope",
+        "user",
+        "--user-root",
+        userRoot,
+        "--output",
+        "json",
+      ],
+      inspectCapture.io,
+    );
+    expect(inspectCode).toBe(0);
+    const inspectPayload = JSON.parse(inspectCapture.stdout.join("\n")) as {
+      source?: { scope?: string; workflowDirectory?: string };
+    };
+    expect(inspectPayload.source?.scope).toBe("user");
+    expect(inspectPayload.source?.workflowDirectory).toBe(workflowDirectory);
+
+    const scenarioPath = path.join(root, "scenario.json");
+    await writeFile(
+      scenarioPath,
+      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
+      "utf8",
+    );
+    const runCapture = createIoCapture();
+    const runCode = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--scope",
+        "user",
+        "--user-root",
+        userRoot,
+        "--mock-scenario",
+        scenarioPath,
+        "--output",
+        "json",
+      ],
+      runCapture.io,
+    );
+    expect(runCode).toBe(0);
+    const runPayload = JSON.parse(runCapture.stdout.join("\n")) as {
+      source?: { scope?: string; workflowDirectory?: string };
+    };
+    expect(runPayload.source?.scope).toBe("user");
+    expect(runPayload.source?.workflowDirectory).toBe(workflowDirectory);
+  });
+
+  test("workflow validate and inspect report scoped local add-on sources", async () => {
+    const root = await makeTempDir();
+    const userRoot = path.join(root, "user");
+    const workflowName = "local-addon-cli";
+    const addonName = "acme/local-echo-worker";
+    const workflowDirectory = path.join(userRoot, "workflows", workflowName);
+    await mkdir(workflowDirectory, { recursive: true });
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: workflowName,
+      description: "local add-on cli fixture",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      entryNodeId: "addon-worker",
+      nodes: [
+        {
+          id: "addon-worker",
+          role: "worker",
+          addon: {
+            name: addonName,
+            version: "1",
+            inputs: { message: "from cli" },
+          },
+          completion: { type: "none" },
+        },
+      ],
+      edges: [],
+      loops: [],
+      branching: { mode: "fan-out" },
+    });
+    await writeLocalAddonManifest({
+      addonRoot: path.join(userRoot, "addons"),
+      name: addonName,
+      version: "1",
+    });
+
+    const validateCapture = createIoCapture();
+    const validateCode = await runCli(
+      [
+        "workflow",
+        "validate",
+        workflowName,
+        "--scope",
+        "user",
+        "--user-root",
+        userRoot,
+        "--output",
+        "json",
+      ],
+      validateCapture.io,
+    );
+    expect(validateCode).toBe(0);
+    const validation = JSON.parse(validateCapture.stdout.join("\n")) as {
+      addonSources?: ReadonlyArray<{
+        readonly nodeId: string;
+        readonly name: string;
+        readonly scope: string;
+        readonly manifestPath: string;
+      }>;
+    };
+    expect(validation.addonSources).toEqual([
+      expect.objectContaining({
+        nodeId: "addon-worker",
+        name: addonName,
+        scope: "user",
+        manifestPath: path.join(
+          userRoot,
+          "addons",
+          "acme",
+          "local-echo-worker",
+          "1",
+          "addon.json",
+        ),
+      }),
+    ]);
+
+    const inspectCapture = createIoCapture();
+    const inspectCode = await runCli(
+      [
+        "workflow",
+        "inspect",
+        workflowName,
+        "--scope",
+        "user",
+        "--user-root",
+        userRoot,
+      ],
+      inspectCapture.io,
+    );
+    expect(inspectCode).toBe(0);
+    expect(inspectCapture.stdout.join("\n")).toContain(
+      `addonSource: addon-worker: ${addonName}@1 user`,
+    );
+  });
+
+  test("workflow commands reject invalid scope selectors", async () => {
+    const capture = createIoCapture();
+
+    const code = await runCli(
+      ["workflow", "validate", "demo", "--scope", "global"],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "invalid --scope value 'global'",
+    );
+  });
+
+  test("workflow commands reject invalid scope environment selectors", async () => {
+    const capture = createIoCapture();
+
+    const code = await runCli(["workflow", "validate", "demo"], capture.io, {
+      startServe: async () => ({
+        host: "127.0.0.1",
+        port: 7777,
+        stop: () => {},
+      }),
+      isInteractiveTerminal: () => true,
+      env: {
+        DIVEDRA_WORKFLOW_SCOPE: "global",
+      },
+    });
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "invalid DIVEDRA_WORKFLOW_SCOPE value 'global'",
+    );
+  });
+
+  test("workflow commands resolve explicit project scope root", async () => {
+    const root = await makeTempDir();
+    const projectRoot = path.join(root, ".divedra");
+
+    const createCapture = createIoCapture();
+    const createCode = await runCli(
+      [
+        "workflow",
+        "create",
+        "demo",
+        "--scope",
+        "project",
+        "--project-root",
+        projectRoot,
+      ],
+      createCapture.io,
+    );
+    expect(createCode).toBe(0);
+    expect(createCapture.stdout.join("\n")).toContain(
+      path.join(projectRoot, "workflows", "demo"),
+    );
+
+    const inspectCapture = createIoCapture();
+    const inspectCode = await runCli(
+      [
+        "workflow",
+        "inspect",
+        "demo",
+        "--scope",
+        "project",
+        "--project-root",
+        projectRoot,
+        "--output",
+        "json",
+      ],
+      inspectCapture.io,
+    );
+    expect(inspectCode).toBe(0);
+    const parsed = JSON.parse(inspectCapture.stdout.join("\n")) as {
+      workflowName: string;
+    };
+    expect(parsed.workflowName).toBe("demo");
   });
 
   test("create --worker-only scaffolds a manager-less starter", async () => {
@@ -1945,6 +2257,7 @@ describe("runCli", () => {
     const started: Array<{
       host?: string;
       port?: number;
+      addonRoot?: string;
       fixedWorkflowName?: string;
       readOnly?: boolean;
       noExec?: boolean;
@@ -1960,6 +2273,8 @@ describe("runCli", () => {
         "7777",
         "--read-only",
         "--no-exec",
+        "--addon-root",
+        "/tmp/direct-addons",
         "--output",
         "json",
       ],
@@ -1980,6 +2295,7 @@ describe("runCli", () => {
 
     expect(code).toBe(0);
     expect(started).toHaveLength(1);
+    expect(started[0]?.addonRoot).toBe("/tmp/direct-addons");
     expect(started[0]?.fixedWorkflowName).toBe("demo");
     expect(started[0]?.readOnly).toBe(true);
     expect(started[0]?.noExec).toBe(true);

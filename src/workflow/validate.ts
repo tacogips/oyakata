@@ -36,9 +36,9 @@ import {
   type ContainerRuntimeDefaults,
   type ContainerRunnerKind,
   type JsonObject,
+  type LoadOptions,
   type CompletionRule,
   type NodeControlKind,
-  type NodeAddonDefinition,
   type NodeAddonPayloadResolver,
   type NodeOutputContract,
   type NodeDurability,
@@ -72,11 +72,21 @@ interface RawBundle {
   readonly nodePayloads: Readonly<Record<string, unknown>>;
 }
 
-export interface WorkflowValidationOptions {
-  readonly nodeAddons?: readonly NodeAddonDefinition[];
-  readonly asyncNodeAddonResolvers?: readonly AsyncNodeAddonPayloadResolver[];
-  readonly nodeAddonResolvers?: readonly NodeAddonPayloadResolver[];
-}
+export interface WorkflowValidationOptions
+  extends Pick<
+    LoadOptions,
+    | "workflowRoot"
+    | "workflowScope"
+    | "userRoot"
+    | "projectRoot"
+    | "addonRoot"
+    | "resolvedWorkflowSource"
+    | "env"
+    | "cwd"
+    | "nodeAddons"
+    | "asyncNodeAddonResolvers"
+    | "nodeAddonResolvers"
+  > {}
 
 type UnknownRecord = Record<string, unknown>;
 type ValidationResult = Result<
@@ -4445,6 +4455,10 @@ export function validateWorkflowBundleDetailed(
           nodeId: node.id,
           addon: node.addon,
           path: `workflow.nodes[${index}].addon`,
+          ...(options.resolvedWorkflowSource === undefined
+            ? {}
+            : { workflowSource: options.resolvedWorkflowSource }),
+          options,
           ...(nodeAddonResolvers === undefined
             ? {}
             : { thirdPartyResolvers: nodeAddonResolvers }),
@@ -4541,6 +4555,10 @@ export async function validateWorkflowBundleDetailedAsync(
           nodeId: node.id,
           addon: node.addon,
           path: `workflow.nodes[${index}].addon`,
+          ...(options.resolvedWorkflowSource === undefined
+            ? {}
+            : { workflowSource: options.resolvedWorkflowSource }),
+          options,
           ...(nodeAddonResolvers === undefined
             ? {}
             : { thirdPartyResolvers: nodeAddonResolvers }),

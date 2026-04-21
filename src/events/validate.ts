@@ -1,8 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
-import path from "node:path";
 import { isJsonObject } from "../shared/json";
-import { resolveEffectiveRoots } from "../workflow/paths";
-import { isSafeWorkflowName } from "../workflow/paths";
+import { listWorkflowCatalogSources } from "../workflow/catalog";
 import { isEventSourceEnabled, loadEventConfiguration } from "./config";
 import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
 import {
@@ -284,33 +281,14 @@ function validateSource(
 
 async function listWorkflowNames(
   options: EventConfigLoadOptions,
+  issues: EventConfigValidationIssue[],
 ): Promise<Set<string>> {
-  const roots = resolveEffectiveRoots(options);
-  let entries: Awaited<ReturnType<typeof readdir>>;
-  try {
-    entries = await readdir(roots.workflowRoot, { withFileTypes: true });
-  } catch {
+  const sources = await listWorkflowCatalogSources(options);
+  if (!sources.ok) {
+    issues.push(error("workflows", sources.error.message));
     return new Set();
   }
-  const names: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !isSafeWorkflowName(entry.name)) {
-      continue;
-    }
-    try {
-      const workflowFile = path.join(
-        roots.workflowRoot,
-        entry.name,
-        "workflow.json",
-      );
-      if ((await stat(workflowFile)).isFile()) {
-        names.push(entry.name);
-      }
-    } catch {
-      // Missing workflow files are ignored here; workflow validation reports them.
-    }
-  }
-  return new Set(names);
+  return new Set(sources.value.map((source) => source.workflowName));
 }
 
 function validateBinding(
@@ -392,7 +370,7 @@ export async function validateEventConfiguration(
   const sourcesById = new Map(
     configuration.sources.map((source) => [source.id, source] as const),
   );
-  const workflowNames = await listWorkflowNames(options);
+  const workflowNames = await listWorkflowNames(options, issues);
   for (const binding of configuration.bindings) {
     validateBinding(binding, sourcesById, workflowNames, issues);
   }

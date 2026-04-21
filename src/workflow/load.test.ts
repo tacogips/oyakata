@@ -3,7 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createWorkflowTemplate } from "./create";
-import { loadWorkflowByIdFromDisk, loadWorkflowFromDisk } from "./load";
+import { listWorkflowCatalogSources } from "./catalog";
+import {
+  loadWorkflowByIdFromDisk,
+  loadWorkflowFromCatalog,
+  loadWorkflowFromDisk,
+} from "./load";
 import {
   computeDefaultRootDataDir,
   encodeProjectPathForDivedraScope,
@@ -29,6 +34,85 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
 
 async function writeText(filePath: string, text: string): Promise<void> {
   await writeFile(filePath, `${text}\n`, "utf8");
+}
+
+async function writeLocalAddonManifest(input: {
+  readonly addonRoot: string;
+  readonly name: string;
+  readonly version: string;
+  readonly prompt: string;
+  readonly model?: string;
+}): Promise<void> {
+  const [namespace, addonName] = input.name.split("/");
+  if (namespace === undefined || addonName === undefined) {
+    throw new Error(`invalid test add-on name '${input.name}'`);
+  }
+  const addonDirectory = path.join(
+    input.addonRoot,
+    namespace,
+    addonName,
+    input.version,
+  );
+  await mkdir(path.join(addonDirectory, "prompts"), { recursive: true });
+  await writeText(
+    path.join(addonDirectory, "prompts", "worker.md"),
+    input.prompt,
+  );
+  await writeJson(path.join(addonDirectory, "addon.json"), {
+    name: input.name,
+    version: input.version,
+    description: "Local echo worker",
+    allowedRoles: ["worker"],
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      additionalProperties: false,
+      properties: {
+        message: { type: "string", minLength: 1 },
+      },
+    },
+    resolution: {
+      kind: "node-payload-template",
+      nodeType: "agent",
+      executionBackend: "official/openai-sdk",
+      model: input.model ?? "gpt-5-nano",
+      promptTemplateFile: "prompts/worker.md",
+      variables: {
+        renderedMessage: "{{addon.inputs.message}}",
+      },
+    },
+  });
+}
+
+async function writeAddonWorkflow(input: {
+  readonly workflowRoot: string;
+  readonly workflowName: string;
+  readonly addonName: string;
+  readonly version?: string;
+  readonly inputs?: Readonly<Record<string, unknown>>;
+}): Promise<void> {
+  const workflowDirectory = path.join(input.workflowRoot, input.workflowName);
+  await mkdir(workflowDirectory, { recursive: true });
+  await writeJson(path.join(workflowDirectory, "workflow.json"), {
+    workflowId: input.workflowName,
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryNodeId: "worker-1",
+    nodes: [
+      {
+        id: "worker-1",
+        role: "worker",
+        addon: {
+          name: input.addonName,
+          ...(input.version === undefined ? {} : { version: input.version }),
+          inputs: input.inputs ?? { message: "loaded" },
+        },
+        completion: { type: "none" },
+      },
+    ],
+    edges: [],
+    loops: [],
+    branching: { mode: "fan-out" },
+  });
 }
 
 afterEach(async () => {
@@ -227,6 +311,203 @@ describe("project path encoding for default root data dir", () => {
     expect(
       encodeProjectPathForDivedraScope("/tmp/project:feature branch"),
     ).toBe("tmp__project_feature_branch");
+  });
+});
+
+describe("scoped workflow catalog", () => {
+  test("loads project-scope workflows before user-scope workflows", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, ".divedra");
+    const userScopeRoot = path.join(root, "user-scope");
+
+    await createWorkflowTemplate("demo", {
+      workflowRoot: path.join(userScopeRoot, "workflows"),
+    });
+    await createWorkflowTemplate("demo", {
+      workflowRoot: path.join(projectScopeRoot, "workflows"),
+    });
+
+    const loaded = await loadWorkflowFromCatalog("demo", {
+      cwd: root,
+      userRoot: userScopeRoot,
+      env: {},
+    });
+
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.source?.scope).toBe("project");
+    expect(loaded.value.workflowDirectory).toBe(
+      path.join(projectScopeRoot, "workflows", "demo"),
+    );
+    expect(loaded.value.artifactWorkflowRoot).toBe(
+      path.join(projectScopeRoot, "artifacts", "workflow", "demo"),
+    );
+  });
+
+  test("can force user scope when a project workflow shadows the name", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, ".divedra");
+    const userScopeRoot = path.join(root, "user-scope");
+
+    await createWorkflowTemplate("demo", {
+      workflowRoot: path.join(userScopeRoot, "workflows"),
+    });
+    await createWorkflowTemplate("demo", {
+      workflowRoot: path.join(projectScopeRoot, "workflows"),
+    });
+
+    const loaded = await loadWorkflowFromCatalog("demo", {
+      cwd: root,
+      workflowScope: "user",
+      userRoot: userScopeRoot,
+      env: {},
+    });
+
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.source?.scope).toBe("user");
+    expect(loaded.value.workflowDirectory).toBe(
+      path.join(userScopeRoot, "workflows", "demo"),
+    );
+    expect(loaded.value.artifactWorkflowRoot).toBe(
+      path.join(userScopeRoot, "artifacts", "workflow", "demo"),
+    );
+  });
+
+  test("rejects invalid workflow scope environment values in catalog APIs", async () => {
+    const root = await makeTempDir();
+    const userScopeRoot = path.join(root, "user-scope");
+    await createWorkflowTemplate("demo", {
+      workflowRoot: path.join(userScopeRoot, "workflows"),
+    });
+
+    const loaded = await loadWorkflowFromCatalog("demo", {
+      cwd: root,
+      userRoot: userScopeRoot,
+      env: {
+        DIVEDRA_WORKFLOW_SCOPE: "global",
+      },
+    });
+    expect(loaded.ok).toBe(false);
+    if (loaded.ok) {
+      return;
+    }
+    expect(loaded.error.code).toBe("INVALID_SCOPE");
+    expect(loaded.error.message).toContain("DIVEDRA_WORKFLOW_SCOPE");
+
+    const listed = await listWorkflowCatalogSources({
+      cwd: root,
+      userRoot: userScopeRoot,
+      env: {
+        DIVEDRA_WORKFLOW_SCOPE: "global",
+      },
+    });
+    expect(listed.ok).toBe(false);
+    if (listed.ok) {
+      return;
+    }
+    expect(listed.error.code).toBe("INVALID_SCOPE");
+  });
+
+  test("rejects invalid workflow scope environment values during create", async () => {
+    const root = await makeTempDir();
+
+    const created = await createWorkflowTemplate("demo", {
+      cwd: root,
+      env: {
+        DIVEDRA_WORKFLOW_SCOPE: "global",
+      },
+    });
+
+    expect(created.ok).toBe(false);
+    if (created.ok) {
+      return;
+    }
+    expect(created.error.code).toBe("INVALID_SCOPE");
+    expect(created.error.message).toContain("DIVEDRA_WORKFLOW_SCOPE");
+  });
+
+  test("infers scoped runtime data root from explicit session store roots", async () => {
+    const root = await makeTempDir();
+    const userScopeRoot = path.join(root, "user-scope");
+    const rootDataDir = path.join(root, "runtime-data");
+    await createWorkflowTemplate("demo", {
+      workflowRoot: path.join(userScopeRoot, "workflows"),
+    });
+
+    const loaded = await loadWorkflowFromCatalog("demo", {
+      cwd: root,
+      workflowScope: "user",
+      userRoot: userScopeRoot,
+      sessionStoreRoot: path.join(rootDataDir, "sessions"),
+      env: {},
+    });
+
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.artifactWorkflowRoot).toBe(
+      path.join(rootDataDir, "workflow", "demo"),
+    );
+  });
+
+  test("preserves direct workflow-root loading", async () => {
+    const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
+
+    const loaded = await loadWorkflowFromCatalog("demo", {
+      workflowRoot: root,
+      env: {},
+    });
+
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.source?.scope).toBe("direct");
+    expect(loaded.value.workflowDirectory).toBe(path.join(root, "demo"));
+  });
+
+  test("creates workflows in user scope when no project scope exists", async () => {
+    const root = await makeTempDir();
+    const userScopeRoot = path.join(root, "user-scope");
+
+    const created = await createWorkflowTemplate("new-flow", {
+      cwd: root,
+      userRoot: userScopeRoot,
+      env: {},
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+    expect(created.value.workflowDirectory).toBe(
+      path.join(userScopeRoot, "workflows", "new-flow"),
+    );
+  });
+
+  test("creates project scope intentionally with --scope project semantics", async () => {
+    const root = await makeTempDir();
+
+    const created = await createWorkflowTemplate("project-flow", {
+      cwd: root,
+      workflowScope: "project",
+      env: {},
+    });
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
+    expect(created.value.workflowDirectory).toBe(
+      path.join(root, ".divedra", "workflows", "project-flow"),
+    );
   });
 });
 
@@ -1246,6 +1527,217 @@ describe("loadWorkflowFromDisk", () => {
       executionBackend: "official/openai-sdk",
       variables: { message: "loaded async" },
     });
+  });
+
+  test("resolves user-scope local add-on manifests", async () => {
+    const root = await makeTempDir();
+    const userScopeRoot = path.join(root, "user-scope");
+    const workflowName = "user-local-addon";
+    const addonName = "acme/echo-worker";
+
+    await writeAddonWorkflow({
+      workflowRoot: path.join(userScopeRoot, "workflows"),
+      workflowName,
+      addonName,
+      version: "1",
+      inputs: { message: "from user scope" },
+    });
+    await writeLocalAddonManifest({
+      addonRoot: path.join(userScopeRoot, "addons"),
+      name: addonName,
+      version: "1",
+      prompt: "User prompt {{renderedMessage}}",
+    });
+
+    const result = await loadWorkflowFromCatalog(workflowName, {
+      workflowScope: "user",
+      userRoot: userScopeRoot,
+      cwd: root,
+      env: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.bundle.nodePayloads["worker-1"]).toMatchObject({
+      executionBackend: "official/openai-sdk",
+      model: "gpt-5-nano",
+      promptTemplate: "User prompt {{renderedMessage}}\n",
+      variables: {
+        renderedMessage: "from user scope",
+        message: "from user scope",
+      },
+    });
+  });
+
+  test("project-scope local add-on shadows user-scope add-on by exact version", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, ".divedra");
+    const userScopeRoot = path.join(root, "user-scope");
+    const workflowName = "project-shadow-addon";
+    const addonName = "acme/echo-worker";
+
+    await writeAddonWorkflow({
+      workflowRoot: path.join(userScopeRoot, "workflows"),
+      workflowName,
+      addonName,
+      version: "1",
+      inputs: { message: "shadowed" },
+    });
+    await writeLocalAddonManifest({
+      addonRoot: path.join(userScopeRoot, "addons"),
+      name: addonName,
+      version: "1",
+      prompt: "User add-on",
+      model: "gpt-5-nano",
+    });
+    await writeLocalAddonManifest({
+      addonRoot: path.join(projectScopeRoot, "addons"),
+      name: addonName,
+      version: "1",
+      prompt: "Project add-on",
+      model: "gpt-5-mini",
+    });
+
+    const result = await loadWorkflowFromCatalog(workflowName, {
+      workflowScope: "user",
+      userRoot: userScopeRoot,
+      cwd: root,
+      env: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.bundle.nodePayloads["worker-1"]).toMatchObject({
+      model: "gpt-5-mini",
+      promptTemplate: "Project add-on\n",
+    });
+  });
+
+  test("uses direct add-on root override before scoped local add-ons", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, ".divedra");
+    const directAddonRoot = path.join(root, "direct-addons");
+    const workflowName = "direct-addon-root";
+    const addonName = "acme/echo-worker";
+
+    await writeAddonWorkflow({
+      workflowRoot: path.join(projectScopeRoot, "workflows"),
+      workflowName,
+      addonName,
+      version: "1",
+    });
+    await writeLocalAddonManifest({
+      addonRoot: path.join(projectScopeRoot, "addons"),
+      name: addonName,
+      version: "1",
+      prompt: "Project add-on",
+      model: "gpt-5-nano",
+    });
+    await writeLocalAddonManifest({
+      addonRoot: directAddonRoot,
+      name: addonName,
+      version: "1",
+      prompt: "Direct add-on",
+      model: "gpt-5-mini",
+    });
+
+    const result = await loadWorkflowFromCatalog(workflowName, {
+      cwd: root,
+      addonRoot: directAddonRoot,
+      env: {},
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.bundle.nodePayloads["worker-1"]).toMatchObject({
+      model: "gpt-5-mini",
+      promptTemplate: "Direct add-on\n",
+    });
+  });
+
+  test("rejects unsafe local add-on names before resolving paths", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, ".divedra");
+    const workflowName = "unsafe-addon-name";
+
+    await writeAddonWorkflow({
+      workflowRoot: path.join(projectScopeRoot, "workflows"),
+      workflowName,
+      addonName: "../evil",
+      version: "1",
+    });
+
+    const result = await loadWorkflowFromCatalog(workflowName, {
+      cwd: root,
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.code).toBe("VALIDATION");
+    expect(
+      result.error.issues?.some((issue) => issue.path.endsWith(".addon")),
+    ).toBe(true);
+    expect(
+      result.error.issues?.some((issue) =>
+        issue.message.includes("invalid local"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects local add-on template files outside the add-on directory", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, ".divedra");
+    const workflowName = "unsafe-addon-template";
+    const addonName = "acme/unsafe-worker";
+    const addonRoot = path.join(projectScopeRoot, "addons");
+    const addonDirectory = path.join(addonRoot, "acme", "unsafe-worker", "1");
+
+    await writeAddonWorkflow({
+      workflowRoot: path.join(projectScopeRoot, "workflows"),
+      workflowName,
+      addonName,
+      version: "1",
+    });
+    await mkdir(addonDirectory, { recursive: true });
+    await writeJson(path.join(addonDirectory, "addon.json"), {
+      name: addonName,
+      version: "1",
+      description: "Unsafe local worker",
+      allowedRoles: ["worker"],
+      resolution: {
+        kind: "node-payload-template",
+        nodeType: "agent",
+        executionBackend: "official/openai-sdk",
+        model: "gpt-5-nano",
+        promptTemplateFile: "../outside.md",
+        variables: {},
+      },
+    });
+
+    const result = await loadWorkflowFromCatalog(workflowName, {
+      cwd: root,
+      env: {},
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.code).toBe("VALIDATION");
+    expect(
+      result.error.issues?.some((issue) =>
+        issue.message.includes("must not contain '.' or '..' segments"),
+      ),
+    ).toBe(true);
   });
 
   test("loads the worker-only example without an authored manager node", async () => {

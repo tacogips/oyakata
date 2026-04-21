@@ -23,6 +23,17 @@ const GRAPHQL_SCHEMA_TEXT = `
     legacySubWorkflows: Int!
   }
 
+  type WorkflowAddonSource {
+    nodeId: String!
+    name: String!
+    version: String!
+    scope: String!
+    addonRoot: String!
+    addonDirectory: String!
+    manifestPath: String!
+    scopeRoot: String
+  }
+
   type WorkflowView {
     workflowName: String!
     workflowId: String!
@@ -36,6 +47,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     nodeFiles: [String!]!
     workflowDirectory: String!
     artifactWorkflowRoot: String!
+    addonSources: [WorkflowAddonSource!]!
   }
 
   type WorkflowDefinitionView {
@@ -298,6 +310,7 @@ const GRAPHQL_SCHEMA_TEXT = `
   type ValidateWorkflowDefinitionPayload {
     valid: Boolean!
     workflowId: String
+    addonSources: [WorkflowAddonSource!]
     warnings: JSON
     issues: JSON
     error: String

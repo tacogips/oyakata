@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-04-20T15:20:00Z",
+  "lastUpdated": "2026-04-21T00:39:59Z",
   "phases": {
     "1": { "status": "COMPLETED" },
     "2": { "status": "COMPLETED" },
@@ -119,7 +119,13 @@
     "116": { "status": "COMPLETED" },
     "117": { "status": "COMPLETED" },
     "118": { "status": "COMPLETED" },
-    "119": { "status": "COMPLETED" }
+    "119": { "status": "COMPLETED" },
+    "120": { "status": "COMPLETED" },
+    "121": { "status": "COMPLETED" },
+    "122": { "status": "COMPLETED" },
+    "123": { "status": "COMPLETED" },
+    "124": { "status": "COMPLETED" },
+    "125": { "status": "COMPLETED" }
   },
   "plans": {
     "workflow-execution-working-directory": {
@@ -2870,6 +2876,142 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": ["TASK-001", "TASK-002", "TASK-003"]
+        }
+      }
+    },
+    "scoped-workflow-catalog": {
+      "phase": 120,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
+        }
+      }
+    },
+    "scoped-workflow-runtime-follow-up": {
+      "phase": 121,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["scoped-workflow-catalog:TASK-004"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        }
+      }
+    },
+    "scoped-workflow-graphql-server": {
+      "phase": 122,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["scoped-workflow-runtime-follow-up:TASK-003"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002"]
+        }
+      }
+    },
+    "scoped-workflow-source-visibility": {
+      "phase": 123,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["scoped-workflow-graphql-server:TASK-003"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        }
+      }
+    },
+    "scoped-workflow-catalog-safety-follow-up": {
+      "phase": 124,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["scoped-workflow-runtime-follow-up:TASK-003"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002"]
+        }
+      }
+    },
+    "scoped-local-addons": {
+      "phase": 125,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["scoped-workflow-catalog-safety-follow-up:TASK-003"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-003", "TASK-004"]
         }
       }
     }

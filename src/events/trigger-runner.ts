@@ -135,6 +135,15 @@ export function createWorkflowTriggerRunner(
           ...(options.workflowRoot === undefined
             ? {}
             : { workflowRoot: options.workflowRoot }),
+          ...(options.workflowScope === undefined
+            ? {}
+            : { workflowScope: options.workflowScope }),
+          ...(options.userRoot === undefined
+            ? {}
+            : { userRoot: options.userRoot }),
+          ...(options.projectRoot === undefined
+            ? {}
+            : { projectRoot: options.projectRoot }),
           ...(options.artifactRoot === undefined
             ? {}
             : { artifactRoot: options.artifactRoot }),
@@ -146,6 +155,15 @@ export function createWorkflowTriggerRunner(
             : { sessionStoreRoot: options.sessionStoreRoot }),
           ...(options.env === undefined ? {} : { env: options.env }),
           ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+          ...(options.nodeAddons === undefined
+            ? {}
+            : { nodeAddons: options.nodeAddons }),
+          ...(options.asyncNodeAddonResolvers === undefined
+            ? {}
+            : { asyncNodeAddonResolvers: options.asyncNodeAddonResolvers }),
+          ...(options.nodeAddonResolvers === undefined
+            ? {}
+            : { nodeAddonResolvers: options.nodeAddonResolvers }),
           ...(options.endpoint === undefined
             ? {}
             : { endpoint: options.endpoint }),
