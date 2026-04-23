@@ -10,6 +10,20 @@ The current codebase provides:
 - a local GraphQL control plane served by Bun
 - an OpenTUI-based terminal UI for browsing workflows, runs, and artifacts
 
+## Active Design Direction
+
+The current implementation remains the source of truth for shipped behavior, but the active design work in `design-docs/specs/` now targets:
+
+- step-addressed workflows (`workflow.json.steps[]`) with a reusable node registry in `workflow.json.nodes[]`
+- jump-driven routing via validated `next.stepId` rather than dedicated branch/loop authoring
+- deterministic `code` manager behavior as the default manager mode
+- explicit same-session continuation for different steps that intentionally reuse one node
+- cross-workflow calls using the same execution-address contract as local step calls by targeting the callee workflow manager step
+- migration toward one shared call abstraction for local and cross-workflow dispatch instead of separate long-term paths
+- supervised `--auto-improve` execution as a future extension
+
+Those design documents describe the intended next schema and runtime direction; they are not a claim that every item is already implemented in `src/`.
+
 ## What Is Implemented Today
 
 The source of truth is the implementation under `src/workflow/`, `src/cli.ts`,

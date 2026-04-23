@@ -15,6 +15,19 @@ This document describes the current runtime architecture implemented in `src/wor
 
 The current implementation is centered on the persisted workflow session and its queue. Manager nodes are important, but they do not replace the queue-based engine.
 
+Current direction:
+
+- workflow authoring uses jump-driven routing via runtime-owned output mail instead of dedicated branch/loop primitives
+- workflows use `workflow -> steps[] + nodes[]`, where steps are the canonical execution addresses and `workflow.json.nodes[]` is a reusable node registry
+- manager nodes should default to a deterministic `code` manager, with `llm` manager retained as experimental
+- repeated visits to the same node should materialize distinct mailbox instances and support same-session continuation with prompt variants
+- `auto improve mode` should run a paired `divedra superviser` workflow that monitors a target workflow, decides between rerun and workflow repair, and reruns against an execution-scoped mutable workflow copy by default
+
+Supporting design:
+- `design-docs/specs/design-node-jump-and-code-manager-runtime.md`
+- `design-docs/specs/design-workflow-steps-and-node-reuse.md`
+- `design-docs/specs/design-auto-improve-superviser-mode.md`
+
 ## Core Architectural Boundaries
 
 ### Workflow Definition Boundary
@@ -22,13 +35,13 @@ The current implementation is centered on the persisted workflow session and its
 Workflow definitions live under `<workflow-root>/<workflow-name>/` and are composed from:
 
 - `workflow.json`
+- optional `steps/step-*.json` files when steps are file-backed
 - referenced node payload JSON files
   - default location: `nodes/node-{id}.json`
   - authors may also place payloads in workflow-relative nested paths such as `workflows/<lane>/nodes/node-{id}.json`
-  - when `workflow.json.nodes[].nodeFile` is omitted, the authored inline `workflow.json.nodes[].node` payload is normalized to `nodes/node-{id}.json`
 - optional prompt files referenced by `systemPromptTemplateFile`, `promptTemplateFile`, and `sessionStartPromptTemplateFile`
 
-The loader resolves those workflow-local prompt files into effective inline template text before validation and execution, and normalizes inline-authored node payloads to stable workflow-relative paths.
+The loader resolves those workflow-local prompt files into effective inline template text before validation and execution.
 
 Workflow roots can be resolved directly or through the scoped workflow catalog.
 The scoped model defines:
@@ -54,11 +67,7 @@ The runtime persists three distinct forms of state:
 - query-oriented runtime index data in `{rootDataDir}/divedra.db`
 
 In scoped catalog mode, `{rootDataDir}` defaults to the owning workflow scope's
-`<scope-root>/artifacts`. In direct workflow-root compatibility mode, the
-current computed default remains `~/.divedra/project/<encoded-project-root>/divedra-artifact`,
-where `<encoded-project-root>` is the nearest ancestor containing `.divedra`
-when present, otherwise the current working directory, with path segments joined
-by `__` and path-hostile characters normalized to `_`.
+`<scope-root>/artifacts`.
 
 File artifacts remain the authoritative source for execution payloads. SQLite is a best-effort index for CLI, TUI, and GraphQL inspection queries.
 
@@ -80,7 +89,7 @@ It owns:
 - timeout and stuck-restart handling
 - output-contract validation and retry
 - communication publication and consumption
-- loop transition resolution
+- step jump resolution and timeout-policy routing
 - manager-control validation
 - final workflow-output publication
 
@@ -105,21 +114,15 @@ Responsibilities:
 
 - read workflow bundle files
 - resolve `promptTemplateFile`
-- normalize inline node authoring and workflow-relative node payload paths
-- validate node kinds, sub-workflow boundaries, edges, loops, and payload shapes
+- validate step definitions, node registry entries, transitions, and payload shapes
 
 Important validation facts:
 
-- authored workflows may use `role: "manager" | "worker"` plus `control`
-- worker-only workflows are valid when `entryNodeId` is explicit
-- authored `workflowCalls` are accepted, loaded, and executable when their target workflow bundles resolve under the configured workflow root
-- non-empty authored `subWorkflows[]` are treated as legacy structural compatibility input and are rejected when combined with authored `role` / `control` nodes
-- non-empty authored `subWorkflowConversations[]` are treated the same way and are rejected when combined with authored `role` / `control` nodes
-- structural boundary node kinds `subworkflow-manager`, `input`, and `output` are rejected when combined with authored `role` / `control` nodes
-- the validator still normalizes authored roles into legacy structural `kind` values and an effective runtime `managerNodeId` so the current engine can execute transitional bundles
-- `root-manager`, `subworkflow-manager`, `input`, and `output` remain the structural roles enforced by the current runtime compatibility layer
-- cross-scope edges must target manager boundaries
-- `branching.mode` is currently fixed to `fan-out`
+- worker-only workflows are valid when `entryStepId` is explicit
+- `managerStepId`, when present, must resolve to an authored step
+- every step must resolve `nodeId` through the explicit node registry in `workflow.json.nodes[]`
+- dedicated authored fields such as `edges`, `loops`, `branching`, and structural sub-workflow metadata are outside the authored schema
+- cross-scope routing must still target the owning manager boundary
 
 ### Node Add-on Catalog
 
@@ -181,10 +184,10 @@ Responsibilities:
 - resolve `argumentBindings`
 - expose inbox/upstream payloads to templates
 - compose manager and worker system prompt layers
-- choose the default manager system prompt by active execution model, so role-authored workflows without structural compatibility use current-workflow and explicit-`workflowCalls` guidance while structural sub-workflow wording remains limited to compatibility bundles that still author those boundaries
+- choose the default manager system prompt by the active step-based execution model so manager guidance reflects current-workflow state and any supported cross-workflow invocation contract
 - prepend node-authored session-start prompts only when a backend session is first created
-- inject workflow and sub-workflow structure summaries
-- keep manager mailbox/control guidance aligned with the active execution model, so role-authored workflows advertise current-workflow retry/replay/optional-node actions while legacy structural sub-workflow actions remain documented only for compatibility paths
+- inject workflow and cross-workflow structure summaries when applicable
+- keep manager mailbox/control guidance aligned with the active execution model so role-authored workflows advertise current-workflow retry/replay/optional-step actions
 
 The runtime distinguishes:
 
@@ -221,12 +224,12 @@ Source:
 
 Responsibilities:
 
-- persist queue and node execution history
-- track loop counts, restart counts, and transitions
+- persist queue and step/node execution history
+- track step visits, restart counts, and transition decisions
 - record mailbox communications and conversation turns
 - expose stable session identity for CLI, TUI, GraphQL, and library consumers
 
-The queue is deduplicated after each scheduling pass. Multiple matched branch edges still fan out to multiple recipients, but duplicate node ids are collapsed in the queue view.
+The queue is deduplicated after each scheduling pass. Multiple valid transition deliveries may still target more than one next execution site, but duplicate queue entries for the same pending execution are collapsed in the queue view.
 
 ### Workflow Invocation and Legacy Structural Planning
 
@@ -238,22 +241,21 @@ Source:
 
 Responsibilities:
 
-- execute explicit authored `workflowCalls` as ordinary child workflow runs
-- deliver workflow-call results back through runtime-owned communications when configured
-- auto-start eligible `plain` sub-workflows
-- map parent manager outputs into child input deliveries
+- execute cross-workflow calls through the same step-call runtime primitive used for local worker-step invocation
+- treat a workflow call as a call to the target workflow's callable entry step, normally its manager step
+- keep older `workflowCalls` and structural sub-workflow planning behavior isolated as compatibility-only behavior while the runtime migrates
+- converge compatibility `workflowCalls` and ordinary step calls behind one shared call abstraction instead of preserving separate long-term dispatch paths
 - allow validated manager override actions
-- run round-robin conversation turns between sub-workflows
+- run round-robin conversation turns for legacy compatibility bundles when still authored
 
 Current planning behavior:
 
-- authored `workflowCalls` execute immediately after their caller node succeeds and stay on the active role-authored path
-- workflow-call result delivery is runtime-owned and uses ordinary upstream communications keyed by `workflow-call:<id>`
-- root manager can auto-start `plain` sub-workflows when `inputSources` are satisfied
-- sub-workflow managers can auto-deliver to their owned `input` node
+- the target design treats cross-workflow invocation as an ordinary call to another workflow's manager step rather than a separate `workflowCalls` channel
+- current runtime compatibility still executes authored `workflowCalls` immediately after their caller node succeeds
+- result delivery should use the same runtime-owned output/publication path as any other step call
+- if current `workflowCalls` plumbing differs too much from local step-call plumbing, the implementation should be refactored so both lower into one normalized dispatch path
 - manager output payloads may include `managerControl.actions`
 - the runtime validates control scope before honoring those actions
-- the structural sub-workflow bullets above remain compatibility behavior for explicitly legacy-authored bundles and are the next cleanup target
 
 ### Server and GraphQL Control Plane
 
@@ -281,7 +283,7 @@ Manager scope rules:
 
 - manager auth is established from request transport metadata
 - HTTP server ambient environment is not trusted as manager scope
-- manager sessions are minted per real manager-node execution
+- manager sessions are minted per real manager-step execution
 
 ### TUI Runtime Boundary
 
@@ -335,36 +337,15 @@ Supporting design:
 
 Current authored direction:
 
-- `role: "manager"` or `role: "worker"`
-- optional `control: "branch-judge" | "loop-judge" | "none"`
-- `entryNodeId` may be the authored entry when a workflow has no manager
+- `steps[]` are the executable addresses
+- steps may be manager or worker execution sites
+- reusable node definitions live in `workflow.json.nodes[]` and backing `nodes/node-*.json` files
+- `entryStepId` is always explicit
 
-Current structural node kinds:
-
-- `task`
-- `branch-judge`
-- `loop-judge`
-- `root-manager`
-- `subworkflow-manager`
-- `input`
-- `output`
-
-The engine still executes against these normalized structural kinds today. Manager-less authored workflows currently work by normalizing the authored `entryNodeId` into an effective runtime entry/manager identity. Explicit authored `workflowCalls` now execute as ordinary child workflow runs, but structural sub-workflow boundaries and their dedicated runtime semantics still remain and are the next removal target.
-
-Role split:
-
-- root manager: workflow-global coordination
-- sub-workflow manager: local coordination for one sub-workflow boundary
-- input: normalize inbound mailbox/runtime data
-- output: publish a scope boundary result
-- judge nodes: emit branch/loop decisions
-- task: ordinary business work
-
-Current execution policies:
+Execution policies:
 
 - `user-action` is implemented as a `nodeType`, not as a new manager boundary, so human approval/input remains a runtime-owned execution flavor rather than a second structural control-flow system
-- optional node execution is implemented as scheduler policy on `workflow.json.nodes[]`
-- the current workflow manager may explicitly choose `execute-optional-node` or `skip-optional-node`, while legacy structural `subworkflow-manager` scope remains limited to its owned compatibility boundary
+- optional step execution is implemented as scheduler policy on authored steps
 - node add-ons are an authoring reuse layer, not a third role axis; after
   resolution, an add-on node executes as a normal worker with descriptor
   provenance recorded in runtime metadata
@@ -398,7 +379,7 @@ sequenceDiagram
         V-->>E: accepted or rejected
         E->>S: persist output/meta/handoff
         E->>C: mark upstream communications consumed
-        E->>C: publish edge and manager-planned communications
+        E->>C: publish transition and manager-planned communications
         E->>S: persist updated queue and session state
     end
 
@@ -408,12 +389,12 @@ sequenceDiagram
 
 ## Mailbox Architecture
 
-The runtime communicates between nodes through persisted communication artifacts, not only in-memory transitions.
+The runtime communicates between steps/nodes through persisted communication artifacts, not only in-memory transitions.
 
 Each communication records:
 
-- source node id and node execution id
-- destination node id
+- source step id, source node id, and node execution id
+- destination step id and destination node id when the route stays inside the workflow
 - routing scope
 - payload reference
 - delivery kind
@@ -422,20 +403,19 @@ Each communication records:
 Routing scopes:
 
 - `external-mailbox`
-- `parent-to-sub-workflow`
-- `intra-sub-workflow`
-- `cross-sub-workflow`
+- `intra-workflow`
+- `cross-workflow`
 
 Delivery kinds:
 
-- `edge-transition`
-- `loop-back`
+- `step-transition`
+- `step-revisit`
 - `manual-rerun`
 - `conversation-turn`
 - `external-input`
 - `external-output`
 
-This mailbox layer is the architectural boundary that lets root workflows, sub-workflows, and external callers use the same handoff model.
+This mailbox layer is the architectural boundary that lets one workflow execution, cross-workflow invocation, and external callers use the same handoff model.
 
 Worker nodes do not consume that canonical transport layout directly.
 Before each node execution, the runtime compiles a worker-facing execution
@@ -463,52 +443,45 @@ This is especially important for nodes that declare `output.jsonSchema`.
 
 ## Control-Flow Semantics
 
-### Branching
+### Routing
 
-- outgoing edges are filtered by `when`
-- matching is fan-out, not priority-based single-choice routing
-- expressions are evaluated against `output.when.<name>` first, then top-level booleans
-
-### Loops
-
-- loop rules attach to a `loop-judge`
-- `continueWhen` and `exitWhen` are evaluated from the judge output
-- `maxIterations` falls back to `defaults.maxLoopIterations`
+- outgoing step transitions define the legal jump graph
+- worker output may include a validated `next.stepId` request
+- the manager validates requested jumps against the current step transitions
 
 ### Completion
 
-The engine checks completion after successful execution and output publication. A node can still fail the workflow after producing syntactically valid output if its completion rule does not pass.
+The engine checks workflow completion after successful execution and output publication.
+In the step-addressed model, terminality comes from explicit manager decisions or the absence of a valid next step, not from a separate authored `CompletionRule`.
 
 ## Manager Control Architecture
 
 Manager nodes may return `payload.managerControl.actions`.
 
-Currently supported actions:
+Step-addressed manager actions should normalize to:
 
 - `planner-note`
-- `start-sub-workflow`
-- `deliver-to-child-input`
-- `retry-node`
+- `retry-step`
 - `replay-communication`
-- `execute-optional-node`
-- `skip-optional-node`
+- `execute-optional-step`
+- `skip-optional-step`
+
+Current runtime compatibility may still expose older node/sub-workflow action names while the implementation catches up to this target contract.
 
 Scope enforcement:
 
-- explicit authored `workflowCalls` run automatically from their caller nodes; managers do not emit `start-sub-workflow` or `deliver-to-child-input` for the active role-authored path
-- only the root manager of an explicitly legacy structural bundle may start sub-workflows
-- only a legacy structural sub-workflow manager may deliver to its owned child input node
+- managers operate only within their allowed workflow scope
 - retries must stay within the manager's allowed scope
 - communication replay must stay within the manager's allowed scope
-- optional-node decisions must stay within the manager's allowed scope
+- optional-step decisions must stay within the manager's allowed scope
 
-Manager sessions are minted per manager-node execution and expire when that node execution finishes.
+Manager sessions are minted per manager-step execution and expire when that execution finishes.
 
 ## Current Limitations
 
-- the main runtime remains queue-based; the local `call-node` path is not the whole orchestration model
-- `LoopRule.backoffMs` exists in schema, but loop backoff is not currently applied directly by the main engine
-- node ordering lives in `workflow.json.nodes[]`, and runtime execution derives semantics from that canonical definition
+- the main runtime remains queue-based; the local `call-step` path is not the whole orchestration model
+- runtime/tooling cleanup is still needed in older internal documents that describe removed branch/loop or structural sub-workflow authoring
+- some supporting materials still assume node-centric naming even though authored execution is step-addressed
 
 ## References
 

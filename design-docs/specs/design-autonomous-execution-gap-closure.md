@@ -157,4 +157,5 @@ No new field is added to `workflow.json` unless:
 - `design-docs/specs/architecture.md`
 - `design-docs/specs/design-workflow-json.md`
 - `design-docs/specs/design-data-model.md`
+- `design-docs/specs/design-auto-improve-superviser-mode.md`
 - `impl-plans/active/autonomous-execution-gap-closure.md`

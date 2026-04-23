@@ -14,39 +14,42 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Create `<workflow-root>/<name>/` with `workflow.json`, prompt templates, and default `nodes/node-{id}.json` payload files.
   - In scoped mode, create under `<scope-root>/workflows/<name>/`.
   - Default write scope is project scope when a project `.divedra` exists, otherwise user scope; `--scope project|user` makes the destination explicit.
-  - The current starter template uses a `claude-code-agent` manager node and a `codex-agent` worker node.
-  - The generated `workflow.json` should prefer the authored-minimal role-based shape and omit compatibility/default fields such as empty `subWorkflows`, synthesized sequential `edges`, default `branching`, unrelated `containerRuntime` defaults, and node-level `completion: { "type": "none" }` unless the authored bundle needs them.
-  - `--worker-only` switches the starter to a manager-less template whose explicit `entryNodeId` points at `main-worker`.
+  - The target starter direction is a `code` manager node by default, with LLM manager authoring retained as experimental.
+  - Starter templates use `workflow -> steps[] + nodes[]`, where steps are the execution addresses and `workflow.json.nodes[]` is the reusable node registry.
+  - The generated `workflow.json` should contain only authored schema fields from the current model.
+  - `--worker-only` switches the starter to a manager-less template whose explicit `entryStepId` points at `main-worker`.
 - `cli workflow validate <name>`
   - Validate `<workflow-root>/<name>/` structure and semantic constraints.
   - Scoped catalog output includes the resolved workflow `source` scope and workflow directory so project/user shadowing is visible.
 - `cli workflow inspect <name>`
-  - Print normalized node graph, fan-out branch rules, loop defaults, timeout defaults, and node file references.
+  - Print workflow structure, including canonical execution units (`steps`), jump graph, timeout defaults, and reusable node references.
   - Scoped catalog output includes the resolved workflow `source` scope and workflow directory.
-  - Active inspection output should label structural compatibility counts as `legacySubWorkflows` rather than presenting raw `subWorkflows` as a peer concept to authored `workflowCalls`.
 - `cli workflow run <name>`
   - Execute `<workflow-root>/<name>/workflow.json` and all referenced workflow-local node payload files.
   - Without a direct `--workflow-root`, resolve `<name>` from the scoped workflow catalog: project scope first, then user scope.
   - Local run output includes the resolved workflow `source` scope and workflow directory before execution/session details.
   - Accepts `--working-dir` / `--working-directory` to override the workflow execution working directory for that run.
+  - Target extension: `--auto-improve` launches the target workflow under a paired `divedra superviser` execution that monitors progress, decides rerun versus workflow repair, and reruns against an execution-scoped mutable workflow copy by default. The CLI should expose the full supervision policy surface, including monitoring cadence, mutation mode, and targeted-rerun enablement.
 - `session progress <session-id>`
-  - Show queue, execution counts, and per-node restart/execution summary.
+  - Show queue, execution counts, and per-step restart/execution summary.
 - `session status <session-id>`
   - Show the persisted workflow-session snapshot.
 - `session resume <session-id>`
   - Continue an interrupted session from persisted state.
-  - Accepts `--working-dir` / `--working-directory` to override the execution working directory used for resumed node execution.
-- `session rerun <session-id> <node-id>`
-  - Start a new run from a chosen node in an existing session.
+  - Accepts `--working-dir` / `--working-directory` to override the execution working directory used for resumed step execution.
+- `session rerun <session-id> <step-id>`
+  - Start a new run from a chosen step in an existing session.
   - Accepts `--working-dir` / `--working-directory` to override the workflow execution working directory for the rerun.
 - `session export <session-id>`
   - Export the persisted workflow run as JSON to stdout or to a file.
-  - Includes session state, runtime node execution rows, runtime node logs, and communication snapshots.
+  - Includes session state, runtime step/node execution rows, runtime node logs, and communication snapshots.
 - `session logs <session-id>`
   - Print runtime node logs for a persisted session.
   - Accepts `--format text|json|jsonl`; defaults to text unless `--output json` is used.
-- `call-node <workflow-id> <workflow-run-id> <node-id>`
-  - Execute one node directly against an existing run context for local debugging.
+- `call-step <workflow-id> <workflow-run-id> <step-id>`
+  - Execute one step directly against an existing run context for local debugging.
+  - The same call contract is the target runtime primitive for cross-workflow invocation; calling another workflow means targeting that workflow's callable entry step through `call-step` semantics rather than through a separate `workflowCalls` feature.
+  - Support explicit continuation controls such as prompt variant selection, backend-session reuse, and timeout override so the same reusable node can be revisited through a different step for flows such as self-review and timeout recovery.
 - `gql <graphql-document>`
   - Execute a GraphQL query or mutation against the canonical control-plane endpoint.
   - Manager-node LLM/tool use should call GraphQL mutations such as `sendManagerMessage` through this command rather than dedicated domain subcommands.
@@ -57,7 +60,6 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Exposes `/graphql` for workflow-definition, execution, communication, and manager-control operations.
   - Exposes `/healthz` for liveness checks.
   - Serves the read-only browser workflow viewer at `/`, `/web`, and `/ui`; the viewer uses `/graphql` for data.
-  - Does not restore legacy workflow/session REST routes.
 - `web serve [workflow-name]`
   - Alias for `serve [workflow-name]` for users who want to start the browser viewer explicitly.
 - `tui`
@@ -68,7 +70,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 - `hook [--vendor claude-code|codex|gemini]`
   - Receive agent backend hook payloads via stdin, detect vendor and event type, associate hook `session_id` with the ambient divedra workflow execution when available, record the hook event, and dispatch to registered policy handlers.
   - Claude Code, Codex, and Gemini pipe a JSON object to stdin; the command parses it, validates the shared transport fields (`session_id`, `cwd`, `hook_event_name`), resolves the vendor (from `--vendor` flag or best-effort detection), identifies the `hook_event_name`, and calls the matching handler.
-  - When `DIVEDRA_WORKFLOW_EXECUTION_ID`, `DIVEDRA_WORKFLOW_ID`, and node execution context variables are present, hook events are persisted as runtime hook-event records keyed by workflow execution id, backend agent session id, node execution id, and optional manager session id.
+  - When `DIVEDRA_WORKFLOW_EXECUTION_ID`, `DIVEDRA_WORKFLOW_ID`, and the ambient step/node execution context variables are present, hook events are persisted as runtime hook-event records keyed by workflow execution id, backend agent session id, node execution id, and optional manager session id.
   - Outside a divedra-launched agent process, the command remains pass-through by default and returns empty JSON `{}` unless a policy handler makes a decision.
   - Exit 0 with JSON on stdout for success; exit 2 with reason on stderr to block.
   - Supporting design: `design-docs/specs/design-hook-command.md`.
@@ -98,8 +100,8 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 
 | Flag                    | Type          | Default                                                           | Description                                                                                                                                                |
 | ----------------------- | ------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--worker-only`         | boolean       | `false`                                                           | For `workflow create`: scaffold a manager-less starter whose explicit entry node is `main-worker`                                                          |
-| `--variables`           | string        | none                                                              | For legacy execution commands: JSON file supplying runtime prompt variables. For `divedra gql`: inline GraphQL variables JSON or `@path/to/variables.json` |
+| `--worker-only`         | boolean       | `false`                                                           | For `workflow create`: scaffold a manager-less starter whose explicit `entryStepId` is `main-worker`                                                         |
+| `--variables`           | string        | none                                                              | For `divedra gql`: inline GraphQL variables JSON or `@path/to/variables.json`                                                                                |
 | `--workflow-root`       | string (path) | scoped catalog lookup                                             | Direct root directory containing workflow definitions; when supplied, bypasses project/user scope catalog lookup                                            |
 | `--scope`               | string        | `auto`                                                            | Workflow scope selector for read/write commands: `auto`, `project`, or `user`                                                                              |
 | `--user-root`           | string (path) | `~/.divedra`                                                      | User scope root; workflows are read from `<user-root>/workflows` unless `--workflow-root` is supplied                                                       |
@@ -113,21 +115,32 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | `--workflow`            | string        | none                                                              | Workflow name for direct TUI launch (skip workflow chooser)                                                                                                |
 | `--resume-session`      | string        | none                                                              | Session id to preselect for interactive TUI resume/inspection, or to resume immediately in non-interactive fallback mode                                   |
 | `--mock-scenario`       | string (path) | none                                                              | Deterministic node-output fixture map for local execution/testing paths                                                                                    |
-| `--max-steps`           | number        | none                                                              | Hard cap on node executions per run                                                                                                                        |
-| `--max-loop-iterations` | number        | none                                                              | Override loop budget for safety                                                                                                                            |
+| `--max-steps`           | number        | none                                                              | Hard cap on step executions per run                                                                                                                        |
 | `--default-timeout-ms`  | number        | none                                                              | Override default node timeout for this run                                                                                                                 |
+| `--auto-improve`        | boolean       | `false`                                                           | Run the workflow under `auto improve mode` with a paired `divedra superviser`                                                                              |
+| `--superviser-workflow` | string        | built-in default superviser workflow                              | Workflow id used for `auto improve mode` supervision                                                                                                       |
+| `--monitor-interval-ms` | number        | none                                                              | For `auto improve mode`: control supervision polling / observation cadence                                                                                 |
+| `--stall-timeout-ms`    | number        | none                                                              | For `auto improve mode`: mark the target workflow stalled when no progress is observed within this interval                                                |
+| `--max-supervised-attempts` | number    | none                                                              | For `auto improve mode`: cap total supervised target workflow attempts                                                                                     |
+| `--max-workflow-patches` | number       | none                                                              | For `auto improve mode`: cap automatic workflow-definition patch attempts                                                                                  |
+| `--workflow-mutation-mode` | string     | `execution-copy`                                                  | For `auto improve mode`: choose whether workflow repairs apply to an execution-scoped copy or in-place on the canonical bundle                            |
+| `--disable-targeted-rerun` | boolean    | `false`                                                           | For `auto improve mode`: disable rerun from a selected step                                                                                                  |
+| `--timeout-ms`          | number        | none                                                              | For targeted `call-step` / continuation flows: override timeout for that invocation                                                                        |
+| `--prompt-variant`      | string        | none                                                              | For targeted `call-step` / continuation flows: select a named prompt variant on the target node                                                            |
+| `--continue-session`    | boolean       | `false`                                                           | For targeted `call-step` / continuation flows: request backend-session reuse when the node and backend support it                                          |
+| `--resume-node-exec`    | string        | none                                                              | For targeted `call-step` / continuation flows: identify the prior node execution being continued conceptually                                              |
 | `--output`              | string        | `text`                                                            | Output format (`text` or `json`) for CLI-rendered GraphQL results                                                                                          |
 | `--dry-run`             | boolean       | `false`                                                           | Validate and simulate transitions without agent execution                                                                                                  |
 | `--endpoint`            | string        | local serve endpoint                                              | GraphQL endpoint used by CLI commands                                                                                                                      |
 | `--auth-token`          | string        | none                                                              | Explicit auth token for GraphQL manager/control-plane requests                                                                                             |
 | `--auth-token-env`      | string        | `DIVEDRA_MANAGER_AUTH_TOKEN`                                      | Environment variable used to resolve GraphQL auth token                                                                                                    |
-| `--message-json`        | string        | none                                                              | Inline JSON payload for `call-node`                                                                                                                        |
-| `--message-file`        | string (path) | none                                                              | JSON payload file for `call-node`                                                                                                                          |
+| `--message-json`        | string        | none                                                              | Inline JSON payload for `call-step`                                                                                                                        |
+| `--message-file`        | string (path) | none                                                              | JSON payload file for `call-step`                                                                                                                          |
 | `--file`                | string (path) | none                                                              | Output file path for `export`; when omitted, the export JSON is written to stdout                                                                          |
 | `--host`                | string        | `127.0.0.1`                                                       | Bind address for `serve`                                                                                                                                   |
 | `--port`                | number        | `43173`                                                           | Listen port for `serve`                                                                                                                                    |
 | `--read-only`           | boolean       | `false`                                                           | Disable write/update operations in `serve` mode                                                                                                            |
-| `--no-exec`             | boolean       | `false`                                                           | Compatibility flag parsed by `serve`; current GraphQL schema does not yet enforce execution blocking from this flag                                        |
+| `--no-exec`             | boolean       | `false`                                                           | Parsed by `serve`; current GraphQL schema does not yet enforce execution blocking from this flag                                                           |
 | `--vendor`              | string        | auto-detect                                                       | For `hook`: explicit vendor identifier (`claude-code` or `codex`); when omitted, detected heuristically from payload fields                                |
 | `--event-root`          | string (path) | nearest `.divedra-events` next to the workflow root               | Root directory containing external event source and binding configuration                                                                                  |
 
@@ -146,16 +159,18 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | `DIVEDRA_SESSION_STORE`           | No       | local file store                                             | Session state backend selector                                                                                                                                                                                                             |
 | `DIVEDRA_SERVE_HOST`              | No       | `127.0.0.1`                                                  | Default bind address for `serve`                                                                                                                                                                                                           |
 | `DIVEDRA_SERVE_PORT`              | No       | `43173`                                                      | Default listen port for `serve`                                                                                                                                                                                                            |
-| `DIVEDRA_ARTIFACT_DIR`            | No       | scoped `<scope-root>/artifacts`; compatibility direct-mode default `~/.divedra/project/<encoded-project-root>/divedra-artifact` | Canonical root data directory override: sessions, `workflow/`, `files/`, `divedra.db`. In scoped lookup, the owning scope root provides the default. In direct workflow-root compatibility mode, the encoded project-root default remains available |
+| `DIVEDRA_ARTIFACT_DIR`            | No       | `<scope-root>/artifacts`                                       | Canonical root data directory override: sessions, `workflow/`, `files/`, `divedra.db`                                                                                                                                                  |
 | `DIVEDRA_GRAPHQL_ENDPOINT`        | No       | local serve endpoint                                         | Default GraphQL endpoint for CLI manager/control-plane commands                                                                                                                                                                            |
 | `DIVEDRA_MANAGER_AUTH_TOKEN`      | No       | none                                                         | Manager-session auth token for `divedra gql` and GraphQL control-plane mutations                                                                                                                                                           |
 | `DIVEDRA_MANAGER_SESSION_ID`      | No       | none                                                         | Ambient manager session id forwarded by `divedra gql` to `/graphql` for manager-scoped requests                                                                                                                                            |
 | `DIVEDRA_WORKFLOW_ID`             | No       | none                                                         | Ambient workflow id for divedra-launched backend processes, manager tool environments, and hook event recording                                                                                                                            |
 | `DIVEDRA_WORKFLOW_EXECUTION_ID`   | No       | none                                                         | Ambient workflow execution id for divedra-launched backend processes, manager tool environments, and hook event recording                                                                                                                  |
-| `DIVEDRA_NODE_ID`                 | No       | none                                                         | Ambient node id for divedra-launched backend processes and hook event recording                                                                                                                                                            |
-| `DIVEDRA_NODE_EXEC_ID`            | No       | none                                                         | Ambient node execution id for divedra-launched backend processes and hook event recording                                                                                                                                                  |
+| `DIVEDRA_STEP_ID`                 | No       | none                                                         | Ambient step id for the current step invocation and hook event recording                                                                                                                                                                  |
+| `DIVEDRA_NODE_ID`                 | No       | none                                                         | Ambient backing node id for the current step invocation and hook event recording                                                                                                                                                           |
+| `DIVEDRA_NODE_EXEC_ID`            | No       | none                                                         | Ambient node execution id for the concrete step invocation and hook event recording                                                                                                                                                        |
 | `DIVEDRA_AGENT_BACKEND`           | No       | none                                                         | Ambient backend name for divedra-launched agent processes, such as `codex-agent` or `claude-code-agent`                                                                                                                                    |
-| `DIVEDRA_MANAGER_NODE_ID`         | No       | none                                                         | Ambient manager node id for manager tool environments                                                                                                                                                                                      |
+| `DIVEDRA_MANAGER_STEP_ID`         | No       | none                                                         | Ambient manager step id for manager tool environments                                                                                                                                                                                      |
+| `DIVEDRA_MANAGER_NODE_ID`         | No       | none                                                         | Ambient backing manager node id for manager tool environments                                                                                                                                                                              |
 | `DIVEDRA_MANAGER_NODE_EXEC_ID`    | No       | none                                                         | Ambient manager node execution id for manager tool environments                                                                                                                                                                            |
 | `DIVEDRA_HOOK_RECORDING`          | No       | `auto`                                                       | Hook event recording mode: `auto` records when divedra context is present, `off` disables persistence, and `required` errors when required context is missing                                                                              |
 | `DIVEDRA_HOOK_STRICT`             | No       | `false`                                                      | When `true`, hook persistence failures become hook errors; when `false`, recording failures do not block the backend                                                                                                                       |
@@ -183,6 +198,13 @@ scope catalog lookup.
 Invalid values for `--scope` or `DIVEDRA_WORKFLOW_SCOPE` are usage errors. The
 CLI must fail rather than silently treating the value as `auto`.
 
+Supporting design for jump-driven routing, timeout continuation, code-manager defaults, and auto-improve supervision:
+`design-docs/specs/design-node-jump-and-code-manager-runtime.md`.
+Supporting design:
+`design-docs/specs/design-auto-improve-superviser-mode.md`.
+Supporting design:
+`design-docs/specs/design-workflow-steps-and-node-reuse.md`.
+
 Scope root defaults:
 
 1. user scope root: `--user-root`, `DIVEDRA_USER_ROOT`, bootstrap config
@@ -205,9 +227,7 @@ Add-on lookup resolution order:
 point at a directory containing `<namespace>/<addon-name>/<version>/addon.json`
 and do not point at a scope root. For scoped catalog loading they are prepended
 to the scoped candidates and do not suppress project/user fallback when the
-direct root does not contain the requested `(name, version)`. For direct
-workflow-root compatibility mode, scoped add-on roots are not inferred; only an
-explicit direct add-on root or host-provided resolver can satisfy local add-ons.
+direct root does not contain the requested `(name, version)`.
 
 Artifact root resolution order:
 
@@ -215,8 +235,7 @@ Artifact root resolution order:
 2. `DIVEDRA_ARTIFACT_ROOT`
 3. `DIVEDRA_ARTIFACT_DIR/workflow` when `DIVEDRA_ARTIFACT_DIR` is set
 4. owning scope default: `<scope-root>/artifacts/workflow`
-5. compatibility computed default: `{resolved DIVEDRA_ARTIFACT_DIR}/workflow` where `DIVEDRA_ARTIFACT_DIR` defaults to `~/.divedra/project/<encoded-project-root>/divedra-artifact`
-   - the encoded project root is the nearest ancestor containing `.divedra`, otherwise the current working directory
+5. `{resolved DIVEDRA_ARTIFACT_DIR}/workflow` when `DIVEDRA_ARTIFACT_DIR` is set
 
 Runtime-root co-location rule:
 
@@ -229,7 +248,6 @@ Session store root resolution order:
 2. `DIVEDRA_SESSION_STORE`
 3. owning scope default: `<scope-root>/artifacts/sessions`
 4. `{resolved DIVEDRA_ARTIFACT_DIR}/sessions` when `DIVEDRA_ARTIFACT_DIR` is set
-5. existing runtime default
 
 Log root resolution order:
 
@@ -253,18 +271,16 @@ Data-root file reference rule:
 
 ## GraphQL Canonicalization
 
-GraphQL is the canonical domain-parameter transport during migration for:
+GraphQL is the canonical domain-parameter transport for:
 
 - workflow execution requests,
 - communication inspection,
 - communication replay/retry,
 - manager send/control-plane requests.
 
-Compatibility rule:
-
 - domain parameters should be modeled in GraphQL inputs,
-- `divedra gql` is the thin generic GraphQL client now, and legacy execution commands may opt into GraphQL transport with `--endpoint` while the rest of the CLI migrates incrementally,
-- local-only debug flags such as `--mock-scenario` are not forwarded when a legacy command is executed remotely through GraphQL,
+- `divedra gql` is the thin generic GraphQL client surface,
+- local-only debug flags such as `--mock-scenario` are not forwarded when a command is executed remotely through GraphQL,
 - workflow tooling should use GraphQL rather than parallel REST transports.
 
 Supporting design: `design-docs/specs/design-graphql-manager-control-plane.md`.

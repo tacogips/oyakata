@@ -34,29 +34,29 @@ Additional input assembly policy:
 
 Workflow data is intentionally split:
 
-- `workflow.json`: structure/control, workflow `description`, and node ordering
-- `node-{id}.json`: runtime payload (`executionBackend`, `model`, `promptTemplate`, `variables`)
+- `workflow.json`: workflow metadata plus the reusable node registry and step registry
+- `steps/step-{id}.json`: executable step addresses, routing, and step-local overrides when file-backed
+- `node-{id}.json`: reusable runtime payload (`executionBackend`, `model`, `promptTemplate`, `variables`)
 
 This keeps derived visualization state out of separate authored files.
 
 ### Deterministic Control Flow
 
-Workflow JSON must make control flow explicit:
+Workflow JSON must make control flow explicit through:
 
-- graph edges for transitions
-- branch conditions
-- loop policies and loop-judge nodes
+- step-local `transitions[]`
+- runtime-owned output mail status
+- optional validated `next.stepId` jump requests
 
-Implicit transitions are avoided.
+Dedicated branch/loop authoring is removed in favor of jump-driven routing as described in `design-docs/specs/design-node-jump-and-code-manager-runtime.md`.
 
 ### Confirmed Runtime Policies
 
-- Branch behavior: fan-out to all matched branches.
-- Loop limit fallback: use workflow global default when loop-local limit is omitted.
+- Routing behavior: step transitions declare the legal jump graph, and worker-requested `next.stepId` remains subject to manager/runtime validation.
 - Completion: auto-complete nodes are allowed; success-judgment-free nodes can be configured.
-- Timeout: each node can define execution timeout, with workflow-level default fallback.
+- Timeout: each step invocation may use per-invocation, step-local, node-local, or workflow-level timeout defaults in that precedence order.
 - Conversation handoff: `divedra` routes by explicit `OutputRef` (`workflowExecutionId`, `outputNodeId`, `nodeExecId`, and optional `subWorkflowId` for sub-workflow outputs) instead of implicit latest-output inference.
-- Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. The parent workflow manager writes only to the recipient sub-workflow manager inbox, and the recipient sub-workflow manager writes only to nodes inside that sub-workflow (validated via `subWorkflows[].nodeIds`). A re-executed/resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
+- Node mailbox transport: messages are persisted as hierarchical manager-routed file mailboxes with per-workflow-execution `communicationId` allocation owned by the root workflow manager. Manager-routed sends remain the authoritative cross-step transport, and a re-executed or resubmitted send always allocates a new `communicationId`; delivery retries for an already-created send keep the same `communicationId` and advance `deliveryAttemptId` (and optional `agentSessionId`). See `design-docs/specs/design-node-mailbox.md`.
 - Node execution inbox contract: canonical mailbox transport stays manager-owned, but workers receive one compiled execution-local inbox/outbox contract under their node artifact directory. The worker-facing metadata uses mailbox-root-relative paths plus `DIVEDRA_MAILBOX_DIR`, so node implementations do not need hidden knowledge of workflow graph shape or canonical `communications/...` layout. See `design-docs/specs/design-node-execution-inbox-contract.md`.
 - GraphQL control-plane direction: GraphQL is now the canonical served control-plane schema for execution, communication inspection/replay, manager send operations, and workflow/session control flows. CLI may remain as a thin client surface over GraphQL. See `design-docs/specs/design-graphql-manager-control-plane.md`.
 - Manager control-plane separation: a manager-issued GraphQL manager-message mutation invoked through `divedra gql` is not itself a mailbox communication. It is a scoped control-plane request that may cause new mailbox communications, retries, planner-state changes, or node execution requests.
@@ -66,18 +66,21 @@ Implicit transitions are avoided.
 - Root-data note: `DIVEDRA_ARTIFACT_DIR` is the canonical root data directory for derived workflow artifacts, session state, attachments, and the runtime database.
 - Manager kind naming direction: the authored workflow schema should keep an explicit root-vs-sub-workflow manager split, but the nested kind should be neutral (`subworkflow-manager`) instead of product-branded (`sub-divedra-manager`). Detailed scope is tracked in `design-docs/specs/design-manager-kind-simplification.md`.
 - Workflow role unification direction: future design work should collapse authored node roles to `manager` and `worker`, make workflow managers optional, and treat called workflows as ordinary workflows rather than as structural sub-workflow boundaries. This supersedes the manager-kind split direction for future architecture work. Detailed scope is tracked in `design-docs/specs/design-unified-workflow-role-model.md`.
-- Workflow JSON simplification direction: future design work may go further and make `workflow.json` linear-by-default, remove required `edges[]`, replace `subWorkflows[]` with node-owned workflow-call semantics, and use node-local skip/repeat controls instead of general graph authoring for common cases. Detailed scope is tracked in `design-docs/specs/design-simplified-workflow-json.md`.
+- Workflow JSON simplification direction: the authored surface should stay step-based, keep the explicit node registry, and avoid reintroducing dedicated graph-control primitives that duplicate step transitions. Detailed scope is tracked in `design-docs/specs/design-simplified-workflow-json.md`.
+- Step-based workflow direction: workflows contain `steps` as the canonical execution units, while `workflow.json.nodes[]` is a reusable node registry instead of direct execution order. Different steps may intentionally share one node and optionally continue its backend session, which makes patterns such as implementation followed by self-review by the same LLM/code node explicit. Detailed scope is tracked in `design-docs/specs/design-workflow-steps-and-node-reuse.md`.
+- Jump-driven routing direction: dedicated authored branch/loop primitives should be removed from the primary workflow schema in favor of runtime-owned output mail envelopes that carry status metadata plus an optional validated next-step jump request. The default manager mode should become deterministic `code`, while `llm` manager remains experimental. Revisited nodes must allocate distinct mailbox instances and may continue the same backend session with a different prompt variant. Detailed scope is tracked in `design-docs/specs/design-node-jump-and-code-manager-runtime.md`.
+- Auto-improve supervision direction: `divedra` should support an `auto improve mode` that launches a paired `divedra superviser` workflow to monitor a target workflow, detect failure or stall, distinguish transient rerun cases from workflow-definition defects, patch an execution-scoped mutable workflow copy when needed, and rerun with persisted incident memory across repeated attempts. Detailed scope is tracked in `design-docs/specs/design-auto-improve-superviser-mode.md`.
 - `divedra gql` variables contract: GraphQL variables are passed through `--variables`, which accepts inline JSON or `@path/to/variables.json`. First-iteration attachment handling assumes files are pre-placed under the Divedra root data directory; no upload mutation is introduced yet.
 - GraphQL transport contract: `/graphql` accepts standard JSON request envelopes with `query` and optional `variables`, and `divedra gql` defaults to the local serve endpoint at `http://127.0.0.1:43173/graphql` unless `--endpoint` or `DIVEDRA_GRAPHQL_ENDPOINT` overrides it.
 - Manager action contract: execution-affecting manager requests must use typed GraphQL actions. Freeform text may be retained for audit notes, but must not be the only source of truth for privileged control decisions.
 - Manager auth/idempotency contract: GraphQL manager mutations use a runtime-issued bearer token scoped to one manager session and enforce persisted idempotency by `(mutationName, managerSessionId, idempotencyKey)`.
 - Manager message identity contract: `managerMessageId` must be allocated with collision-safe opaque ids so concurrent `sendManagerMessage` requests cannot reuse the same append-only message record.
-- Manager runtime session lifecycle: manager-node executions mint a scoped GraphQL manager session at runtime, pass the ambient control-plane environment only to manager-capable adapters, and expire the token when the step ends. See `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`.
+- Manager runtime session lifecycle: manager-step executions mint a scoped GraphQL manager session at runtime, pass the ambient control-plane environment only to manager-capable adapters, and expire the token when the step ends. See `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`.
 - Manager control-mode exclusivity: each manager execution persists one authoritative control source, so `sendManagerMessage` and payload `managerControl` cannot both drive the same manager step; the control-mode claim itself must be atomic at the storage boundary.
 - Node output ingestion contract: ordinary node completion is runtime-captured in the execution path itself, not discovered by periodic scanning for `output.json` files. File watching is only an adapter-local fallback for special external backends and must still feed results back into the runtime-owned completion path.
 - Timeout inspection fallback: if the normal transition/notification path fails, Divedra still needs a deterministic inspection path for node `status`, published `output.json`, `meta.json`, and timeout/failure messages via GraphQL `nodeExecution(...)` or internal runtime-db/session helpers.
 - Container runtime contract: container nodes may declare either a prebuilt `image` or a workflow-local `build` block with `contextPath` and optional `containerfilePath`, plus workflow-level runner defaults. Runtime behavior and authoring rules are specified in `design-docs/specs/design-container-runtime-contract.md`.
-- User escalation contract: add `nodeType: "user-action"` as a runtime-owned human interaction executor that fans out through registered message/notification tools selected by logical tool id, validates the normalized reply against the node `output` contract, and resumes the paused workflow on acceptance. Optional node execution should be modeled separately as manager-owned scheduler policy on `workflow.json.nodes[]` rather than as a node payload executor concern. See `design-docs/specs/design-user-action-and-optional-node-execution.md`.
+- User escalation contract: add `nodeType: "user-action"` as a runtime-owned human interaction executor that fans out through registered message/notification tools selected by logical tool id, validates the normalized reply against the node `output` contract, and resumes the paused workflow on acceptance. Optional step execution should be modeled separately as manager-owned scheduler policy rather than as a node payload executor concern. See `design-docs/specs/design-user-action-and-optional-node-execution.md`.
 - Node add-on contract: `workflow.json.nodes[]` may reference built-in worker add-ons with `addon` instead of `nodeFile`; the loader resolves them into effective node payloads while save/edit surfaces preserve the authored reference. Built-in add-ons currently include `divedra/chat-reply-worker` for provider-neutral event replies, `divedra/codex-worker` and `divedra/claude-code-worker` for reusable agent-backed workers, `divedra/x-gateway-read` for read-only x-gateway GraphQL inspection through an explicit container runner binding, `divedra/x-gateway` for intentional x-gateway GraphQL query or mutation execution such as X post creation, `divedra/mail-gateway-read` for read-only mail-gateway GraphQL inspection, and `divedra/mail-gateway` for intentional mail-gateway GraphQL query or send-mutation execution. `addon.inputs` supplies invocation-specific node variables, and only descriptors that consume explicit environment bindings may accept `addon.env`; required add-on env sources are runtime readiness prerequisites. See `design-docs/specs/design-node-addon-catalog-and-chat-reply-worker.md`.
 
 ### Completion-First Progression

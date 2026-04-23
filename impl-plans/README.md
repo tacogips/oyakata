@@ -26,6 +26,8 @@ impl-plans/
 
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
+| `step-addressed-workflow-runtime-cutover` | Ready | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-workflow-steps-and-node-reuse`, `architecture`, `command`, `qa-step-schema-workflow-calls` |
+| `auto-improve-superviser-mode` | Planning | `design-auto-improve-superviser-mode`, `design-node-jump-and-code-manager-runtime`, `architecture`, `command` |
 
 ## Completed Plans
 
@@ -228,15 +230,32 @@ impl-plans/
 | 70    | COMPLETED   | Phase 69   |
 | 71    | COMPLETED   | Phase 70   |
 | 72    | COMPLETED   | Phase 71   |
-| 82    | IN_PROGRESS | Phase 71   |
+| 73    | COMPLETED   | -          |
+| 74    | COMPLETED   | Phase 71   |
+| 75    | COMPLETED   | -          |
+| 76    | COMPLETED   | -          |
+| 77    | COMPLETED   | -          |
+| 78    | COMPLETED   | Phase 77   |
+| 79    | COMPLETED   | -          |
+| 80    | COMPLETED   | -          |
+| 81    | COMPLETED   | -          |
+| 82    | COMPLETED   | Phase 71   |
 | 83    | COMPLETED   | Phase 71   |
 | 84    | COMPLETED   | Phase 83   |
 | 85    | COMPLETED   | Phase 84   |
 | 86    | COMPLETED   | Phase 85   |
+| 87    | COMPLETED   | -          |
+| 88    | COMPLETED   | Phase 64   |
 | 89    | COMPLETED   | Phase 88   |
+| 90    | COMPLETED   | -          |
+| 91    | COMPLETED   | Phase 90   |
+| 92    | COMPLETED   | Phases 83, 84, 85, 86 |
+| 93    | COMPLETED   | Phase 92   |
 | 94    | COMPLETED   | Phase 91   |
+| 95    | COMPLETED   | Phases 92, 93 |
 | 96    | COMPLETED   | Phase 94   |
 | 97    | COMPLETED   | Phase 96   |
+| 98    | COMPLETED   | -          |
 | 99    | COMPLETED   | Phase 98   |
 | 100   | COMPLETED   | Phase 99   |
 | 101   | COMPLETED   | Phase 99   |
@@ -254,22 +273,37 @@ impl-plans/
 | 113   | COMPLETED   | Phase 111  |
 | 114   | COMPLETED   | Phase 111  |
 | 115   | COMPLETED   | Phase 114  |
+| 116   | COMPLETED   | Phases 110, 111 |
+| 117   | COMPLETED   | Phases 114, 116 |
+| 118   | COMPLETED   | -          |
+| 119   | COMPLETED   | -          |
+| 120   | COMPLETED   | -          |
+| 121   | COMPLETED   | Phase 120  |
+| 122   | COMPLETED   | Phase 121  |
+| 123   | COMPLETED   | Phase 122  |
+| 124   | COMPLETED   | Phase 121  |
+| 125   | COMPLETED   | Phase 124  |
+| 126   | COMPLETED   | -          |
+| 127   | COMPLETED   | -          |
+| 128   | COMPLETED   | -          |
+| 129   | READY       | Phases 16, 65, 71, 82 |
+| 130   | PLANNING    | Phase 129  |
 
 ### Phase to Plans Mapping
 
 ```
 PHASE_TO_PLANS = {
-  1: ["completed/workflow-core-and-validation.md"],
-  2: ["completed/workflow-cli-mvp.md"],
-  3: ["completed/workflow-execution-and-session.md"],
-  4: ["completed/workflow-serve-mvp.md"],
-  5: ["completed/workflow-vcs-handoff-checkpoints.md"],
-  6: ["completed/workflow-save-revision-api.md"],
-  7: ["completed/workflow-deterministic-mock-and-rerun.md"],
-  8: ["completed/autonomous-execution-gap-closure.md"],
-  9: ["completed/workflow-tui-mvp.md"],
-  10: ["completed/workflow-tui-cli-parity.md"],
-  11: ["completed/workflow-tui-resume-decoupling.md"],
+  1: ["impl-plans/completed/workflow-core-and-validation.md"],
+  2: ["impl-plans/completed/workflow-cli-mvp.md"],
+  3: ["impl-plans/completed/workflow-execution-and-session.md"],
+  4: ["impl-plans/completed/workflow-serve-mvp.md"],
+  5: ["impl-plans/completed/workflow-vcs-handoff-checkpoints.md"],
+  6: ["impl-plans/completed/workflow-save-revision-api.md"],
+  7: ["impl-plans/completed/workflow-deterministic-mock-and-rerun.md"],
+  8: ["impl-plans/completed/autonomous-execution-gap-closure.md"],
+  9: ["impl-plans/completed/workflow-tui-mvp.md"],
+  10: ["impl-plans/completed/workflow-tui-cli-parity.md"],
+  11: ["impl-plans/completed/workflow-tui-resume-decoupling.md"],
   12: ["impl-plans/node-execution-backend-selection.md"],
   13: ["impl-plans/node-output-contract-and-validation.md"],
   14: ["impl-plans/workflow-web-editor-execution.md"],
@@ -327,18 +361,30 @@ PHASE_TO_PLANS = {
   66: ["impl-plans/graphql-library-rest-surface-simplification.md"],
   67: ["impl-plans/example-node-combination-showcase.md"],
   68: ["impl-plans/node-execution-inbox-contract.md"],
-  83: ["impl-plans/hook-command.md"],
-  84: ["impl-plans/hook-command-hardening.md"],
-  85: ["impl-plans/hook-command-cross-vendor-alignment.md"],
-  86: ["impl-plans/hook-command-review-follow-up.md"],
   69: ["impl-plans/user-action-and-optional-node-execution.md"],
   70: ["impl-plans/manager-kind-simplification.md"],
   71: ["impl-plans/workflow-role-unification.md", "impl-plans/tui-workflow-browser-and-json-input.md"],
   72: ["impl-plans/completed/tui-opentui-solid-migration.md", "impl-plans/completed/tui-solid-runtime-fallback-hardening.md", "impl-plans/completed/remove-web-ui.md", "impl-plans/completed/root-data-dir-project-root-scoping.md"],
+  73: ["impl-plans/node-system-and-session-prompts.md"],
+  74: ["impl-plans/tui-workflow-definition-screen.md"],
+  75: ["impl-plans/example-workflow-expected-results-and-verification.md"],
+  76: ["impl-plans/simplified-workflow-json-transition-examples.md"],
+  77: ["impl-plans/inline-node-and-nested-example-layout.md"],
+  78: ["impl-plans/workflow-definition-alignment-follow-up.md"],
+  79: ["impl-plans/tui-workflow-history-delete-all.md"],
+  80: ["impl-plans/workflow-id-filesystem-safety.md"],
+  81: ["impl-plans/completed/v2-cutover-command-container-runtime.md"],
   82: ["impl-plans/workflow-role-unification-structural-cleanup.md"],
+  83: ["impl-plans/hook-command.md"],
+  84: ["impl-plans/hook-command-hardening.md"],
+  85: ["impl-plans/hook-command-cross-vendor-alignment.md"],
+  86: ["impl-plans/hook-command-review-follow-up.md"],
+  87: ["impl-plans/workflow-execution-working-directory.md"],
+  88: ["impl-plans/web-workflow-viewer.md"],
   89: ["impl-plans/container-runtime-env-isolation.md"],
   90: ["impl-plans/event-listener-workflow-trigger-foundation.md"],
   91: ["impl-plans/event-source-adapters.md"],
+  92: ["impl-plans/hook-event-recording.md"],
   93: ["impl-plans/hook-snippet-command.md"],
   94: ["impl-plans/event-receipt-operator-commands.md"],
   95: ["impl-plans/gemini-hook-support.md"],
@@ -361,6 +407,21 @@ PHASE_TO_PLANS = {
   112: ["impl-plans/third-party-addon-payload-shape-guard.md"],
   113: ["impl-plans/third-party-addon-package-root-entrypoint.md"],
   114: ["impl-plans/third-party-addon-graphql-validation.md"],
-  115: ["impl-plans/third-party-addon-editor-revision.md"]
+  115: ["impl-plans/third-party-addon-editor-revision.md"],
+  116: ["impl-plans/third-party-addon-resolver-unhandled-return.md"],
+  117: ["impl-plans/third-party-addon-resolver-ergonomics.md"],
+  118: ["impl-plans/third-party-addon-definition-registry.md"],
+  119: ["impl-plans/third-party-addon-async-resolution.md"],
+  120: ["impl-plans/scoped-workflow-catalog.md"],
+  121: ["impl-plans/scoped-workflow-runtime-follow-up.md"],
+  122: ["impl-plans/scoped-workflow-graphql-server.md"],
+  123: ["impl-plans/scoped-workflow-source-visibility.md"],
+  124: ["impl-plans/scoped-workflow-catalog-safety-follow-up.md"],
+  125: ["impl-plans/scoped-local-addons.md"],
+  126: ["impl-plans/event-root-manager-session-stickiness.md"],
+  127: ["impl-plans/event-root-manager-session-stickiness-binding-scope.md"],
+  128: ["impl-plans/event-root-manager-session-stickiness-record-lifecycle.md"],
+  129: ["impl-plans/step-addressed-workflow-runtime-cutover.md"],
+  130: ["impl-plans/auto-improve-superviser-mode.md"],
 }
 ```

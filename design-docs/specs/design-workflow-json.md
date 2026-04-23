@@ -1,25 +1,20 @@
 # Workflow JSON Design
 
-This document defines the current authored workflow bundle format implemented by `src/workflow/types.ts`, `src/workflow/load.ts`, and `src/workflow/validate.ts`.
+This document defines the authored workflow bundle format. It is the authoritative schema direction for workflow definitions saved and executed by divedra.
 
-Important distinction:
-
-- authored `workflow.json` files may use the newer role-based surface and may omit several fields in the simplified ordered-node form
-- the normalized runtime bundle still materializes compatibility fields such as an effective `managerNodeId`, `subWorkflows`, synthesized `edges`, and `branching`
-- `src/workflow/types.ts` currently models that normalized runtime shape more closely than the raw authored JSON
-- save/edit surfaces should persist authored workflow JSON, not leak compatibility-only fields such as `hasManagerNode`, an effective manager id for worker-only workflows, or derived structural `kind` values for role-authored nodes
-- starter templates and save round-trips should preserve that authored-minimal omission strategy rather than eagerly writing empty compatibility/default fields back into `workflow.json`
-- the same omission rule applies at node level: authored bundles should not write normalized defaults such as `completion: { "type": "none" }` or `control: "none"` unless the author explicitly needs them
+Supporting design:
+`design-docs/specs/design-workflow-steps-and-node-reuse.md`.
 
 ## Overview
 
 A workflow bundle is a directory containing:
 
 - `workflow.json`
-- one `node-{id}.json` file per referenced node
-- optional prompt files referenced by `systemPromptTemplateFile`, `promptTemplateFile`, and `sessionStartPromptTemplateFile`
+- zero or more `steps/step-*.json` files when steps are file-backed
+- one reusable node payload file per file-backed node registry entry
+- optional prompt files referenced by node payloads
 
-The runtime validates the authored bundle, resolves prompt files into effective prompt text, and executes the normalized workflow.
+The runtime validates the authored bundle, resolves prompt files into effective prompt text, and executes the workflow.
 
 ## Directory Layout
 
@@ -29,12 +24,15 @@ Typical managed layout:
 <workflow-root>/
   <workflow-name>/
     workflow.json
+    steps/
+      step-manager.json
+      step-implement.json
     nodes/
-      node-divedra-manager.json
-      node-main-worker.json
+      node-manager.json
+      node-coder.json
     prompts/
-      divedra-manager.md
-      main-worker.md
+      coder.md
+      coder-self-review.md
 ```
 
 Notes:
@@ -42,11 +40,10 @@ Notes:
 - in scoped workflow lookup, `<workflow-root>` is `<scope-root>/workflows`;
   user scope defaults to `~/.divedra/workflows` and project scope defaults to
   `<project>/.divedra/workflows`
-- `workflow.json.nodes[]` order is canonical for editor and runtime vertical ordering.
+- `workflow.json.steps[]` order is canonical for editor presentation, while step transitions define legal routing.
 - runtime execution artifacts are written outside the workflow-definition directory under the configured artifact root.
-- worker-only workflows are also valid and may omit `managerNodeId` when `entryNodeId` names the first worker node.
-- starter templates should prefer this minimal authored shape, so fields such as `subWorkflows`, `edges`, `loops`, `branching`, and `defaults.containerRuntime` are omitted until the author actually needs them.
-- starter templates should also omit node-level normalized defaults such as `completion: { "type": "none" }`.
+- the workflow keeps an explicit reusable node registry in `workflow.json.nodes[]`; node files are not inferred by filename convention.
+- worker-only workflows are valid and omit `managerStepId`.
 
 ## `node-{id}.json`
 
@@ -59,7 +56,6 @@ Node payload files may now include a canonical node-level description:
 `description` is intended to capture the node's authored purpose in a short human-readable sentence. It is distinct from:
 
 - workflow-level `description`
-- sub-workflow `description`
 - `output.description`, which describes the expected output contract rather than the node's overall role
 
 Validation rules:
@@ -68,56 +64,63 @@ Validation rules:
 
 ## `workflow.json`
 
-Current authored shape:
+Authored shape:
 
 ```json
 {
   "workflowId": "example",
   "description": "Example workflow definition showing the authored top-level fields.",
   "defaults": {
-    "maxLoopIterations": 3,
-    "nodeTimeoutMs": 120000
+    "nodeTimeoutMs": 120000,
+    "timeoutPolicy": {
+      "onTimeout": "fail"
+    }
   },
-  "prompts": {
-    "divedraPromptTemplate": "Coordinate {{workflowId}}.",
-    "workerSystemPromptTemplate": "Work only on the current node."
-  },
-  "managerNodeId": "divedra-manager",
-  "entryNodeId": "divedra-manager",
+  "managerStepId": "manager",
+  "entryStepId": "manager",
   "nodes": [
     {
-      "id": "divedra-manager",
-      "role": "manager",
-      "nodeFile": "nodes/node-divedra-manager.json"
+      "id": "manager-runtime",
+      "nodeFile": "nodes/node-manager.json"
     },
     {
-      "id": "main-worker",
-      "role": "worker",
-      "nodeFile": "nodes/node-main-worker.json"
+      "id": "coder",
+      "nodeFile": "nodes/node-coder.json"
+    }
+  ],
+  "steps": [
+    {
+      "id": "manager",
+      "stepFile": "steps/step-manager.json"
+    },
+    {
+      "id": "implement",
+      "stepFile": "steps/step-implement.json"
     }
   ]
 }
 ```
 
-Current minimal worker-only authored shape:
+Minimal worker-only authored shape:
 
 ```json
 {
   "workflowId": "worker-only-example",
-  "description": "One worker starts directly from an explicit entry node.",
+  "description": "One worker starts directly from an explicit entry step.",
   "defaults": {
-    "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
   },
-  "prompts": {
-    "workerSystemPromptTemplate": "Work only on the current node."
-  },
-  "entryNodeId": "main-worker",
+  "entryStepId": "main-worker",
   "nodes": [
     {
-      "id": "main-worker",
-      "role": "worker",
+      "id": "coder",
       "nodeFile": "nodes/node-main-worker.json"
+    }
+  ],
+  "steps": [
+    {
+      "id": "main-worker",
+      "nodeId": "coder"
     }
   ]
 }
@@ -128,39 +131,30 @@ Current minimal worker-only authored shape:
 Required:
 
 - `workflowId: string`
-- `defaults.maxLoopIterations: number`
 - `defaults.nodeTimeoutMs: number`
+- `entryStepId: string`
 - `nodes: WorkflowNodeRef[]`
+- `steps: WorkflowStepRef[]`
 
 Optional:
 
 - `description: string`
-- `defaults.containerRuntime`
-- `prompts`
-- `managerNodeId`
-- `entryNodeId`
-- `workflowCalls`
-- `subWorkflows`
-- `subWorkflowConversations`
-- `edges`
-- `loops`
-- `branching`
+- `managerStepId`
+- `defaults.timeoutPolicy`
 
 Validation rules:
 
 - `workflowId` is a filesystem namespace key for runtime artifacts and attachments, so it must start with an alphanumeric character and then contain only letters, digits, hyphens, or underscores
 - when provided, `description` must be a non-empty string
-- when omitted, the normalized runtime bundle uses `description: ""`
-- if exactly one manager-role node exists, `managerNodeId` may be inferred
-- if no manager exists, `entryNodeId` is required
-- omitted `edges` are synthesized sequentially from node order
-- omitted `subWorkflows`, `subWorkflowConversations`, `loops`, and `workflowCalls` normalize to empty arrays
-- non-empty authored `subWorkflows` and `subWorkflowConversations` are legacy structural compatibility fields and must not be combined with authored `role` / `control` nodes
-- structural boundary node kinds `subworkflow-manager`, `input`, and `output` are legacy compatibility fields and must not be combined with authored `role` / `control` nodes
-- omitted `branching` normalizes to `{ "mode": "fan-out" }`
-- authored `workflowCalls` are executable: the caller's `output.payload` is exposed to the callee as `runtimeVariables.workflowCall.input`, and `resultNodeId` receives the callee result through a runtime-owned `workflow-call:<id>` communication when configured
+- `entryStepId` must resolve to an authored step
+- `managerStepId`, when present, must resolve to an authored step
+- every step must reference a node registry entry through `nodeId`
+- `steps[]` must be non-empty
+- dedicated authored fields such as `workflowCalls`, `edges`, `loops`, `branching`, `subWorkflows`, and `subWorkflowConversations` are not part of the schema
+- cross-workflow invocation uses the same execution-address model as ordinary step calls rather than a dedicated top-level `workflowCalls` section
+- calling another workflow means targeting an explicit step in that workflow; the canonical workflow-level entry is the callee workflow's `managerStepId`, or `entryStepId` when the callee is worker-only
 
-Not part of the current schema:
+Not part of the schema:
 
 - `workflowType`
 - `nodeGroups`
@@ -170,42 +164,12 @@ Older documents mentioned those concepts, but they are not current authored fiel
 
 ## `WorkflowNodeRef`
 
-`workflow.json.nodes[]` entries:
+`workflow.json.nodes[]` entries form the reusable node registry:
 
 - `id: string`
 - `nodeFile: string` when the node uses a workflow-local payload
 - optional `addon` when the node uses a built-in, scoped local, or
   host-provided add-on payload
-- optional `role: "manager" | "worker"`
-- optional `control: "none" | "branch-judge" | "loop-judge"`
-- optional `kind: NodeKind`
-- optional `completion: CompletionRule`
-- optional `group`
-- optional `repeat`
-
-Recommended authored direction:
-
-- use `role` for manager-versus-worker intent
-- use `control` for judge semantics
-- omit structural `kind` in newly authored ordered-node workflows
-
-Current compatibility note:
-
-- the validator still accepts structural `kind` metadata where the current runtime needs it
-- the normalized runtime continues to derive structural `kind` values such as `root-manager`, `subworkflow-manager`, `input`, and `output`
-- role/control-authored nodes must not author structural boundary `kind` values directly
-- role-authored grouped examples should describe lanes/stages or explicit `workflowCalls`; only explicit legacy compatibility examples should foreground structural sub-workflow vocabulary
-
-Current `NodeKind` values:
-
-- `task`
-- `branch-judge`
-- `loop-judge`
-- `root-manager`
-- `subworkflow-manager`
-- `input`
-- `output`
-
 Validation rules:
 
 - a node reference must provide exactly one of `nodeFile` or `addon`
@@ -216,10 +180,7 @@ Validation rules:
   functions passed through the library/server load, validation, save, and
   execution options
 - workflow loading does not fetch third-party packages or registry metadata
-- current add-ons are worker-only; manager-role add-on references are rejected
-- manager-role nodes must stay on the agent execution path
-- `workflow.managerNodeId`, when present, must resolve to the effective root manager in the normalized runtime bundle
-- structural sub-workflow validation still applies when `subWorkflows[]` are authored
+- manager/worker semantics are authored at the step or node payload level rather than through structural `kind` metadata
 
 ### `addon`
 
@@ -233,7 +194,6 @@ Object form:
 ```json
 {
   "id": "reply",
-  "role": "worker",
   "addon": {
     "name": "divedra/chat-reply-worker",
     "version": "1",
@@ -268,9 +228,7 @@ Rules:
   bindings set `required: false`
 - `addon.inputs`, when present, is copied into the resolved node payload
   `variables`
-- add-on node references must author `role: "worker"` explicitly; compatibility
-  inference from `kind`, `control`, or `repeat` does not satisfy the add-on
-  worker-only contract
+- add-on node references participate in the same explicit registry as file-backed nodes
 - save/edit surfaces preserve the authored `addon` reference rather than writing
   generated node payload JSON
 
@@ -297,155 +255,98 @@ Initial built-in add-ons:
 Detailed design:
 `design-docs/specs/design-node-addon-catalog-and-chat-reply-worker.md`.
 
-## `CompletionRule`
+## `WorkflowStepRef`
 
-Current shape:
+`workflow.json.steps[]` entries declare the executable addresses of the workflow.
+
+Each step entry provides exactly one of:
+
+- `stepFile`
+- inline step fields in `workflow.json`
+
+File-backed example:
 
 ```json
 {
-  "type": "checklist",
-  "config": {
-    "required": ["ready"]
-  }
+  "id": "implement",
+  "stepFile": "steps/step-implement.json"
 }
 ```
 
-Supported types:
+Inline example:
 
-- `none`
-- `checklist`
-- `score-threshold`
-- `validator-result`
+```json
+{
+  "id": "self-review",
+  "nodeId": "coder",
+  "promptVariant": "self-review",
+  "sessionPolicy": {
+    "mode": "reuse",
+    "inheritFromStepId": "implement"
+  },
+  "transitions": [
+    { "toStepId": "finish", "label": "accepted" },
+    { "toStepId": "implement", "label": "needs-fix" }
+  ]
+}
+```
 
-Current config usage:
-
-- `checklist`: `config.required: string[]`
-- `score-threshold`: `config.threshold: number`
-- `validator-result`: optional `config.resultField: string`, defaults to `validatorResult`
-
-## `WorkflowEdge`
-
-Shape:
-
-- `from: string`
-- `to: string`
-- `when: string`
-- optional `priority: number`
-
-Current semantics:
-
-- matching remains fan-out even when `priority` is present
-- `priority` is metadata only in the current runtime
-
-### Condition Expression Language
-
-`when` expressions support:
-
-- identifiers such as `approved`
-- literals `always`, `never`, `true`, `false`
-- `!`, `&&`, `||`
-- parentheses
-
-Evaluation checks:
-
-1. `output.when.<identifier>`
-2. `output.<identifier> === true`
-
-This expression language is used for:
-
-- edge routing
-- loop `continueWhen`
-- loop `exitWhen`
-- conversation `stopWhen`
-
-## `LoopRule`
-
-Shape:
+Required:
 
 - `id: string`
-- `judgeNodeId: string`
-- `continueWhen: string`
-- `exitWhen: string`
-- optional `maxIterations: number`
-- optional `backoffMs: number`
+- exactly one of `stepFile: string` or inline `nodeId: string`
+
+Optional inline step fields:
+
+- `description: string`
+- `role: "manager" | "worker"`
+- `promptVariant: string`
+- `timeoutMs: number`
+- `sessionPolicy`
+- `transitions`
 
 Validation rules:
 
-- `judgeNodeId` must reference a `loop-judge`
-- `maxIterations`, when omitted, falls back to `defaults.maxLoopIterations`
+- `id` values are unique within the workflow
+- exactly one of `stepFile` or inline `nodeId` authoring is allowed for a given step entry
+- when `stepFile` is used, the loaded step definition must resolve to the same `id`
+- `nodeId` must resolve through `workflow.json.nodes[]`
+- when `role` is omitted, the step named by `managerStepId` is treated as the manager execution site and all other steps default to worker execution sites
+- `transitions[]` target step ids, not node ids
+- `sessionPolicy.inheritFromStepId`, when present, must reference an authored step in the same workflow
+- step-local `timeoutMs`, prompt, and session settings override node defaults for that step usage site only
 
-Implementation note:
+## `StepTransition`
 
-- `backoffMs` is validated as schema, but the current engine does not apply direct loop sleeping from that field.
-
-## `SubWorkflowRef`
-
-`subWorkflows[]` remains part of the current compatibility surface, but it is no longer the recommended authoring direction for new simple workflows. Prefer the ordered-node role-based form unless a feature still depends on structural grouped-lane routing.
-
-Current shape:
-
-- `id: string`
-- `description: string`
-- `managerNodeId: string`
-- `inputNodeId: string`
-- `outputNodeId: string`
-- `nodeIds: string[]`
-- `inputSources: SubWorkflowInputSource[]`
-- optional `block`
-
-There is only one sub-workflow form in the current schema: explicit boundary metadata inside the same workflow definition.
-
-### `inputSources`
-
-Supported types:
-
-- `human-input`
-- `workflow-output`
-- `node-output`
-- `sub-workflow-output`
-
-Optional source selectors:
-
-- `workflowId`
-- `nodeId`
-- `subWorkflowId`
-- `selectionPolicy`
-
-Current `selectionPolicy.mode` values:
-
-- `explicit`
-- `latest-succeeded`
-- `latest-any`
-- `by-loop-iteration`
-
-### `block`
-
-Supported values:
-
-- `plain`
-- `branch-block`
-- `loop-body`
-
-Rules:
-
-- `plain` is the default structural grouping case
-- `branch-block` must be entered from a `branch-judge` edge to the sub-workflow manager
-- `loop-body` must reference a loop id and be re-entered by that loop's continue edge
-
-## `SubWorkflowConversation`
+`transitions[]` define the legal next execution addresses for one step.
 
 Shape:
 
-- `id: string`
-- `participants: string[]`
-- `maxTurns: number`
-- `stopWhen: string`
+- `toStepId: string`
+- optional `toWorkflowId: string`
+- optional `label: string`
 
-Current implementation behavior:
+Rules:
 
-- participants are ordered
-- turns are round-robin by participant order
-- the runtime emits at most one new turn per evaluation pass
+- when `toWorkflowId` is omitted, the transition stays inside the current workflow
+- when `toWorkflowId` is present, the transition targets another workflow using the same execution-address contract as any other step call
+- cross-workflow transitions must target the callee workflow's callable entry step, which is normally its `managerStepId`, or `entryStepId` for a worker-only workflow
+- transitions always target steps, never raw node ids
+- `label` is descriptive metadata and not the routing authority
+
+## Removed Fields
+
+The authored workflow schema does not include:
+
+- `CompletionRule`
+- `workflowCalls[]`
+- top-level `edges[]`
+- `LoopRule`
+- `subWorkflows[]`
+- `subWorkflowConversations[]`
+- branch/loop judge metadata
+
+Routing is step-addressed through `transitions[]`. Branching, repetition, and cross-workflow manager calls are all expressed through ordinary transitions between explicit execution addresses.
 
 ## `node-{id}.json`
 
@@ -454,7 +355,7 @@ materializes their effective payload from the selected add-on descriptor,
 scoped local add-on manifest, or host resolver during validation. Save/edit
 surfaces preserve the `addon` reference in `workflow.json`.
 
-Current authored shape:
+Authored shape:
 
 ```json
 {
@@ -500,13 +401,13 @@ Optional:
 - `timeoutMs`
 - `output`
 
-Important normalization rules:
+Important rules:
 
 - omitted `nodeType` defaults to `agent`
 - `systemPromptTemplateFile` is resolved into `systemPromptTemplate` during load
 - `promptTemplateFile` is resolved into `promptTemplate` during load
 - `sessionStartPromptTemplateFile` is resolved into `sessionStartPromptTemplate` during load
-- legacy prompt/variable aliases are rejected; authored JSON must use the canonical field names
+- authored JSON must use the canonical field names
 
 ### `nodeType`
 
@@ -587,18 +488,16 @@ Rules:
 
 ## Node Order
 
-Vertical ordering is defined directly by the array order of `workflow.json.nodes[]`.
+Presentation ordering is defined directly by the array order of `workflow.json.steps[]`.
 The runtime and editor derive indent/color from workflow graph structure rather than persisted visualization metadata.
 
-## Current Compatibility Notes
+## Validation Notes
 
-- `subWorkflows[].inputs` is rejected; authored JSON must use `inputSources`
-- `subWorkflowConversations[].participantsIds` is rejected; authored JSON must use `participants`
 - `executionBackend` is required for agent nodes; backend identifiers encoded in `model` are rejected
 
-## Current Non-Goals
+## Non-Goals
 
-These are not part of the current authored workflow format:
+These are not part of the authored workflow format:
 
 - concurrent `nodeGroups`
 - `workflowType`
