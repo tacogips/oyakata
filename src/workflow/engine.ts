@@ -16,6 +16,11 @@ import {
   type NodeAdapter,
 } from "./adapter";
 import {
+  DEFAULT_SUPERVISER_WORKFLOW_ID,
+  normalizeAutoImprovePolicy,
+  resolveSuperviserWorkflowId,
+} from "./auto-improve-policy";
+import {
   executeAdapterWithTimeout,
   executeNativeNodeWithTimeout,
 } from "./adapter-execution";
@@ -1852,18 +1857,42 @@ function createInitialSupervisionRunState(input: {
   readonly policy: AutoImprovePolicy;
   readonly targetWorkflowId: string;
 }): SupervisionRunState {
-  const superviserWorkflowId =
-    input.policy.superviserWorkflowId ?? "divedra/default-superviser";
+  const superviserWorkflowId = resolveSuperviserWorkflowId(
+    input.policy.superviserWorkflowId,
+  );
   return {
     supervisionRunId: `sup-${randomBytes(10).toString("hex")}`,
     targetWorkflowId: input.targetWorkflowId,
-    superviserWorkflowId,
+    superviserWorkflowId: superviserWorkflowId.ok
+      ? superviserWorkflowId.value
+      : DEFAULT_SUPERVISER_WORKFLOW_ID,
     status: "running",
     attemptCount: 1,
     workflowPatchCount: 0,
     policy: input.policy,
     incidents: [],
     remediations: [],
+  };
+}
+
+function cloneSupervisionForContinuedRun(
+  source: SupervisionRunState,
+  policy: AutoImprovePolicy,
+): SupervisionRunState {
+  const superviserWorkflowId = resolveSuperviserWorkflowId(
+    policy.superviserWorkflowId,
+  );
+  return {
+    ...source,
+    superviserWorkflowId: superviserWorkflowId.ok
+      ? superviserWorkflowId.value
+      : DEFAULT_SUPERVISER_WORKFLOW_ID,
+    status: "running",
+    policy,
+    incidents: [...source.incidents],
+    ...(source.remediations === undefined
+      ? {}
+      : { remediations: [...source.remediations] }),
   };
 }
 
@@ -2043,12 +2072,6 @@ async function runWorkflowInternal(
   let precomputedSupervision: SupervisionRunState | undefined;
   if (isFreshRootStart && options.autoImprove !== undefined) {
     const policy = options.autoImprove;
-    if (policy.enabled !== true) {
-      return err({
-        exitCode: 2,
-        message: "autoImprove.enabled must be true when autoImprove is set",
-      });
-    }
     const initial = createInitialSupervisionRunState({
       policy,
       targetWorkflowId: loaded.value.bundle.workflow.workflowId,
@@ -2144,8 +2167,7 @@ async function runWorkflowInternal(
     const source = preloadedForBundlePath;
     const rerunTargetLabel = workflow.steps === undefined ? "node" : "step";
     /** Step id wins when both are set (reusable-node bundles may supply both). */
-    const rerunTargetId =
-      options.rerunFromStepId ?? options.rerunFromNodeId;
+    const rerunTargetId = options.rerunFromStepId ?? options.rerunFromNodeId;
     if (rerunTargetId === undefined) {
       return err({
         exitCode: 1,
@@ -2195,15 +2217,6 @@ async function runWorkflowInternal(
     session = cloneSession(existing);
     if (options.autoImprove !== undefined) {
       const policy = options.autoImprove;
-      if (policy.enabled !== true) {
-        return err(
-          workflowRunFailure(
-            2,
-            "autoImprove.enabled must be true when autoImprove is set",
-            existing,
-          ),
-        );
-      }
       if (session.supervision === undefined) {
         return err(
           workflowRunFailure(
@@ -2213,17 +2226,12 @@ async function runWorkflowInternal(
           ),
         );
       }
-      const s = session.supervision;
       session = {
         ...session,
-        supervision: {
-          ...s,
+        supervision: cloneSupervisionForContinuedRun(
+          session.supervision,
           policy,
-          incidents: [...s.incidents],
-          ...(s.remediations === undefined
-            ? {}
-            : { remediations: [...s.remediations] }),
-        },
+        ),
       };
     }
     if (session.status === "completed") {
@@ -2260,25 +2268,14 @@ async function runWorkflowInternal(
     options.resumeSessionId === undefined
   ) {
     const policy = options.autoImprove;
-    if (policy.enabled !== true) {
-      return err({
-        exitCode: 2,
-        message: "autoImprove.enabled must be true when autoImprove is set",
-      });
-    }
     let nextSupervision: SupervisionRunState;
     if (precomputedSupervision !== undefined) {
       nextSupervision = precomputedSupervision;
     } else if (preloadedForBundlePath?.supervision !== undefined) {
-      const s = preloadedForBundlePath.supervision;
-      nextSupervision = {
-        ...s,
+      nextSupervision = cloneSupervisionForContinuedRun(
+        preloadedForBundlePath.supervision,
         policy,
-        incidents: [...s.incidents],
-        ...(s.remediations === undefined
-          ? {}
-          : { remediations: [...s.remediations] }),
-      };
+      );
     } else if (options.rerunFromSessionId !== undefined) {
       return err({
         exitCode: 2,
@@ -4369,8 +4366,7 @@ async function runWorkflowInternal(
               await saveSession(failed, options);
               return err({
                 exitCode: 6,
-                message:
-                  failed.lastError ?? `${executionTargetNoun} timeout`,
+                message: failed.lastError ?? `${executionTargetNoun} timeout`,
               });
             }
             session = {
@@ -5111,20 +5107,18 @@ async function runAutoImproveLoop(
     );
 
     if (result.ok) {
-      const s = result.value.session;
-      if (s.status !== "completed" || result.value.exitCode !== 0) {
-        if (s.supervision !== undefined) {
-          const persisted = await loadSession(s.sessionId, options);
-          if (persisted.ok) {
-            return ok({ ...result.value, session: persisted.value });
-          }
-        }
-        return result;
+      const persisted = await loadSession(
+        result.value.session.sessionId,
+        options,
+      );
+      const latest = persisted.ok ? persisted.value : result.value.session;
+      if (latest.status !== "completed" || result.value.exitCode !== 0) {
+        return ok({ ...result.value, session: latest });
       }
-      if (s.supervision !== undefined) {
+      if (latest.supervision !== undefined) {
         const next: WorkflowSessionState = {
-          ...s,
-          supervision: { ...s.supervision, status: "succeeded" },
+          ...latest,
+          supervision: { ...latest.supervision, status: "succeeded" },
         };
         const saved = await saveSession(next, options);
         if (!saved.ok) {
@@ -5132,7 +5126,7 @@ async function runAutoImproveLoop(
         }
         return ok({ session: next, exitCode: 0 });
       }
-      return result;
+      return ok({ ...result.value, session: latest });
     }
 
     const failure = result.error;
@@ -5336,15 +5330,24 @@ async function runAutoImproveLoop(
       return err(workflowRunFailure(1, saved2.error.message, withUpdates));
     }
 
+    const {
+      resumeSessionId: _resumeSessionId,
+      rerunFromSessionId: _rerunFromSessionId,
+      rerunFromNodeId: _rerunFromNodeId,
+      rerunFromStepId: _rerunFromStepId,
+      ...rerunBase
+    } = innerBase;
     current = {
-      ...innerBase,
+      ...rerunBase,
       autoImprove: policy,
       supervisionLoopExecution: true,
       rerunFromSessionId: withUpdates.sessionId,
-      rerunFromNodeId: remediationPlan.rerunFromNodeId,
-      ...(remediationPlan.targetStepId === undefined
-        ? {}
-        : { rerunFromStepId: remediationPlan.targetStepId }),
+      ...(wfForTarget.value.bundle.workflow.steps === undefined
+        ? { rerunFromNodeId: remediationPlan.rerunFromNodeId }
+        : {
+            rerunFromStepId:
+              remediationPlan.targetStepId ?? remediationPlan.rerunFromNodeId,
+          }),
     };
   }
 }
@@ -5355,17 +5358,42 @@ export async function runWorkflow(
   adapter?: NodeAdapter,
   guards?: EngineExecutionGuards,
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
-  if (options.autoImprove === undefined) {
-    return runWorkflowInternal(workflowName, options, adapter, guards, []);
+  let normalizedOptions = options;
+  if (options.autoImprove !== undefined) {
+    const normalizedPolicy = normalizeAutoImprovePolicy(options.autoImprove);
+    if (!normalizedPolicy.ok || normalizedPolicy.value === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          normalizedPolicy.ok
+            ? "autoImprove.enabled must be true when autoImprove is set"
+            : `invalid autoImprove policy: ${normalizedPolicy.error}`,
+        ),
+      );
+    }
+    normalizedOptions = {
+      ...options,
+      autoImprove: normalizedPolicy.value,
+    };
   }
-  if (options.supervisionLoopExecution === true) {
-    return runWorkflowInternal(workflowName, options, adapter, guards, []);
+
+  if (normalizedOptions.autoImprove === undefined) {
+    return runWorkflowInternal(
+      workflowName,
+      normalizedOptions,
+      adapter,
+      guards,
+      [],
+    );
   }
-  if (
-    options.resumeSessionId !== undefined ||
-    options.rerunFromSessionId !== undefined
-  ) {
-    return runWorkflowInternal(workflowName, options, adapter, guards, []);
+  if (normalizedOptions.supervisionLoopExecution === true) {
+    return runWorkflowInternal(
+      workflowName,
+      normalizedOptions,
+      adapter,
+      guards,
+      [],
+    );
   }
-  return runAutoImproveLoop(workflowName, options, adapter, guards);
+  return runAutoImproveLoop(workflowName, normalizedOptions, adapter, guards);
 }

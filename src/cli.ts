@@ -20,6 +20,7 @@ import { emitEventFile } from "./events/manual-emit";
 import { listEventReceipts, replayEventReceipt } from "./events/receipt-ops";
 import type { EventListenerHandle } from "./events/listener-service";
 import type { MockNodeScenario } from "./workflow/adapter";
+import { normalizeAutoImprovePolicy } from "./workflow/auto-improve-policy";
 import { createWorkflowTemplate } from "./workflow/create";
 import { callNode, type CallNodeInput } from "./workflow/call-node";
 import { callStep, type CallStepInput } from "./workflow/call-step";
@@ -65,7 +66,7 @@ import type {
   WorkflowScopeSelector,
 } from "./workflow/types";
 
-function parseAutoImprovePolicyFromCliFlags(input: {
+type AutoImproveCliInputs = {
   readonly enabled: boolean;
   readonly superviserWorkflowId?: string;
   readonly monitorIntervalMs?: number;
@@ -73,23 +74,18 @@ function parseAutoImprovePolicyFromCliFlags(input: {
   readonly maxSupervisedAttempts?: number;
   readonly maxWorkflowPatches?: number;
   readonly workflowMutationMode?: "execution-copy" | "in-place";
-  readonly allowTargetedRerun: boolean;
-}): AutoImprovePolicy | undefined {
-  if (!input.enabled) {
-    return undefined;
+  readonly allowTargetedRerun?: boolean;
+};
+
+function parseAutoImprovePolicyFromCliFlags(input: AutoImproveCliInputs): {
+  readonly policy?: AutoImprovePolicy;
+  readonly error?: string;
+} {
+  const normalized = normalizeAutoImprovePolicy(input);
+  if (!normalized.ok) {
+    return { error: normalized.error };
   }
-  return {
-    enabled: true,
-    ...(input.superviserWorkflowId === undefined
-      ? {}
-      : { superviserWorkflowId: input.superviserWorkflowId }),
-    monitorIntervalMs: input.monitorIntervalMs ?? 5000,
-    stallTimeoutMs: input.stallTimeoutMs ?? 60_000,
-    maxSupervisedAttempts: input.maxSupervisedAttempts ?? 5,
-    maxWorkflowPatches: input.maxWorkflowPatches ?? 3,
-    workflowMutationMode: input.workflowMutationMode ?? "execution-copy",
-    ...(input.allowTargetedRerun ? {} : { allowTargetedRerun: false as const }),
-  };
+  return normalized.value === undefined ? {} : { policy: normalized.value };
 }
 
 export interface CliIo {
@@ -278,15 +274,58 @@ const DEFAULT_DEPS: CliDependencies = {
     waitForProcessShutdownSignal(),
 };
 
-function parseNumericOption(value: string | undefined): number | undefined {
+function parseNumericOption(
+  flagName: string,
+  value: string | undefined,
+): { readonly value?: number; readonly error?: string } {
   if (value === undefined) {
-    return undefined;
+    return { error: `${flagName} requires a numeric value` };
   }
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    return undefined;
+    return {
+      error: `invalid ${flagName} value '${value}'; expected a number`,
+    };
   }
-  return parsed;
+  return { value: parsed };
+}
+
+function parseRequiredStringOption(
+  flagName: string,
+  value: string | undefined,
+  expectation?: string,
+): { readonly value?: string; readonly error?: string } {
+  if (value !== undefined) {
+    return { value };
+  }
+  return {
+    error:
+      expectation === undefined
+        ? `${flagName} requires a value`
+        : `${flagName} requires a value: ${expectation}`,
+  };
+}
+
+function parseEnumOption<const T extends string>(
+  flagName: string,
+  value: string | undefined,
+  allowedValues: readonly T[],
+  expectation: string,
+): { readonly value?: T; readonly error?: string } {
+  const parsedString = parseRequiredStringOption(flagName, value, expectation);
+  if (parsedString.error !== undefined) {
+    return { error: parsedString.error };
+  }
+  const parsedValue = parsedString.value;
+  if (
+    parsedValue !== undefined &&
+    allowedValues.some((allowed) => allowed === parsedValue)
+  ) {
+    return { value: parsedValue as T };
+  }
+  return {
+    error: `invalid ${flagName} value '${parsedValue}'; expected ${expectation}`,
+  };
 }
 
 function parseEnvBooleanFlag(value: string | undefined): boolean {
@@ -439,6 +478,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let maxWorkflowPatches: number | undefined;
   let workflowMutationMode: "execution-copy" | "in-place" | undefined;
   let noAllowTargetedRerun = false;
+  let firstAutoImprovePolicyFlag: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -459,11 +499,20 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       return undefined;
     };
+    const markAutoImprovePolicyFlag = (): void => {
+      firstAutoImprovePolicyFlag ??= token;
+    };
 
     switch (token) {
-      case "--workflow-root":
-        workflowRoot = readNext();
+      case "--workflow-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        workflowRoot = parsedString.value;
         break;
+      }
       case "--scope":
         {
           const rawScope = readNext();
@@ -478,106 +527,263 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
           }
         }
         break;
-      case "--user-root":
-        userRoot = readNext();
+      case "--user-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        userRoot = parsedString.value;
         break;
-      case "--project-root":
-        projectRoot = readNext();
+      }
+      case "--project-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        projectRoot = parsedString.value;
         break;
-      case "--addon-root":
-        addonRoot = readNext();
+      }
+      case "--addon-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        addonRoot = parsedString.value;
         break;
-      case "--artifact-root":
-        artifactRoot = readNext();
+      }
+      case "--artifact-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        artifactRoot = parsedString.value;
         break;
-      case "--session-store":
-        sessionStoreRoot = readNext();
+      }
+      case "--session-store": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        sessionStoreRoot = parsedString.value;
         break;
+      }
       case "--working-dir":
-      case "--working-directory":
-        workingDirectory = readNext();
+      case "--working-directory": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        workingDirectory = parsedString.value;
         break;
+      }
       case "--worker-only":
         workerOnly = true;
         break;
-      case "--variables":
-        variablesPath = readNext();
+      case "--variables": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        variablesPath = parsedString.value;
         break;
+      }
       case "--output": {
-        const maybeOutput = readNext();
-        if (maybeOutput === "json" || maybeOutput === "text") {
-          output = maybeOutput;
+        const parsedOutput = parseEnumOption(
+          token,
+          readNext(),
+          ["json", "text"],
+          "json or text",
+        );
+        if (parsedOutput.error !== undefined) {
+          parseError = parsedOutput.error;
+          break;
+        }
+        if (parsedOutput.value !== undefined) {
+          output = parsedOutput.value;
         }
         break;
       }
       case "--format": {
-        const maybeFormat = readNext();
-        if (
-          maybeFormat === "json" ||
-          maybeFormat === "jsonl" ||
-          maybeFormat === "text"
-        ) {
-          format = maybeFormat;
+        const parsedFormat = parseEnumOption(
+          token,
+          readNext(),
+          ["json", "jsonl", "text"],
+          "json, jsonl, or text",
+        );
+        if (parsedFormat.error !== undefined) {
+          parseError = parsedFormat.error;
+          break;
+        }
+        if (parsedFormat.value !== undefined) {
+          format = parsedFormat.value;
         }
         break;
       }
       case "--dry-run":
         dryRun = true;
         break;
-      case "--mock-scenario":
-        mockScenarioPath = readNext();
+      case "--mock-scenario": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        mockScenarioPath = parsedString.value;
         break;
+      }
       case "--max-steps":
-        maxSteps = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxSteps = parsedNumber.value;
+        }
         break;
       case "--max-loop-iterations":
-        maxLoopIterations = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxLoopIterations = parsedNumber.value;
+        }
         break;
       case "--default-timeout-ms":
-        defaultTimeoutMs = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          defaultTimeoutMs = parsedNumber.value;
+        }
         break;
       case "--timeout-ms":
-        timeoutMs = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          timeoutMs = parsedNumber.value;
+        }
         break;
-      case "--host":
-        host = readNext();
+      case "--host": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        host = parsedString.value;
         break;
+      }
       case "--port":
-        port = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          port = parsedNumber.value;
+        }
         break;
-      case "--endpoint":
-        endpoint = readNext();
+      case "--endpoint": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        endpoint = parsedString.value;
         break;
-      case "--auth-token":
-        authToken = readNext();
+      }
+      case "--auth-token": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        authToken = parsedString.value;
         break;
-      case "--auth-token-env":
-        authTokenEnv = readNext();
+      }
+      case "--auth-token-env": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        authTokenEnv = parsedString.value;
         break;
-      case "--file":
-        filePath = readNext();
+      }
+      case "--file": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        filePath = parsedString.value;
         break;
+      }
       case "--read-only":
         readOnly = true;
         break;
       case "--no-exec":
         noExec = true;
         break;
-      case "--resume-session":
-        resumeSessionId = readNext();
+      case "--resume-session": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        resumeSessionId = parsedString.value;
         break;
-      case "--workflow":
-        workflowName = readNext();
+      }
+      case "--workflow": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        workflowName = parsedString.value;
         break;
-      case "--message-json":
-        messageJson = readNext();
+      }
+      case "--message-json": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        messageJson = parsedString.value;
         break;
-      case "--message-file":
-        messageFile = readNext();
+      }
+      case "--message-file": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        messageFile = parsedString.value;
         break;
-      case "--prompt-variant":
-        promptVariant = readNext();
+      }
+      case "--prompt-variant": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        promptVariant = parsedString.value;
         break;
+      }
       case "--continue-session":
         continueSession = true;
         break;
@@ -599,64 +805,159 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         resumeNodeExecId = nextResumeExec;
         break;
       }
-      case "--vendor":
-        vendor = readNext();
+      case "--vendor": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        vendor = parsedString.value;
         break;
-      case "--event-root":
-        eventRoot = readNext();
+      }
+      case "--event-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        eventRoot = parsedString.value;
         break;
-      case "--event-file":
-        eventFile = readNext();
+      }
+      case "--event-file": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        eventFile = parsedString.value;
         break;
-      case "--source":
-        sourceId = readNext();
+      }
+      case "--source": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        sourceId = parsedString.value;
         break;
-      case "--status":
-        status = readNext();
+      }
+      case "--status": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        status = parsedString.value;
         break;
+      }
       case "--limit":
-        limit = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          limit = parsedNumber.value;
+        }
         break;
-      case "--reason":
-        reason = readNext();
+      case "--reason": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        reason = parsedString.value;
         break;
+      }
       case "--auto-improve":
         autoImprove = true;
         break;
-      case "--superviser-workflow":
-        superviserWorkflowId = readNext();
+      case "--superviser-workflow": {
+        markAutoImprovePolicyFlag();
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        superviserWorkflowId = parsedString.value;
         break;
+      }
       case "--monitor-interval-ms":
-        monitorIntervalMs = parseNumericOption(readNext());
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          monitorIntervalMs = parsedNumber.value;
+        }
         break;
       case "--stall-timeout-ms":
-        stallTimeoutMs = parseNumericOption(readNext());
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          stallTimeoutMs = parsedNumber.value;
+        }
         break;
       case "--max-supervised-attempts":
-        maxSupervisedAttempts = parseNumericOption(readNext());
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxSupervisedAttempts = parsedNumber.value;
+        }
         break;
       case "--max-workflow-patches":
-        maxWorkflowPatches = parseNumericOption(readNext());
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxWorkflowPatches = parsedNumber.value;
+        }
         break;
       case "--workflow-mutation-mode": {
-        const mode = readNext();
-        if (mode === "execution-copy" || mode === "in-place") {
-          workflowMutationMode = mode;
-        } else if (mode !== undefined) {
-          parseError = `invalid --workflow-mutation-mode '${mode}'; expected execution-copy or in-place`;
+        markAutoImprovePolicyFlag();
+        const parsedMode = parseEnumOption(
+          token,
+          readNext(),
+          ["execution-copy", "in-place"],
+          "execution-copy or in-place",
+        );
+        if (parsedMode.error !== undefined) {
+          parseError = parsedMode.error;
+          break;
+        }
+        if (parsedMode.value !== undefined) {
+          workflowMutationMode = parsedMode.value;
         }
         break;
       }
       case "--no-allow-targeted-rerun":
       case "--disable-targeted-rerun":
+        markAutoImprovePolicyFlag();
         noAllowTargetedRerun = true;
         break;
       default:
         break;
     }
+
+    if (parseError !== undefined) {
+      break;
+    }
   }
 
-  const autoImprovePolicy = parseAutoImprovePolicyFromCliFlags({
+  const autoImproveInputs = {
     enabled: autoImprove,
     ...(superviserWorkflowId === undefined ? {} : { superviserWorkflowId }),
     ...(monitorIntervalMs === undefined ? {} : { monitorIntervalMs }),
@@ -664,8 +965,18 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     ...(maxSupervisedAttempts === undefined ? {} : { maxSupervisedAttempts }),
     ...(maxWorkflowPatches === undefined ? {} : { maxWorkflowPatches }),
     ...(workflowMutationMode === undefined ? {} : { workflowMutationMode }),
-    allowTargetedRerun: !noAllowTargetedRerun,
-  });
+    ...(noAllowTargetedRerun ? { allowTargetedRerun: false } : {}),
+  } as const;
+  const autoImprovePolicy =
+    parseAutoImprovePolicyFromCliFlags(autoImproveInputs);
+  if (parseError === undefined) {
+    if (!autoImprove && firstAutoImprovePolicyFlag !== undefined) {
+      parseError = `${firstAutoImprovePolicyFlag} requires --auto-improve`;
+    }
+  }
+  if (parseError === undefined && autoImprovePolicy.error !== undefined) {
+    parseError = `invalid --auto-improve policy: ${autoImprovePolicy.error}`;
+  }
 
   return {
     positionals,
@@ -710,9 +1021,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(status === undefined ? {} : { status }),
       ...(limit === undefined ? {} : { limit }),
       ...(reason === undefined ? {} : { reason }),
-      ...(autoImprovePolicy === undefined
+      ...(autoImprovePolicy.policy === undefined
         ? {}
-        : { autoImprove: autoImprovePolicy }),
+        : { autoImprove: autoImprovePolicy.policy }),
     },
     ...(parseError === undefined ? {} : { error: parseError }),
   };
@@ -796,7 +1107,9 @@ function printHelp(io: CliIo): void {
   io.stdout(
     "  --monitor-interval-ms <n>    Observation cadence (default 5000)",
   );
-  io.stdout("  --stall-timeout-ms <n>       Stall threshold (default 60000)");
+  io.stdout(
+    "  --stall-timeout-ms <n>       Stall threshold (default 60000; must be >= monitor interval)",
+  );
   io.stdout("  --max-supervised-attempts <n> Attempt budget (default 5)");
   io.stdout("  --max-workflow-patches <n>   Patch budget (default 3)");
   io.stdout(

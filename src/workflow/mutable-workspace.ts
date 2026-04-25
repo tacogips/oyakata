@@ -134,6 +134,51 @@ function isPatchRevisionRecord(
   );
 }
 
+function isNodeErrorWithCode(
+  error: unknown,
+  code: string,
+): error is NodeJS.ErrnoException {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+async function loadPatchRevisionRecords(
+  filePath: string,
+): Promise<Result<readonly WorkflowPatchRevisionRecord[], MutableWorkspaceFailure>> {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed: unknown = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return err({
+        code: "IO",
+        message: `patch revision file '${filePath}' must contain a JSON array`,
+      });
+    }
+    for (const [index, entry] of parsed.entries()) {
+      if (!isPatchRevisionRecord(entry)) {
+        return err({
+          code: "IO",
+          message: `patch revision file '${filePath}' contains an invalid record at index ${index}`,
+        });
+      }
+    }
+    return ok(parsed as readonly WorkflowPatchRevisionRecord[]);
+  } catch (error: unknown) {
+    if (isNodeErrorWithCode(error, "ENOENT")) {
+      return ok([]);
+    }
+    const message = error instanceof Error ? error.message : "unknown error";
+    return err({
+      code: "IO",
+      message: `failed reading patch revisions: ${message}`,
+    });
+  }
+}
+
 /**
  * Appends a patch provenance record under the supervision run directory.
  */
@@ -162,19 +207,12 @@ export async function recordWorkflowPatchRevision(
     patchedByStepId: input.patchedByStepId,
     mutableWorkflowDir: input.mutableWorkflowDir,
   };
-  let prior: readonly WorkflowPatchRevisionRecord[] = [];
-  try {
-    const raw = await readFile(filePath, "utf8");
-    const parsed: unknown = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed)) {
-      const cleaned = parsed.filter(isPatchRevisionRecord);
-      prior = cleaned;
-    }
-  } catch {
-    // Missing or corrupt file: start fresh.
+  const prior = await loadPatchRevisionRecords(filePath);
+  if (!prior.ok) {
+    return prior;
   }
   try {
-    await atomicWriteJsonFile(filePath, [...prior, next]);
+    await atomicWriteJsonFile(filePath, [...prior.value, next]);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({
@@ -205,28 +243,5 @@ export async function readWorkflowPatchRevisionsFromArtifact(input: {
     });
   }
   const filePath = path.join(runDir, PATCH_REVISIONS_FILE);
-  try {
-    const raw = await readFile(filePath, "utf8");
-    const parsed: unknown = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      return ok([]);
-    }
-    return ok(parsed.filter(isPatchRevisionRecord));
-  } catch (error: unknown) {
-    const code =
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT"
-        ? "ENOENT"
-        : undefined;
-    if (code === "ENOENT") {
-      return ok([]);
-    }
-    const message = error instanceof Error ? error.message : "unknown error";
-    return err({
-      code: "IO",
-      message: `failed reading patch revisions: ${message}`,
-    });
-  }
+  return loadPatchRevisionRecords(filePath);
 }

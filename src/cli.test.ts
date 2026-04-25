@@ -1595,7 +1595,10 @@ describe("runCli", () => {
     expect(code).toBe(0);
     const out = JSON.parse(capture.stdout.join("\n")) as {
       status: string;
-      supervision?: { status: string; incidents: readonly { category: string }[] };
+      supervision?: {
+        status: string;
+        incidents: readonly { category: string }[];
+      };
     };
     expect(out.status).toBe("completed");
     expect(out.supervision).toBeDefined();
@@ -1603,6 +1606,305 @@ describe("runCli", () => {
     expect(
       (out.supervision?.incidents ?? []).some((i) => i.category === "failure"),
     ).toBe(true);
+  });
+
+  test("commands without auto-improve flags do not synthesize supervision policy input", async () => {
+    const root = await makeTempDir();
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["workflow", "create", "demo", "--workflow-root", root],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("workflow run rejects invalid auto-improve numeric flags", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--monitor-interval-ms",
+        "0",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "invalid --auto-improve policy: monitorIntervalMs must be a positive integer",
+    );
+  });
+
+  test("workflow run rejects a stall timeout shorter than the monitor interval", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--monitor-interval-ms",
+        "5000",
+        "--stall-timeout-ms",
+        "4999",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "invalid --auto-improve policy: stallTimeoutMs must be greater than or equal to monitorIntervalMs",
+    );
+  });
+
+  test("workflow run rejects supervision policy flags without --auto-improve", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--monitor-interval-ms requires --auto-improve",
+    );
+  });
+
+  test("workflow run reports the first unexpected supervision flag in argv order", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--workflow-mutation-mode",
+        "execution-copy",
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--workflow-mutation-mode requires --auto-improve",
+    );
+    expect(capture.stderr.join("\n")).not.toContain(
+      "--monitor-interval-ms requires --auto-improve",
+    );
+  });
+
+  test("workflow run rejects --superviser-workflow without a value", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--superviser-workflow",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--superviser-workflow requires a value",
+    );
+  });
+
+  test("workflow run rejects --superviser-workflow when the value is missing before another flag", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--superviser-workflow",
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--superviser-workflow requires a value",
+    );
+  });
+
+  test("workflow run rejects --workflow-mutation-mode without a value", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--workflow-mutation-mode",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--workflow-mutation-mode requires a value: execution-copy or in-place",
+    );
+  });
+
+  test("workflow run rejects --workflow-mutation-mode when the value is missing before another flag", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--workflow-mutation-mode",
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--workflow-mutation-mode requires a value: execution-copy or in-place",
+    );
+  });
+
+  test("workflow run preserves the first parse error when a later flag is also invalid", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--superviser-workflow",
+        "--workflow-mutation-mode",
+        "mutate-all-the-things",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--superviser-workflow requires a value",
+    );
+    expect(capture.stderr.join("\n")).not.toContain(
+      "invalid --workflow-mutation-mode value 'mutate-all-the-things'",
+    );
+  });
+
+  test.each([
+    {
+      name: "workflow run rejects --workflow-root without a value",
+      argv: ["workflow", "run", "supervised-mock-retry", "--workflow-root"],
+      message: "--workflow-root requires a value",
+    },
+    {
+      name: "session status rejects --endpoint without a value",
+      argv: ["session", "status", "sess-missing-endpoint", "--endpoint"],
+      message: "--endpoint requires a value",
+    },
+    {
+      name: "call-step rejects --message-file without a value",
+      argv: [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--message-file",
+      ],
+      message: "--message-file requires a value",
+    },
+    {
+      name: "workflow inspect rejects --output without a value",
+      argv: ["workflow", "inspect", "supervised-mock-retry", "--output"],
+      message: "--output requires a value: json or text",
+    },
+    {
+      name: "session logs rejects --format without a value",
+      argv: ["session", "logs", "sess-format-missing", "--format"],
+      message: "--format requires a value: json, jsonl, or text",
+    },
+  ])("$name", async ({ argv, message }) => {
+    const capture = createIoCapture();
+    const code = await runCli(argv, capture.io);
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(message);
+  });
+
+  test.each([
+    {
+      name: "workflow run rejects invalid --workflow-mutation-mode values",
+      argv: [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--workflow-mutation-mode",
+        "mutate-all-the-things",
+      ],
+      message:
+        "invalid --workflow-mutation-mode value 'mutate-all-the-things'; expected execution-copy or in-place",
+    },
+    {
+      name: "workflow inspect rejects invalid --output values",
+      argv: [
+        "workflow",
+        "inspect",
+        "supervised-mock-retry",
+        "--output",
+        "yaml",
+      ],
+      message: "invalid --output value 'yaml'; expected json or text",
+    },
+    {
+      name: "session logs rejects invalid --format values",
+      argv: ["session", "logs", "sess-format-invalid", "--format", "yaml"],
+      message: "invalid --format value 'yaml'; expected json, jsonl, or text",
+    },
+  ])("$name", async ({ argv, message }) => {
+    const capture = createIoCapture();
+    const code = await runCli(argv, capture.io);
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(message);
   });
 
   test("run -> status -> resume flow", async () => {

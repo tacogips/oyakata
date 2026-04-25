@@ -26,7 +26,7 @@ impl-plans/
 
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
-| *(none)* | — | Open a new plan under `impl-plans/` when starting tracked work. |
+| `auto-improve-superviser-workflow-phase-2` | Ready | `design-auto-improve-superviser-mode`, `architecture`, `command` |
 
 ## Completed Plans
 
@@ -34,6 +34,7 @@ impl-plans/
 | -------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
 | `step-addressed-workflow-runtime-cutover`               | 2026-04-29 | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-workflow-steps-and-node-reuse`, `architecture`, `command`, `qa-step-schema-workflow-calls` |
 | `auto-improve-superviser-mode`                          | 2026-04-25 | `design-auto-improve-superviser-mode`, `design-node-jump-and-code-manager-runtime`, `architecture`, `command`     |
+| `auto-improve-supervision-review-follow-up`            | 2026-04-25 | `design-auto-improve-superviser-mode`, `architecture`, `command`                                                   |
 | `scoped-local-addons`                                    | 2026-04-21 | `design-node-addon-catalog-and-chat-reply-worker`, `design-user-scope-workflows`                                 |
 | `event-root-manager-session-stickiness-record-lifecycle` | 2026-04-22 | `design-event-listener-workflow-trigger`                                                                         |
 | `event-root-manager-session-stickiness-binding-scope`    | 2026-04-22 | `design-event-listener-workflow-trigger`                                                                         |
@@ -424,5 +425,7 @@ PHASE_TO_PLANS = {
   128: ["impl-plans/event-root-manager-session-stickiness-record-lifecycle.md"],
   129: ["impl-plans/completed/step-addressed-workflow-runtime-cutover.md"],
   130: ["impl-plans/completed/auto-improve-superviser-mode.md"],
+  131: ["impl-plans/completed/auto-improve-supervision-review-follow-up.md"],
+  132: ["impl-plans/active/auto-improve-superviser-workflow-phase-2.md"],
 }
 ```

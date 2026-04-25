@@ -1081,6 +1081,58 @@ async function createManagerlessWorkflowFixture(
   });
 }
 
+async function createStepAddressedSupervisionRerunFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed supervision rerun fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "step-a",
+    nodes: [
+      {
+        id: "manager-node",
+        nodeFile: "nodes/node-manager.json",
+      },
+      {
+        id: "worker-node",
+        nodeFile: "nodes/node-worker.json",
+      },
+    ],
+    steps: [
+      {
+        id: "step-a",
+        nodeId: "manager-node",
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "worker-node",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "nodes", "node-manager.json"), {
+    id: "manager-node",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "manage",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "nodes", "node-worker.json"), {
+    id: "worker-node",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "work",
+    variables: {},
+  });
+}
+
 async function createRoleManagedWorkflowFixture(
   root: string,
   workflowName: string,
@@ -1379,7 +1431,8 @@ async function createStepAddressedCallerCrossWorkflowToCalleeId(
 
   await writeJson(path.join(workflowDir, "workflow.json"), {
     workflowId: workflowName,
-    description: "managed caller: cross-workflow transition by callee workflowId",
+    description:
+      "managed caller: cross-workflow transition by callee workflowId",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
     managerStepId: "divedra-manager",
     entryStepId: "divedra-manager",
@@ -1416,7 +1469,8 @@ async function createStepAddressedCallerCrossWorkflowToCalleeId(
       id: "divedra-manager",
       executionBackend: "claude-code-agent",
       model: "claude-haiku-4-5",
-      promptTemplate: "Coordinate and run draft-write before the workflow call.",
+      promptTemplate:
+        "Coordinate and run draft-write before the workflow call.",
       variables: {},
     },
   );
@@ -2247,6 +2301,9 @@ describe("runWorkflow", () => {
     expect(sup?.targetWorkflowId).toBe("managerless");
     expect(sup?.superviserWorkflowId).toBe("divedra/default-superviser");
     expect(sup?.status).toBe("succeeded");
+    expect(sup?.policy?.superviserWorkflowId).toBe(
+      "divedra/default-superviser",
+    );
     expect(sup?.policy?.monitorIntervalMs).toBe(1500);
     expect(sup?.incidents).toEqual([]);
     expect(sup?.remediations).toEqual([]);
@@ -2494,7 +2551,10 @@ describe("runWorkflow", () => {
       return;
     }
     const incidents = loaded.value.supervision?.incidents ?? [];
-    expect(incidents.map((i) => i.category)).toEqual(["failure", "budget-exhausted"]);
+    expect(incidents.map((i) => i.category)).toEqual([
+      "failure",
+      "budget-exhausted",
+    ]);
   });
 
   test("fails a supervised run with a stall when the adapter does not make session progress in time", async () => {
@@ -2611,6 +2671,294 @@ describe("runWorkflow", () => {
     expect(next?.mutableWorkflowDir).toBe(firstSup.mutableWorkflowDir);
   });
 
+  test("keeps the auto-improve retry loop active on resume", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-supervision-resume-loop",
+        maxSteps: 1,
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.exitCode).toBe(4);
+
+    class FailOncePerResume implements NodeAdapter {
+      #failed = false;
+      readonly #inner = new DeterministicNodeAdapter();
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+        context: Parameters<NodeAdapter["execute"]>[1],
+      ) {
+        if (!this.#failed) {
+          this.#failed = true;
+          throw new Error("resume attempt fails once before supervision rerun");
+        }
+        return this.#inner.execute(input, context);
+      }
+    }
+
+    const resumed = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        resumeSessionId: first.value.session.sessionId,
+        autoImprove: policy,
+      },
+      new FailOncePerResume(),
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) {
+      return;
+    }
+    expect(resumed.value.exitCode).toBe(0);
+    expect(resumed.value.session.supervision?.status).toBe("succeeded");
+    expect(resumed.value.session.supervision?.attemptCount).toBe(2);
+    expect(resumed.value.session.supervision?.incidents).toHaveLength(1);
+    expect(
+      resumed.value.session.supervision?.remediations?.map((r) => r.action),
+    ).toEqual(["rerun-workflow"]);
+  });
+
+  test("keeps the auto-improve retry loop active on supervised rerun", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    class FailOncePerRerun implements NodeAdapter {
+      #failed = false;
+      readonly #inner = new DeterministicNodeAdapter();
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+        context: Parameters<NodeAdapter["execute"]>[1],
+      ) {
+        if (!this.#failed) {
+          this.#failed = true;
+          throw new Error("rerun attempt fails once before supervision retry");
+        }
+        return this.#inner.execute(input, context);
+      }
+    }
+
+    const rerun = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromNodeId: "step-1",
+      },
+      new FailOncePerRerun(),
+    );
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+    expect(rerun.value.exitCode).toBe(0);
+    expect(rerun.value.session.supervision?.status).toBe("succeeded");
+    expect(rerun.value.session.supervision?.attemptCount).toBe(2);
+    expect(rerun.value.session.supervision?.incidents).toHaveLength(1);
+    expect(
+      rerun.value.session.supervision?.remediations?.map((r) => r.action),
+    ).toEqual(["rerun-workflow"]);
+  });
+
+  test("clears stale rerun targets before the next supervised attempt", async () => {
+    const root = await makeTempDir();
+    await createStepAddressedSupervisionRerunFixture(root, "step-addressed");
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+      allowTargetedRerun: false,
+    };
+
+    const first = await runWorkflow(
+      "step-addressed",
+      {
+        ...options,
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    class FailWorkerOnceThenSucceed implements NodeAdapter {
+      #failedWorker = false;
+
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+      ): Promise<AdapterExecutionOutput> {
+        if (input.nodeId === "step-b" && !this.#failedWorker) {
+          this.#failedWorker = true;
+          throw new Error("first supervised rerun attempt fails on worker");
+        }
+
+        return {
+          provider: "test-adapter",
+          model: input.node.model,
+          promptText: input.promptText,
+          completionPassed: true,
+          when: { always: true },
+          payload: { nodeId: input.nodeId },
+        };
+      }
+    }
+
+    const rerun = await runWorkflow(
+      "step-addressed",
+      {
+        ...options,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "step-b",
+        autoImprove: policy,
+      },
+      new FailWorkerOnceThenSucceed(),
+    );
+
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+    expect(rerun.value.exitCode).toBe(0);
+    expect(
+      rerun.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["step-a", "step-b"]);
+    expect(
+      rerun.value.session.supervision?.remediations?.map((r) => r.action),
+    ).toEqual(["rerun-workflow"]);
+  });
+
+  test("rejects invalid auto-improve policies before workflow execution starts", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        autoImprove: {
+          enabled: true,
+          monitorIntervalMs: 0,
+          stallTimeoutMs: 90_000,
+          maxSupervisedAttempts: 4,
+          maxWorkflowPatches: 2,
+          workflowMutationMode: "execution-copy",
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain(
+      "invalid autoImprove policy: monitorIntervalMs must be a positive integer",
+    );
+  });
+
+  test("rejects a stall timeout shorter than the monitor interval before workflow execution starts", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        autoImprove: {
+          enabled: true,
+          monitorIntervalMs: 5000,
+          stallTimeoutMs: 4999,
+          maxSupervisedAttempts: 4,
+          maxWorkflowPatches: 2,
+          workflowMutationMode: "execution-copy",
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain(
+      "invalid autoImprove policy: stallTimeoutMs must be greater than or equal to monitorIntervalMs",
+    );
+  });
+
   test("rejects autoImprove on rerun when the source session has no supervision state", async () => {
     const root = await makeTempDir();
     await createManagerlessWorkflowFixture(root, "managerless");
@@ -2671,6 +3019,7 @@ describe("runWorkflow", () => {
     const policyB = {
       ...policyA,
       monitorIntervalMs: 9999,
+      superviserWorkflowId: "divedra/custom-superviser",
     };
 
     const first = await runWorkflow(
@@ -2713,6 +3062,12 @@ describe("runWorkflow", () => {
     expect(resumed.value.session.supervision?.policy?.monitorIntervalMs).toBe(
       9999,
     );
+    expect(resumed.value.session.supervision?.policy?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
+    expect(resumed.value.session.supervision?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
 
     const loaded = await loadSession(first.value.session.sessionId, {
       workflowRoot: root,
@@ -2724,6 +3079,12 @@ describe("runWorkflow", () => {
       return;
     }
     expect(loaded.value.supervision?.policy?.monitorIntervalMs).toBe(9999);
+    expect(loaded.value.supervision?.policy?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
+    expect(loaded.value.supervision?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
   });
 
   test("rejects autoImprove on resume when the session has no supervision state", async () => {

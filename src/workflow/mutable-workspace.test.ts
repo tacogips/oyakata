@@ -178,4 +178,38 @@ describe("recordWorkflowPatchRevision", () => {
     expect(list.value[0]?.patchedByStepId).toBe("step-a");
     expect(list.value[1]?.reason).toBe("second");
   });
+
+  test("returns an error for malformed persisted patch revision data", async () => {
+    const base = await makeTempDir();
+    const artifactRoot = path.join(base, "artifacts");
+    const supervisionRunId = "sup-44444444444444444444";
+    const runDir = path.join(artifactRoot, "supervision", supervisionRunId);
+    await mkdir(runDir, { recursive: true });
+    const revisionsPath = path.join(runDir, "patch-revisions.json");
+    await writeFile(revisionsPath, "{not-json", "utf8");
+
+    const readResult = await readWorkflowPatchRevisionsFromArtifact({
+      artifactRoot,
+      supervisionRunId,
+    });
+    expect(readResult.ok).toBe(false);
+    if (readResult.ok) {
+      return;
+    }
+    expect(readResult.error.message).toContain("failed reading patch revisions");
+
+    const recordResult = await recordWorkflowPatchRevision({
+      artifactRoot,
+      supervisionRunId,
+      mutableWorkflowDir: path.join(base, "m1"),
+      reason: "should not overwrite corrupt audit data",
+      patchedByStepId: "step-a",
+    });
+    expect(recordResult.ok).toBe(false);
+    if (recordResult.ok) {
+      return;
+    }
+    expect(recordResult.error.message).toContain("failed reading patch revisions");
+    expect(await readFile(revisionsPath, "utf8")).toBe("{not-json");
+  });
 });

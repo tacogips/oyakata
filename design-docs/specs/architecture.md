@@ -21,7 +21,7 @@ Current direction:
 - workflows use `workflow -> steps[] + nodes[]`, where steps are the canonical execution addresses and `workflow.json.nodes[]` is a reusable node registry
 - manager nodes should default to a deterministic `code` manager, with `llm` manager retained as experimental
 - repeated visits to the same node should materialize distinct mailbox instances and support same-session continuation with prompt variants
-- `auto improve mode` should run a paired `divedra superviser` workflow that monitors a target workflow, decides between rerun and workflow repair, and reruns against an execution-scoped mutable workflow copy by default
+- `auto improve mode` currently runs as an engine-owned outer supervision loop that persists incidents, remediations, and mutable-workspace audit data on the target session; phase 2 is to lower that policy into a paired `divedra superviser` workflow without changing the operator-visible audit model
 
 Supporting design:
 - `design-docs/specs/design-node-jump-and-code-manager-runtime.md`
@@ -100,6 +100,30 @@ Execution-time working directory is resolved separately from workflow/artifact/s
 - node-scoped override: `nodePayload.workingDirectory`, resolved from the effective workflow execution working directory
 
 Supporting design: `design-docs/specs/design-workflow-working-directory.md`.
+
+### Auto-Improve Supervision Boundary
+
+Source:
+
+- `src/workflow/engine.ts`
+- `src/workflow/superviser.ts`
+- `src/workflow/mutable-workspace.ts`
+- `src/workflow/auto-improve-policy.ts`
+
+Current phase-1 responsibilities:
+
+- normalize and validate `autoImprove` policy input before execution
+- seed and persist supervision state on the target session
+- detect terminal failure and stalled progress from persisted runtime state
+- choose deterministic remediations (`rerun-workflow`, `rerun-step`, `patch-workflow`, `stop-supervision`)
+- create execution-copy mutable workflow workspaces and patch audit records
+
+Not yet implemented in the runtime:
+
+- executing `superviserWorkflowId` as a nested workflow
+- control-plane add-ons invoked by that nested superviser workflow for target-run start/status/load/save/rerun
+
+This distinction is intentional: the current runtime architecture already persists the audit trail and policy contract required by `design-auto-improve-superviser-mode.md`, while the nested superviser workflow remains a follow-up implementation.
 
 ## Primary Components
 
