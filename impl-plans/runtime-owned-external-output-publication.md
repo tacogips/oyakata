@@ -1,7 +1,7 @@
 # Runtime-Owned External Output Publication Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-runtime-owned-external-output-publication.md#Source Selection Rule
+**Design Reference**: design-docs/specs/architecture.md#output-ownership, design-docs/specs/notes.md
 **Created**: 2026-03-08
 **Last Updated**: 2026-03-08
 
@@ -9,7 +9,7 @@
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-runtime-owned-external-output-publication.md`
+**Source**: consolidated into `design-docs/specs/architecture.md` and `design-docs/specs/notes.md`
 
 ### Summary
 
@@ -162,8 +162,7 @@ test("fails deterministically when external output publication cannot persist it
 
 ### 4. Design Consistency References
 
-#### `design-docs/specs/design-divedra-manager-prompt-contract.md`
-#### `design-docs/specs/design-runtime-owned-external-output-publication.md`
+#### `design-docs/specs/architecture.md`, `design-docs/specs/notes.md`
 
 **Status**: COMPLETED
 

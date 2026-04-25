@@ -35,6 +35,7 @@ import {
   loadWorkflowByIdFromDisk,
   loadWorkflowFromDisk,
   mergeLoadOptionsForSessionMutableBundle,
+  type LoadedWorkflow,
 } from "./load";
 import {
   createExecutionCopyMutableWorkspace,
@@ -100,7 +101,13 @@ import {
   getEngineSupervisionPatcherId,
   isSupervisionStallLastError,
   planSupervisionRemediation,
+  toStepAddressedWorkflowForSupervision,
 } from "./superviser";
+import {
+  buildSuperviserRuntimeControl,
+  workflowRunBaseForSuperviserControl,
+} from "./superviser-runtime-control-impl";
+import type { SuperviserRuntimeControl } from "./superviser-control";
 import {
   resolveNodeExecutionWorkingDirectory,
   resolveWorkflowExecutionWorkingDirectory,
@@ -122,7 +129,10 @@ import type {
   WorkflowJson,
   WorkflowTimeoutPolicy,
 } from "./types";
-import { asAgentNodePayload } from "./types";
+import {
+  asAgentNodePayload,
+  resolveWorkflowManagerRuntimeId,
+} from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
@@ -133,6 +143,11 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly defaultTimeoutMs?: number;
   readonly dryRun?: boolean;
   readonly eventReplyDispatcher?: ChatReplyDispatcher;
+  /**
+   * Phase-2 nested superviser: passed to native add-on execution so
+   * `divedra/*` superviser control nodes can operate on the paired target session.
+   */
+  readonly superviserControl?: SuperviserRuntimeControl;
   readonly mockScenario?: MockNodeScenario;
   /** When set on a new run (not resume), seeds {@link WorkflowSessionState.supervision} and, unless {@link supervisionLoopExecution} is set, runs the supervision retry loop. */
   readonly autoImprove?: AutoImprovePolicy;
@@ -142,16 +157,18 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
    * @internal
    */
   readonly supervisionLoopExecution?: boolean;
+  /**
+   * Phase-2: after seeding a supervised target session, run `superviserWorkflowId` as a nested
+   * step-addressed workflow with {@link superviserControl} instead of the engine-only
+   * `runAutoImproveLoop`. Ignored for resume and rerun entry points.
+   */
+  readonly nestedSuperviserDriver?: boolean;
   readonly resumeSessionId?: string;
   readonly rerunFromSessionId?: string;
   /**
-   * Rerun entry id for node-registry workflows without `steps[]`.
-   * When {@link rerunFromStepId} is also set, the step id wins for the rerun target.
-   */
-  readonly rerunFromNodeId?: string;
-  /**
-   * Rerun entry step id for step-addressed workflows.
-   * Takes precedence over {@link rerunFromNodeId} when both are supplied (reusable-node bundles).
+   * Rerun entry id: step id (and, for legacy node-registry-only bundles without `steps[]`,
+   * the same value may be a node id that identifies the node registry entry to restart from).
+   * Required with {@link rerunFromSessionId} for rerun entry.
    */
   readonly rerunFromStepId?: string;
   readonly restartOnStuck?: boolean;
@@ -666,7 +683,7 @@ function findOwningManagerNodeId(
 ): string {
   return (
     findOwningSubWorkflowByRuntimeNodeId(workflow, nodeId)?.managerNodeId ??
-    workflow.managerNodeId
+    resolveWorkflowManagerRuntimeId(workflow)
   );
 }
 
@@ -748,22 +765,22 @@ function applyOptionalManagerDecisions(input: {
   >();
   for (const action of managerControl.actions) {
     if (
-      action.type !== "execute-optional-node" &&
-      action.type !== "skip-optional-node"
+      action.type !== "execute-optional-step" &&
+      action.type !== "skip-optional-step"
     ) {
       continue;
     }
     const nextStatus =
-      action.type === "execute-optional-node" ? "execute" : "skip";
-    const existingAction = actionsByNodeId.get(action.nodeId);
+      action.type === "execute-optional-step" ? "execute" : "skip";
+    const existingAction = actionsByNodeId.get(action.stepId);
     if (existingAction !== undefined && existingAction.status !== nextStatus) {
       return err(
-        `invalid manager control at '${input.managerNodeId}': optional ${optionalTargetNoun} '${action.nodeId}' cannot be both executed and skipped in one manager turn`,
+        `invalid manager control at '${input.managerNodeId}': optional ${optionalTargetNoun} '${action.stepId}' cannot be both executed and skipped in one manager turn`,
       );
     }
-    actionsByNodeId.set(action.nodeId, {
+    actionsByNodeId.set(action.stepId, {
       status: nextStatus,
-      ...(action.type === "skip-optional-node" && action.reason !== undefined
+      ...(action.type === "skip-optional-step" && action.reason !== undefined
         ? { reason: action.reason }
         : {}),
     });
@@ -824,17 +841,18 @@ function mailboxDeliveryManagerNodeId(
   workflow: WorkflowJson,
   toNodeId: string,
 ): string {
-  if (toNodeId === workflow.managerNodeId) {
-    return workflow.managerNodeId;
+  const rootManagerId = resolveWorkflowManagerRuntimeId(workflow);
+  if (toNodeId === rootManagerId) {
+    return rootManagerId;
   }
 
   if (workflow.subWorkflows.some((entry) => entry.managerNodeId === toNodeId)) {
-    return workflow.managerNodeId;
+    return rootManagerId;
   }
 
   return (
     findOwningSubWorkflowByRuntimeNodeId(workflow, toNodeId)?.managerNodeId ??
-    workflow.managerNodeId
+    rootManagerId
   );
 }
 
@@ -1157,8 +1175,10 @@ async function executeWorkflowCallsForNode(input: {
       : { callerStepId: input.callerStepId }),
     callerOutputPayload: input.callerOutputPayload,
   };
-  // Union explicit `workflowCalls` with step `toWorkflowId` transitions; order and
-  // dedup rules live in `workflowCallsForExecutionMatch` (differs from `effectiveWorkflowCalls`).
+  // Cross-workflow dispatch: step-addressed bundles use only step-derived `__cw:*` rows
+  // from `steps[].transitions`. Legacy node graphs union explicit `workflow.workflowCalls`
+  // with step-derived rows (see `workflowCallsForExecutionMatch` in `cross-workflow-from-steps.ts`).
+  // Order and dedup rules differ from `effectiveWorkflowCalls` on the legacy union path.
   const relevantCalls = workflowCallsForExecutionMatch(
     input.workflow,
     (entry) => workflowCallMatchesCallerExecution({ entry, ...matchCtx }),
@@ -1713,7 +1733,7 @@ async function persistExternalMailboxOutputCommunication(input: {
       input.execution.nodeId,
     ),
     outputRaw: input.outputRaw,
-    deliveredByNodeId: input.workflow.managerNodeId,
+    deliveredByNodeId: resolveWorkflowManagerRuntimeId(input.workflow),
     createdAt: input.createdAt,
   });
 }
@@ -2166,8 +2186,7 @@ async function runWorkflowInternal(
     }
     const source = preloadedForBundlePath;
     const rerunTargetLabel = workflow.steps === undefined ? "node" : "step";
-    /** Step id wins when both are set (reusable-node bundles may supply both). */
-    const rerunTargetId = options.rerunFromStepId ?? options.rerunFromNodeId;
+    const rerunTargetId = options.rerunFromStepId;
     if (rerunTargetId === undefined) {
       return err({
         exitCode: 1,
@@ -2258,7 +2277,7 @@ async function runWorkflowInternal(
         createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
-      initialNodeId: workflow.managerNodeId,
+      initialNodeId: resolveWorkflowManagerRuntimeId(workflow),
       runtimeVariables,
     });
   }
@@ -2305,8 +2324,8 @@ async function runWorkflowInternal(
           workflowId: workflow.workflowId,
           workflowExecutionId: session.sessionId,
           communicationCounter: session.communicationCounter,
-          deliveredByNodeId: workflow.managerNodeId,
-          toNodeId: workflow.managerNodeId,
+          deliveredByNodeId: resolveWorkflowManagerRuntimeId(workflow),
+          toNodeId: resolveWorkflowManagerRuntimeId(workflow),
           humanInput,
           createdAt: session.startedAt,
         });
@@ -2319,6 +2338,56 @@ async function runWorkflowInternal(
   }
 
   await saveSession(session, options);
+
+  if (options.nestedSuperviserDriver === true) {
+    if (options.autoImprove === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver requires an auto-improve policy",
+          session,
+        ),
+      );
+    }
+    if (options.rerunFromSessionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver is not valid when rerunning from a source session",
+          session,
+        ),
+      );
+    }
+    if (options.resumeSessionId !== undefined) {
+      if (session.supervision?.nestedSuperviserSessionId === undefined) {
+        return err(
+          workflowRunFailure(
+            2,
+            "nestedSuperviserDriver on resume requires nestedSuperviserSessionId on supervision (start the workflow with --nested-superviser first)",
+            session,
+          ),
+        );
+      }
+    }
+    if (session.supervision === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver requires seed supervision on the session",
+          session,
+        ),
+      );
+    }
+    return runNestedSuperviserSessionDriver(
+      workflowName,
+      session,
+      loaded.value,
+      options,
+      adapter,
+      guards,
+      workflowCallAncestors,
+    );
+  }
 
   const outgoingEdges = new Map<string, WorkflowEdge[]>();
   workflow.edges.forEach((edge) => {
@@ -3412,6 +3481,9 @@ async function runWorkflowInternal(
                       ? {}
                       : { chatReplyDispatcher: options.eventReplyDispatcher }),
                     ...(options.env === undefined ? {} : { env: options.env }),
+                    ...(options.superviserControl === undefined
+                      ? {}
+                      : { superviserControl: options.superviserControl }),
                     timeoutMs,
                     ...(supervisionStall === undefined
                       ? {}
@@ -3924,113 +3996,6 @@ async function runWorkflowInternal(
           }
         }
 
-        if (
-          nodeId !== workflow.managerNodeId &&
-          (managerControl?.startSubWorkflowIds.length ?? 0) > 0
-        ) {
-          nodeStatus = "failed";
-          const nodeExecutions = buildNodeExecutions();
-          try {
-            await finalizeManagerSession("failed");
-          } catch (finalizationError: unknown) {
-            const message =
-              finalizationError instanceof Error
-                ? finalizationError.message
-                : "unknown manager session finalization failure";
-            const failed: WorkflowSessionState = {
-              ...session,
-              queue,
-              status: "failed",
-              currentNodeId: nodeId,
-              endedAt,
-              nodeExecutionCounter: nextExecutionCounter,
-              nodeExecutionCounts: updatedCounts,
-              nodeExecutions,
-              communicationCounter: session.communicationCounter,
-              communications: session.communications,
-              nodeBackendSessions: nextNodeBackendSessions,
-              lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
-            };
-            await saveSession(failed, options);
-            return err({
-              exitCode: 1,
-              message: failed.lastError ?? "failed to finalize manager session",
-            });
-          }
-          const failed: WorkflowSessionState = {
-            ...session,
-            queue,
-            status: "failed",
-            currentNodeId: nodeId,
-            endedAt,
-            nodeExecutionCounter: nextExecutionCounter,
-            nodeExecutionCounts: updatedCounts,
-            nodeExecutions,
-            communicationCounter: session.communicationCounter,
-            communications: session.communications,
-            nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control for ${executionTargetNoun} '${nodeId}': only the root manager can start sub-workflows`,
-          };
-          await saveSession(failed, options);
-          return err({
-            exitCode: 5,
-            message: failed.lastError ?? "invalid manager control",
-          });
-        }
-
-        if (
-          !isSubworkflowManagerNodeRef(nodeRef) &&
-          (managerControl?.childInputNodeIds.length ?? 0) > 0
-        ) {
-          nodeStatus = "failed";
-          const nodeExecutions = buildNodeExecutions();
-          try {
-            await finalizeManagerSession("failed");
-          } catch (finalizationError: unknown) {
-            const message =
-              finalizationError instanceof Error
-                ? finalizationError.message
-                : "unknown manager session finalization failure";
-            const failed: WorkflowSessionState = {
-              ...session,
-              queue,
-              status: "failed",
-              currentNodeId: nodeId,
-              endedAt,
-              nodeExecutionCounter: nextExecutionCounter,
-              nodeExecutionCounts: updatedCounts,
-              nodeExecutions,
-              communicationCounter: session.communicationCounter,
-              communications: session.communications,
-              nodeBackendSessions: nextNodeBackendSessions,
-              lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
-            };
-            await saveSession(failed, options);
-            return err({
-              exitCode: 1,
-              message: failed.lastError ?? "failed to finalize manager session",
-            });
-          }
-          const failed: WorkflowSessionState = {
-            ...session,
-            queue,
-            status: "failed",
-            currentNodeId: nodeId,
-            endedAt,
-            nodeExecutionCounter: nextExecutionCounter,
-            nodeExecutionCounts: updatedCounts,
-            nodeExecutions,
-            communicationCounter: session.communicationCounter,
-            communications: session.communications,
-            nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control for ${executionTargetNoun} '${nodeId}': only a subworkflow-manager can dispatch child input ${stepAddressedExecution ? "steps" : "nodes"}`,
-          };
-          await saveSession(failed, options);
-          return err({
-            exitCode: 5,
-            message: failed.lastError ?? "invalid manager control",
-          });
-        }
       }
       const optionalManagerDecisionsResult = applyOptionalManagerDecisions({
         managerControl,
@@ -4679,41 +4644,28 @@ async function runWorkflowInternal(
         communications: currentCommunications,
         runtimeVariables: currentRuntimeVariables,
       };
-      let managerPlannedInputs = isManagerNodeRef(nodeRef)
+      let managerPlannedInputs: string[] = isManagerNodeRef(nodeRef)
         ? isSubworkflowManagerNodeRef(nodeRef)
           ? [
-              ...((managerControl?.overridesChildInputPlanning ?? false)
-                ? (managerControl?.childInputNodeIds ?? [])
-                : planSubWorkflowChildInputs({
-                    workflow,
-                    session: pendingSessionState,
-                    managerNodeId: nodeId,
-                  })),
+              ...planSubWorkflowChildInputs({
+                workflow,
+                session: pendingSessionState,
+                managerNodeId: nodeId,
+              }),
             ]
           : []
         : [];
 
+      const rootManagerRuntimeId = resolveWorkflowManagerRuntimeId(workflow);
       let managerPlannedCommunications: readonly CommunicationRecord[] = [];
-      if (nodeId === workflow.managerNodeId) {
-        const plannedSubWorkflowStarts =
-          managerControl?.overridesRootSubWorkflowPlanning === true
-            ? managerControl.startSubWorkflowIds
-                .map((subWorkflowId) =>
-                  workflow.subWorkflows.find(
-                    (entry) => entry.id === subWorkflowId,
-                  ),
-                )
-                .filter(
-                  (subWorkflow): subWorkflow is SubWorkflowRef =>
-                    subWorkflow !== undefined,
-                )
-            : planRootManagerSubWorkflowStarts({
-                workflow,
-                session: pendingSessionState,
-              });
+      if (nodeId === rootManagerRuntimeId) {
+        const plannedSubWorkflowStarts = planRootManagerSubWorkflowStarts({
+          workflow,
+          session: pendingSessionState,
+        });
         const persistedStarts: CommunicationRecord[] = [];
         for (const subWorkflow of plannedSubWorkflowStarts) {
-          if (subWorkflow.managerNodeId === workflow.managerNodeId) {
+          if (subWorkflow.managerNodeId === rootManagerRuntimeId) {
             managerPlannedInputs.push(subWorkflow.inputNodeId);
             continue;
           }
@@ -4914,7 +4866,7 @@ async function runWorkflowInternal(
               sourceNodeExecId: turn.outputRef.nodeExecId,
               payloadRef: turn.outputRef,
               outputRaw: parsedOutput.value.raw,
-              deliveredByNodeId: workflow.managerNodeId,
+              deliveredByNodeId: resolveWorkflowManagerRuntimeId(workflow),
               createdAt: endedAt,
             });
             currentCommunicationCounter += 1;
@@ -4942,7 +4894,7 @@ async function runWorkflowInternal(
         }
       }
 
-      const retryNodeIds = managerControl?.retryNodeIds ?? [];
+      const retryStepIds = managerControl?.retryStepIds ?? [];
       const nextQueue = [
         ...queue,
         ...transitionNextNodes,
@@ -4951,7 +4903,7 @@ async function runWorkflowInternal(
         ...conversationPlannedInputs,
         ...queuedOptionalDecisionNodeIds,
       ].filter((value, index, all) => all.indexOf(value) === index);
-      const nextQueueWithRetries = [...nextQueue, ...retryNodeIds].filter(
+      const nextQueueWithRetries = [...nextQueue, ...retryStepIds].filter(
         (value, index, all) => all.indexOf(value) === index,
       );
 
@@ -5221,10 +5173,23 @@ async function runAutoImproveLoop(
         ),
       );
     }
+    const targetWorkflow = wfForTarget.value.bundle.workflow;
+    const workflowForSupervision = toStepAddressedWorkflowForSupervision(
+      targetWorkflow,
+    );
+    if (workflowForSupervision === null) {
+      return err(
+        workflowRunFailure(
+          2,
+          "supervision rerun requires entryStepId+steps or legacy entryNodeId+nodes on the target workflow",
+          failedSession,
+        ),
+      );
+    }
     const remediationPlan = planSupervisionRemediation({
       policy,
       sup,
-      workflow: wfForTarget.value.bundle.workflow,
+      workflow: workflowForSupervision,
       session: failedSession,
       failIncident,
     });
@@ -5333,7 +5298,6 @@ async function runAutoImproveLoop(
     const {
       resumeSessionId: _resumeSessionId,
       rerunFromSessionId: _rerunFromSessionId,
-      rerunFromNodeId: _rerunFromNodeId,
       rerunFromStepId: _rerunFromStepId,
       ...rerunBase
     } = innerBase;
@@ -5342,12 +5306,8 @@ async function runAutoImproveLoop(
       autoImprove: policy,
       supervisionLoopExecution: true,
       rerunFromSessionId: withUpdates.sessionId,
-      ...(wfForTarget.value.bundle.workflow.steps === undefined
-        ? { rerunFromNodeId: remediationPlan.rerunFromNodeId }
-        : {
-            rerunFromStepId:
-              remediationPlan.targetStepId ?? remediationPlan.rerunFromNodeId,
-          }),
+      rerunFromStepId:
+        remediationPlan.targetStepId ?? remediationPlan.rerunFromStepId,
     };
   }
 }
@@ -5395,5 +5355,217 @@ export async function runWorkflow(
       [],
     );
   }
+  if (normalizedOptions.nestedSuperviserDriver === true) {
+    if (normalizedOptions.rerunFromSessionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver cannot be combined with rerunFromSessionId",
+        ),
+      );
+    }
+    return runWorkflowInternal(
+      workflowName,
+      normalizedOptions,
+      adapter,
+      guards,
+      [],
+    );
+  }
   return runAutoImproveLoop(workflowName, normalizedOptions, adapter, guards);
+}
+
+async function runNestedSuperviserSessionDriver(
+  workflowName: string,
+  session: WorkflowSessionState,
+  loaded: LoadedWorkflow,
+  options: WorkflowRunOptions,
+  adapter: NodeAdapter | undefined,
+  guards: EngineExecutionGuards | undefined,
+  workflowCallAncestors: readonly string[],
+): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
+  const sup = session.supervision;
+  if (sup === undefined || options.autoImprove === undefined) {
+    return err(
+      workflowRunFailure(
+        2,
+        "internal: nested superviser requires supervision and policy",
+      ),
+    );
+  }
+  const supLoad = await loadWorkflowByIdFromDisk(
+    sup.superviserWorkflowId,
+    options,
+  );
+  if (!supLoad.ok) {
+    return err(
+      workflowRunFailure(
+        2,
+        `nested superviser: load '${sup.superviserWorkflowId}': ${supLoad.error.message}`,
+        session,
+      ),
+    );
+  }
+  const resumingTarget =
+    options.resumeSessionId !== undefined &&
+    options.resumeSessionId === session.sessionId;
+  const existingNested = sup.nestedSuperviserSessionId;
+  let sessionWithNested: WorkflowSessionState;
+  let nestedSessionId: string;
+  /** When true, run the superviser bundle with `resumeSessionId` for the nested session. */
+  let resumeNestedSuperviserWorkflow: boolean;
+  if (resumingTarget) {
+    if (existingNested === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "internal: nested superviser resume requires nestedSuperviserSessionId on supervision",
+          session,
+        ),
+      );
+    }
+    const nestedLoaded = await loadSession(existingNested, options);
+    if (!nestedLoaded.ok) {
+      return err(
+        workflowRunFailure(
+          1,
+          `nested superviser: load nested session: ${nestedLoaded.error.message}`,
+          session,
+        ),
+      );
+    }
+    const nestedCompleted = nestedLoaded.value.status === "completed";
+    const targetStillActive = session.status !== "completed";
+    if (nestedCompleted && targetStillActive) {
+      // The nested superviser workflow finished (for example a one-shot add-on) while the
+      // target session is still paused or failed. Resume the target by running another nested
+      // superviser round with a fresh nested session id (reusing the same supervision run).
+      nestedSessionId = createSessionId({
+        workflowId: supLoad.value.bundle.workflow.workflowId,
+      });
+      sessionWithNested = {
+        ...session,
+        supervision: {
+          ...sup,
+          nestedSuperviserSessionId: nestedSessionId,
+        },
+      };
+      const savedNested = await saveSession(sessionWithNested, options);
+      if (!savedNested.ok) {
+        return err(
+          workflowRunFailure(1, savedNested.error.message, sessionWithNested),
+        );
+      }
+      resumeNestedSuperviserWorkflow = false;
+    } else {
+      nestedSessionId = existingNested;
+      sessionWithNested = session;
+      resumeNestedSuperviserWorkflow = true;
+    }
+  } else {
+    nestedSessionId = createSessionId({
+      workflowId: supLoad.value.bundle.workflow.workflowId,
+    });
+    sessionWithNested = {
+      ...session,
+      supervision: {
+        ...sup,
+        nestedSuperviserSessionId: nestedSessionId,
+      },
+    };
+    const savedNested = await saveSession(sessionWithNested, options);
+    if (!savedNested.ok) {
+      return err(
+        workflowRunFailure(1, savedNested.error.message, sessionWithNested),
+      );
+    }
+    resumeNestedSuperviserWorkflow = false;
+  }
+  const baseForControl = workflowRunBaseForSuperviserControl(options);
+  const runWorkflowWithAdapter = (
+    name: string,
+    opts: WorkflowRunOptions,
+  ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> =>
+    runWorkflow(name, opts, adapter, guards);
+  const control = buildSuperviserRuntimeControl({
+    base: baseForControl,
+    runWorkflow: runWorkflowWithAdapter,
+    auth: {
+      supervisionRunId: sup.supervisionRunId,
+      targetSessionId: session.sessionId,
+    },
+    targetWorkflowName: workflowName,
+    targetExpectedWorkflowId: loaded.bundle.workflow.workflowId,
+    defaultPolicy: options.autoImprove,
+  });
+  const {
+    autoImprove: _ai2,
+    supervisionLoopExecution: _sl2,
+    nestedSuperviserDriver: _nd2,
+    superviserControl: _sc2,
+    ...supOptsBase
+  } = baseForControl;
+  const baseRv = supOptsBase.runtimeVariables ?? {};
+  const supOpts: WorkflowRunOptions = {
+    ...supOptsBase,
+    runtimeVariables: {
+      ...baseRv,
+      supervisionRunId: sup.supervisionRunId,
+      targetSessionId: session.sessionId,
+      superviserTargetWorkflowId: loaded.bundle.workflow.workflowId,
+    },
+    superviserControl: control,
+    ...(resumeNestedSuperviserWorkflow
+      ? { resumeSessionId: nestedSessionId }
+      : { sessionId: nestedSessionId }),
+  };
+  const supResult = await runWorkflowInternal(
+    supLoad.value.workflowName,
+    supOpts,
+    adapter,
+    guards,
+    workflowCallAncestors,
+  );
+  const reloaded = await loadSession(session.sessionId, options);
+  const target =
+    reloaded.ok && reloaded.value.supervision !== undefined
+      ? reloaded.value
+      : sessionWithNested;
+  if (supResult.ok) {
+    const exit = supResult.value.exitCode;
+    const st: SupervisionRunState["status"] =
+      exit === 0 ? "succeeded" : exit === 4 ? "stopped" : "failed";
+    const nextSup: SupervisionRunState = {
+      ...(target.supervision as SupervisionRunState),
+      status: st,
+    };
+    const stamped: WorkflowSessionState = {
+      ...target,
+      supervision: nextSup,
+    };
+    const w = await saveSession(stamped, options);
+    if (!w.ok) {
+      return err(workflowRunFailure(1, w.error.message, stamped));
+    }
+    return ok({ session: stamped, exitCode: exit });
+  }
+  const nextSup: SupervisionRunState = {
+    ...((target.supervision ?? sup) as SupervisionRunState),
+    status: "failed",
+  };
+  const stamped: WorkflowSessionState = {
+    ...target,
+    supervision: nextSup,
+  };
+  const w = await saveSession(stamped, options);
+  if (!w.ok) {
+    return err(workflowRunFailure(1, w.error.message, stamped));
+  }
+  return err(
+    workflowRunFailure(
+      supResult.error.exitCode,
+      supResult.error.message,
+      stamped,
+    ),
+  );
 }

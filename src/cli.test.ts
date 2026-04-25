@@ -18,7 +18,6 @@ import {
   shouldFallbackFromOpenTuiError,
 } from "./cli";
 import type { CliDependencies } from "./cli";
-import * as workflowCallNode from "./workflow/call-node";
 import * as workflowCallStep from "./workflow/call-step";
 import * as workflowEngine from "./workflow/engine";
 import { ok } from "./workflow/result";
@@ -161,63 +160,6 @@ async function writeLocalAddonManifest(input: {
       promptTemplateFile: "prompts/worker.md",
       variables: {
         renderedMessage: "{{addon.inputs.message}}",
-      },
-    },
-  });
-}
-
-async function createCallNodeFixture(
-  workflowRoot: string,
-  workflowName: string,
-): Promise<void> {
-  const workflowDirectory = path.join(workflowRoot, workflowName);
-  await mkdir(workflowDirectory, { recursive: true });
-
-  await writeJson(path.join(workflowDirectory, "workflow.json"), {
-    workflowId: workflowName,
-    description: "call node cli fixture",
-    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    nodes: [
-      {
-        id: "divedra-manager",
-        kind: "root-manager",
-        nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "writer",
-        kind: "task",
-        nodeFile: "node-writer.json",
-        completion: { type: "none" },
-      },
-    ],
-    edges: [],
-    loops: [],
-    branching: { mode: "fan-out" },
-  });
-  await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
-    id: "divedra-manager",
-    executionBackend: "claude-code-agent",
-    model: "claude-opus-4-1",
-    promptTemplate: "manager",
-    variables: {},
-  });
-  await writeJson(path.join(workflowDirectory, "node-writer.json"), {
-    id: "writer",
-    executionBackend: "codex-agent",
-    model: "gpt-5",
-    promptTemplate: "writer",
-    variables: {},
-    output: {
-      description: "writer output",
-      maxValidationAttempts: 2,
-      jsonSchema: {
-        type: "object",
-        required: ["summary"],
-        properties: {
-          summary: { type: "string" },
-        },
       },
     },
   });
@@ -704,7 +646,6 @@ describe("runCli", () => {
       readonly runtimeVariables: Readonly<Record<string, unknown>>;
       readonly rerunFromSessionId?: string;
       readonly rerunFromStepId?: string;
-      readonly rerunFromNodeId?: string;
       readonly resumeSessionId?: string;
       readonly sessionId?: string;
     }> = [];
@@ -781,111 +722,20 @@ describe("runCli", () => {
     expect(code).toBe(1);
     const help = capture.stdout.join("\n");
     expect(help).toContain("Usage:");
-    expect(help).toContain("prefer call-step");
+    expect(help).toContain("call-step <workflow-id> <workflow-run-id> <step-id>");
     expect(help).toContain("--superviser-workflow");
-    expect(help).toContain("Phase 2");
+    expect(help).toContain("--nested-superviser");
     expect(help).toContain("--no-allow-targeted-rerun");
     expect(help).toContain("--disable-targeted-rerun");
   });
 
-  test("call-node usage on missing args mentions call-step preference", async () => {
+  test("call-node reports that the legacy command was removed", async () => {
     const capture = createIoCapture();
     const code = await runCli(["call-node", "wf", "run"], capture.io);
-    expect(code).toBe(2);
+    expect(code).toBe(1);
     const err = capture.stderr.join("\n");
-    expect(err).toContain("node id are required");
-    expect(err).toContain("prefer call-step");
-  });
-
-  test("call-node executes locally with structured manager message input", async () => {
-    await withLegacyWorkflowAuthorshipForCli(async () => {
-      const root = await makeTempDir();
-      const workflowName = "call-node-cli";
-      const sessionId = "sess-call-node-cli";
-      const artifactsRoot = path.join(root, "artifacts");
-      const sessionStoreRoot = path.join(root, "sessions");
-      const scenarioPath = path.join(root, "scenario.json");
-      const messagePath = path.join(root, "message.json");
-
-      await createCallNodeFixture(root, workflowName);
-      const saved = await saveSession(
-        createSessionState({
-          sessionId,
-          workflowName,
-          workflowId: workflowName,
-          initialNodeId: "divedra-manager",
-          runtimeVariables: {},
-        }),
-        { sessionStoreRoot },
-      );
-      expect(saved.ok).toBe(true);
-
-      await writeFile(
-        scenarioPath,
-        JSON.stringify(
-          {
-            writer: [
-              {
-                provider: "scenario-mock",
-                when: { always: true },
-                payload: { wrong: true },
-              },
-              {
-                provider: "scenario-mock",
-                when: { always: true },
-                payload: { summary: "cli ok" },
-              },
-            ],
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
-      await writeFile(
-        messagePath,
-        JSON.stringify({ instruction: "review this change" }, null, 2),
-        "utf8",
-      );
-
-      const capture = createIoCapture();
-      const code = await runCli(
-        [
-          "call-node",
-          workflowName,
-          sessionId,
-          "writer",
-          "--workflow-root",
-          root,
-          "--artifact-root",
-          artifactsRoot,
-          "--session-store",
-          sessionStoreRoot,
-          "--mock-scenario",
-          scenarioPath,
-          "--message-file",
-          messagePath,
-          "--output",
-          "json",
-        ],
-        capture.io,
-      );
-
-      expect(code).toBe(0);
-      const payload = JSON.parse(capture.stdout.join("\n")) as {
-        output: { payload: { summary: string } };
-        outputRef: { artifactDir: string };
-      };
-      expect(payload.output.payload.summary).toBe("cli ok");
-
-      const inputJson = JSON.parse(
-        await readFile(
-          path.join(payload.outputRef.artifactDir, "input.json"),
-          "utf8",
-        ),
-      ) as { managerMessage?: { instruction?: string } };
-      expect(inputJson.managerMessage?.instruction).toBe("review this change");
-    });
+    expect(err).toContain("call-node has been removed");
+    expect(err).toContain("call-step <workflow-id> <workflow-run-id> <step-id>");
   });
 
   test("call-step executes locally with structured manager message input", async () => {
@@ -1365,16 +1215,14 @@ describe("runCli", () => {
     expect(inspectCode).toBe(0);
 
     const parsed = JSON.parse(inspectCapture.stdout.join("\n")) as {
-      entryNodeId?: string;
       entryStepId?: string;
       hasManagerNode: boolean;
-      managerNodeId?: string;
+      nodeRegistryIds: readonly string[];
       counts: { structuralProjection?: { nodes: number }; nodes?: number };
     };
     expect(parsed.hasManagerNode).toBe(false);
-    expect(parsed.managerNodeId).toBeUndefined();
-    expect(parsed.entryNodeId).toBeUndefined();
     expect(parsed.entryStepId).toBe("main-worker");
+    expect(parsed.nodeRegistryIds).toEqual(["main-worker"]);
     expect(parsed.counts.nodes).toBeUndefined();
     expect(parsed.counts.structuralProjection?.nodes).toBe(1);
 
@@ -1385,13 +1233,8 @@ describe("runCli", () => {
     );
     expect(inspectTextCode).toBe(0);
     const textOut = inspectTextCapture.stdout.join("\n");
-    expect(textOut).toMatch(
-      /compatibility: normalizesRoleAuthoredNodesToStructuralKinds=yes, usesEffectiveEntryManagerNodeId=yes, usesLegacyStructuralSubWorkflows=no/,
-    );
-    expect(textOut).toContain("compatibility notes:");
-    expect(textOut).toContain(
-      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-    );
+    expect(textOut).toContain("entryStepId: main-worker");
+    expect(textOut).not.toContain("compatibility:");
   });
 
   test("inspect reports worker-only workflows without an authored manager node", async () => {
@@ -1415,23 +1258,13 @@ describe("runCli", () => {
       expect(code).toBe(0);
 
       const parsed = JSON.parse(capture.stdout.join("\n")) as {
-        compatibility: {
-          usesEffectiveEntryManagerNodeId: boolean;
-          notes: readonly string[];
-        };
-        entryNodeId: string;
         hasManagerNode: boolean;
-        managerNodeId?: string;
+        nodeRegistryIds: readonly string[];
         counts: { nodes: number };
       };
       expect(parsed.hasManagerNode).toBe(false);
-      expect(parsed.managerNodeId).toBeUndefined();
-      expect(parsed.entryNodeId).toBe("worker-1");
+      expect(parsed.nodeRegistryIds).toEqual(["worker-1", "worker-2"]);
       expect(parsed.counts.nodes).toBe(2);
-      expect(parsed.compatibility.usesEffectiveEntryManagerNodeId).toBe(true);
-      expect(parsed.compatibility.notes).toContain(
-        "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
-      );
     });
   });
 
@@ -1456,26 +1289,13 @@ describe("runCli", () => {
       expect(jsonCode).toBe(0);
 
       const parsed = JSON.parse(jsonCapture.stdout.join("\n")) as {
-        compatibility: {
-          normalizesRoleAuthoredNodesToStructuralKinds: boolean;
-          usesLegacyStructuralSubWorkflows: boolean;
-          notes: readonly string[];
-        };
         workflowCallIds: readonly string[];
-        counts: { workflowCalls: number; legacySubWorkflows: number };
+        counts: { workflowCalls: number };
         runtime: { ready: boolean };
       };
       expect(parsed.workflowCallIds).toEqual(["review-call"]);
       expect(parsed.counts.workflowCalls).toBe(1);
-      expect(parsed.counts.legacySubWorkflows).toBe(0);
       expect(parsed.runtime.ready).toBe(true);
-      expect(
-        parsed.compatibility.normalizesRoleAuthoredNodesToStructuralKinds,
-      ).toBe(true);
-      expect(parsed.compatibility.usesLegacyStructuralSubWorkflows).toBe(false);
-      expect(parsed.compatibility.notes).toContain(
-        "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-      );
 
       const textCapture = createIoCapture();
       const textCode = await runCli(
@@ -1487,17 +1307,8 @@ describe("runCli", () => {
       expect(textCapture.stdout.join("\n")).toContain(
         "workflowCallIds: review-call",
       );
-      expect(textCapture.stdout.join("\n")).toMatch(
-        /compatibility: normalizesRoleAuthoredNodesToStructuralKinds=yes, usesEffectiveEntryManagerNodeId=no, usesLegacyStructuralSubWorkflows=no/,
-      );
-      expect(textCapture.stdout.join("\n")).toContain("compatibility notes:");
-      expect(textCapture.stdout.join("\n")).toContain(
-        "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-      );
+      expect(textCapture.stdout.join("\n")).not.toContain("compatibility:");
       expect(textCapture.stdout.join("\n")).not.toContain("subWorkflows:");
-      expect(textCapture.stdout.join("\n")).not.toContain(
-        "legacySubWorkflows:",
-      );
       expect(textCapture.stdout.join("\n")).toContain("runtimeReady: yes");
     });
   });
@@ -2948,6 +2759,176 @@ describe("runCli", () => {
     });
   });
 
+  test("workflow run forwards auto-improve and nested-superviser through GraphQL transport", async () => {
+    const capture = createIoCapture();
+    const requests: Readonly<Record<string, unknown>>[] = [];
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--auto-improve",
+        "--nested-superviser",
+        "--superviser-workflow",
+        "custom-superviser",
+        "--monitor-interval-ms",
+        "6000",
+        "--stall-timeout-ms",
+        "12000",
+        "--max-supervised-attempts",
+        "4",
+        "--max-workflow-patches",
+        "2",
+        "--workflow-mutation-mode",
+        "in-place",
+        "--no-allow-targeted-rerun",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          requests.push(body);
+          const query = typeof body["query"] === "string" ? body["query"] : "";
+          if (query.includes("mutation ExecuteWorkflow")) {
+            return createJsonResponse({
+              data: {
+                executeWorkflow: {
+                  workflowExecutionId: "sess-remote-supervised",
+                  sessionId: "sess-remote-supervised",
+                  status: "running",
+                  exitCode: 0,
+                },
+              },
+            });
+          }
+          return createJsonResponse({
+            data: {
+              workflowExecution: {
+                session: {
+                  sessionId: "sess-remote-supervised",
+                  workflowName: "demo",
+                  workflowId: "demo",
+                  transitions: [],
+                },
+                nodeExecutions: [],
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requests[0]).toMatchObject({
+      variables: {
+        input: {
+          workflowName: "demo",
+          nestedSuperviser: true,
+          autoImprove: {
+            enabled: true,
+            superviserWorkflowId: "custom-superviser",
+            monitorIntervalMs: 6000,
+            stallTimeoutMs: 12000,
+            maxSupervisedAttempts: 4,
+            maxWorkflowPatches: 2,
+            workflowMutationMode: "in-place",
+            allowTargetedRerun: false,
+          },
+        },
+      },
+    });
+  });
+
+  test("session resume forwards auto-improve and nested-superviser through GraphQL transport", async () => {
+    const capture = createIoCapture();
+    let requestedBody: Readonly<Record<string, unknown>> | undefined;
+
+    const code = await runCli(
+      [
+        "session",
+        "resume",
+        "sess-remote-001",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--auto-improve",
+        "--nested-superviser",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          requestedBody = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          return createJsonResponse({
+            data: {
+              resumeWorkflowExecution: {
+                workflowExecutionId: "sess-remote-001",
+                sessionId: "sess-remote-001",
+                status: "running",
+                exitCode: 0,
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requestedBody).toMatchObject({
+      variables: {
+        input: {
+          workflowExecutionId: "sess-remote-001",
+          nestedSuperviser: true,
+          autoImprove: {
+            enabled: true,
+          },
+        },
+      },
+    });
+  });
+
+  test("session rerun rejects nested superviser before execution", async () => {
+    const capture = createIoCapture();
+
+    const code = await runCli(
+      [
+        "session",
+        "rerun",
+        "sess-remote-001",
+        "workflow-output",
+        "--auto-improve",
+        "--nested-superviser",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--nested-superviser is not supported for session rerun",
+    );
+  });
+
   test("local session resume forwards normalized workflow run overrides", async () => {
     const root = await makeTempDir();
     const sessionStoreRoot = path.join(root, "sessions");
@@ -3096,73 +3077,6 @@ describe("runCli", () => {
       rerunFromStepId: "workflow-output",
       exitCode: 0,
     });
-  });
-
-  test("local call-node forwards normalized working directory overrides", async () => {
-    const capture = createIoCapture();
-    const session = createSessionState({
-      sessionId: "sess-call-node-local",
-      workflowName: "demo",
-      workflowId: "demo",
-      initialNodeId: "writer",
-      runtimeVariables: {},
-    });
-
-    const callNodeSpy = vi
-      .spyOn(workflowCallNode, "callNode")
-      .mockResolvedValue(
-        ok({
-          session,
-          nodeExecution: {
-            nodeId: "writer",
-            nodeExecId: "exec-1",
-            status: "succeeded",
-          },
-          output: { ok: true },
-          outputRef: {
-            type: "json",
-            path: "artifacts/output.json",
-          },
-          exitCode: 0,
-        } as unknown as workflowCallNode.CallNodeSuccess),
-      );
-
-    const code = await runCli(
-      [
-        "call-node",
-        "demo",
-        "sess-call-node-local",
-        "writer",
-        "--working-dir",
-        " apps/reviewer ",
-        "--default-timeout-ms",
-        "750",
-        "--dry-run",
-        "--output",
-        "json",
-      ],
-      capture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 43173,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => true,
-      },
-    );
-
-    expect(code).toBe(0);
-    expect(callNodeSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workflowId: "demo",
-        workflowRunId: "sess-call-node-local",
-        nodeId: "writer",
-        workflowWorkingDirectory: "apps/reviewer",
-        defaultTimeoutMs: 750,
-        dryRun: true,
-      }),
-    );
   });
 
   test("local call-step forwards normalized working directory and continuation overrides", async () => {

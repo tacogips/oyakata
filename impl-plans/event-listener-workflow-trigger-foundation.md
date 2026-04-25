@@ -29,8 +29,8 @@ local library, or GraphQL workflow dispatch wiring.
 distributed cron locking, and object-content download. The foundation should
 include S3-compatible repository-file event source types and validation for a
 non-polling event receiver, while production receiver integration can remain a
-later provider slice after the open decisions in
-`design-docs/user-qa/qa-event-listener-workflow-trigger.md` are resolved.
+later provider slice after the remaining provider/product decisions are
+resolved.
 
 ### Resolved Decisions
 
@@ -405,4 +405,4 @@ changes.
 - **Previous**: None
 - **Next**: Provider-specific adapter plans after foundation completion
 - **Depends On**:
-  `design-docs/user-qa/qa-event-listener-workflow-trigger.md`
+  provider/product decisions tracked in later implementation work

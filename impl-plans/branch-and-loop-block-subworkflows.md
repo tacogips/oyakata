@@ -76,13 +76,16 @@ type DerivedColor =
 - [x] Treat loop-body sub-workflows as canonical visual loop scopes
 - [x] Preserve legacy loop visualization for workflows that do not yet declare block metadata
 
-### 3. Migration Follow-Up
+### 3. Migration Follow-Up (browser editor; superseded)
 
-#### `design-docs/specs/design-workflow-web-editor.md`
-#### `ui/src/App.svelte`
-#### `src/server/api.ts`
+**Note**: The browser workflow editor and `design-workflow-web-editor.md` were removed (see `impl-plans/completed/remove-web-ui.md`). Block typing remains in the workflow model and validation; operators author `subWorkflows[].block` in JSON or future surfaces.
 
-**Status**: COMPLETED
+**Historical design touchpoints (removed from tree)**:
+- `design-workflow-web-editor.md` (deleted)
+- `ui/src/App.svelte` (removed)
+- `src/server/api.ts` (web API removed)
+
+**Status**: COMPLETED (for the pre-removal tree)
 
 ```ts
 interface FutureEditorWork {
@@ -91,7 +94,7 @@ interface FutureEditorWork {
 }
 ```
 
-**Checklist**:
+**Checklist** (historical; satisfied before web UI removal):
 - [x] Expose `subWorkflows[].block` in the Svelte browser/editor surface
 - [x] Add Svelte authoring UX for branch-block and loop-body declaration
 - [x] Align Svelte local visualization with backend block-aware scope derivation

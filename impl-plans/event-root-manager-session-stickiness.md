@@ -1,7 +1,7 @@
 # Event Root Manager Session Stickiness Implementation Plan
 
 **Status**: Completed
-**Design Reference**: `design-docs/specs/design-node-session-reuse.md`, `design-docs/specs/design-event-listener-workflow-trigger.md`, `design-docs/specs/design-manager-driven-call-node-runtime.md`
+**Design Reference**: `design-docs/specs/design-node-session-reuse.md`, `design-docs/specs/design-event-listener-workflow-trigger.md`, `design-docs/specs/architecture.md`
 **Created**: 2026-04-22
 **Last Updated**: 2026-04-22
 

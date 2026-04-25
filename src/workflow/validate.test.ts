@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,7 +10,43 @@ import {
   validateWorkflowBundle,
   validateWorkflowBundleDetailed,
 } from "./validate";
-import type { NodeAddonDefinition, NodeAddonPayloadResolver } from "./types";
+import {
+  resolveWorkflowManagerRuntimeId,
+  type NodeAddonDefinition,
+  type NodeAddonPayloadResolver,
+  type WorkflowJson,
+} from "./types";
+
+describe("resolveWorkflowManagerRuntimeId", () => {
+  test("uses managerStepId ?? entryStepId when entryStepId and steps are present", () => {
+    expect(
+      resolveWorkflowManagerRuntimeId({
+        entryStepId: "e",
+        managerStepId: "m",
+        steps: [],
+        managerNodeId: "compat-synthetic",
+      } as unknown as WorkflowJson),
+    ).toBe("m");
+  });
+
+  test("uses entryStepId when managerStepId is omitted on step-addressed bundles", () => {
+    expect(
+      resolveWorkflowManagerRuntimeId({
+        entryStepId: "e",
+        steps: [],
+        managerNodeId: "compat",
+      } as unknown as WorkflowJson),
+    ).toBe("e");
+  });
+
+  test("uses managerNodeId for legacy node-graph bundles", () => {
+    expect(
+      resolveWorkflowManagerRuntimeId({
+        managerNodeId: "root",
+      } as unknown as WorkflowJson),
+    ).toBe("root");
+  });
+});
 
 /** Opt in to legacy node-ordered / structural authoring for tests of the compatibility validator path. */
 const legacyWorkflowAuthorshipOk = {
@@ -254,6 +290,26 @@ describe("validateWorkflowBundle", () => {
     expect(result.value.workflow.nodes[1]?.role).toBeUndefined();
   });
 
+  test("rejects step-addressed bundle that also includes legacy entryNodeId", () => {
+    const raw = makeValidStepAddressedRaw();
+    (raw.workflow as Record<string, unknown>)["entryNodeId"] = "manager";
+    const result = validateWorkflowBundleDetailed(raw, {
+      rejectLegacyWorkflowAuthoring: true,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "workflow.entryNodeId",
+          message: "is not part of the step-addressed workflow schema",
+        }),
+      ]),
+    );
+  });
+
   test("accepts strict step-addressed validation for canonical step-addressed payloads", () => {
     const result = validateWorkflowBundle(makeValidStepAddressedRaw(), {
       rejectLegacyWorkflowAuthoring: true,
@@ -269,6 +325,23 @@ describe("validateWorkflowBundle", () => {
       "manager",
       "worker",
     ]);
+  });
+
+  test("examples default-superviser workflow.json passes strict authorship validation", () => {
+    const workflowPath = path.join(
+      process.cwd(),
+      "examples",
+      "default-superviser",
+      "workflow.json",
+    );
+    const workflow = JSON.parse(
+      readFileSync(workflowPath, "utf8"),
+    ) as unknown;
+    const result = validateWorkflowBundleDetailed(
+      { workflow, nodePayloads: {} },
+      { rejectLegacyWorkflowAuthoring: true },
+    );
+    expect(result.ok).toBe(true);
   });
 
   test("rejects cross-workflow step transitions without resumeStepId", () => {
@@ -386,7 +459,7 @@ describe("validateWorkflowBundle", () => {
     ]);
   });
 
-  test("rejects explicit workflowCalls for the same caller step as a cross-workflow step transition (non-strict)", () => {
+  test("rejects top-level workflowCalls on step-addressed bundles even with cross-workflow step transitions (non-strict)", () => {
     const raw = makeValidStepAddressedRaw();
     const workflow = raw.workflow as Record<string, unknown>;
     (workflow as { workflowCalls: readonly unknown[] }).workflowCalls = [
@@ -416,47 +489,9 @@ describe("validateWorkflowBundle", () => {
     expect(
       result.error.some(
         (issue) =>
-          issue.path === "workflow.steps[0]" &&
-          issue.message.includes(
-            "cannot combine cross-workflow transitions with workflowCalls",
-          ),
-      ),
-    ).toBe(true);
-  });
-
-  test("rejects explicit workflowCall ids that collide with cross-workflow __cw: ids (non-strict)", () => {
-    const raw = makeValidStepAddressedRaw();
-    const workflow = raw.workflow as Record<string, unknown>;
-    (workflow as { workflowCalls: readonly unknown[] }).workflowCalls = [
-      {
-        id: "__cw:manager",
-        workflowId: "callee",
-        callerNodeId: "worker",
-        callerStepId: "worker",
-        resultNodeId: "manager",
-      },
-    ];
-    const steps = workflow["steps"] as Array<Record<string, unknown>>;
-    (steps[0] as { transitions: unknown[] }).transitions = [
-      {
-        toStepId: "callee-entry",
-        toWorkflowId: "callee",
-        resumeStepId: "worker",
-      },
-    ];
-    const result = validateWorkflowBundleDetailed(raw, {
-      rejectLegacyWorkflowAuthoring: false,
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(
-      result.error.some(
-        (issue) =>
           issue.path === "workflow.workflowCalls" &&
           issue.message.includes(
-            "reserved for cross-workflow step transitions",
+            "is not part of the step-addressed workflow schema",
           ),
       ),
     ).toBe(true);
@@ -2048,7 +2083,7 @@ describe("validateWorkflowBundle", () => {
     ]);
   });
 
-  test("accepts compatibility workflowCalls on step-addressed bundles outside strict mode", () => {
+  test("rejects top-level workflowCalls on step-addressed bundles outside strict mode", () => {
     const raw = makeValidStepAddressedRaw();
     raw.workflow = {
       ...(raw.workflow as Record<string, unknown>),
@@ -2062,68 +2097,6 @@ describe("validateWorkflowBundle", () => {
       ],
     };
 
-    const result = validateWorkflowBundle(raw, legacyWorkflowAuthorshipOk);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    expect(result.value.workflow.workflowCalls).toEqual([
-      {
-        id: "call-review",
-        workflowId: "review-flow",
-        callerNodeId: "worker",
-        resultNodeId: "worker",
-      },
-    ]);
-  });
-
-  test("accepts workflowCalls with callerStepId aligned to the compat execution step id", () => {
-    const raw = makeValidStepAddressedRaw();
-    raw.workflow = {
-      ...(raw.workflow as Record<string, unknown>),
-      workflowCalls: [
-        {
-          id: "call-review",
-          workflowId: "review-flow",
-          callerNodeId: "worker",
-          callerStepId: "worker",
-          resultNodeId: "worker",
-        },
-      ],
-    };
-
-    const result = validateWorkflowBundle(raw, legacyWorkflowAuthorshipOk);
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    expect(result.value.workflow.workflowCalls).toEqual([
-      {
-        id: "call-review",
-        workflowId: "review-flow",
-        callerNodeId: "worker",
-        callerStepId: "worker",
-        resultNodeId: "worker",
-      },
-    ]);
-  });
-
-  test("rejects workflowCalls callerStepId that does not exist on the step graph", () => {
-    const raw = makeValidStepAddressedRaw();
-    raw.workflow = {
-      ...(raw.workflow as Record<string, unknown>),
-      workflowCalls: [
-        {
-          id: "call-review",
-          workflowId: "review-flow",
-          callerNodeId: "worker-node",
-          callerStepId: "missing-step",
-        },
-      ],
-    };
-
     const result = validateWorkflowBundleDetailed(
       raw,
       legacyWorkflowAuthorshipOk,
@@ -2132,51 +2105,18 @@ describe("validateWorkflowBundle", () => {
     if (result.ok) {
       return;
     }
-
-    expect(result.error).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: "workflow.workflowCalls[0].callerStepId",
-          message: "must reference an existing step id",
-        }),
-      ]),
-    );
+    expect(
+      result.error.some(
+        (issue) =>
+          issue.path === "workflow.workflowCalls" &&
+          issue.message.includes(
+            "is not part of the step-addressed workflow schema",
+          ),
+      ),
+    ).toBe(true);
   });
 
-  test("rejects workflowCalls callerNodeId that disagrees with callerStepId", () => {
-    const raw = makeValidStepAddressedRaw();
-    raw.workflow = {
-      ...(raw.workflow as Record<string, unknown>),
-      workflowCalls: [
-        {
-          id: "call-review",
-          workflowId: "review-flow",
-          callerNodeId: "manager",
-          callerStepId: "worker",
-        },
-      ],
-    };
-
-    const result = validateWorkflowBundleDetailed(
-      raw,
-      legacyWorkflowAuthorshipOk,
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    expect(result.error).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: "workflow.workflowCalls[0].callerNodeId",
-          message: expect.stringContaining("must equal callerStepId"),
-        }),
-      ]),
-    );
-  });
-
-  test("rejects workflowCalls on step-addressed bundles in strict mode", () => {
+  test("rejects top-level workflowCalls on step-addressed bundles in strict mode", () => {
     const raw = makeValidStepAddressedRaw();
     raw.workflow = {
       ...(raw.workflow as Record<string, unknown>),
@@ -2202,7 +2142,7 @@ describe("validateWorkflowBundle", () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: "workflow.workflowCalls",
-          message: "is not part of the step-addressed workflow schema",
+          message: "is not part of the step-addressed workflow schema; use step transitions with toWorkflowId and resumeStepId for cross-workflow calls",
         }),
       ]),
     );
@@ -2701,7 +2641,10 @@ describe("validateWorkflowBundle", () => {
     if (!result.ok) {
       return;
     }
-    expect(result.value.nodePayloads["worker-1"]?.addon?.config).toEqual({
+    const chatAddon = result.value.nodePayloads["worker-1"]?.addon;
+    expect(
+      chatAddon && "config" in chatAddon ? chatAddon.config : undefined,
+    ).toEqual({
       textTemplate: "Reply: {{event.payload.text}}",
       visibility: "ephemeral",
       threadPolicy: "same-thread",

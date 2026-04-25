@@ -1,7 +1,7 @@
 # Step-addressed Workflow Runtime Cutover Implementation Plan
 
 **Status**: Completed (PROGRESS phase **129**; TASK-001 through TASK-005). The long-term [Completion Criteria](#completion-criteria) checklists in this file remain open for the full breaking cutover until design and code remove remaining transitional paths.
-**Design Reference**: `design-docs/specs/design-workflow-json.md`, `design-docs/specs/design-node-jump-and-code-manager-runtime.md`, `design-docs/specs/design-workflow-steps-and-node-reuse.md`, `design-docs/specs/architecture.md`, `design-docs/specs/command.md`, `design-docs/user-qa/qa-step-schema-workflow-calls.md`
+**Design Reference**: `design-docs/specs/design-workflow-json.md`, `design-docs/specs/design-node-jump-and-code-manager-runtime.md`, `design-docs/specs/design-workflow-steps-and-node-reuse.md`, `design-docs/specs/architecture.md`, `design-docs/specs/command.md`
 **Created**: 2026-04-24
 **Last Updated**: 2026-04-29 (phase 129 closed; plan archived under `impl-plans/completed/`; full-suite verification)
 
@@ -14,7 +14,6 @@
 - `design-docs/specs/design-workflow-steps-and-node-reuse.md`
 - `design-docs/specs/architecture.md`
 - `design-docs/specs/command.md`
-- `design-docs/user-qa/qa-step-schema-workflow-calls.md`
 
 ### Summary
 
@@ -350,11 +349,15 @@ interface StepAddressedExampleSet {
 
 **Tasks In Progress**: TASK-002, TASK-003, TASK-004; end-state [Completion Criteria](#completion-criteria) and module checklists 1-4 remain the long pole.
 
+**Superseded (phase 133, `workflow-legacy-compatibility-removal`)**: The public `rerunWorkflow` path and `WorkflowRunOptions` later removed companion `rerunFromNodeId` / node-targeted reruns; `runWorkflow` resume reruns require `rerunFromStepId` only. The following session’s `RerunWorkflowInput.fromNodeId` JSDoc is historical for the same reason.
+
 ### Session: 2026-04-28 (TASK-004: `RerunWorkflowInput` JSDoc for step vs node)
 
 **Tasks Completed**: Added JSDoc on `RerunWorkflowInput.fromStepId` and `.fromNodeId` in `src/lib.ts` documenting engine precedence and reusable-node cases (matches `WorkflowRunOptions` / engine behavior; no API change). Ran `env -u DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT bash scripts/run-bun-tests.sh` (**996** pass, 0 fail) and `bun run typecheck:server` after the change.
 
 **Tasks In Progress**: TASK-002, TASK-003, TASK-004; end-state [Completion Criteria](#completion-criteria) and module checklists 1-4 remain the long pole.
+
+**Superseded (phase 133)**: `RerunWorkflowInput` is `fromStepId` only; the JSDoc described here no longer applies.
 
 ### Session: 2026-04-25 (verification: full suite, architecture, no code delta)
 
@@ -757,7 +760,7 @@ Re-validated architecture: `auto-improve-superviser-mode` Phase 1 engine loop re
 
 ### Session: 2026-04-26 (TASK-005: migrate `codex-codex-euthanasia-debate` off structural sub-workflows)
 
-**Tasks Completed**: Replaced authored `subWorkflows` / `subWorkflowConversations` / `edges` with `managerStepId`, `entryStepId`, registry `nodes[]`, and `steps[]` (affirmative chain, negative chain, `debate-judge` with `continue_debate` / `!(continue_debate)` labels, `debate-summary`). Added `nodes/node-debate-judge.json`, `nodes/node-debate-summary.json`, prompts, sixth-round mock entries for the negative lane, and fixed `debate-judge` mock to publish branch booleans via adapter `when` (same contract as `foreach-judge`). Updated `EXPECTED_RESULTS.md` (55 transitions, `conversationTurns: 0`), READMEs, `design-node-system-and-session-prompts.md`, and `load.test.ts` (strict load list + all examples omit structural fields). Verified `workflow validate`, mock `workflow run` (56 executions), pending full CI test run.
+**Tasks Completed**: Replaced authored `subWorkflows` / `subWorkflowConversations` / `edges` with `managerStepId`, `entryStepId`, registry `nodes[]`, and `steps[]` (affirmative chain, negative chain, `debate-judge` with `continue_debate` / `!(continue_debate)` labels, `debate-summary`). Added `nodes/node-debate-judge.json`, `nodes/node-debate-summary.json`, prompts, sixth-round mock entries for the negative lane, and fixed `debate-judge` mock to publish branch booleans via adapter `when` (same contract as `foreach-judge`). Updated `EXPECTED_RESULTS.md` (55 transitions, `conversationTurns: 0`), READMEs, consolidated prompt-layering docs, and `load.test.ts` (strict load list + all examples omit structural fields). Verified `workflow validate`, mock `workflow run` (56 executions), pending full CI test run.
 
 **Tasks In Progress**: TASK-001 (global strict default / remaining checklist), TASK-002, TASK-003, TASK-004; TASK-005 closer (docs checklist may still have tail items).
 

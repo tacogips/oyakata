@@ -549,6 +549,7 @@ describe("createGraphqlSchema", () => {
         status: "running" as const,
         attemptCount: 1,
         workflowPatchCount: 0,
+        nestedSuperviserSessionId: "sess-nested-superviser",
         policy,
         incidents: [],
         remediations: [
@@ -581,6 +582,9 @@ describe("createGraphqlSchema", () => {
       ctx,
     );
     expect(execution?.session.supervision?.supervisionRunId).toBe("sr-gql");
+    expect(execution?.session.supervision?.nestedSuperviserSessionId).toBe(
+      "sess-nested-superviser",
+    );
     expect(execution?.session.supervision?.policy?.monitorIntervalMs).toBe(
       5000,
     );
@@ -945,7 +949,7 @@ describe("createGraphqlSchema", () => {
     });
   });
 
-  test("accepts differing stepId and nodeId on rerunWorkflowExecution for reusable-node steps", async () => {
+  test("reruns reusable-node workflows by explicit stepId", async () => {
     const root = await makeTempDir();
     const workflowName = "schema-rerun-step-node-mismatch";
     const sessionId = "sess-schema-rerun-step-node-mismatch";
@@ -1033,7 +1037,6 @@ describe("createGraphqlSchema", () => {
       {
         workflowExecutionId: sessionId,
         stepId: "writer-step",
-        nodeId: "writer-node",
       },
       options,
     );
@@ -1050,26 +1053,338 @@ describe("createGraphqlSchema", () => {
       sessionId: "sess-schema-rerun-step-node-mismatch-2",
       status: "running",
       rerunFromStepId: "writer-step",
-      rerunFromNodeId: "writer-node",
       exitCode: 0,
     });
   });
 
-  test("rerunWorkflowExecution rejects when stepId and nodeId are both omitted", async () => {
+  test("rerunWorkflowExecution rejects when stepId is blank", async () => {
     const root = await makeTempDir();
     const schema = createGraphqlSchema();
     await expect(
       schema.mutation.rerunWorkflowExecution(
-        { workflowExecutionId: "sess-missing-rerun-target" },
+        {
+          workflowExecutionId: "sess-missing-rerun-target",
+          stepId: " ",
+        },
         {
           workflowRoot: root,
           artifactRoot: path.join(root, "artifacts"),
           sessionStoreRoot: path.join(root, "sessions"),
         },
       ),
-    ).rejects.toThrow(
-      "stepId is required (nodeId accepted for compatibility with legacy callers)",
+    ).rejects.toThrow("stepId is required");
+  });
+
+  test("rerunWorkflowExecution trims stepId before dispatch", async () => {
+    const root = await makeTempDir();
+    const workflowName = "schema-rerun-trimmed-step-id";
+    const sessionId = "sess-schema-rerun-trimmed-step-id";
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName,
+        workflowId: workflowName,
+        initialNodeId: "writer-step",
+        runtimeVariables: {},
+      }),
+      options,
     );
+    expect(saved.ok).toBe(true);
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-rerun-trimmed-step-id-2",
+              workflowName,
+              workflowId: workflowName,
+              initialNodeId: "writer-step",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const schema = createGraphqlSchema();
+    const payload = await schema.mutation.rerunWorkflowExecution(
+      {
+        workflowExecutionId: sessionId,
+        stepId: " writer-step ",
+      },
+      options,
+    );
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      workflowName,
+      expect.objectContaining({
+        rerunFromSessionId: sessionId,
+        rerunFromStepId: "writer-step",
+      }),
+    );
+    expect(payload.rerunFromStepId).toBe("writer-step");
+  });
+
+  test("executeWorkflow normalizes auto-improve and nested-superviser into runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-supervised-start",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const schema = createGraphqlSchema();
+    const payload = await schema.mutation.executeWorkflow(
+      {
+        workflowName: "demo",
+        nestedSuperviser: true,
+        autoImprove: {
+          enabled: true,
+          superviserWorkflowId: "custom-superviser",
+          monitorIntervalMs: 6000,
+          stallTimeoutMs: 12000,
+          maxSupervisedAttempts: 4,
+          maxWorkflowPatches: 2,
+          workflowMutationMode: "in-place",
+          allowTargetedRerun: false,
+        },
+      },
+      options,
+    );
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        nestedSuperviserDriver: true,
+        autoImprove: {
+          enabled: true,
+          superviserWorkflowId: "custom-superviser",
+          monitorIntervalMs: 6000,
+          stallTimeoutMs: 12000,
+          maxSupervisedAttempts: 4,
+          maxWorkflowPatches: 2,
+          workflowMutationMode: "in-place",
+          allowTargetedRerun: false,
+        },
+      }),
+    );
+    expect(payload.status).toBe("running");
+  });
+
+  test("executeWorkflow rejects nested-superviser without auto-improve before calling runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const schema = createGraphqlSchema();
+
+    await expect(
+      schema.mutation.executeWorkflow(
+        {
+          workflowName: "demo",
+          nestedSuperviser: true,
+        },
+        options,
+      ),
+    ).rejects.toThrow("nestedSuperviser requires autoImprove");
+    expect(runWorkflowSpy).not.toHaveBeenCalled();
+  });
+
+  test("executeWorkflow rejects invalid auto-improve policy before calling runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const schema = createGraphqlSchema();
+
+    await expect(
+      schema.mutation.executeWorkflow(
+        {
+          workflowName: "demo",
+          autoImprove: {
+            enabled: true,
+            monitorIntervalMs: 6000,
+            stallTimeoutMs: 5000,
+          },
+        },
+        options,
+      ),
+    ).rejects.toThrow(
+      "invalid autoImprove policy: stallTimeoutMs must be greater than or equal to monitorIntervalMs",
+    );
+    expect(runWorkflowSpy).not.toHaveBeenCalled();
+  });
+
+  test("resumeWorkflowExecution normalizes auto-improve and nested-superviser into runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const sessionId = "sess-schema-supervised-resume";
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    expect(saved.ok).toBe(true);
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId,
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const schema = createGraphqlSchema();
+    const payload = await schema.mutation.resumeWorkflowExecution(
+      {
+        workflowExecutionId: sessionId,
+        nestedSuperviser: true,
+        autoImprove: {
+          enabled: true,
+        },
+      },
+      options,
+    );
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        resumeSessionId: sessionId,
+        nestedSuperviserDriver: true,
+        autoImprove: expect.objectContaining({
+          enabled: true,
+        }),
+      }),
+    );
+    expect(payload.status).toBe("running");
+  });
+
+  test("rerunWorkflowExecution normalizes auto-improve into runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const sessionId = "sess-schema-supervised-rerun";
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    expect(saved.ok).toBe(true);
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-supervised-rerun-2",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const schema = createGraphqlSchema();
+    const payload = await schema.mutation.rerunWorkflowExecution(
+      {
+        workflowExecutionId: sessionId,
+        stepId: "main-worker",
+        autoImprove: {
+          enabled: true,
+          maxSupervisedAttempts: 2,
+        },
+      },
+      options,
+    );
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        rerunFromSessionId: sessionId,
+        rerunFromStepId: "main-worker",
+        autoImprove: expect.objectContaining({
+          enabled: true,
+          maxSupervisedAttempts: 2,
+        }),
+      }),
+    );
+    expect(payload.rerunFromStepId).toBe("main-worker");
   });
 
   test("exposes worker-only workflows without requiring an authored manager id", async () => {
@@ -1085,15 +1400,10 @@ describe("createGraphqlSchema", () => {
     expect(workflow?.workflowName).toBe("solo");
     expect(workflow?.workflowId).toBe("solo");
     expect(workflow?.hasManagerNode).toBe(false);
-    expect(workflow?.managerNodeId).toBeUndefined();
-    expect(workflow?.entryNodeId).toBeUndefined();
     expect(workflow?.entryStepId).toBe("main-worker");
+    expect(workflow?.nodeRegistryIds).toEqual(["main-worker"]);
     expect(workflow?.counts.nodes).toBeUndefined();
     expect(workflow?.counts.structuralProjection?.nodes).toBe(1);
-    expect(workflow?.compatibility.usesEffectiveEntryManagerNodeId).toBe(true);
-    expect(workflow?.compatibility.notes).not.toContain(
-      "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
-    );
   });
 
   test("reports scaffolded managed starters as not runtime-ready until code-manager runtime lands", async () => {
@@ -1118,8 +1428,6 @@ describe("createGraphqlSchema", () => {
       },
     );
 
-    expect(workflow?.managerNodeId).toBeUndefined();
-    expect(workflow?.entryNodeId).toBeUndefined();
     expect(workflow?.managerStepId).toBe("divedra-manager");
     expect(workflow?.entryStepId).toBe("divedra-manager");
     expect(workflow?.stepIds).toEqual(["divedra-manager", "main-worker"]);
@@ -1152,17 +1460,7 @@ describe("createGraphqlSchema", () => {
 
     expect(workflow?.workflowCallIds).toEqual(["review-call"]);
     expect(workflow?.counts.workflowCalls).toBe(1);
-    expect(workflow?.counts.legacySubWorkflows).toBe(0);
     expect(workflow?.runtime.ready).toBe(true);
-    expect(
-      workflow?.compatibility.normalizesRoleAuthoredNodesToStructuralKinds,
-    ).toBe(true);
-    expect(workflow?.compatibility.usesLegacyStructuralSubWorkflows).toBe(
-      false,
-    );
-    expect(workflow?.compatibility.notes).toContain(
-      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-    );
   });
 
   test("aggregates node detail and communication snapshots by workflow execution id", async () => {
@@ -1355,6 +1653,36 @@ describe("createGraphqlSchema", () => {
     );
     expect(validation.valid).toBe(false);
     expect(validation.issues?.length ?? 0).toBeGreaterThan(0);
+
+    const malformedValidation =
+      await schema.mutation.validateWorkflowDefinition(
+        {
+          workflowName: "demo",
+          bundle: {
+            workflow: validBundle.workflow,
+            nodePayloads: [] as unknown as Record<string, unknown>,
+          },
+        },
+        options,
+      );
+    expect(malformedValidation.valid).toBe(false);
+    expect(malformedValidation.error).toBe(
+      "input.bundle.nodePayloads must be an object",
+    );
+    expect(malformedValidation.issues).toEqual([]);
+
+    const malformedSave = await schema.mutation.saveWorkflowDefinition(
+      {
+        workflowName: "demo",
+        bundle: {
+          workflow: [] as unknown as Record<string, unknown>,
+          nodePayloads: validBundle.nodePayloads,
+        },
+      },
+      options,
+    );
+    expect(malformedSave.error).toBe("input.bundle.workflow must be an object");
+    expect(malformedSave.issues).toEqual([]);
   });
 
   test("resolves scoped user workflows through GraphQL schema operations", async () => {
@@ -1892,7 +2220,7 @@ describe("createGraphqlSchema", () => {
         workflowId: "demo",
         workflowExecutionId: session.sessionId,
         message: "Retry the main worker node.",
-        actions: [{ type: "retry-node", nodeId: "main-worker" }],
+        actions: [{ type: "retry-step", stepId: "main-worker" }],
         idempotencyKey: "idem-graphql-send",
       },
       context,
@@ -1917,7 +2245,7 @@ describe("createGraphqlSchema", () => {
           workflowId: "demo",
           workflowExecutionId: session.sessionId,
           managerSessionId: "mgrsess-000001",
-          actions: [{ type: "retry-node", nodeId: "main-worker" }],
+          actions: [{ type: "retry-step", stepId: "main-worker" }],
         },
         {
           ...options,

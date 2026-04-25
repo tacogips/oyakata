@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { MockNodeScenario } from "../workflow/adapter";
 import { createWorkflowTemplate } from "../workflow/create";
+import * as workflowEngine from "../workflow/engine";
 import { runWorkflow } from "../workflow/engine";
 import {
   createManagerSessionStore,
@@ -33,6 +34,7 @@ async function makeTempDir(): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     tempDirs
       .splice(0)
@@ -319,9 +321,8 @@ describe("GraphQL HTTP transport", () => {
               workflow(workflowName: $workflowName) {
                 workflowId
                 hasManagerNode
-                managerNodeId
-                entryNodeId
                 entryStepId
+                nodeRegistryIds
                 workflowCallIds
                 counts {
                   steps
@@ -329,10 +330,6 @@ describe("GraphQL HTTP transport", () => {
                   structuralProjection {
                     nodes
                   }
-                }
-                compatibility {
-                  usesEffectiveEntryManagerNodeId
-                  notes
                 }
               }
             }
@@ -350,9 +347,8 @@ describe("GraphQL HTTP transport", () => {
     expect(payload.data?.workflow).toMatchObject({
       workflowId: "solo",
       hasManagerNode: false,
-      managerNodeId: null,
-      entryNodeId: null,
       entryStepId: "main-worker",
+      nodeRegistryIds: ["main-worker"],
       workflowCallIds: [],
       counts: {
         steps: 1,
@@ -361,13 +357,7 @@ describe("GraphQL HTTP transport", () => {
           nodes: 1,
         },
       },
-      compatibility: {
-        usesEffectiveEntryManagerNodeId: true,
-      },
     });
-    expect(payload.data?.workflow?.compatibility?.notes ?? []).not.toContain(
-      "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
-    );
   });
 
   test("reports scaffolded managed starters as not runtime-ready over /graphql", async () => {
@@ -463,7 +453,6 @@ describe("GraphQL HTTP transport", () => {
                 workflowCallIds
                 counts {
                   workflowCalls
-                  legacySubWorkflows
                 }
               }
             }
@@ -484,7 +473,6 @@ describe("GraphQL HTTP transport", () => {
           workflowCallIds: ["review-call"],
           counts: {
             workflowCalls: 1,
-            legacySubWorkflows: 0,
           },
         },
       },
@@ -677,6 +665,262 @@ describe("GraphQL HTTP transport", () => {
         },
       },
     });
+  });
+
+  test("accepts supervision execution inputs over /graphql", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const sourceSessionId = "sess-http-supervision-source";
+    const saved = await saveSession(
+      createSessionState({
+        sessionId: sourceSessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    expect(saved.ok).toBe(true);
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-http-supervision-result",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const executeResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation ExecuteWorkflow($input: ExecuteWorkflowInput!) {
+              executeWorkflow(input: $input) {
+                workflowExecutionId
+                status
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowName: "demo",
+              nestedSuperviser: true,
+              autoImprove: {
+                enabled: true,
+                monitorIntervalMs: 6000,
+                stallTimeoutMs: 12000,
+              },
+            },
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(executeResponse.status).toBe(200);
+    await expect(executeResponse.json()).resolves.toMatchObject({
+      data: {
+        executeWorkflow: {
+          workflowExecutionId: "sess-http-supervision-result",
+          status: "running",
+        },
+      },
+    });
+
+    const resumeResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation ResumeWorkflowExecution($input: ResumeWorkflowExecutionInput!) {
+              resumeWorkflowExecution(input: $input) {
+                workflowExecutionId
+                status
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowExecutionId: sourceSessionId,
+              nestedSuperviser: true,
+              autoImprove: {
+                enabled: true,
+              },
+            },
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(resumeResponse.status).toBe(200);
+    await expect(resumeResponse.json()).resolves.toMatchObject({
+      data: {
+        resumeWorkflowExecution: {
+          workflowExecutionId: "sess-http-supervision-result",
+          status: "running",
+        },
+      },
+    });
+
+    const rerunResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation RerunWorkflowExecution($input: RerunWorkflowExecutionInput!) {
+              rerunWorkflowExecution(input: $input) {
+                workflowExecutionId
+                status
+                rerunFromStepId
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowExecutionId: sourceSessionId,
+              stepId: "main-worker",
+              autoImprove: {
+                enabled: true,
+                maxSupervisedAttempts: 2,
+              },
+            },
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(rerunResponse.status).toBe(200);
+    await expect(rerunResponse.json()).resolves.toMatchObject({
+      data: {
+        rerunWorkflowExecution: {
+          workflowExecutionId: "sess-http-supervision-result",
+          status: "running",
+          rerunFromStepId: "main-worker",
+        },
+      },
+    });
+
+    expect(runWorkflowSpy).toHaveBeenNthCalledWith(
+      1,
+      "demo",
+      expect.objectContaining({
+        nestedSuperviserDriver: true,
+        autoImprove: expect.objectContaining({
+          enabled: true,
+          monitorIntervalMs: 6000,
+          stallTimeoutMs: 12000,
+        }),
+      }),
+    );
+    expect(runWorkflowSpy).toHaveBeenNthCalledWith(
+      2,
+      "demo",
+      expect.objectContaining({
+        resumeSessionId: sourceSessionId,
+        nestedSuperviserDriver: true,
+        autoImprove: expect.objectContaining({
+          enabled: true,
+        }),
+      }),
+    );
+    expect(runWorkflowSpy).toHaveBeenNthCalledWith(
+      3,
+      "demo",
+      expect.objectContaining({
+        rerunFromSessionId: sourceSessionId,
+        rerunFromStepId: "main-worker",
+        autoImprove: expect.objectContaining({
+          enabled: true,
+          maxSupervisedAttempts: 2,
+        }),
+      }),
+    );
+  });
+
+  test("rejects invalid nested superviser execution inputs over /graphql before runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            mutation ExecuteWorkflow($input: ExecuteWorkflowInput!) {
+              executeWorkflow(input: $input) {
+                workflowExecutionId
+                status
+              }
+            }
+          `,
+          variables: {
+            input: {
+              workflowName: "demo",
+              nestedSuperviser: true,
+            },
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: null,
+      errors: [
+        expect.objectContaining({
+          message: "nestedSuperviser requires autoImprove",
+        }),
+      ],
+    });
+    expect(runWorkflowSpy).not.toHaveBeenCalled();
   });
 
   test("exposes currentStepId on workflowExecution and workflowExecutionOverview session views over /graphql", async () => {
@@ -941,14 +1185,10 @@ describe("GraphQL HTTP transport", () => {
           inputFields: expect.arrayContaining([
             { name: "workflowExecutionId" },
             { name: "stepId" },
-            { name: "nodeId" },
           ]),
         },
         payloadType: {
-          fields: expect.arrayContaining([
-            { name: "rerunFromStepId" },
-            { name: "rerunFromNodeId" },
-          ]),
+          fields: expect.arrayContaining([{ name: "rerunFromStepId" }]),
         },
       },
     });
@@ -1449,7 +1689,7 @@ describe("GraphQL HTTP transport", () => {
               workflowExecutionId: session.sessionId,
               managerSessionId: "mgrsess-000001",
               message: "Retry the main worker node.",
-              actions: [{ type: "retry-node", nodeId: "main-worker" }],
+              actions: [{ type: "retry-step", stepId: "main-worker" }],
               idempotencyKey: "idem-http-send",
             },
           },
@@ -1467,7 +1707,7 @@ describe("GraphQL HTTP transport", () => {
           queuedNodeIds: ["main-worker"],
           parsedIntent: [
             {
-              kind: "retry-node",
+              kind: "retry-step",
               targetId: "main-worker",
             },
           ],
@@ -1504,7 +1744,7 @@ describe("GraphQL HTTP transport", () => {
               workflowId: "demo",
               workflowExecutionId: session.sessionId,
               message: "Retry the main worker node.",
-              actions: [{ type: "retry-node", nodeId: "main-worker" }],
+              actions: [{ type: "retry-step", stepId: "main-worker" }],
               idempotencyKey: "idem-http-ambient-send",
             },
           },
@@ -1549,7 +1789,7 @@ describe("GraphQL HTTP transport", () => {
               workflowId: "demo",
               workflowExecutionId: session.sessionId,
               message: "Retry the main worker node.",
-              actions: [{ type: "retry-node", nodeId: "main-worker" }],
+              actions: [{ type: "retry-step", stepId: "main-worker" }],
               idempotencyKey: "idem-http-no-env-fallback",
             },
           },
@@ -1604,7 +1844,7 @@ describe("GraphQL HTTP transport", () => {
               workflowId: "demo",
               workflowExecutionId: session.sessionId,
               message: "Retry the main worker node.",
-              actions: [{ type: "retry-node", nodeId: "main-worker" }],
+              actions: [{ type: "retry-step", stepId: "main-worker" }],
               idempotencyKey: "idem-http-no-context-fallback",
             },
           },
@@ -1655,7 +1895,7 @@ describe("GraphQL HTTP transport", () => {
             workflowId: "demo",
             workflowExecutionId: session.sessionId,
             message: "Retry the main worker node.",
-            actions: [{ type: "retry-node", nodeId: "main-worker" }],
+            actions: [{ type: "retry-step", stepId: "main-worker" }],
             idempotencyKey: "idem-direct-context-auth",
           },
         },

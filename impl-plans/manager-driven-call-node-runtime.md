@@ -1,9 +1,11 @@
 # Manager-Driven Call-Node Runtime Implementation Plan
 
 **Status**: Completed
-**Design Reference**: `design-docs/specs/design-manager-driven-call-node-runtime.md`
+**Design Reference**: `design-docs/specs/architecture.md`, `design-docs/specs/command.md`, `design-docs/specs/design-node-jump-and-code-manager-runtime.md`
 **Created**: 2026-03-15
 **Last Updated**: 2026-03-16
+
+**Supersession (phase 133)**: The public `call-node` CLI command and `callWorkflowNode` library entrypoint were removed in favor of `call-step` and `callWorkflowStep`. Direct execution is implemented in `src/workflow/call-step-impl.ts` (internal `callNode` only used from `src/workflow/call-step.ts`). See `impl-plans/workflow-legacy-compatibility-removal.md` and `impl-plans/completed/step-addressed-workflow-runtime-cutover.md`.
 
 ## Scope
 

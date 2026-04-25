@@ -7,11 +7,12 @@ import {
 } from "./json-boundary";
 import { effectiveWorkflowCalls } from "./cross-workflow-from-steps";
 import { describeWorkflowNodeKind, isManagerNodeRef } from "./node-role";
-import type {
-  JsonObject,
-  NodePayload,
-  WorkflowJson,
-  WorkflowNodeRef,
+import {
+  resolveWorkflowManagerRuntimeId,
+  type JsonObject,
+  type NodePayload,
+  type WorkflowJson,
+  type WorkflowNodeRef,
 } from "./types";
 
 export interface PromptCompositionUpstreamInput {
@@ -37,6 +38,11 @@ export interface NodeExecutionMailboxManagedChild {
 
 export interface NodeExecutionMailboxStructure {
   readonly type: "root-workflow" | "sub-workflow";
+  /**
+   * Root manager **execution** id: for step-addressed loads this is the manager
+   * step id (`resolveWorkflowManagerRuntimeId`); for legacy node graphs, the
+   * root manager node id. Name is historical; not always a registry `nodeId`.
+   */
   readonly rootManagerNodeId?: string;
   readonly subWorkflows?: readonly {
     readonly id: string;
@@ -378,7 +384,7 @@ function buildMailboxStructure(input: {
   ) {
     return {
       type: "root-workflow",
-      rootManagerNodeId: input.workflow.managerNodeId,
+      rootManagerNodeId: resolveWorkflowManagerRuntimeId(input.workflow),
       subWorkflows: input.workflow.subWorkflows.map((subWorkflow) => ({
         id: subWorkflow.id,
         managerNodeId: subWorkflow.managerNodeId,
@@ -420,18 +426,17 @@ function buildManagerControlMetadata(input: {
       preferredTransport: "divedra gql",
       fallbackField: "managerControl",
       supportedActions: [
-        "deliver-to-child-input",
-        "retry-node",
+        "retry-step",
         "replay-communication",
-        "execute-optional-node",
-        "skip-optional-node",
+        "execute-optional-step",
+        "skip-optional-step",
       ],
       rules: [
         "Manager scope is limited to the current sub-workflow execution owned by this manager.",
-        "Use `deliver-to-child-input` when this manager chooses to pass instruction/output to its owned input node.",
-        "Use `retry-node` when a prior child node result is insufficient and that node must run again.",
+        "Child input dispatch for owned structural scopes is scheduled by the engine from the workflow graph; do not try to replace it with ad-hoc control actions.",
+        "Use `retry-step` with the execution step id when a prior child step result is insufficient and that step must run again.",
         "Use `replay-communication` to redeliver an existing communication that stays within this manager's current scope.",
-        "Use `execute-optional-node` or `skip-optional-node` only for pending optional nodes owned by this manager.",
+        "Use `execute-optional-step` or `skip-optional-step` only for pending optional steps owned by this manager.",
         "Omit `managerControl` when no runtime control change is needed.",
       ],
     };
@@ -442,19 +447,17 @@ function buildManagerControlMetadata(input: {
       preferredTransport: "divedra gql",
       fallbackField: "managerControl",
       supportedActions: [
-        "start-sub-workflow",
-        "retry-node",
+        "retry-step",
         "replay-communication",
-        "execute-optional-node",
-        "skip-optional-node",
+        "execute-optional-step",
+        "skip-optional-step",
       ],
       rules: [
         "Manager scope is limited to the current workflow execution.",
-        "Use `start-sub-workflow` when the root manager chooses to invoke or re-invoke a structural child scope as one unit.",
-        "Use `retry-node` when a prior child node result is insufficient and that node must run again.",
+        "Structural child scopes are scheduled by the engine; cross-workflow work uses step transitions and is not started via extra control primitives.",
+        "Use `retry-step` with the execution step id when a prior child step result is insufficient and that step must run again (including steps inside structural child scopes).",
         "Use `replay-communication` to redeliver an existing communication that stays within the current workflow execution scope.",
-        "Use `execute-optional-node` or `skip-optional-node` only for pending optional nodes owned by this manager.",
-        "Root manager must not use `retry-node` for internal nodes owned by a structural sub-workflow; re-run that child unit with `start-sub-workflow` instead.",
+        "Use `execute-optional-step` or `skip-optional-step` only for pending optional steps owned by this manager.",
         "Omit `managerControl` when no runtime control change is needed.",
       ],
     };
@@ -464,17 +467,17 @@ function buildManagerControlMetadata(input: {
     preferredTransport: "divedra gql",
     fallbackField: "managerControl",
     supportedActions: [
-      "retry-node",
+      "retry-step",
       "replay-communication",
-      "execute-optional-node",
-      "skip-optional-node",
+      "execute-optional-step",
+      "skip-optional-step",
     ],
     rules: [
       "Manager scope is limited to the current workflow execution.",
-      "Use `retry-node` when a prior worker result is insufficient and that node must run again.",
+      "Use `retry-step` with the execution step id when a prior worker result is insufficient and that step must run again.",
       "Use `replay-communication` to redeliver an existing communication within the current workflow execution.",
-      "Use `execute-optional-node` or `skip-optional-node` only for pending optional nodes owned by this manager.",
-      "Cross-workflow calls (authored as `steps[].transitions` with toWorkflowId or as explicit `workflowCalls`) run automatically from the caller step; do not emit `start-sub-workflow` or `deliver-to-child-input` for that path.",
+      "Use `execute-optional-step` or `skip-optional-step` only for pending optional steps owned by this manager.",
+      "Cross-workflow calls (step-addressed: `steps[].transitions` with `toWorkflowId` and `resumeStepId`; legacy node-graph bundles may still use top-level `workflowCalls`) run automatically from the caller step.",
       "Omit `managerControl` when no runtime control change is needed.",
     ],
   };
@@ -748,17 +751,13 @@ function renderManagerControlSection(
     "Include workflow assessment in normal JSON fields, and place runtime control decisions under `managerControl`.",
     "Supported actions:",
     ...managerControl.supportedActions.map((action) =>
-      action === "start-sub-workflow"
-        ? '- `{"type":"start-sub-workflow","subWorkflowId":"<sub-workflow-id>"}`'
-        : action === "deliver-to-child-input"
-          ? '- `{"type":"deliver-to-child-input","inputNodeId":"<input-node-id>"}`'
-          : action === "retry-node"
-            ? '- `{"type":"retry-node","nodeId":"<node-id>"}`'
-            : action === "replay-communication"
-              ? '- `{"type":"replay-communication","communicationId":"<communication-id>","reason":"<optional-reason>"}`'
-              : action === "execute-optional-node"
-                ? '- `{"type":"execute-optional-node","nodeId":"<node-id>"}`'
-                : '- `{"type":"skip-optional-node","nodeId":"<node-id>","reason":"<optional-reason>"}`',
+      action === "retry-step"
+        ? '- `{"type":"retry-step","stepId":"<step-id>"}`'
+        : action === "replay-communication"
+          ? '- `{"type":"replay-communication","communicationId":"<communication-id>","reason":"<optional-reason>"}`'
+          : action === "execute-optional-step"
+            ? '- `{"type":"execute-optional-step","stepId":"<step-id>"}`'
+            : '- `{"type":"skip-optional-step","stepId":"<step-id>","reason":"<optional-reason>"}`',
     ),
     "Rules:",
     ...managerControl.rules.map((rule) => `- ${rule}`),

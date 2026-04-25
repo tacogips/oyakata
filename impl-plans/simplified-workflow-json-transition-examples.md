@@ -1,7 +1,7 @@
 # Simplified Workflow JSON Transition For Examples Implementation Plan
 
 **Status**: Completed
-**Design Reference**: `design-docs/specs/design-simplified-workflow-json.md`
+**Design Reference**: `design-docs/specs/design-workflow-json.md`, `design-docs/specs/notes.md`
 **Created**: 2026-03-30
 **Last Updated**: 2026-03-30
 

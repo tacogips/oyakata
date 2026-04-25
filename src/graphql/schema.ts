@@ -5,7 +5,8 @@ import type {
   ValidationResponse,
   WorkflowResponse,
 } from "../shared/ui-contract";
-import { runWorkflow } from "../workflow/engine";
+import { normalizeAutoImprovePolicy } from "../workflow/auto-improve-policy";
+import { runWorkflow, type WorkflowRunOptions } from "../workflow/engine";
 import {
   createWorkflowTemplate,
   type CreateWorkflowTemplateMode,
@@ -59,9 +60,11 @@ import {
 import { loadSession, saveSession } from "../workflow/session-store";
 import { listSessions } from "../workflow/session-store";
 import type { WorkflowExecutionSummary } from "../shared/ui-contract";
+import { err, ok, type Result } from "../workflow/result";
 import { validateWorkflowBundleDetailedAsync } from "../workflow/validate";
 import { deriveWorkflowVisualization } from "../workflow/visualization";
 import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
+import { parseWorkflowBundleInput } from "../workflow/workflow-bundle-input";
 import type { WorkflowJson } from "../workflow/types";
 import type {
   CreateWorkflowDefinitionInput,
@@ -109,6 +112,68 @@ import type {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+interface GraphqlWorkflowRunOverridesInput {
+  readonly autoImprove?: ExecuteWorkflowInput["autoImprove"];
+  readonly nestedSuperviser?: boolean;
+  readonly workingDirectory?: string;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+}
+
+function buildGraphqlWorkflowRunOverrides(
+  input: GraphqlWorkflowRunOverridesInput,
+): Result<
+  Pick<
+    WorkflowRunOptions,
+    | "autoImprove"
+    | "nestedSuperviserDriver"
+    | "workflowWorkingDirectory"
+    | "dryRun"
+    | "maxSteps"
+    | "maxLoopIterations"
+    | "defaultTimeoutMs"
+  >,
+  string
+> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workingDirectory,
+  );
+  const normalizedAutoImprove =
+    input.autoImprove === undefined
+      ? { ok: true as const, value: undefined }
+      : normalizeAutoImprovePolicy(input.autoImprove);
+  if (!normalizedAutoImprove.ok) {
+    return err(`invalid autoImprove policy: ${normalizedAutoImprove.error}`);
+  }
+  if (
+    input.nestedSuperviser === true &&
+    normalizedAutoImprove.value === undefined
+  ) {
+    return err("nestedSuperviser requires autoImprove");
+  }
+  return ok({
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
+    ...(normalizedAutoImprove.value === undefined
+      ? {}
+      : { autoImprove: normalizedAutoImprove.value }),
+    ...(input.nestedSuperviser === true
+      ? { nestedSuperviserDriver: true }
+      : {}),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+    ...(input.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: input.defaultTimeoutMs }),
+  });
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {
@@ -336,6 +401,14 @@ async function saveWorkflowDefinitionMutation(
   input: SaveWorkflowDefinitionInput,
   context: GraphqlRequestContext,
 ): Promise<SaveWorkflowDefinitionPayload> {
+  const parsedBundle = parseWorkflowBundleInput(input.bundle, "input.bundle");
+  if (!parsedBundle.ok) {
+    return {
+      workflowName: input.workflowName,
+      error: parsedBundle.error,
+      issues: [],
+    };
+  }
   assertWorkflowDefinitionWritable(input.workflowName, context);
   const workflowContext = await resolveWorkflowContextForGraphql(
     input.workflowName,
@@ -344,8 +417,8 @@ async function saveWorkflowDefinitionMutation(
   const saveResult = await saveWorkflowToDisk(
     input.workflowName,
     {
-      workflow: input.bundle.workflow,
-      nodePayloads: input.bundle.nodePayloads,
+      workflow: parsedBundle.value.workflow,
+      nodePayloads: parsedBundle.value.nodePayloads,
       ...(input.expectedRevision === undefined
         ? {}
         : { expectedRevision: input.expectedRevision }),
@@ -376,14 +449,18 @@ async function validateWorkflowDefinitionMutation(
   context: GraphqlRequestContext,
 ): Promise<ValidateWorkflowDefinitionPayload> {
   if (input.bundle !== undefined) {
+    const parsedBundle = parseWorkflowBundleInput(input.bundle, "input.bundle");
+    if (!parsedBundle.ok) {
+      return {
+        valid: false,
+        error: parsedBundle.error,
+        issues: [],
+      } satisfies ValidationResponse;
+    }
     const validation = await validateWorkflowBundleDetailedAsync(
       {
-        workflow: input.bundle.workflow as unknown as Readonly<
-          Record<string, unknown>
-        >,
-        nodePayloads: input.bundle.nodePayloads as unknown as Readonly<
-          Record<string, unknown>
-        >,
+        workflow: parsedBundle.value.workflow,
+        nodePayloads: parsedBundle.value.nodePayloads,
       },
       context,
     );
@@ -999,9 +1076,10 @@ async function executeWorkflowMutation(
   input: ExecuteWorkflowInput,
   context: GraphqlRequestContext,
 ): Promise<ExecuteWorkflowPayload> {
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    input.workingDirectory,
-  );
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
   const workflowContext = await resolveWorkflowContextForGraphql(
     input.workflowName,
     context,
@@ -1020,23 +1098,13 @@ async function executeWorkflowMutation(
     void runWorkflow(input.workflowName, {
       ...workflowContext,
       sessionId: workflowExecutionId,
-      ...(workingDirectory === undefined
-        ? {}
-        : { workflowWorkingDirectory: workingDirectory }),
+      ...workflowRunOverrides.value,
       ...(input.runtimeVariables === undefined
         ? {}
         : { runtimeVariables: input.runtimeVariables }),
       ...(input.mockScenario === undefined
         ? {}
         : { mockScenario: input.mockScenario }),
-      ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-      ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-      ...(input.maxLoopIterations === undefined
-        ? {}
-        : { maxLoopIterations: input.maxLoopIterations }),
-      ...(input.defaultTimeoutMs === undefined
-        ? {}
-        : { defaultTimeoutMs: input.defaultTimeoutMs }),
     }).catch(() => undefined);
     return {
       workflowExecutionId,
@@ -1048,23 +1116,13 @@ async function executeWorkflowMutation(
 
   const result = await runWorkflow(input.workflowName, {
     ...workflowContext,
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
+    ...workflowRunOverrides.value,
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
     ...(input.mockScenario === undefined
       ? {}
       : { mockScenario: input.mockScenario }),
-    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: input.defaultTimeoutMs }),
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -1081,9 +1139,10 @@ async function resumeWorkflowExecutionMutation(
   input: ResumeWorkflowExecutionInput,
   context: GraphqlRequestContext,
 ): Promise<ResumeWorkflowExecutionPayload> {
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    input.workingDirectory,
-  );
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
   const existing = await loadSession(input.workflowExecutionId, context);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -1095,17 +1154,7 @@ async function resumeWorkflowExecutionMutation(
   const result = await runWorkflow(existing.value.workflowName, {
     ...workflowContext,
     resumeSessionId: input.workflowExecutionId,
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
-    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...workflowRunOverrides.value,
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -1122,15 +1171,14 @@ async function rerunWorkflowExecutionMutation(
   input: RerunWorkflowExecutionInput,
   context: GraphqlRequestContext,
 ): Promise<RerunWorkflowExecutionPayload> {
-  const rerunTargetId = input.stepId ?? input.nodeId;
-  if (rerunTargetId === undefined) {
-    throw new Error(
-      "stepId is required (nodeId accepted for compatibility with legacy callers)",
-    );
+  const rerunFromStepId = input.stepId.trim();
+  if (rerunFromStepId.length === 0) {
+    throw new Error("stepId is required");
   }
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    input.workingDirectory,
-  );
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
   const existing = await loadSession(input.workflowExecutionId, context);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -1142,23 +1190,11 @@ async function rerunWorkflowExecutionMutation(
   const result = await runWorkflow(existing.value.workflowName, {
     ...workflowContext,
     rerunFromSessionId: input.workflowExecutionId,
-    ...(input.stepId !== undefined
-      ? { rerunFromStepId: input.stepId }
-      : { rerunFromNodeId: rerunTargetId }),
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
+    rerunFromStepId,
+    ...workflowRunOverrides.value,
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
-    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: input.defaultTimeoutMs }),
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -1167,8 +1203,7 @@ async function rerunWorkflowExecutionMutation(
     workflowExecutionId: result.value.session.sessionId,
     sessionId: result.value.session.sessionId,
     status: result.value.session.status,
-    ...(input.stepId === undefined ? {} : { rerunFromStepId: input.stepId }),
-    ...(input.nodeId === undefined ? {} : { rerunFromNodeId: input.nodeId }),
+    rerunFromStepId,
     exitCode: result.value.exitCode,
   };
 }

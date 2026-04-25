@@ -28,7 +28,6 @@ export interface WorkflowInspectionCounts {
   readonly steps: number;
   readonly nodeRegistry: number;
   readonly workflowCalls: number;
-  readonly legacySubWorkflows: number;
   /** Legacy (non-step-addressed) bundles only. Omitted for step-addressed. */
   readonly nodes?: number;
   readonly edges?: number;
@@ -42,21 +41,11 @@ export interface WorkflowInspectionSummary {
   readonly workflowId: string;
   readonly description: string;
   readonly hasManagerNode: boolean;
-  /** Legacy (non-step-addressed) bundles: workflow manager node id. Omitted for step-addressed. */
-  readonly managerNodeId?: string;
-  /** Legacy (non-step-addressed) bundles: entry node id. Omitted for step-addressed. */
-  readonly entryNodeId?: string;
   readonly managerStepId?: string;
   readonly entryStepId?: string;
   readonly stepIds: readonly string[];
   readonly nodeRegistryIds: readonly string[];
   readonly workflowCallIds: readonly string[];
-  readonly compatibility: {
-    readonly normalizesRoleAuthoredNodesToStructuralKinds: boolean;
-    readonly usesEffectiveEntryManagerNodeId: boolean;
-    readonly usesLegacyStructuralSubWorkflows: boolean;
-    readonly notes: readonly string[];
-  };
   readonly defaults: {
     readonly maxLoopIterations: number;
     readonly nodeTimeoutMs: number;
@@ -76,32 +65,10 @@ export async function buildInspectionSummary(
   const workflow = loaded.bundle.workflow;
   const isStepAddressed = workflow.steps !== undefined;
   const stepIds = workflow.steps?.map((step) => step.id) ?? [];
-  const nodeRegistryIds = workflow.nodeRegistry?.map((node) => node.id) ?? [];
+  const nodeRegistryIds =
+    workflow.nodeRegistry?.map((node) => node.id) ??
+    workflow.nodes.map((node) => node.id);
   const hasManagerNode = workflow.hasManagerNode !== false;
-  const usesRoleAuthoredNodes =
-    workflow.steps?.some((step) => step.role !== undefined) ??
-    workflow.nodes.some(
-      (node) => node.role !== undefined || node.control !== undefined,
-    );
-  const usesEffectiveEntryManagerNodeId = !hasManagerNode;
-  const usesLegacyStructuralSubWorkflows = workflow.subWorkflows.length > 0;
-  const compatibilityNotes = [
-    ...(usesRoleAuthoredNodes
-      ? [
-          "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-        ]
-      : []),
-    ...(!isStepAddressed && usesEffectiveEntryManagerNodeId
-      ? [
-          "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
-        ]
-      : []),
-    ...(usesLegacyStructuralSubWorkflows
-      ? [
-          "Legacy structural subWorkflows remain active for this bundle; prefer step-addressed cross-workflow transitions (steps[].transitions with toWorkflowId and resumeStepId) or explicit workflowCalls when migrating away from structural sub-workflows.",
-        ]
-      : []),
-  ];
   const nodeRegistryCount =
     workflow.nodeRegistry === undefined
       ? workflow.nodes.length
@@ -120,12 +87,6 @@ export async function buildInspectionSummary(
     workflowId: workflow.workflowId,
     description: workflow.description,
     hasManagerNode,
-    ...(!isStepAddressed && hasManagerNode
-      ? { managerNodeId: workflow.managerNodeId }
-      : {}),
-    ...(!isStepAddressed
-      ? { entryNodeId: workflow.entryNodeId ?? workflow.managerNodeId }
-      : {}),
     ...(workflow.managerStepId === undefined
       ? {}
       : { managerStepId: workflow.managerStepId }),
@@ -135,12 +96,6 @@ export async function buildInspectionSummary(
     stepIds,
     nodeRegistryIds,
     workflowCallIds: effectiveCalls.map((call) => call.id),
-    compatibility: {
-      normalizesRoleAuthoredNodesToStructuralKinds: usesRoleAuthoredNodes,
-      usesEffectiveEntryManagerNodeId,
-      usesLegacyStructuralSubWorkflows,
-      notes: compatibilityNotes,
-    },
     defaults: {
       maxLoopIterations: workflow.defaults.maxLoopIterations,
       nodeTimeoutMs: workflow.defaults.nodeTimeoutMs,
@@ -150,7 +105,6 @@ export async function buildInspectionSummary(
           steps: stepCount,
           nodeRegistry: nodeRegistryCount,
           workflowCalls: effectiveCalls.length,
-          legacySubWorkflows: workflow.subWorkflows.length,
           structuralProjection: structuralGraphCounts,
         }
       : {
@@ -160,7 +114,6 @@ export async function buildInspectionSummary(
           edges: edgeCount,
           loops: loopCount,
           workflowCalls: effectiveCalls.length,
-          legacySubWorkflows: workflow.subWorkflows.length,
         },
     nodeFiles: collectWorkflowRevisionNodeFiles(workflow),
     workflowDirectory: loaded.workflowDirectory,
@@ -204,5 +157,8 @@ export function getSupervisionSummary(
     ...(run.mutableWorkflowDir === undefined
       ? {}
       : { mutableWorkflowDir: run.mutableWorkflowDir }),
+    ...(run.nestedSuperviserSessionId === undefined
+      ? {}
+      : { nestedSuperviserSessionId: run.nestedSuperviserSessionId }),
   };
 }

@@ -453,6 +453,41 @@ describe("buildWorkflowDefinitionContent", () => {
     expect(content).toContain("Step ids: manager-step, writer-step");
     expect(content).toContain("Node registry: 2");
     expect(content).toContain("Node registry ids: manager-node, writer-node");
+    expect(content).not.toContain("Legacy structural");
+  });
+
+  test("omits legacy structural sub-workflow lines for step-addressed loads even if compatible subWorkflow entries remain", () => {
+    const base = makeStepAddressedLoadedWorkflow();
+    const loaded: LoadedWorkflow = {
+      ...base,
+      bundle: {
+        ...base.bundle,
+        workflow: {
+          ...base.bundle.workflow,
+          subWorkflows: [
+            {
+              id: "delivery",
+              description: "delivery",
+              managerNodeId: "manager-step",
+              inputNodeId: "writer-step",
+              outputNodeId: "writer-step",
+              nodeIds: ["manager-step", "writer-step"],
+              inputSources: [{ type: "human-input" }],
+              block: { type: "plain" },
+            },
+          ],
+        },
+      },
+    };
+
+    const def = buildWorkflowDefinitionContent(loaded);
+    expect(def).not.toContain("Legacy structural");
+    expect(plainStyledText(buildWorkflowSummaryPreview(loaded))).not.toContain(
+      "Legacy Structural",
+    );
+    expect(plainStyledText(buildWorkflowRunPreview(loaded))).not.toContain(
+      "Legacy structural",
+    );
   });
 });
 
@@ -502,6 +537,7 @@ describe("buildWorkflowSummaryPreview", () => {
     expect(content).toContain("Step Graph");
     expect(content).toContain("Step ids: manager-step, writer-step");
     expect(content).toContain("Node registry ids: manager-node, writer-node");
+    expect(content).not.toContain("Legacy Structural");
   });
 });
 
@@ -670,10 +706,10 @@ describe("buildWorkflowRunPreview", () => {
     expect(content).toContain("Manager: manager-step");
     expect(content).toContain("Steps: 2");
     expect(content).toContain("Node registry: 2");
-    expect(content).toContain("Compatibility nodes: 2");
     expect(content).toContain("Step Graph");
     expect(content).toContain("Node registry ids: manager-node, writer-node");
     expect(content).toContain("- writer-step (WORKER): write the change");
+    expect(content).not.toContain("Legacy structural");
   });
 });
 
@@ -1037,7 +1073,7 @@ describe("workflow preview text helpers", () => {
 
     expect(text).toContain("demo");
     expect(text).not.toContain("demo workflow");
-    expect(text).toContain("nodes=3  workflowCalls=0  legacySubWorkflows=1");
+    expect(text).toContain("nodes=3  workflowCalls=0  subWorkflows=1");
     expect(text).not.toContain("demo\n\nnodes=");
   });
 });

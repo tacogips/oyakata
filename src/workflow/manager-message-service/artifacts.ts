@@ -315,7 +315,7 @@ export async function persistManagerMessageCommunication(args: {
     sourceNodeExecId: args.managerNodeExecId,
     payloadRef: args.payloadRef,
     deliveryKind: "edge-transition",
-    transitionWhen: `manager-message:${args.managerMessageId}:deliver-to-child-input:${args.targetNodeId}`,
+    transitionWhen: `manager-message:${args.managerMessageId}:to-node:${args.targetNodeId}`,
     status: "delivered",
     deliveryAttemptIds: [deliveryAttemptId],
     activeDeliveryAttemptId: deliveryAttemptId,

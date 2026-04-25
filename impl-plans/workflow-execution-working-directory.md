@@ -1,7 +1,7 @@
 # Workflow Execution Working Directory Implementation Plan
 
 **Status**: Completed
-**Design Reference**: `design-docs/specs/design-workflow-working-directory.md`
+**Design Reference**: `design-docs/specs/architecture.md#execution-boundary`, `design-docs/specs/command.md#subcommands`
 **Created**: 2026-04-12
 **Last Updated**: 2026-04-12
 

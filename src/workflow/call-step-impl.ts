@@ -1,3 +1,8 @@
+/**
+ * Internal direct step execution engine used only by {@link ./call-step.callStep}.
+ * The CLI and package API expose `call-step` only; phase 133 removes remaining
+ * legacy compatibility surfaces in `impl-plans/workflow-legacy-compatibility-removal.md`.
+ */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -76,6 +81,7 @@ import type {
   WorkflowJson,
 } from "./types";
 import { asAgentNodePayload } from "./types";
+import type { SuperviserRuntimeControl } from "./superviser-control";
 
 export interface DirectExecutionOverrides {
   readonly promptVariant?: string;
@@ -88,7 +94,7 @@ export interface DirectExecutionOverrides {
   readonly resumeNodeExecId?: string;
 }
 
-export interface CallNodeInput extends LoadOptions, SessionStoreOptions {
+export interface CallStepExecutionInput extends LoadOptions, SessionStoreOptions {
   readonly workflowId: string;
   readonly workflowRunId: string;
   readonly nodeId: string;
@@ -99,9 +105,14 @@ export interface CallNodeInput extends LoadOptions, SessionStoreOptions {
   readonly eventReplyDispatcher?: ChatReplyDispatcher;
   readonly defaultTimeoutMs?: number;
   readonly overrides?: DirectExecutionOverrides;
+  /**
+   * When calling nodes inside a phase-2 nested superviser run, pass the
+   * engine-owned control surface for `divedra/*` superviser control add-ons.
+   */
+  readonly superviserControl?: SuperviserRuntimeControl;
 }
 
-export interface CallNodeSuccess {
+export interface CallStepExecutionSuccess {
   readonly session: WorkflowSessionState;
   readonly nodeExecution: NodeExecutionRecord;
   readonly output: Readonly<Record<string, unknown>>;
@@ -109,7 +120,7 @@ export interface CallNodeSuccess {
   readonly exitCode: 0;
 }
 
-export interface CallNodeFailure {
+export interface CallStepExecutionFailure {
   readonly session: WorkflowSessionState;
   readonly nodeExecution?: NodeExecutionRecord;
   readonly exitCode: number;
@@ -837,8 +848,8 @@ class ExecutionDispatcher {
   }
 
   async dispatch(
-    input: CallNodeInput,
-  ): Promise<Result<CallNodeSuccess, CallNodeFailure>> {
+    input: CallStepExecutionInput,
+  ): Promise<Result<CallStepExecutionSuccess, CallStepExecutionFailure>> {
     const sessionResult = await loadSession(input.workflowRunId, input);
     if (!sessionResult.ok) {
       const session = {
@@ -1397,6 +1408,9 @@ class ExecutionDispatcher {
                   ? {}
                   : { chatReplyDispatcher: input.eventReplyDispatcher }),
                 ...(input.env === undefined ? {} : { env: input.env }),
+                ...(input.superviserControl === undefined
+                  ? {}
+                  : { superviserControl: input.superviserControl }),
                 timeoutMs,
                 ...(supervisionStall === undefined ? {} : { supervisionStall }),
               });
@@ -1786,10 +1800,10 @@ class ExecutionDispatcher {
   }
 }
 
-export async function callNode(
-  input: CallNodeInput,
+export async function callStepExecution(
+  input: CallStepExecutionInput,
   adapter?: NodeAdapter,
-): Promise<Result<CallNodeSuccess, CallNodeFailure>> {
+): Promise<Result<CallStepExecutionSuccess, CallStepExecutionFailure>> {
   const effectiveAdapter =
     adapter ??
     (input.mockScenario === undefined

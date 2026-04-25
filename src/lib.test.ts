@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
-  callWorkflowNode,
   callWorkflowStep,
   createNodeAddonPayloadResolver,
   createWorkflowExecutionClient,
@@ -39,52 +38,6 @@ async function makeTempDir(): Promise<string> {
 
 async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-}
-
-async function createCallNodeFixture(
-  workflowRoot: string,
-  workflowName: string,
-): Promise<void> {
-  const workflowDirectory = path.join(workflowRoot, workflowName);
-  await mkdir(workflowDirectory, { recursive: true });
-  await writeJson(path.join(workflowDirectory, "workflow.json"), {
-    workflowId: workflowName,
-    description: "call node library fixture",
-    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
-    nodes: [
-      {
-        id: "divedra-manager",
-        kind: "root-manager",
-        nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "writer",
-        kind: "task",
-        nodeFile: "node-writer.json",
-        completion: { type: "none" },
-      },
-    ],
-    edges: [],
-    loops: [],
-    branching: { mode: "fan-out" },
-  });
-  await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
-    id: "divedra-manager",
-    executionBackend: "claude-code-agent",
-    model: "claude-opus-4-1",
-    promptTemplate: "manager",
-    variables: {},
-  });
-  await writeJson(path.join(workflowDirectory, "node-writer.json"), {
-    id: "writer",
-    executionBackend: "codex-agent",
-    model: "gpt-5",
-    promptTemplate: "writer",
-    variables: {},
-  });
 }
 
 async function createCallStepFixture(
@@ -340,7 +293,6 @@ describe("library api", () => {
       fetchSpy.mockRestore();
     }
     expect(summary.workflowName).toBe("demo");
-    expect(summary.entryNodeId).toBeUndefined();
     expect(summary.entryStepId).toBe("divedra-manager");
     expect(summary.counts.nodes).toBeUndefined();
     expect(summary.counts.structuralProjection).toEqual({
@@ -438,50 +390,6 @@ describe("library api", () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.sessionId).toBe("sess-library-list-fallback");
     expect(sessions[0]?.currentStepId).toBe("writer-step");
-  });
-
-  test("calls one workflow node through the library wrapper", async () => {
-    const root = await makeTempDir();
-    const workflowName = "call-node-lib";
-    const sessionId = "sess-call-node-lib";
-    const sessionStoreRoot = path.join(root, "sessions");
-
-    await createCallNodeFixture(root, workflowName);
-
-    const saved = await saveSession(
-      createSessionState({
-        sessionId,
-        workflowName,
-        workflowId: workflowName,
-        initialNodeId: "divedra-manager",
-        runtimeVariables: {},
-      }),
-      {
-        sessionStoreRoot,
-      },
-    );
-    expect(saved.ok).toBe(true);
-
-    const result = await callWorkflowNode({
-      ...testLegacyAuthorshipOk,
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot,
-      workflowId: workflowName,
-      workflowRunId: sessionId,
-      nodeId: "writer",
-      mockScenario: {
-        writer: {
-          provider: "scenario-mock",
-          when: { always: true },
-          payload: { summary: "library ok" },
-        },
-      },
-    });
-
-    expect(result.sessionId).toBe(sessionId);
-    expect(result.status).toBe("succeeded");
-    expect(result.output["payload"]).toEqual({ summary: "library ok" });
   });
 
   test("derives currentStepId from authored workflow state before the first execution record exists", async () => {
@@ -861,7 +769,7 @@ describe("library api", () => {
     expect(rerun.rerunFromStepId).toBe("addon-worker");
   });
 
-  test("rerunWorkflow preserves differing step and node ids for reusable-node steps", async () => {
+  test("rerunWorkflow forwards only the authored step id", async () => {
     const root = await makeTempDir();
     const workflowName = "rerun-call-step-lib";
     const sessionId = "sess-rerun-call-step-lib";
@@ -906,7 +814,6 @@ describe("library api", () => {
       ...options,
       sourceSessionId: sessionId,
       fromStepId: "writer-step",
-      fromNodeId: "writer-node",
     });
 
     expect(runWorkflowSpy).toHaveBeenCalledWith(
@@ -914,14 +821,12 @@ describe("library api", () => {
       expect.objectContaining({
         rerunFromSessionId: sessionId,
         rerunFromStepId: "writer-step",
-        rerunFromNodeId: "writer-node",
       }),
     );
     expect(rerun).toMatchObject({
       sessionId: "sess-rerun-call-step-lib-2",
       status: "running",
       rerunFromStepId: "writer-step",
-      rerunFromNodeId: "writer-node",
       exitCode: 0,
     });
   });
@@ -1123,6 +1028,32 @@ describe("getSupervisionSummary", () => {
     expect(summary?.superviserWorkflowId).toBe("sup-wf");
     expect(summary?.workflowPatchCount).toBe(1);
     expect(summary?.latestRemediationId).toBeUndefined();
+    expect(summary?.nestedSuperviserSessionId).toBeUndefined();
+  });
+
+  test("includes nestedSuperviserSessionId when present on supervision", () => {
+    const session = {
+      ...createSessionState({
+        sessionId: "s1",
+        workflowName: "w",
+        workflowId: "w",
+        initialNodeId: "m",
+        runtimeVariables: {},
+      }),
+      supervision: {
+        supervisionRunId: "run-n",
+        targetWorkflowId: "target-wf",
+        superviserWorkflowId: "sup-wf",
+        status: "running" as const,
+        attemptCount: 0,
+        workflowPatchCount: 0,
+        nestedSuperviserSessionId: "nested-sess-1",
+        incidents: [],
+      },
+    };
+    expect(getSupervisionSummary(session)?.nestedSuperviserSessionId).toBe(
+      "nested-sess-1",
+    );
   });
 
   test("maps latest remediation id when remediations are present", () => {

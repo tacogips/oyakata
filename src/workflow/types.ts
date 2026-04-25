@@ -255,6 +255,16 @@ export interface SubWorkflowConversation {
   readonly stopWhen: string;
 }
 
+/**
+ * Top-level `workflow.json` before normalization. Two validation paths exist:
+ * - **Step-addressed (strict)**: with `entryStepId` and `steps`, {@link import("./validate").isStrictWorkflowAuthorshipValidation}
+ *   gates rejection of legacy graph keys in favor of `nodes` and step `transitions` (see `normalizeStepAddressedWorkflow`
+ *   in `validate.ts` for the authoritative rejected-field list, including top-level
+ *   `managerNodeId`, `entryNodeId`, `subWorkflows`, `subWorkflowConversations`, `edges`, `loops`,
+ *   `branching`, and `workflowCalls`).
+ * - **Legacy node graph**: `normalizeWorkflow` may still accept some of those fields until phase 133
+ *   module 1 removes the compatibility types and branches.
+ */
 export interface AuthoredWorkflowJson
   extends Readonly<Record<string, unknown>> {
   readonly workflowId: string;
@@ -265,6 +275,11 @@ export interface AuthoredWorkflowJson
   readonly entryNodeId?: string;
   readonly managerStepId?: string;
   readonly entryStepId?: string;
+  /**
+   * Legacy **node-graph** authoring only. Step-addressed bundles (`entryStepId` + `steps`) must
+   * not use this field; cross-workflow calls use `steps[].transitions` with `toWorkflowId` /
+   * `resumeStepId` instead (see `design-workflow-json.md`).
+   */
   readonly workflowCalls?: readonly WorkflowCallRef[];
   readonly subWorkflows?: readonly SubWorkflowRef[];
   readonly subWorkflowConversations?: readonly SubWorkflowConversation[];
@@ -280,11 +295,29 @@ export interface AuthoredWorkflowJson
   };
 }
 
+/**
+ * Normalized workflow from validation/load. {@link AuthoredWorkflowJson} may omit
+ * several fields; the validator projects step graphs and, while phase 133
+ * (`impl-plans/workflow-legacy-compatibility-removal.md`) is in progress, may
+ * still synthesize legacy runtime companions (`managerNodeId`, `edges`, empty
+ * structural `subWorkflows`, `branching`, etc.) from step-addressed authoring.
+ * New authoring should be step-only (`entryStepId`, `steps`, `nodes` registry);
+ * use {@link isStrictWorkflowAuthorshipValidation} / `rejectLegacyWorkflowAuthoring`
+ * to reject node-graph-only bundles when loading.
+ */
 export interface WorkflowJson {
   readonly workflowId: string;
   readonly description: string;
   readonly defaults: WorkflowDefaults;
   readonly prompts?: WorkflowPrompts;
+  /**
+   * Compatibility name retained while phase 133 is in progress. For normalized
+   * **step-addressed** bundles, validation sets this to `managerStepId ?? entryStepId`
+   * (the same id space as the engine queue and materialized `nodes[].id` for the
+   * manager/entry **step**), not necessarily the underlying registry id from
+   * `steps[].nodeId`. Legacy node-graph bundles use the root manager's node id
+   * here. Prefer {@link resolveWorkflowManagerRuntimeId} at call sites.
+   */
   readonly managerNodeId: string;
   readonly hasManagerNode?: boolean;
   readonly entryNodeId?: string;
@@ -301,6 +334,26 @@ export interface WorkflowJson {
   readonly branching: {
     readonly mode: "fan-out";
   };
+}
+
+/**
+ * Primary manager/entry **runtime** id for engine routing, mailbox handoff, and
+ * new-session bootstrap. For step-addressed normalized bundles (`entryStepId`
+ * and `steps` present), returns `managerStepId ?? entryStepId` (a **step** id
+ * in the same id space as `session.queue` items and the manager step's
+ * materialized `nodes[].id`), not `steps[].nodeId` from the registry. Call sites
+ * comparing to session/manager context should use this rather than re-reading
+ * {@link WorkflowJson.managerNodeId} (slated for removal in
+ * `impl-plans/workflow-legacy-compatibility-removal.md`). For legacy node-graph
+ * bundles, returns the root `managerNodeId` (node id).
+ */
+export function resolveWorkflowManagerRuntimeId(
+  workflow: WorkflowJson,
+): string {
+  if (workflow.steps !== undefined && workflow.entryStepId !== undefined) {
+    return workflow.managerStepId ?? workflow.entryStepId;
+  }
+  return workflow.managerNodeId;
 }
 
 export interface ArgumentBinding {
@@ -551,13 +604,97 @@ export type ResolvedAgentWorkerAddon =
   | ResolvedCodexWorkerAddon
   | ResolvedClaudeCodeWorkerAddon;
 
+/**
+ * Phase-2 nested superviser control-plane add-ons. Invoked as `nodeType: "addon"`
+ * and executed natively when a {@link import("./superviser-control").SuperviserRuntimeControl}
+ * handle is present on the execution input (nested superviser session).
+ */
+export const SUPERVISER_CONTROL_ADDON_NAMES = [
+  "divedra/start-workflow",
+  "divedra/get-workflow-status",
+  "divedra/get-workflow-execution-details",
+  "divedra/rerun-workflow",
+  "divedra/load-workflow-definition",
+  "divedra/save-workflow-definition",
+] as const;
+
+export type SuperviserControlAddonName =
+  (typeof SUPERVISER_CONTROL_ADDON_NAMES)[number];
+
+const SUPERVISER_CONTROL_ADDON_METADATA = {
+  "divedra/start-workflow": {
+    description:
+      "Start the supervised target workflow (nested superviser control; phase-2).",
+    providerOperationId: "start-workflow",
+  },
+  "divedra/get-workflow-status": {
+    description:
+      "Read high-level target workflow session status (nested superviser control; phase-2).",
+    providerOperationId: "get-workflow-status",
+  },
+  "divedra/get-workflow-execution-details": {
+    description:
+      "Read extended target session details (nested superviser control; phase-2).",
+    providerOperationId: "get-workflow-execution-details",
+  },
+  "divedra/rerun-workflow": {
+    description:
+      "Rerun the target workflow (nested superviser control; phase-2).",
+    providerOperationId: "rerun-workflow",
+  },
+  "divedra/load-workflow-definition": {
+    description:
+      "Load the mutable target workflow definition bundle (nested superviser control; phase-2).",
+    providerOperationId: "load-workflow-definition",
+  },
+  "divedra/save-workflow-definition": {
+    description:
+      "Write an updated target workflow definition revision (nested superviser control; phase-2).",
+    providerOperationId: "save-workflow-definition",
+  },
+} as const satisfies Record<
+  SuperviserControlAddonName,
+  {
+    readonly description: string;
+    readonly providerOperationId: string;
+  }
+>;
+
+const SUPERVISER_CONTROL_ADDON_NAME_SET: ReadonlySet<string> = new Set(
+  SUPERVISER_CONTROL_ADDON_NAMES,
+);
+
+export function isSuperviserControlAddonName(
+  name: string,
+): name is SuperviserControlAddonName {
+  return SUPERVISER_CONTROL_ADDON_NAME_SET.has(name);
+}
+
+export function describeSuperviserControlAddon(
+  name: SuperviserControlAddonName,
+): string {
+  return SUPERVISER_CONTROL_ADDON_METADATA[name].description;
+}
+
+export function getSuperviserControlAddonProviderOperationId(
+  name: SuperviserControlAddonName,
+): string {
+  return SUPERVISER_CONTROL_ADDON_METADATA[name].providerOperationId;
+}
+
+export interface ResolvedSuperviserControlAddon {
+  readonly name: SuperviserControlAddonName;
+  readonly version: "1";
+}
+
 export type ResolvedNodeAddon =
   | ResolvedChatReplyWorkerAddon
   | ResolvedXGatewayReadAddon
   | ResolvedXGatewayAddon
   | ResolvedMailGatewayReadAddon
   | ResolvedMailGatewayAddon
-  | ResolvedAgentWorkerAddon;
+  | ResolvedAgentWorkerAddon
+  | ResolvedSuperviserControlAddon;
 
 export interface NodePayload {
   readonly id: string;
@@ -786,6 +923,11 @@ export interface SupervisionRunState {
   /** Active policy for this cycle; omitted in older persisted sessions until backfilled. */
   readonly policy?: AutoImprovePolicy;
   /**
+   * When phase-2 nested superviser execution is active, the session id of the
+   * superviser workflow run that owns this supervision cycle.
+   */
+  readonly nestedSuperviserSessionId?: string;
+  /**
    * Absolute path to the workflow bundle directory (canonical source for in-place, or
    * execution-scoped copy under the artifact root). Used to resume loads after restart.
    */
@@ -808,7 +950,115 @@ export interface SupervisionSummary {
   readonly latestIncidentId?: string;
   readonly latestRemediationId?: string;
   readonly mutableWorkflowDir?: string;
+  readonly nestedSuperviserSessionId?: string;
 }
+
+/**
+ * Shared request fields for nested-superviser control add-on `arguments` (phase 2).
+ * The runtime issues a {@link SuperviserControlAuth} when launching the nested superviser;
+ * each control call must repeat it so the engine can scope operations to the active cycle.
+ */
+export interface SuperviserControlAuth {
+  readonly supervisionRunId: string;
+  readonly targetSessionId: string;
+}
+
+export interface StartWorkflowAddonInput {
+  readonly workflowId: string;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly autoImprove?: AutoImprovePolicy;
+}
+
+export interface GetWorkflowStatusAddonInput {
+  readonly sessionId: string;
+}
+
+export interface GetWorkflowExecutionDetailsAddonInput {
+  readonly sessionId: string;
+}
+
+export interface RerunWorkflowAddonInput {
+  readonly sessionId: string;
+  /**
+   * When omitted, nested `SuperviserRuntimeControl` resolves a step id from the
+   * target session and workflow (current step, else manager/entry anchor) so
+   * `runWorkflow` receives `rerunFromStepId` with `rerunFromSessionId`.
+   */
+  readonly rerunFromStepId?: string;
+}
+
+export interface LoadWorkflowDefinitionAddonInput {
+  readonly workflowId: string;
+  readonly mutableWorkflowDir: string;
+}
+
+export interface SaveWorkflowDefinitionAddonInput {
+  readonly workflowId: string;
+  readonly mutableWorkflowDir: string;
+  /**
+   * `workflow` + `nodePayloads` bundle to write via {@link import("./save").saveWorkflowToDisk}.
+   */
+  readonly bundle: {
+    readonly workflow: Readonly<Record<string, unknown>>;
+    readonly nodePayloads: Readonly<Record<string, unknown>>;
+  };
+}
+
+export interface StartTargetWorkflowOutput {
+  readonly sessionId: string;
+  /** Mirrors {@link import("./session").SessionStatus} (string union, keeps types acyclic). */
+  readonly status: string;
+}
+
+export interface GetWorkflowStatusOutput {
+  readonly sessionId: string;
+  readonly status: string;
+  readonly workflowId: string;
+  readonly currentNodeId?: string;
+  readonly lastError?: string;
+}
+
+export interface GetWorkflowExecutionDetailsOutput {
+  readonly session: Readonly<Record<string, unknown>>;
+}
+
+export interface RerunTargetWorkflowOutput {
+  readonly sessionId: string;
+  readonly status: string;
+}
+
+export interface LoadWorkflowDefinitionOutput {
+  readonly workflowId: string;
+  readonly mutableWorkflowDir: string;
+  /**
+   * Normalized `workflow.json` object plus any node payload records the load path produced.
+   * Shape follows `loadWorkflowFromDisk` bundle view used by the runtime.
+   */
+  readonly bundle: Readonly<Record<string, unknown>>;
+}
+
+export interface SaveWorkflowDefinitionOutput {
+  readonly saved: true;
+  readonly workflowId: string;
+  readonly mutableWorkflowDir: string;
+}
+
+/**
+ * Add-on `arguments` must include {@link SuperviserControlAuth} fields plus
+ * the fields for the selected operation; see `superviser-control.ts` parsing helpers.
+ */
+export type StartTargetWorkflowControlArguments = SuperviserControlAuth &
+  StartWorkflowAddonInput;
+export type GetWorkflowStatusControlArguments = SuperviserControlAuth &
+  GetWorkflowStatusAddonInput;
+export type GetWorkflowExecutionDetailsControlArguments =
+  SuperviserControlAuth & GetWorkflowExecutionDetailsAddonInput;
+export type RerunWorkflowControlArguments = SuperviserControlAuth &
+  RerunWorkflowAddonInput;
+export type LoadWorkflowDefinitionControlArguments = SuperviserControlAuth &
+  LoadWorkflowDefinitionAddonInput;
+export type SaveWorkflowDefinitionControlArguments = SuperviserControlAuth &
+  SaveWorkflowDefinitionAddonInput;
 
 /**
  * Locates a workflow bundle the superviser may mutate. For `execution-copy`, files live under

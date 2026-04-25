@@ -29,8 +29,9 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Without a direct `--workflow-root`, resolve `<name>` from the scoped workflow catalog: project scope first, then user scope.
   - Local run output includes the resolved workflow `source` scope and workflow directory before execution/session details.
   - Accepts `--working-dir` / `--working-directory` to override the workflow execution working directory for that run.
-  - Current implementation: `--auto-improve` runs the target workflow under the engine-owned supervision loop described in `design-auto-improve-superviser-mode.md` phase 1. The CLI exposes the supervision policy surface, persists incidents/remediations on the target session, and uses an execution-scoped mutable workflow copy by default when workflow patching is required.
-  - Phase-2 follow-up: run the reserved `superviserWorkflowId` as a paired nested superviser workflow while keeping the same operator-visible policy and audit surfaces.
+  - Current implementation: `--auto-improve` runs the target workflow under the engine-owned phase-1 supervision loop. The CLI exposes the supervision policy surface, persists incidents/remediations on the target session, and uses an execution-scoped mutable workflow copy by default when workflow patching is required.
+  - Optional nested supervision: `--nested-superviser` runs `superviserWorkflowId` as a paired nested superviser workflow while keeping the same operator-visible policy and audit surfaces.
+  - When `--endpoint` is used, the GraphQL execution transport must forward the same supervision policy surface as the local engine path; remote execution must not silently drop `--auto-improve` or `--nested-superviser`.
 - `session progress <session-id>`
   - Show queue, execution counts, and per-step restart/execution summary.
 - `session status <session-id>`
@@ -38,9 +39,12 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 - `session resume <session-id>`
   - Continue an interrupted session from persisted state.
   - Accepts `--working-dir` / `--working-directory` to override the execution working directory used for resumed step execution.
+  - The same supervision policy surface (`--auto-improve`, optional `--nested-superviser`) must work through both local and `--endpoint` GraphQL execution paths.
 - `session rerun <session-id> <step-id>`
   - Start a new run from a chosen step in an existing session.
   - Accepts `--working-dir` / `--working-directory` to override the workflow execution working directory for the rerun.
+  - Step ids are the only supported rerun target on active command/control surfaces; do not add node-id aliases to new APIs.
+  - `--nested-superviser` is not a valid rerun flag; nested supervision is meaningful only for supervised start/resume flows.
 - `session export <session-id>`
   - Export the persisted workflow run as JSON to stdout or to a file.
   - Includes session state, runtime step/node execution rows, runtime node logs, and communication snapshots.
@@ -51,6 +55,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Execute one step directly against an existing run context for local debugging.
   - The same call contract is the target runtime primitive for cross-workflow invocation; calling another workflow means targeting that workflow's callable entry step through `call-step` semantics rather than through a separate `workflowCalls` feature.
   - Support explicit continuation controls such as prompt variant selection, backend-session reuse, and timeout override so the same reusable node can be revisited through a different step for flows such as self-review and timeout recovery.
+  - New API work should follow the same rule: step-addressed direct execution only, with no additive `call-node`-style aliases. The legacy `call-node` command/library surface is removed rather than retained as a compatibility synonym.
 - `gql <graphql-document>`
   - Execute a GraphQL query or mutation against the canonical control-plane endpoint.
   - Manager-node LLM/tool use should call GraphQL mutations such as `sendManagerMessage` through this command rather than dedicated domain subcommands.
@@ -74,7 +79,6 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - When `DIVEDRA_WORKFLOW_EXECUTION_ID`, `DIVEDRA_WORKFLOW_ID`, and the ambient step/node execution context variables are present, hook events are persisted as runtime hook-event records keyed by workflow execution id, backend agent session id, node execution id, and optional manager session id.
   - Outside a divedra-launched agent process, the command remains pass-through by default and returns empty JSON `{}` unless a policy handler makes a decision.
   - Exit 0 with JSON on stdout for success; exit 2 with reason on stderr to block.
-  - Supporting design: `design-docs/specs/design-hook-command.md`.
 - `hook snippet --vendor claude-code|codex|gemini`
   - Print a paste-ready JSON hook configuration snippet for the selected backend.
   - The generated snippet registers the vendor-detecting `divedra hook` command for the recommended lifecycle events.
@@ -95,7 +99,6 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - `--dry-run` forwards the replay through workflow execution dry-run behavior.
   - `--reason` records operator intent in the replay receipt raw artifact.
   - Local event dispatch commands accept `--mock-scenario <path>` and reject combining it with `--endpoint`.
-  - Supporting design: `design-docs/specs/design-event-listener-workflow-trigger.md`.
 
 ### Flags and Options
 
@@ -119,7 +122,7 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | `--max-steps`           | number        | none                                                              | Hard cap on step executions per run                                                                                                                        |
 | `--default-timeout-ms`  | number        | none                                                              | Override default node timeout for this run                                                                                                                 |
 | `--auto-improve`        | boolean       | `false`                                                           | Run the workflow under phase-1 `auto improve mode` using the engine-owned supervision loop                                                                 |
-| `--superviser-workflow` | string        | built-in default superviser workflow id                           | Reserved workflow id for the phase-2 nested superviser workflow; persisted on supervision state today                                                     |
+| `--superviser-workflow` | string        | built-in default superviser workflow id                           | Workflow id for nested superviser execution when `--nested-superviser` is enabled; persisted on supervision state                                         |
 | `--monitor-interval-ms` | number        | none                                                              | For `auto improve mode`: control supervision polling / observation cadence                                                                                 |
 | `--stall-timeout-ms`    | number        | none                                                              | For `auto improve mode`: mark the target workflow stalled when no progress is observed within this interval; must be greater than or equal to `--monitor-interval-ms` |
 | `--max-supervised-attempts` | number    | none                                                              | For `auto improve mode`: cap total supervised target workflow attempts                                                                                     |
@@ -200,12 +203,9 @@ scope catalog lookup.
 Invalid values for `--scope` or `DIVEDRA_WORKFLOW_SCOPE` are usage errors. The
 CLI must fail rather than silently treating the value as `auto`.
 
-Supporting design for jump-driven routing, timeout continuation, code-manager defaults, and auto-improve supervision:
-`design-docs/specs/design-node-jump-and-code-manager-runtime.md`.
-Supporting design:
-`design-docs/specs/design-auto-improve-superviser-mode.md`.
-Supporting design:
-`design-docs/specs/design-workflow-steps-and-node-reuse.md`.
+These CLI behaviors correspond to the current step-addressed runtime in
+`src/workflow/`, including jump-driven routing, timeout continuation, scoped
+catalog lookup, and engine-owned auto-improve supervision.
 
 Scope root defaults:
 
@@ -285,7 +285,8 @@ GraphQL is the canonical domain-parameter transport for:
 - local-only debug flags such as `--mock-scenario` are not forwarded when a command is executed remotely through GraphQL,
 - workflow tooling should use GraphQL rather than parallel REST transports.
 
-Supporting design: `design-docs/specs/design-graphql-manager-control-plane.md`.
+The canonical transport is the current GraphQL schema and server implementation
+under `src/graphql/` and `src/server/`.
 
 ### Exit Codes
 

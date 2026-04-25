@@ -1,4 +1,5 @@
 import type { MockNodeScenario } from "../workflow/adapter";
+import type { AutoImprovePolicyInput } from "../workflow/auto-improve-policy";
 import type { CreateWorkflowTemplateMode } from "../workflow/create";
 import type { WorkflowExecutionSummary } from "../shared/ui-contract";
 import type {
@@ -38,10 +39,7 @@ import type {
   WorkflowSessionState,
 } from "../workflow/session";
 import type { ChatReplyDispatcher, LoadOptions } from "../workflow/types";
-import type {
-  NormalizedWorkflowBundle,
-  ValidationIssue,
-} from "../workflow/types";
+import type { ValidationIssue } from "../workflow/types";
 import type { CommunicationService } from "../workflow/communication-service";
 
 export interface GraphqlRequestContext
@@ -184,6 +182,8 @@ export interface ManagerSessionView {
 export interface ExecuteWorkflowInput {
   readonly workflowName: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly autoImprove?: AutoImprovePolicyInput;
+  readonly nestedSuperviser?: boolean;
   readonly workingDirectory?: string;
   readonly mockScenario?: MockNodeScenario;
   readonly async?: boolean;
@@ -205,7 +205,7 @@ export interface CreateWorkflowDefinitionInput {
 
 export interface SaveWorkflowDefinitionInput {
   readonly workflowName: string;
-  readonly bundle: NormalizedWorkflowBundle;
+  readonly bundle: GraphqlWorkflowBundleInput;
   readonly expectedRevision?: string;
 }
 
@@ -219,7 +219,12 @@ export interface SaveWorkflowDefinitionPayload
 
 export interface ValidateWorkflowDefinitionInput {
   readonly workflowName: string;
-  readonly bundle?: NormalizedWorkflowBundle;
+  readonly bundle?: GraphqlWorkflowBundleInput;
+}
+
+export interface GraphqlWorkflowBundleInput {
+  readonly workflow: unknown;
+  readonly nodePayloads: unknown;
 }
 
 export interface ValidateWorkflowDefinitionPayload extends ValidationResponse {}
@@ -234,6 +239,8 @@ export interface ExecuteWorkflowPayload {
 
 export interface ResumeWorkflowExecutionInput {
   readonly workflowExecutionId: string;
+  readonly autoImprove?: AutoImprovePolicyInput;
+  readonly nestedSuperviser?: boolean;
   readonly workingDirectory?: string;
   readonly dryRun?: boolean;
   readonly maxSteps?: number;
@@ -250,8 +257,8 @@ export interface ResumeWorkflowExecutionPayload {
 
 export interface RerunWorkflowExecutionInput {
   readonly workflowExecutionId: string;
-  readonly stepId?: string;
-  readonly nodeId?: string;
+  readonly stepId: string;
+  readonly autoImprove?: AutoImprovePolicyInput;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly workingDirectory?: string;
   readonly dryRun?: boolean;
@@ -265,7 +272,6 @@ export interface RerunWorkflowExecutionPayload {
   readonly sessionId: string;
   readonly status: WorkflowSessionState["status"];
   readonly rerunFromStepId?: string;
-  readonly rerunFromNodeId?: string;
   readonly exitCode: number;
 }
 

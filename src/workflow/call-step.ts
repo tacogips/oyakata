@@ -1,26 +1,26 @@
 import type { NodeAdapter } from "./adapter";
 import { err, ok, type Result } from "./result";
 import {
-  callNode,
-  type CallNodeFailure,
-  type CallNodeInput,
+  callStepExecution,
+  type CallStepExecutionFailure,
+  type CallStepExecutionInput,
   type DirectExecutionOverrides,
-  type CallNodeSuccess,
-} from "./call-node";
+  type CallStepExecutionSuccess,
+} from "./call-step-impl";
 
 export interface CallStepOverrides extends DirectExecutionOverrides {}
 
 export interface CallStepInput
-  extends Omit<CallNodeInput, "nodeId" | "overrides"> {
+  extends Omit<CallStepExecutionInput, "nodeId" | "overrides"> {
   readonly stepId: string;
   readonly overrides?: CallStepOverrides;
 }
 
-export interface CallStepSuccess extends CallNodeSuccess {
+export interface CallStepSuccess extends CallStepExecutionSuccess {
   readonly stepId: string;
 }
 
-export interface CallStepFailure extends CallNodeFailure {
+export interface CallStepFailure extends CallStepExecutionFailure {
   readonly stepId: string;
 }
 
@@ -74,9 +74,10 @@ export async function callStep(
 ): Promise<Result<CallStepSuccess, CallStepFailure>> {
   // Step-addressed validation materializes each step as a runtime node ref with
   // `nodes[].id === step.id` (see `normalizeStepAddressedWorkflow`), and node
-  // payloads are keyed the same way in the loaded bundle. Delegate to `callNode`
-  // using that execution address without re-resolving `step.nodeId` here.
-  const result = await callNode(
+  // payloads are keyed the same way in the loaded bundle. Delegate to the
+  // internal direct step executor using that execution address without
+  // re-resolving `step.nodeId` here.
+  const result = await callStepExecution(
     {
       ...input,
       nodeId: input.stepId,

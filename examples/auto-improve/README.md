@@ -13,12 +13,9 @@ and state live on the target **session** and survive resume.
   opt-in and mutates the source bundle directory.
 - **Inspection**: library `getSupervisionSummary`, GraphQL `session.supervision`
   on workflow execution types.
-- `superviserWorkflowId` (default `divedra/default-superviser`) is **reserved** for
-  a future paired superviser **workflow**; the current tree runs remediation logic
-  in the engine, not a separate superviser run.
+- `superviserWorkflowId` defaults to `divedra-default-superviser` (see `examples/default-superviser/`). **Without** `--nested-superviser`, remediation is still the engine `runAutoImprove` loop. **With** `--nested-superviser`, that bundle runs as a nested step-addressed workflow and drives the target via `divedra/*` control add-ons (the engine injects `supervisionRunId`, `targetSessionId`, and `superviserTargetWorkflowId` as runtime variables on the superviser session).
 
-See `design-docs/specs/design-auto-improve-superviser-mode.md` and
-`impl-plans/completed/auto-improve-superviser-mode.md` for the full model and phasing.
+See `design-docs/specs/architecture.md`, `design-docs/specs/design-auto-improve-superviser-mode.md`, and `impl-plans/completed/auto-improve-superviser-mode.md` for the model and phasing.
 
 ## Runnable example: fail once, succeed on supervised rerun
 

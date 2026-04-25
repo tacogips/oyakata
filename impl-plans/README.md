@@ -26,19 +26,21 @@ impl-plans/
 
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
-| `auto-improve-superviser-workflow-phase-2` | Ready | `design-auto-improve-superviser-mode`, `architecture`, `command` |
+| `workflow-legacy-compatibility-removal` | In Progress | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes` |
 
 ## Completed Plans
 
 | Plan                                                     | Completed  | Design Reference                                                                                                 |
 | -------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| `step-addressed-workflow-runtime-cutover`               | 2026-04-29 | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-workflow-steps-and-node-reuse`, `architecture`, `command`, `qa-step-schema-workflow-calls` |
+| `auto-improve-superviser-workflow-phase-2`               | 2026-04-25 | `design-auto-improve-superviser-mode`, `architecture`, `command`                                                  |
+| `graphql-supervision-execution-parity`                 | 2026-04-26 | `design-auto-improve-superviser-mode`, `command`                                                                  |
+| `step-addressed-workflow-runtime-cutover`               | 2026-04-29 | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-workflow-steps-and-node-reuse`, `architecture`, `command` |
 | `auto-improve-superviser-mode`                          | 2026-04-25 | `design-auto-improve-superviser-mode`, `design-node-jump-and-code-manager-runtime`, `architecture`, `command`     |
 | `auto-improve-supervision-review-follow-up`            | 2026-04-25 | `design-auto-improve-superviser-mode`, `architecture`, `command`                                                   |
 | `scoped-local-addons`                                    | 2026-04-21 | `design-node-addon-catalog-and-chat-reply-worker`, `design-user-scope-workflows`                                 |
 | `event-root-manager-session-stickiness-record-lifecycle` | 2026-04-22 | `design-event-listener-workflow-trigger`                                                                         |
 | `event-root-manager-session-stickiness-binding-scope`    | 2026-04-22 | `design-event-listener-workflow-trigger`                                                                         |
-| `event-root-manager-session-stickiness`                  | 2026-04-22 | `design-node-session-reuse`, `design-event-listener-workflow-trigger`, `design-manager-driven-call-node-runtime` |
+| `event-root-manager-session-stickiness`                  | 2026-04-22 | `design-node-session-reuse`, `design-event-listener-workflow-trigger`, `design-node-jump-and-code-manager-runtime` |
 | `scoped-workflow-catalog-safety-follow-up`               | 2026-04-21 | `design-user-scope-workflows`, `architecture`                                                                    |
 | `scoped-workflow-source-visibility`                      | 2026-04-21 | `design-user-scope-workflows`, `command`                                                                         |
 | `scoped-workflow-graphql-server`                         | 2026-04-21 | `design-user-scope-workflows`                                                                                    |
@@ -76,7 +78,7 @@ impl-plans/
 | `event-listener-workflow-trigger-foundation`             | 2026-04-20 | `design-event-listener-workflow-trigger`                                                                         |
 | `container-runtime-env-isolation`                        | 2026-04-20 | `design-container-runtime-contract`                                                                              |
 | `root-data-dir-project-root-scoping`                     | 2026-03-26 | `command`, `architecture`                                                                                        |
-| `workflow-execution-working-directory`                   | 2026-04-12 | `design-workflow-working-directory`, `command`, `architecture`                                                   |
+| `workflow-execution-working-directory`                   | 2026-04-12 | `command`, `architecture`, `notes`                                                                                |
 | `hook-command-review-follow-up`                          | 2026-04-09 | `design-hook-command`                                                                                            |
 | `hook-command-cross-vendor-alignment`                    | 2026-04-09 | `design-hook-command`, `command`                                                                                 |
 | `hook-command-hardening`                                 | 2026-04-09 | `design-hook-command`, `command`                                                                                 |
@@ -86,60 +88,60 @@ impl-plans/
 | `tui-opentui-solid-migration`                            | 2026-03-26 | `design-tui`, `command`                                                                                          |
 | `tui-workflow-browser-and-json-input`                    | 2026-03-26 | `design-tui`                                                                                                     |
 | `remove-web-ui`                                          | 2026-03-24 | `command`                                                                                                        |
-| `manager-kind-simplification`                            | 2026-03-18 | `design-manager-kind-simplification`, `design-workflow-json`                                                     |
+| `manager-kind-simplification`                            | 2026-03-18 | `design-workflow-json`, `architecture`, `notes`                                                                   |
 | `workflow-core-and-validation`                           | 2026-02-23 | `design-data-model`, `design-workflow-json`, `architecture`                                                      |
 | `workflow-cli-mvp`                                       | 2026-02-23 | `command`, `design-workflow-json`                                                                                |
 | `workflow-execution-and-session`                         | 2026-02-24 | `architecture`, `command`                                                                                        |
-| `workflow-serve-mvp`                                     | 2026-02-23 | `design-workflow-web-editor`, `architecture`, `command`                                                          |
-| `workflow-vcs-handoff-checkpoints`                       | 2026-02-23 | `architecture`, `design-vcs-handoff-checkpoints`                                                                 |
-| `workflow-save-revision-api`                             | 2026-02-24 | `design-workflow-web-editor`                                                                                     |
-| `workflow-web-editor-execution`                          | 2026-03-15 | `design-workflow-web-editor`                                                                                     |
+| `workflow-serve-mvp`                                     | 2026-02-23 | `architecture`, `command`, `notes`                                                                                |
+| `workflow-vcs-handoff-checkpoints`                       | 2026-02-23 | `architecture`, `notes`                                                                                           |
+| `workflow-save-revision-api`                             | 2026-02-24 | `architecture`, `notes`                                                                                          |
+| `workflow-web-editor-execution`                          | 2026-03-15 | `architecture`, `notes`                                                                                          |
 | `workflow-deterministic-mock-and-rerun`                  | 2026-02-24 | `architecture`, `command`                                                                                        |
-| `autonomous-execution-gap-closure`                       | 2026-02-24 | `design-autonomous-execution-gap-closure`                                                                        |
+| `autonomous-execution-gap-closure`                       | 2026-02-24 | `architecture`, `notes`                                                                                         |
 | `workflow-tui-mvp`                                       | 2026-02-25 | `design-tui`                                                                                                     |
 | `workflow-tui-cli-parity`                                | 2026-02-25 | `design-tui`                                                                                                     |
 | `workflow-tui-resume-decoupling`                         | 2026-02-25 | `design-tui`                                                                                                     |
 | `node-execution-backend-selection`                       | 2026-03-07 | `architecture`                                                                                                   |
 | `node-output-contract-and-validation`                    | 2026-03-07 | `design-node-output-contract`, `design-data-model`, `architecture`                                               |
-| `divedra-manager-prompt-contract`                        | 2026-03-07 | `design-divedra-manager-prompt-contract`, `architecture`                                                         |
+| `divedra-manager-prompt-contract`                        | 2026-03-07 | `architecture`, `notes`                                                                                          |
 | `node-session-reuse`                                     | 2026-03-07 | `design-node-session-reuse`, `architecture`, `design-data-model`                                                 |
-| `node-backend-model-separation`                          | 2026-03-07 | `design-node-backend-model-separation`, `design-data-model`, `design-workflow-json`, `architecture`              |
-| `runtime-owned-external-output-publication`              | 2026-03-08 | `design-runtime-owned-external-output-publication`, `architecture`, `design-node-output-contract`                |
+| `node-backend-model-separation`                          | 2026-03-07 | `design-data-model`, `design-workflow-json`, `architecture`, `notes`                                             |
+| `runtime-owned-external-output-publication`              | 2026-03-08 | `architecture`, `design-node-output-contract`, `notes`                                                            |
 | `mailbox-delivery-manager-ownership`                     | 2026-03-08 | `design-node-mailbox`, `architecture`                                                                            |
 | `mailbox-output-snapshot-fidelity`                       | 2026-03-08 | `design-node-mailbox`, `architecture`                                                                            |
 | `mailbox-cross-boundary-routing-scope`                   | 2026-03-09 | `design-node-mailbox`, `architecture`                                                                            |
 | `mailbox-cross-boundary-edge-validation`                 | 2026-03-09 | `design-node-mailbox`, `design-workflow-json`, `architecture`                                                    |
 | `mailbox-artifact-atomic-writes`                         | 2026-03-09 | `design-node-mailbox`, `architecture`                                                                            |
-| `branch-and-loop-block-subworkflows`                     | 2026-03-09 | `design-workflow-json`, `design-data-model`, `architecture`, `design-workflow-web-editor`                        |
-| `refactoring-shared-ui-contract`                         | 2026-03-10 | `design-refactoring-shared-ui-contract`                                                                          |
-| `refactoring-shared-visualization-derivation`            | 2026-03-10 | `design-refactoring-shared-visualization-derivation`                                                             |
-| `refactoring-shared-editable-workflow-types`             | 2026-03-10 | `design-refactoring-shared-editable-workflow-types`                                                              |
-| `refactoring-editor-api-client`                          | 2026-03-10 | `design-refactoring-editor-api-client`                                                                           |
-| `refactoring-editor-workflow-operations`                 | 2026-03-10 | `design-refactoring-editor-workflow-operations`                                                                  |
-| `refactoring-editor-support-helpers`                     | 2026-03-10 | `design-refactoring-editor-support-helpers`                                                                      |
-| `refactoring-editor-state-helpers`                       | 2026-03-10 | `design-refactoring-editor-state-helpers`                                                                        |
-| `refactoring-editor-mutation-helpers`                    | 2026-03-10 | `design-refactoring-editor-mutation-helpers`                                                                     |
-| `refactoring-editor-data-loaders`                        | 2026-03-10 | `design-refactoring-editor-data-loaders`                                                                         |
-| `refactoring-editor-field-updates`                       | 2026-03-09 | `design-refactoring-editor-field-updates`                                                                        |
-| `refactoring-server-api-request-parsing`                 | 2026-03-09 | `design-refactoring-server-api-request-parsing`                                                                  |
-| `refactoring-editor-execution-helpers`                   | 2026-03-09 | `design-refactoring-editor-execution-helpers`                                                                    |
-| `refactoring-editor-action-helpers`                      | 2026-03-10 | `design-refactoring-editor-action-helpers`                                                                       |
-| `refactoring-server-ui-asset-serving`                    | 2026-03-10 | `design-refactoring-server-ui-asset-serving`                                                                     |
-| `refactoring-editor-component-boundaries`                | 2026-03-09 | `design-refactoring-editor-component-boundaries`                                                                 |
-| `refactoring-server-workflow-bundle-parsing`             | 2026-03-09 | `design-refactoring-server-workflow-bundle-parsing`                                                              |
-| `refactoring-editor-main-panel-component`                | 2026-03-09 | `design-refactoring-editor-main-panel-component`                                                                 |
-| `refactoring-frontend-solidjs-migration`                 | 2026-03-09 | `design-workflow-web-editor`, `design-refactoring-investigation-plan`                                            |
-| `refactoring-editor-session-controller`                  | 2026-03-09 | `design-refactoring-editor-session-controller`, `design-workflow-web-editor`                                     |
-| `frontend-mode-built-asset-contract`                     | 2026-03-09 | `design-workflow-web-editor`, `architecture`                                                                     |
-| `frontend-mode-package-root-alignment`                   | 2026-03-09 | `design-workflow-web-editor`, `architecture`                                                                     |
-| `frontend-tooling-package-root-alignment`                | 2026-03-09 | `design-workflow-web-editor`, `architecture`                                                                     |
+| `branch-and-loop-block-subworkflows`                     | 2026-03-09 | `design-workflow-json`, `design-data-model`, `architecture`, `notes`                                              |
+| `refactoring-shared-ui-contract`                         | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-shared-visualization-derivation`            | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-shared-editable-workflow-types`             | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-api-client`                          | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-workflow-operations`                 | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-support-helpers`                     | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-state-helpers`                       | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-mutation-helpers`                    | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-data-loaders`                        | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-field-updates`                       | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-server-api-request-parsing`                 | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-execution-helpers`                   | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-action-helpers`                      | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-server-ui-asset-serving`                    | 2026-03-10 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-component-boundaries`                | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-server-workflow-bundle-parsing`             | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-main-panel-component`                | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-frontend-solidjs-migration`                 | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `refactoring-editor-session-controller`                  | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `frontend-mode-built-asset-contract`                     | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `frontend-mode-package-root-alignment`                   | 2026-03-09 | `architecture`, `notes`                                                                                          |
+| `frontend-tooling-package-root-alignment`                | 2026-03-09 | `architecture`, `notes`                                                                                          |
 | `graphql-manager-control-plane`                          | 2026-03-15 | `design-graphql-manager-control-plane`                                                                           |
 | `graphql-manager-control-plane-surface`                  | 2026-03-15 | `design-graphql-manager-control-plane`                                                                           |
 | `graphql-manager-ambient-context-transport`              | 2026-03-15 | `design-graphql-manager-control-plane`                                                                           |
 | `graphql-manager-artifact-atomic-writes`                 | 2026-03-15 | `architecture`, `design-graphql-manager-control-plane`                                                           |
-| `graphql-manager-runtime-session-lifecycle`              | 2026-03-15 | `design-graphql-manager-runtime-session-lifecycle`, `design-graphql-manager-control-plane`                       |
+| `graphql-manager-runtime-session-lifecycle`              | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                                           |
 | `graphql-manager-http-context-isolation`                 | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                                           |
-| `graphql-manager-control-mode-exclusivity`               | 2026-03-15 | `design-graphql-manager-control-plane`, `design-graphql-manager-runtime-session-lifecycle`                       |
+| `graphql-manager-control-mode-exclusivity`               | 2026-03-15 | `design-graphql-manager-control-plane`, `architecture`                                                         |
 | `graphql-manager-control-mode-claim-atomicity`           | 2026-03-15 | `design-graphql-manager-control-plane`, `notes`                                                                  |
 | `graphql-manager-message-id-collision-safety`            | 2026-03-15 | `design-graphql-manager-control-plane`, `notes`                                                                  |
 | `graphql-manager-idempotency-canonicalization`           | 2026-03-15 | `design-graphql-manager-control-plane`                                                                           |
@@ -290,6 +292,9 @@ impl-plans/
 | 128   | COMPLETED   | -          |
 | 129   | COMPLETED   | Phases 16, 65, 71, 82 |
 | 130   | COMPLETED   | Phases 125, 128, 129 (+ earlier foundations) |
+| 131   | COMPLETED   | Phase 130 |
+| 132   | COMPLETED   | Phase 130 |
+| 133   | IN_PROGRESS | Phases 129, 132 |
 
 ### Phase to Plans Mapping
 
@@ -426,6 +431,8 @@ PHASE_TO_PLANS = {
   129: ["impl-plans/completed/step-addressed-workflow-runtime-cutover.md"],
   130: ["impl-plans/completed/auto-improve-superviser-mode.md"],
   131: ["impl-plans/completed/auto-improve-supervision-review-follow-up.md"],
-  132: ["impl-plans/active/auto-improve-superviser-workflow-phase-2.md"],
+  132: ["impl-plans/completed/auto-improve-superviser-workflow-phase-2.md"],
+  133: ["impl-plans/workflow-legacy-compatibility-removal.md"],
+  134: ["impl-plans/graphql-supervision-execution-parity.md"],
 }
 ```

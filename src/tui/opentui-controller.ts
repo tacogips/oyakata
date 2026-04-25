@@ -84,8 +84,7 @@ export interface OpenTuiControllerContext {
   ) => Promise<void>;
   readonly render: () => Promise<void>;
   readonly rerunWorkflow: (input: {
-    readonly fromStepId?: string;
-    readonly fromNodeId?: string;
+    readonly fromStepId: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
     readonly sourceSessionId: string;
   }) => Promise<{
@@ -167,7 +166,9 @@ function buildCopyTargetInput(
   return {
     focusPane: context.getFocusPane(),
     screenMode,
-    ...(stepAddressedAuthoring ? { stepAddressedAuthoring: true as const } : {}),
+    ...(stepAddressedAuthoring
+      ? { stepAddressedAuthoring: true as const }
+      : {}),
     ...(loadedWorkflowId === undefined ? {} : { loadedWorkflowId }),
     ...(selectedNodeExecutionId === undefined
       ? {}
@@ -357,16 +358,20 @@ export function createOpenTuiController(
         await context.render();
         return;
       }
+      const stepId = execution.stepId;
+      if (stepId === undefined) {
+        context.setStatus(
+          "Cannot rerun a legacy node-addressed execution; this surface requires an authored stepId",
+        );
+        await context.render();
+        return;
+      }
       await context.withBusy(
-        `Rerunning ${execution.stepId === undefined ? "node" : "step"} '${
-          execution.stepId ?? execution.nodeId
-        }' from ${session.sessionId}`,
+        `Rerunning step '${stepId}' from ${session.sessionId}`,
         async () => {
           const result = await context.rerunWorkflow({
             sourceSessionId: session.sessionId,
-            ...(execution.stepId === undefined
-              ? { fromNodeId: execution.nodeId }
-              : { fromStepId: execution.stepId }),
+            fromStepId: stepId,
             runtimeVariables,
           });
           await context.refreshWorkflow(session.workflowName, result.sessionId);

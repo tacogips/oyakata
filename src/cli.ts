@@ -22,7 +22,6 @@ import type { EventListenerHandle } from "./events/listener-service";
 import type { MockNodeScenario } from "./workflow/adapter";
 import { normalizeAutoImprovePolicy } from "./workflow/auto-improve-policy";
 import { createWorkflowTemplate } from "./workflow/create";
-import { callNode, type CallNodeInput } from "./workflow/call-node";
 import { callStep, type CallStepInput } from "./workflow/call-step";
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
@@ -180,6 +179,8 @@ interface ParsedOptions {
   readonly limit?: number;
   readonly reason?: string;
   readonly autoImprove?: AutoImprovePolicy;
+  /** Phase-2: run superviser bundle as nested workflow; requires --auto-improve */
+  readonly nestedSuperviser?: boolean;
 }
 
 interface ParsedArgs {
@@ -479,6 +480,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let workflowMutationMode: "execution-copy" | "in-place" | undefined;
   let noAllowTargetedRerun = false;
   let firstAutoImprovePolicyFlag: string | undefined;
+  let nestedSuperviser = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -948,6 +950,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         markAutoImprovePolicyFlag();
         noAllowTargetedRerun = true;
         break;
+      case "--nested-superviser":
+        markAutoImprovePolicyFlag();
+        nestedSuperviser = true;
+        break;
       default:
         break;
     }
@@ -973,6 +979,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     if (!autoImprove && firstAutoImprovePolicyFlag !== undefined) {
       parseError = `${firstAutoImprovePolicyFlag} requires --auto-improve`;
     }
+  }
+  if (parseError === undefined && nestedSuperviser && !autoImprove) {
+    parseError = "--nested-superviser requires --auto-improve";
   }
   if (parseError === undefined && autoImprovePolicy.error !== undefined) {
     parseError = `invalid --auto-improve policy: ${autoImprovePolicy.error}`;
@@ -1024,6 +1033,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(autoImprovePolicy.policy === undefined
         ? {}
         : { autoImprove: autoImprovePolicy.policy }),
+      ...(nestedSuperviser ? { nestedSuperviser: true } : {}),
     },
     ...(parseError === undefined ? {} : { error: parseError }),
   };
@@ -1055,9 +1065,6 @@ function printHelp(io: CliIo): void {
   );
   io.stdout(
     "  divedra call-step <workflow-id> <workflow-run-id> <step-id> [--message-json <json> | --message-file <path>] [--prompt-variant <name>] [--continue-session] [--timeout-ms <ms>] [--resume-step-exec <id>] [options]",
-  );
-  io.stdout(
-    "  divedra call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>] [options]  (compatibility; prefer call-step for step-addressed workflows)",
   );
   io.stdout(`  divedra hook [--vendor ${HOOK_VENDOR_USAGE}]`);
   io.stdout(`  divedra hook snippet --vendor ${HOOK_VENDOR_USAGE}`);
@@ -1096,13 +1103,16 @@ function printHelp(io: CliIo): void {
     "Auto-improve (supervision policy; engine retries on terminal failure until success or budgets;",
   );
   io.stdout(
-    "  persisted stall watch is active; nested superviser workflow is not wired yet):",
+    "  persisted stall watch is active; use --nested-superviser to run the superviser bundle as a workflow):",
   );
   io.stdout(
     "  --auto-improve               Enable supervised runs with durable supervision state",
   );
   io.stdout(
-    "  --superviser-workflow <id>   Reserved superviser bundle id (persisted on session; nested execution is Phase 2)",
+    "  --superviser-workflow <id>   Superviser bundle id (persisted; divedra/* control + optional --nested-superviser)",
+  );
+  io.stdout(
+    "  --nested-superviser         Run the superviser workflow as a nested session (requires --auto-improve)",
   );
   io.stdout(
     "  --monitor-interval-ms <n>    Observation cadence (default 5000)",
@@ -1168,7 +1178,7 @@ async function readJsonValueFromFile(filePath: string): Promise<unknown> {
   return JSON.parse(content) as unknown;
 }
 
-async function readCallNodeMessage(
+async function readDirectCallMessage(
   parsedOptions: ParsedOptions,
 ): Promise<unknown | undefined> {
   if (
@@ -1472,6 +1482,10 @@ function buildRemoteExecutionInput(
     parsedOptions.workingDirectory,
   );
   return {
+    ...(parsedOptions.autoImprove === undefined
+      ? {}
+      : { autoImprove: parsedOptions.autoImprove }),
+    ...(parsedOptions.nestedSuperviser ? { nestedSuperviser: true } : {}),
     ...(workingDirectory === undefined ? {} : { workingDirectory }),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
     ...(parsedOptions.maxSteps === undefined
@@ -1565,6 +1579,7 @@ function buildLocalWorkflowRunOverrides(
 ): Pick<
   WorkflowRunOptions,
   | "autoImprove"
+  | "nestedSuperviserDriver"
   | "defaultTimeoutMs"
   | "dryRun"
   | "maxLoopIterations"
@@ -1591,26 +1606,7 @@ function buildLocalWorkflowRunOverrides(
     ...(parsedOptions.autoImprove === undefined
       ? {}
       : { autoImprove: parsedOptions.autoImprove }),
-  };
-}
-
-function buildLocalCallNodeOverrides(
-  parsedOptions: ParsedOptions,
-): Pick<
-  CallNodeInput,
-  "defaultTimeoutMs" | "dryRun" | "workflowWorkingDirectory"
-> {
-  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    parsedOptions.workingDirectory,
-  );
-  return {
-    ...(workflowWorkingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory }),
-    ...(parsedOptions.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
-    ...(parsedOptions.dryRun ? { dryRun: true } : {}),
+    ...(parsedOptions.nestedSuperviser ? { nestedSuperviserDriver: true } : {}),
   };
 }
 
@@ -1742,7 +1738,6 @@ interface LocalTuiWorkflowActionInput {
   readonly workflowName: string;
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly rerunFromStepId?: string;
-  readonly rerunFromNodeId?: string;
   readonly rerunFromSessionId?: string;
   readonly resumeSessionId?: string;
   readonly sessionId?: string;
@@ -1891,15 +1886,13 @@ export function createOpenTuiWorkflowAppOptions(
     rerunWorkflow: async ({
       sourceSessionId,
       fromStepId,
-      fromNodeId,
       runtimeVariables,
     }) => {
       const source = await loadSessionOrThrow(sourceSessionId);
       return input.runLocalTuiWorkflow({
         workflowName: source.workflowName,
         rerunFromSessionId: source.sessionId,
-        ...(fromStepId === undefined ? {} : { rerunFromStepId: fromStepId }),
-        ...(fromNodeId === undefined ? {} : { rerunFromNodeId: fromNodeId }),
+        rerunFromStepId: fromStepId,
         runtimeVariables: {
           ...input.optionRuntimeVariables,
           ...runtimeVariables,
@@ -2066,7 +2059,6 @@ async function runTui(
     readonly workflowName: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
     readonly rerunFromStepId?: string;
-    readonly rerunFromNodeId?: string;
     readonly rerunFromSessionId?: string;
     readonly resumeSessionId?: string;
     readonly sessionId?: string;
@@ -2085,9 +2077,7 @@ async function runTui(
         : { rerunFromSessionId: input.rerunFromSessionId }),
       ...(input.rerunFromStepId !== undefined
         ? { rerunFromStepId: input.rerunFromStepId }
-        : input.rerunFromNodeId !== undefined
-          ? { rerunFromNodeId: input.rerunFromNodeId }
-          : {}),
+        : {}),
       runtimeVariables: input.runtimeVariables,
     });
     if (!result.ok) {
@@ -2962,89 +2952,10 @@ export async function runCli(
   }
 
   if (scope === "call-node") {
-    const workflowId = command;
-    const workflowRunId = target;
-    const nodeId = positionals[3];
-    if (
-      workflowId === undefined ||
-      workflowRunId === undefined ||
-      nodeId === undefined
-    ) {
-      io.stderr("workflow id, workflow run id, and node id are required");
-      io.stderr(
-        "usage: divedra call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>] [options]  (compatibility; prefer call-step for step-addressed workflows)",
-      );
-      return 2;
-    }
-    if (graphqlCliTransport !== null) {
-      io.stderr(
-        "call-node currently supports local execution only; omit --endpoint",
-      );
-      return 2;
-    }
-
-    let message: unknown;
-    try {
-      message = await readCallNodeMessage(parsed.options);
-    } catch (error: unknown) {
-      const messageText =
-        error instanceof Error ? error.message : "unknown error";
-      io.stderr(`failed to read call-node message: ${messageText}`);
-      return 1;
-    }
-
-    let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> = {};
-    try {
-      mockScenarioOptions = await readMockScenarioOption(
-        parsed.options.mockScenarioPath,
-      );
-    } catch (error: unknown) {
-      const messageText =
-        error instanceof Error ? error.message : "unknown error";
-      io.stderr(`failed to read --mock-scenario file: ${messageText}`);
-      return 1;
-    }
-
-    const result = await callNode({
-      ...sharedOptions,
-      workflowId,
-      workflowRunId,
-      nodeId,
-      ...buildLocalCallNodeOverrides(parsed.options),
-      ...mockScenarioOptions,
-      ...(message === undefined ? {} : { message }),
-    });
-
-    if (!result.ok) {
-      if (parsed.options.output === "json") {
-        emitJson(io, result.error);
-      } else {
-        io.stderr(`call-node failed: ${result.error.message}`);
-        if (result.error.nodeExecution !== undefined) {
-          io.stderr(`nodeExecId: ${result.error.nodeExecution.nodeExecId}`);
-          io.stderr(`status: ${result.error.nodeExecution.status}`);
-        }
-      }
-      return result.error.exitCode;
-    }
-
-    if (parsed.options.output === "json") {
-      emitJson(io, {
-        sessionId: result.value.session.sessionId,
-        nodeId,
-        nodeExecId: result.value.nodeExecution.nodeExecId,
-        status: result.value.nodeExecution.status,
-        output: result.value.output,
-        outputRef: result.value.outputRef,
-        exitCode: result.value.exitCode,
-      });
-    } else {
-      io.stdout(`sessionId: ${result.value.session.sessionId}`);
-      io.stdout(`nodeId: ${nodeId}`);
-      io.stdout(`nodeExecId: ${result.value.nodeExecution.nodeExecId}`);
-      io.stdout(`status: ${result.value.nodeExecution.status}`);
-    }
-    return result.value.exitCode;
+    io.stderr(
+      "call-node has been removed. Use 'call-step <workflow-id> <workflow-run-id> <step-id>' instead.",
+    );
+    return 1;
   }
 
   if (scope === "call-step") {
@@ -3071,7 +2982,7 @@ export async function runCli(
 
     let message: unknown;
     try {
-      message = await readCallNodeMessage(parsed.options);
+      message = await readDirectCallMessage(parsed.options);
     } catch (error: unknown) {
       const messageText =
         error instanceof Error ? error.message : "unknown error";
@@ -3244,10 +3155,6 @@ export async function runCli(
           source: workflowSourceJson(loaded.value.source),
         });
       } else {
-        const legacySubWorkflowCountSegment =
-          summary.counts.legacySubWorkflows === 0
-            ? ""
-            : `, legacySubWorkflows: ${summary.counts.legacySubWorkflows}`;
         io.stdout(`workflow: ${summary.workflowName}`);
         const sourceLine = formatWorkflowSource(loaded.value.source);
         if (sourceLine !== undefined) {
@@ -3257,23 +3164,14 @@ export async function runCli(
           io.stdout(`addonSource: ${formatAddonSource(addonSource)}`);
         }
         io.stdout(`workflowId: ${summary.workflowId}`);
-        if (isStepAddressedInspect) {
-          io.stdout(
-            `managerStepId: ${summary.managerStepId ?? "(implicit or worker-only)"}`,
-          );
-          io.stdout(
-            `entryStepId: ${summary.entryStepId ?? "(not set; check workflow authorship)"}`,
-          );
-          io.stdout(`stepIds: ${summary.stepIds.join(", ")}`);
-          io.stdout(`nodeRegistryIds: ${summary.nodeRegistryIds.join(", ")}`);
-        } else {
-          io.stdout(
-            `managerNodeId: ${summary.managerNodeId ?? "(none; worker-only workflow)"}`,
-          );
-          io.stdout(
-            `entryNodeId: ${summary.entryNodeId ?? "(not set; check workflow authorship)"}`,
-          );
-        }
+        io.stdout(
+          `managerStepId: ${summary.managerStepId ?? "(implicit or worker-only)"}`,
+        );
+        io.stdout(
+          `entryStepId: ${summary.entryStepId ?? "(not set; check workflow authorship)"}`,
+        );
+        io.stdout(`stepIds: ${summary.stepIds.join(", ")}`);
+        io.stdout(`nodeRegistryIds: ${summary.nodeRegistryIds.join(", ")}`);
         if (isStepAddressedInspect) {
           const projection = summary.counts.structuralProjection;
           if (projection === undefined) {
@@ -3282,25 +3180,15 @@ export async function runCli(
             );
           }
           io.stdout(
-            `steps: ${summary.counts.steps}, nodeRegistry: ${summary.counts.nodeRegistry}, workflowCalls: ${summary.counts.workflowCalls}, structuralProjection: nodes=${projection.nodes} edges=${projection.edges} loops=${projection.loops}${legacySubWorkflowCountSegment}`,
+            `steps: ${summary.counts.steps}, nodeRegistry: ${summary.counts.nodeRegistry}, workflowCalls: ${summary.counts.workflowCalls}, structuralProjection: nodes=${projection.nodes} edges=${projection.edges} loops=${projection.loops}`,
           );
         } else {
           io.stdout(
-            `nodes: ${summary.counts.nodes}, nodeRegistry: ${summary.counts.nodeRegistry}, steps: ${summary.counts.steps}, edges: ${summary.counts.edges}, loops: ${summary.counts.loops}, workflowCalls: ${summary.counts.workflowCalls}${legacySubWorkflowCountSegment}`,
+            `nodes: ${summary.counts.nodes}, nodeRegistry: ${summary.counts.nodeRegistry}, steps: ${summary.counts.steps}, edges: ${summary.counts.edges}, loops: ${summary.counts.loops}, workflowCalls: ${summary.counts.workflowCalls}`,
           );
         }
         if (summary.workflowCallIds.length > 0) {
           io.stdout(`workflowCallIds: ${summary.workflowCallIds.join(", ")}`);
-        }
-        const compat = summary.compatibility;
-        io.stdout(
-          `compatibility: normalizesRoleAuthoredNodesToStructuralKinds=${compat.normalizesRoleAuthoredNodesToStructuralKinds ? "yes" : "no"}, usesEffectiveEntryManagerNodeId=${compat.usesEffectiveEntryManagerNodeId ? "yes" : "no"}, usesLegacyStructuralSubWorkflows=${compat.usesLegacyStructuralSubWorkflows ? "yes" : "no"}`,
-        );
-        if (compat.notes.length > 0) {
-          io.stdout("compatibility notes:");
-          for (const note of compat.notes) {
-            io.stdout(`- ${note}`);
-          }
         }
         io.stdout(
           `defaults: maxLoopIterations=${summary.defaults.maxLoopIterations}, nodeTimeoutMs=${summary.defaults.nodeTimeoutMs}`,
@@ -3690,6 +3578,12 @@ export async function runCli(
         io.stderr("step id is required for session rerun");
         io.stderr(
           "usage: divedra session rerun <session-id> <step-id> [options]",
+        );
+        return 2;
+      }
+      if (parsed.options.nestedSuperviser) {
+        io.stderr(
+          "--nested-superviser is not supported for session rerun; use workflow run or session resume with --auto-improve instead",
         );
         return 2;
       }

@@ -125,7 +125,7 @@ describe("parseManagerControlPayload", () => {
     const parsed = parseManagerControlPayload(
       {
         managerControl: {
-          actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+          actions: [{ type: "retry-step", stepId: "a-manager" }],
         },
       },
       makeWorkflow(),
@@ -136,12 +136,12 @@ describe("parseManagerControlPayload", () => {
     );
 
     expect(parsed).not.toBeNull();
-    expect(parsed?.startSubWorkflowIds).toEqual(["sw-a"]);
-    expect(parsed?.childInputNodeIds).toEqual([]);
-    expect(parsed?.retryNodeIds).toEqual([]);
+    expect(parsed?.retryStepIds).toEqual(["a-manager"]);
+    expect(parsed?.actions[0]).toEqual({
+      type: "retry-step",
+      stepId: "a-manager",
+    });
     expect(parsed?.replayCommunicationIds).toEqual([]);
-    expect(parsed?.overridesRootSubWorkflowPlanning).toBe(true);
-    expect(parsed?.overridesChildInputPlanning).toBe(true);
   });
 
   test("accepts role-authored workflow managers as root-manager control scope", () => {
@@ -162,7 +162,7 @@ describe("parseManagerControlPayload", () => {
     const parsed = parseManagerControlPayload(
       {
         managerControl: {
-          actions: [{ type: "start-sub-workflow", subWorkflowId: "sw-a" }],
+          actions: [{ type: "planner-note" }],
         },
       },
       workflow,
@@ -173,10 +173,10 @@ describe("parseManagerControlPayload", () => {
       },
     );
 
-    expect(parsed?.startSubWorkflowIds).toEqual(["sw-a"]);
+    expect(parsed?.actions).toEqual([{ type: "planner-note" }]);
   });
 
-  test("rejects start-sub-workflow for role-authored workflows without structural sub-workflows", () => {
+  test("rejects removed structural action types in payloads", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -193,19 +193,14 @@ describe("parseManagerControlPayload", () => {
           managerRole: "manager",
         },
       ),
-    ).toThrow(
-      "cross-workflow step transitions and explicit workflowCalls run automatically from their caller steps",
-    );
+    ).toThrow("is not supported");
   });
 
-  test("parses supported subworkflow-manager child-input and retry actions", () => {
+  test("parses subworkflow-manager retry actions", () => {
     const parsed = parseManagerControlPayload(
       {
         managerControl: {
-          actions: [
-            { type: "deliver-to-child-input", inputNodeId: "a-input" },
-            { type: "retry-node", nodeId: "a-input" },
-          ],
+          actions: [{ type: "retry-step", stepId: "a-input" }],
         },
       },
       makeWorkflow(),
@@ -216,12 +211,8 @@ describe("parseManagerControlPayload", () => {
     );
 
     expect(parsed).not.toBeNull();
-    expect(parsed?.startSubWorkflowIds).toEqual([]);
-    expect(parsed?.childInputNodeIds).toEqual(["a-input"]);
-    expect(parsed?.retryNodeIds).toEqual(["a-input"]);
+    expect(parsed?.retryStepIds).toEqual(["a-input"]);
     expect(parsed?.replayCommunicationIds).toEqual([]);
-    expect(parsed?.overridesRootSubWorkflowPlanning).toBe(true);
-    expect(parsed?.overridesChildInputPlanning).toBe(true);
   });
 
   test("parses planner-note and replay-communication action variants", () => {
@@ -242,17 +233,53 @@ describe("parseManagerControlPayload", () => {
     );
 
     expect(parsed.actions).toHaveLength(2);
-    expect(parsed.retryNodeIds).toEqual([]);
+    expect(parsed.retryStepIds).toEqual([]);
     expect(parsed.replayCommunicationIds).toEqual(["comm-000123"]);
   });
 
-  test("parses execute-optional-node and skip-optional-node action variants", () => {
+  test("trims manager-control identifiers and optional reason text", () => {
     const parsed = parseManagerControlActions(
       [
-        { type: "execute-optional-node", nodeId: "step-1" },
+        { type: "retry-step", stepId: " a-input " },
         {
-          type: "skip-optional-node",
-          nodeId: "step-1",
+          type: "replay-communication",
+          communicationId: " comm-000123 ",
+          reason: " rerun after inspection ",
+        },
+        {
+          type: "skip-optional-step",
+          stepId: " step-1 ",
+          reason: "   ",
+        },
+      ],
+      makeWorkflow(),
+      {
+        managerNodeId: "divedra-manager",
+        managerKind: "root-manager",
+      },
+    );
+
+    expect(parsed.retryStepIds).toEqual(["a-input"]);
+    expect(parsed.replayCommunicationIds).toEqual(["comm-000123"]);
+    expect(parsed.skipOptionalStepIds).toEqual(["step-1"]);
+    expect(parsed.actions[1]).toEqual({
+      type: "replay-communication",
+      communicationId: "comm-000123",
+      reason: "rerun after inspection",
+    });
+    expect(parsed.actions[2]).toEqual({
+      type: "skip-optional-step",
+      stepId: "step-1",
+    });
+  });
+
+  test("parses execute-optional-step and skip-optional-step action variants", () => {
+    const parsed = parseManagerControlActions(
+      [
+        { type: "execute-optional-step", stepId: "step-1" },
+        {
+          type: "skip-optional-step",
+          stepId: "step-1",
           reason: "not needed this run",
         },
       ],
@@ -263,11 +290,35 @@ describe("parseManagerControlPayload", () => {
       },
     );
 
-    expect(parsed.executeOptionalNodeIds).toEqual(["step-1"]);
-    expect(parsed.skipOptionalNodeIds).toEqual(["step-1"]);
+    expect(parsed.executeOptionalStepIds).toEqual(["step-1"]);
+    expect(parsed.skipOptionalStepIds).toEqual(["step-1"]);
   });
 
-  test("rejects start-sub-workflow outside the root-manager scope", () => {
+  test("rejects removal-bound retry-node and optional-node action types", () => {
+    expect(() =>
+      parseManagerControlActions(
+        [{ type: "retry-node", nodeId: "a-manager" }],
+        makeWorkflow(),
+        {
+          managerNodeId: "divedra-manager",
+          managerKind: "root-manager",
+        },
+      ),
+    ).toThrow("is not supported");
+
+    expect(() =>
+      parseManagerControlActions(
+        [{ type: "execute-optional-node", nodeId: "step-1" }],
+        makeWorkflow(),
+        {
+          managerNodeId: "divedra-manager",
+          managerKind: "root-manager",
+        },
+      ),
+    ).toThrow("is not supported");
+  });
+
+  test("rejects start-sub-workflow as an unsupported action type", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -281,7 +332,7 @@ describe("parseManagerControlPayload", () => {
           managerKind: "subworkflow-manager",
         },
       ),
-    ).toThrow("only allowed for the root manager");
+    ).toThrow("is not supported");
   });
 
   test("rejects unknown referenced ids", () => {
@@ -289,7 +340,7 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "retry-node", nodeId: "missing" }],
+            actions: [{ type: "retry-step", stepId: "missing" }],
           },
         },
         makeWorkflow(),
@@ -320,7 +371,31 @@ describe("parseManagerControlPayload", () => {
     ).toThrow("reason must be a string");
   });
 
-  test("rejects child-input dispatch outside the subworkflow-manager owned scope", () => {
+  test("rejects whitespace-only control identifiers", () => {
+    expect(() =>
+      parseManagerControlActions(
+        [{ type: "retry-step", stepId: "   " }],
+        makeWorkflow(),
+        {
+          managerNodeId: "divedra-manager",
+          managerKind: "root-manager",
+        },
+      ),
+    ).toThrow("stepId must be a non-empty string");
+
+    expect(() =>
+      parseManagerControlActions(
+        [{ type: "replay-communication", communicationId: "   " }],
+        makeWorkflow(),
+        {
+          managerNodeId: "divedra-manager",
+          managerKind: "root-manager",
+        },
+      ),
+    ).toThrow("communicationId must be a non-empty string");
+  });
+
+  test("rejects deliver-to-child-input as an unsupported action type", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -336,44 +411,7 @@ describe("parseManagerControlPayload", () => {
           managerKind: "root-manager",
         },
       ),
-    ).toThrow("only allowed for a subworkflow-manager");
-
-    expect(() =>
-      parseManagerControlPayload(
-        {
-          managerControl: {
-            actions: [
-              {
-                type: "deliver-to-child-input",
-                inputNodeId: "divedra-manager",
-              },
-            ],
-          },
-        },
-        makeWorkflow(),
-        {
-          managerNodeId: "a-manager",
-          managerKind: "subworkflow-manager",
-        },
-      ),
-    ).toThrow("must exist with kind 'input'");
-
-    expect(() =>
-      parseManagerControlPayload(
-        {
-          managerControl: {
-            actions: [
-              { type: "deliver-to-child-input", inputNodeId: "a-output" },
-            ],
-          },
-        },
-        makeWorkflow(),
-        {
-          managerNodeId: "a-manager",
-          managerKind: "subworkflow-manager",
-        },
-      ),
-    ).toThrow("must exist with kind 'input'");
+    ).toThrow("is not supported");
   });
 
   test("rejects subworkflow-manager retries outside the owned sub-workflow scope", () => {
@@ -381,7 +419,7 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "retry-node", nodeId: "divedra-manager" }],
+            actions: [{ type: "retry-step", stepId: "divedra-manager" }],
           },
         },
         makeWorkflow(),
@@ -393,23 +431,20 @@ describe("parseManagerControlPayload", () => {
     ).toThrow("must belong to sub-workflow 'sw-a'");
   });
 
-  test("rejects root-manager retries that pierce into a sub-workflow internals", () => {
-    expect(() =>
-      parseManagerControlPayload(
-        {
-          managerControl: {
-            actions: [{ type: "retry-node", nodeId: "a-input" }],
-          },
+  test("accepts root-manager retry-step for nodes inside a structural sub-workflow", () => {
+    const parsed = parseManagerControlPayload(
+      {
+        managerControl: {
+          actions: [{ type: "retry-step", stepId: "a-input" }],
         },
-        makeWorkflow(),
-        {
-          managerNodeId: "divedra-manager",
-          managerKind: "root-manager",
-        },
-      ),
-    ).toThrow(
-      "must re-invoke that sub-workflow with start-sub-workflow instead",
+      },
+      makeWorkflow(),
+      {
+        managerNodeId: "divedra-manager",
+        managerKind: "root-manager",
+      },
     );
+    expect(parsed?.retryStepIds).toEqual(["a-input"]);
   });
 
   test("rejects manager self-retry", () => {
@@ -417,7 +452,7 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "retry-node", nodeId: "a-manager" }],
+            actions: [{ type: "retry-step", stepId: "a-manager" }],
           },
         },
         makeWorkflow(),
@@ -434,7 +469,9 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "execute-optional-node", nodeId: "a-output" }],
+            actions: [
+              { type: "execute-optional-step", stepId: "a-output" },
+            ],
           },
         },
         makeWorkflow(),
@@ -449,7 +486,7 @@ describe("parseManagerControlPayload", () => {
       parseManagerControlPayload(
         {
           managerControl: {
-            actions: [{ type: "skip-optional-node", nodeId: "a-input" }],
+            actions: [{ type: "skip-optional-step", stepId: "a-input" }],
           },
         },
         makeWorkflow(),

@@ -75,6 +75,7 @@ describe("saveWorkflowToDisk", () => {
       "utf8",
     );
     expect(workflowJsonText).not.toContain('"hasManagerNode"');
+    expect(workflowJsonText).not.toContain('"entryNodeId"');
     expect(workflowJsonText).not.toContain('"kind"');
     expect(workflowJsonText).toContain('"role": "manager"');
     expect(workflowJsonText).toContain('"role": "worker"');
@@ -189,6 +190,7 @@ describe("saveWorkflowToDisk", () => {
     );
     expect(workflowJsonText).not.toContain('"hasManagerNode"');
     expect(workflowJsonText).not.toContain('"managerNodeId"');
+    expect(workflowJsonText).not.toContain('"entryNodeId"');
     expect(workflowJsonText).not.toContain('"kind"');
     expect(workflowJsonText).toContain('"entryStepId": "main-worker"');
     expect(workflowJsonText).toContain('"steps"');

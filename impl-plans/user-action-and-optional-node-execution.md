@@ -177,7 +177,7 @@ export interface ActiveUserActionRef {
 ### Session: 2026-03-18 12:02
 **Tasks Completed**: Implementation plan creation
 **Tasks In Progress**: TASK-001 planning
-**Blockers**: Open product decisions remain documented in `design-docs/user-qa/qa-user-action-open-decisions.md`, but the design already recommends first-iteration defaults that are sufficient for authoring/validation work
+**Blockers**: Open product questions were tracked separately at planning time, but the design already recommends first-iteration defaults that are sufficient for authoring/validation work
 **Notes**: Start with authored model and validation because no runtime primitive currently exists for either `user-action` or manager-scoped optional execution, and those schema guarantees are prerequisites for all deeper engine work.
 
 ### Session: 2026-03-18 12:02

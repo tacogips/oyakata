@@ -69,7 +69,7 @@ Out of scope for this plan:
 
 **Deliverables**:
 - `README.md`
-- `design-docs/qa.md` (if decisions changed)
+- `design-docs/user-qa/README.md` (if decisions changed)
 
 **Completion Criteria**:
 - [x] command examples include `--resume-session`

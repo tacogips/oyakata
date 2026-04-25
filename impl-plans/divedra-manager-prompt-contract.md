@@ -1,13 +1,13 @@
 # Divedra Manager Prompt Contract Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-divedra-manager-prompt-contract.md
+**Design Reference**: design-docs/specs/architecture.md#prompt-and-input-assembly, design-docs/specs/notes.md, design-docs/specs/design-workflow-json.md
 **Created**: 2026-03-07
 **Last Updated**: 2026-03-07
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-divedra-manager-prompt-contract.md`
+**Source**: prompt-contract guidance is now consolidated into `design-docs/specs/architecture.md` and `design-docs/specs/notes.md`
 
 ### Summary
 

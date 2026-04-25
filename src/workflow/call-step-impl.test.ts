@@ -8,7 +8,7 @@ import {
   type AdapterExecutionInput,
   type NodeAdapter,
 } from "./adapter";
-import { callNode } from "./call-node";
+import { callStepExecution } from "./call-step-impl";
 import { createWorkflowTemplate } from "./create";
 import { listRuntimeNodeLogs } from "./runtime-db";
 import { createSessionState } from "./session";
@@ -241,7 +241,7 @@ class PromptAndAmbientCaptureAdapter implements NodeAdapter {
   }
 }
 
-describe("callNode", () => {
+describe("callStepExecution", () => {
   test("treats role-authored managers as managers for prompt assembly and ambient manager context", async () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
@@ -257,7 +257,7 @@ describe("callNode", () => {
     });
 
     const adapter = new PromptAndAmbientCaptureAdapter();
-    const result = await callNode(
+    const result = await callStepExecution(
       {
         ...legacyAuthoredWorkflowLoadOpts,
         workflowRoot: root,
@@ -309,7 +309,7 @@ describe("callNode", () => {
       sessionStoreRoot,
     });
 
-    const result = await callNode({
+    const result = await callStepExecution({
       ...legacyAuthoredWorkflowLoadOpts,
       workflowRoot: root,
       artifactRoot: artifactsRoot,
@@ -366,7 +366,7 @@ describe("callNode", () => {
     }
 
     const adapter = new RepairingAdapter();
-    const result = await callNode(
+    const result = await callStepExecution(
       {
         ...legacyAuthoredWorkflowLoadOpts,
         workflowRoot: root,
@@ -536,7 +536,7 @@ describe("callNode", () => {
     }
 
     const adapter = new InvalidThenFixedAdapter();
-    const result = await callNode(
+    const result = await callStepExecution(
       {
         ...legacyAuthoredWorkflowLoadOpts,
         workflowRoot: root,
@@ -603,7 +603,7 @@ describe("callNode", () => {
     );
     expect(saved.ok).toBe(true);
 
-    const result = await callNode({
+    const result = await callStepExecution({
       ...legacyAuthoredWorkflowLoadOpts,
       workflowRoot: root,
       artifactRoot: artifactsRoot,
@@ -635,7 +635,7 @@ describe("callNode", () => {
       sessionStoreRoot,
     });
 
-    const result = await callNode({
+    const result = await callStepExecution({
       ...legacyAuthoredWorkflowLoadOpts,
       workflowRoot: root,
       artifactRoot: artifactsRoot,
@@ -667,7 +667,7 @@ describe("callNode", () => {
       sessionStoreRoot,
     });
 
-    const result = await callNode({
+    const result = await callStepExecution({
       ...legacyAuthoredWorkflowLoadOpts,
       workflowRoot: root,
       artifactRoot: artifactsRoot,
@@ -723,7 +723,7 @@ describe("callNode", () => {
       sessionStoreRoot,
     });
 
-    const result = await callNode({
+    const result = await callStepExecution({
       ...legacyAuthoredWorkflowLoadOpts,
       workflowRoot: root,
       artifactRoot: artifactsRoot,
@@ -780,7 +780,7 @@ describe("callNode", () => {
     await mkdir(path.dirname(blockedMailboxPath), { recursive: true });
     await writeFile(blockedMailboxPath, "blocked", "utf8");
 
-    const result = await callNode(
+    const result = await callStepExecution(
       {
         ...legacyAuthoredWorkflowLoadOpts,
         workflowRoot: root,
@@ -851,7 +851,7 @@ describe("callNode", () => {
       sessionStoreRoot,
     });
 
-    const result = await callNode({
+    const result = await callStepExecution({
       ...legacyAuthoredWorkflowLoadOpts,
       workflowRoot: root,
       artifactRoot: artifactsRoot,
@@ -895,7 +895,7 @@ describe("callNode", () => {
       }
     }
 
-    const result = await callNode(
+    const result = await callStepExecution(
       {
         ...legacyAuthoredWorkflowLoadOpts,
         workflowRoot: root,

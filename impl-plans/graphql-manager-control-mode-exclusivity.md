@@ -16,7 +16,7 @@
 **Source**:
 
 - `design-docs/specs/design-graphql-manager-control-plane.md`
-- `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`
+- `design-docs/specs/architecture.md`
 
 ### Summary
 

@@ -21,7 +21,10 @@ import type {
   RuntimeSessionSummary,
 } from "../../workflow/runtime-db";
 import { describeWorkflowNodeKind } from "../../workflow/node-role";
-import { getNormalizedNodePayload } from "../../workflow/types";
+import {
+  getNormalizedNodePayload,
+  resolveWorkflowManagerRuntimeId,
+} from "../../workflow/types";
 import type { OpenTuiRichSelectOption } from "../opentui-view-shared";
 import {
   resolveOpenTuiNodeTypeColor,
@@ -69,15 +72,65 @@ import {
 
 const WORKSPACE_LATEST_RESULT_PREVIEW_LINES = 18;
 
-function buildLegacySubWorkflowCountSegment(count: number): string {
-  return count === 0
-    ? ""
-    : `  Legacy structural sub-workflows: ${String(count)}`;
+function buildLegacySubWorkflowCountSegment(
+  count: number,
+  isStepAddressed: boolean,
+): string {
+  if (isStepAddressed || count === 0) {
+    return "";
+  }
+  return `  Legacy structural sub-workflows: ${String(count)}`;
+}
+
+/**
+ * Compact Entry/Manager labels for summary and run one-liners. Step-addressed
+ * bundles use step ids only for Entry (no compatibility `managerNodeId` alias);
+ * legacy node graphs keep the previous node-id fallbacks.
+ */
+function buildWorkflowExecutionIdentityPreviewSegment(input: {
+  readonly workflow: LoadedWorkflow["bundle"]["workflow"];
+  readonly isStepAddressed: boolean;
+}): { readonly entry: string; readonly manager: string } {
+  const { workflow, isStepAddressed } = input;
+  if (isStepAddressed) {
+    return {
+      entry:
+        workflow.entryStepId ??
+        workflow.entryNodeId ??
+        "(unset)",
+      manager:
+        workflow.managerStepId ??
+        (workflow.hasManagerNode === false
+          ? "none"
+          : resolveWorkflowManagerRuntimeId(workflow)),
+    };
+  }
+  return {
+    entry:
+      workflow.entryStepId ??
+      workflow.entryNodeId ??
+      workflow.managerNodeId ??
+      "(unset)",
+    manager:
+      workflow.managerStepId ??
+      (workflow.hasManagerNode === false ? "none" : workflow.managerNodeId),
+  };
+}
+
+/** Matches {@link buildInspectionSummary}: optional `nodeRegistry` else `nodes` ids. */
+function effectiveNodeRegistryIds(
+  workflow: LoadedWorkflow["bundle"]["workflow"],
+): readonly string[] {
+  return (
+    workflow.nodeRegistry?.map((entry) => entry.id) ??
+    workflow.nodes.map((entry) => entry.id)
+  );
 }
 
 function appendWorkflowBoundarySections(input: {
   readonly append: (value: StyledText) => void;
   readonly workflow: LoadedWorkflow["bundle"]["workflow"];
+  readonly isStepAddressed: boolean;
 }): void {
   const workflowCallIds = effectiveWorkflowCalls(input.workflow).map(
     (entry) => entry.id,
@@ -92,7 +145,7 @@ function appendWorkflowBoundarySections(input: {
     );
   }
 
-  if (legacySubWorkflowIds.length > 0) {
+  if (!input.isStepAddressed && legacySubWorkflowIds.length > 0) {
     input.append(
       t`\n\n${brightWhite("Legacy Structural Sub-Workflows")}\n- ${legacySubWorkflowIds.join(", ")}`,
     );
@@ -227,16 +280,16 @@ export function buildWorkflowSummaryPreview(
 
   const workflow = loadedWorkflow.bundle.workflow;
   const isStepAddressed = workflow.steps !== undefined;
-  const entryExecutionId =
-    workflow.entryStepId ?? workflow.entryNodeId ?? workflow.managerNodeId;
-  const managerExecutionLabel =
-    workflow.managerStepId ??
-    (workflow.hasManagerNode === false ? "none" : workflow.managerNodeId);
+  const { entry: entryExecutionId, manager: managerExecutionLabel } =
+    buildWorkflowExecutionIdentityPreviewSegment({
+      workflow,
+      isStepAddressed,
+    });
   const workflowCallIds = effectiveWorkflowCalls(workflow).map(
     (entry) => entry.id,
   );
   const stepIds = workflow.steps?.map((entry) => entry.id) ?? [];
-  const nodeRegistryIds = workflow.nodeRegistry?.map((entry) => entry.id) ?? [];
+  const nodeRegistryIds = effectiveNodeRegistryIds(workflow);
   const chunks: StyledText["chunks"] = [];
   const append = (value: StyledText): void => {
     chunks.push(...value.chunks);
@@ -248,12 +301,13 @@ export function buildWorkflowSummaryPreview(
         isStepAddressed
           ? `Steps: ${String(stepIds.length)}  Node registry: ${String(
               nodeRegistryIds.length,
-            )}  Compatibility nodes: ${String(workflow.nodes.length)}`
+            )}`
           : `Nodes: ${String(workflow.nodes.length)}`
       }  Workflow calls: ${String(
         workflowCallIds.length,
       )}${buildLegacySubWorkflowCountSegment(
         workflow.subWorkflows.length,
+        isStepAddressed,
       )}  Entry: ${entryExecutionId}  Manager: ${managerExecutionLabel}`,
     )}`,
   );
@@ -279,6 +333,7 @@ export function buildWorkflowSummaryPreview(
   appendWorkflowBoundarySections({
     append,
     workflow,
+    isStepAddressed,
   });
   append(t`\n\n`);
   append(t`${brightWhite(bold("Node Structure"))}\n`);
@@ -296,16 +351,16 @@ export function buildWorkflowRunPreview(
   const workflow = loadedWorkflow.bundle.workflow;
   const inputDetection = detectWorkflowInputMode(loadedWorkflow);
   const isStepAddressed = workflow.steps !== undefined;
-  const entryExecutionId =
-    workflow.entryStepId ?? workflow.entryNodeId ?? workflow.managerNodeId;
-  const managerExecutionLabel =
-    workflow.managerStepId ??
-    (workflow.hasManagerNode === false ? "none" : workflow.managerNodeId);
+  const { entry: entryExecutionId, manager: managerExecutionLabel } =
+    buildWorkflowExecutionIdentityPreviewSegment({
+      workflow,
+      isStepAddressed,
+    });
   const workflowCallIds = effectiveWorkflowCalls(workflow).map(
     (entry) => entry.id,
   );
   const stepIds = workflow.steps?.map((entry) => entry.id) ?? [];
-  const nodeRegistryIds = workflow.nodeRegistry?.map((entry) => entry.id) ?? [];
+  const nodeRegistryIds = effectiveNodeRegistryIds(workflow);
   const chunks: StyledText["chunks"] = [];
   const append = (value: StyledText): void => {
     chunks.push(...value.chunks);
@@ -317,11 +372,14 @@ export function buildWorkflowRunPreview(
         isStepAddressed
           ? `Steps: ${String(stepIds.length)}  Node registry: ${String(
               nodeRegistryIds.length,
-            )}  Compatibility nodes: ${String(workflow.nodes.length)}`
+            )}`
           : `Nodes: ${String(workflow.nodes.length)}`
       }  Workflow calls: ${String(
         workflowCallIds.length,
-      )}${buildLegacySubWorkflowCountSegment(workflow.subWorkflows.length)}`,
+      )}${buildLegacySubWorkflowCountSegment(
+        workflow.subWorkflows.length,
+        isStepAddressed,
+      )}`,
     )}`,
   );
 
@@ -344,6 +402,7 @@ export function buildWorkflowRunPreview(
   appendWorkflowBoundarySections({
     append,
     workflow,
+    isStepAddressed,
   });
 
   append(t`\n\n${brightWhite("Nodes")}`);
@@ -385,7 +444,7 @@ export function buildWorkflowDefinitionContent(
     (entry) => entry.id,
   );
   const stepIds = workflow.steps?.map((entry) => entry.id) ?? [];
-  const nodeRegistryIds = workflow.nodeRegistry?.map((entry) => entry.id) ?? [];
+  const nodeRegistryIds = effectiveNodeRegistryIds(workflow);
   const isStepAddressed = workflow.steps !== undefined;
   const identityLines = isStepAddressed
     ? [
@@ -425,23 +484,23 @@ export function buildWorkflowDefinitionContent(
           `Steps: ${String(stepIds.length)}`,
           `Step ids: ${stepIds.join(", ") || "(none)"}`,
         ]),
-    ...(workflow.nodeRegistry === undefined
-      ? []
-      : [
+    ...(isStepAddressed || workflow.nodeRegistry !== undefined
+      ? [
           `Node registry: ${String(nodeRegistryIds.length)}`,
           `Node registry ids: ${nodeRegistryIds.join(", ") || "(none)"}`,
-        ]),
+        ]
+      : []),
     `Workflow calls: ${String(workflowCallIds.length)}`,
     ...(workflowCallIds.length === 0
       ? []
       : [`Workflow call ids: ${workflowCallIds.join(", ")}`]),
     `Nodes: ${String(workflow.nodes.length)}`,
-    ...(subworkflowIds.length === 0
-      ? []
-      : [
+    ...(!isStepAddressed && subworkflowIds.length > 0
+      ? [
           `Legacy structural sub-workflows: ${String(subworkflowIds.length)}`,
           `Legacy structural sub-workflow ids: ${subworkflowIds.join(", ")}`,
-        ]),
+        ]
+      : []),
     `Input mode hint: ${inputDetection.mode}`,
     "",
     "Use the Nodes pane and press enter to inspect an individual node definition.",
@@ -724,7 +783,7 @@ export function buildWorkflowHistoryHeader(
     ...t`\n${dim(
       `nodes=${String(workflow.nodes.length)}  workflowCalls=${String(
         workflowCallCount,
-      )}  legacySubWorkflows=${String(workflow.subWorkflows.length)}`,
+      )}  subWorkflows=${String(workflow.subWorkflows.length)}`,
     )}`.chunks,
   );
   if (scopeLines.length > 0) {

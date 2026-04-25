@@ -398,5 +398,4 @@ does not connect to Slack, Discord, Telegram, or another chat API.
 - **Previous**: `impl-plans/event-listener-workflow-trigger-foundation.md`
 - **Next**: Chat SDK provider adapter plan after source runtime completion
 - **Depends On**:
-  `impl-plans/event-listener-workflow-trigger-foundation.md`,
-  `design-docs/user-qa/qa-event-listener-workflow-trigger.md`
+  `impl-plans/event-listener-workflow-trigger-foundation.md`

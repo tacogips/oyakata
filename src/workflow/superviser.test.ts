@@ -4,46 +4,109 @@ import {
   formatSupervisionStallError,
   isSupervisionStallLastError,
   planSupervisionRemediation,
+  resolveNestedSuperviserAddonRerunFromStepId,
   resolveSupervisionRerunAnchor,
   resolveSupervisionRerunTarget,
+  toStepAddressedWorkflowForSupervision,
 } from "./superviser";
 import type { AutoImprovePolicy, LoadOptions, WorkflowJson } from "./types";
 import type { WorkflowSessionState } from "./session";
 
 describe("resolveSupervisionRerunAnchor", () => {
-  test("prefers managerStepId over entryStepId and managerNodeId", () => {
+  test("prefers managerStepId over entryStepId", () => {
     expect(
       resolveSupervisionRerunAnchor({
-        managerNodeId: "m-node",
         managerStepId: "mgr-step",
         entryStepId: "entry-step",
       }),
     ).toBe("mgr-step");
   });
 
-  test("falls back to entryStepId then managerNodeId", () => {
+  test("falls back to entryStepId", () => {
     expect(
       resolveSupervisionRerunAnchor({
-        managerNodeId: "m-node",
         entryStepId: "entry-step",
       }),
     ).toBe("entry-step");
+  });
+});
+
+describe("resolveNestedSuperviserAddonRerunFromStepId", () => {
+  const stepAddressed = {
+    entryStepId: "e1",
+    steps: [
+      { id: "e1", nodeId: "n1" },
+      { id: "s2", nodeId: "n2" },
+    ],
+  } as const;
+
+  const sess = (currentNodeId: string | undefined) =>
+    ({
+      currentNodeId,
+      nodeExecutions: [],
+    }) as Pick<WorkflowSessionState, "currentNodeId" | "nodeExecutions">;
+
+  test("uses requested when provided", () => {
     expect(
-      resolveSupervisionRerunAnchor({
-        managerNodeId: "m-node",
-      }),
-    ).toBe("m-node");
+      resolveNestedSuperviserAddonRerunFromStepId(
+        "s2",
+        sess("e1"),
+        { steps: [...stepAddressed.steps] } as unknown as WorkflowJson,
+        stepAddressed,
+      ),
+    ).toBe("s2");
   });
 
-  test("falls back to entryNodeId when no step or manager id is set", () => {
+  test("uses current step from session when request omitted", () => {
     expect(
-      resolveSupervisionRerunAnchor({
-        entryNodeId: "legacy-entry",
-      } as Pick<
-        WorkflowJson,
-        "managerNodeId" | "managerStepId" | "entryStepId" | "entryNodeId"
-      >),
-    ).toBe("legacy-entry");
+      resolveNestedSuperviserAddonRerunFromStepId(
+        undefined,
+        sess("s2"),
+        { steps: [...stepAddressed.steps] } as unknown as WorkflowJson,
+        stepAddressed,
+      ),
+    ).toBe("s2");
+  });
+
+  test("falls back to anchor when session step unknown", () => {
+    expect(
+      resolveNestedSuperviserAddonRerunFromStepId(
+        undefined,
+        sess("unknown"),
+        { steps: [...stepAddressed.steps] } as unknown as WorkflowJson,
+        stepAddressed,
+      ),
+    ).toBe("e1");
+  });
+
+  test("prefers manager step as anchor", () => {
+    const sa = { ...stepAddressed, managerStepId: "mgr" };
+    expect(
+      resolveNestedSuperviserAddonRerunFromStepId(
+        undefined,
+        sess("unknown"),
+        { steps: [...stepAddressed.steps] } as unknown as WorkflowJson,
+        sa,
+      ),
+    ).toBe("mgr");
+  });
+
+  test("uses projected legacy node ids when the target workflow has no authored steps", () => {
+    const legacyWorkflow = {
+      entryNodeId: "manager-node",
+      nodes: [{ id: "manager-node" }, { id: "worker-node" }],
+    } as unknown as WorkflowJson;
+    const legacyStepAddressed =
+      toStepAddressedWorkflowForSupervision(legacyWorkflow);
+    expect(legacyStepAddressed).not.toBeNull();
+    expect(
+      resolveNestedSuperviserAddonRerunFromStepId(
+        undefined,
+        sess("worker-node"),
+        legacyWorkflow,
+        legacyStepAddressed!,
+      ),
+    ).toBe("worker-node");
   });
 });
 
@@ -64,18 +127,14 @@ describe("resolveSupervisionRerunTarget", () => {
     workflowId: "wf",
     description: "d",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120_000 },
-    managerNodeId: "nm",
-    subWorkflows: [],
     nodes: [{ id: "nm" }, { id: "nw" }],
-    edges: [],
-    branching: { mode: "fan-out" as const },
     entryStepId: "entry",
     managerStepId: "mgr",
     steps: [
       { id: "mgr", nodeId: "nm" },
       { id: "w", nodeId: "nw" },
     ],
-  } as unknown as WorkflowJson;
+  };
 
   const failedAtWorker = {
     currentNodeId: "nw",
@@ -99,7 +158,7 @@ describe("resolveSupervisionRerunTarget", () => {
       failedAtWorker,
     );
     expect(r).toEqual({
-      rerunFromNodeId: "mgr",
+      rerunFromStepId: "mgr",
       remediationAction: "rerun-workflow",
     });
   });
@@ -111,7 +170,7 @@ describe("resolveSupervisionRerunTarget", () => {
       failedAtWorker,
     );
     expect(r).toEqual({
-      rerunFromNodeId: "w",
+      rerunFromStepId: "w",
       remediationAction: "rerun-step",
       targetStepId: "w",
     });
@@ -138,7 +197,7 @@ describe("resolveSupervisionRerunTarget", () => {
       failedAtManager,
     );
     expect(r).toEqual({
-      rerunFromNodeId: "mgr",
+      rerunFromStepId: "mgr",
       remediationAction: "rerun-workflow",
     });
   });
@@ -149,18 +208,14 @@ describe("planSupervisionRemediation", () => {
     workflowId: "wf",
     description: "d",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120_000 },
-    managerNodeId: "nm",
-    subWorkflows: [],
     nodes: [{ id: "nm" }, { id: "nw" }],
-    edges: [],
-    branching: { mode: "fan-out" as const },
     entryStepId: "entry",
     managerStepId: "mgr",
     steps: [
       { id: "mgr", nodeId: "nm" },
       { id: "w", nodeId: "nw" },
     ],
-  } as unknown as WorkflowJson;
+  };
 
   const failedAtWorker = {
     currentNodeId: "nw",
@@ -329,6 +384,55 @@ describe("planSupervisionRemediation", () => {
       },
     });
     expect(p.kind).toBe("patch-then-rerun");
+  });
+});
+
+describe("toStepAddressedWorkflowForSupervision", () => {
+  test("passes through authored entryStepId and steps", () => {
+    const wf = {
+      entryStepId: "a",
+      steps: [{ id: "a", nodeId: "n1" }],
+    } as unknown as WorkflowJson;
+    expect(toStepAddressedWorkflowForSupervision(wf)).toEqual({
+      entryStepId: "a",
+      steps: [{ id: "a", nodeId: "n1" }],
+    });
+  });
+
+  test("projects legacy entryNodeId and nodes to steps", () => {
+    const wf = {
+      entryNodeId: "step-1",
+      managerNodeId: "step-1",
+      nodes: [
+        { id: "step-1", nodeFile: "n1.json", kind: "task" as const },
+        { id: "step-2", nodeFile: "n2.json", kind: "task" as const },
+      ],
+    } as unknown as WorkflowJson;
+    const r = toStepAddressedWorkflowForSupervision(wf);
+    expect(r?.entryStepId).toBe("step-1");
+    expect(r?.steps).toEqual([
+      { id: "step-1", nodeId: "step-1" },
+      { id: "step-2", nodeId: "step-2" },
+    ]);
+    expect(r?.managerStepId).toBe("step-1");
+  });
+
+  test("returns null when steps cannot be derived", () => {
+    expect(
+      toStepAddressedWorkflowForSupervision({
+        workflowId: "w",
+      } as unknown as WorkflowJson),
+    ).toBeNull();
+  });
+
+  test("returns null when entryStepId is set but steps are empty (does not fall back to legacy nodes)", () => {
+    const wf = {
+      entryStepId: "a",
+      steps: [],
+      entryNodeId: "legacy",
+      nodes: [{ id: "legacy", nodeFile: "n.json" }],
+    } as unknown as WorkflowJson;
+    expect(toStepAddressedWorkflowForSupervision(wf)).toBeNull();
   });
 });
 

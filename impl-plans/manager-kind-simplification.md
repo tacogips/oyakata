@@ -1,13 +1,13 @@
 # Manager Kind Simplification Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-manager-kind-simplification.md, design-docs/specs/design-workflow-json.md#workflownoderef
+**Design Reference**: design-docs/specs/design-unified-workflow-role-model.md, design-docs/specs/design-workflow-json.md#workflownoderef
 **Created**: 2026-03-18
 **Last Updated**: 2026-03-18
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-manager-kind-simplification.md`
+**Source**: historical manager-kind notes now consolidated into `design-docs/specs/notes.md`
 
 ### Summary
 

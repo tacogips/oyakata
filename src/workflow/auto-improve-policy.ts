@@ -1,7 +1,8 @@
 import { err, ok, type Result } from "./result";
 import type { AutoImprovePolicy } from "./types";
 
-export const DEFAULT_SUPERVISER_WORKFLOW_ID = "divedra/default-superviser";
+/** Default superviser bundle id (valid workflow id; loadWorkflowByIdFromDisk matches workflow.json). */
+export const DEFAULT_SUPERVISER_WORKFLOW_ID = "divedra-default-superviser";
 export const DEFAULT_MONITOR_INTERVAL_MS = 5_000;
 export const DEFAULT_STALL_TIMEOUT_MS = 60_000;
 export const DEFAULT_MAX_SUPERVISED_ATTEMPTS = 5;

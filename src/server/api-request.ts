@@ -158,10 +158,8 @@ export function readWorkflowRerunRequestOptions(
 ): WorkflowRerunRequestOptions {
   const bodyObject = jsonBodyObject(body);
   const fromStepId = optionalTrimmedStringField(bodyObject, "fromStepId");
-  const fromNodeId = optionalTrimmedStringField(bodyObject, "fromNodeId");
   return {
     ...(fromStepId === undefined ? {} : { fromStepId }),
-    ...(fromNodeId === undefined ? {} : { fromNodeId }),
     ...workflowRunRequestOptionsFromBody(bodyObject),
   };
 }

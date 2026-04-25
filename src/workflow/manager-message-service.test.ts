@@ -423,7 +423,7 @@ describe("manager-message-service", () => {
         workflowExecutionId: session.sessionId,
         managerSessionId: "mgrsess-000001",
         message: "  Retry the worker stage after review.  ",
-        actions: [{ type: "retry-node", nodeId: "main-worker" }],
+        actions: [{ type: "retry-step", stepId: "main-worker" }],
         attachments: [
           {
             path: `files/demo/${session.sessionId}/attachments/./brief.txt`,
@@ -438,7 +438,7 @@ describe("manager-message-service", () => {
     expect(accepted.accepted).toBe(true);
     expect(accepted.queuedNodeIds).toEqual(["main-worker"]);
     expect(accepted.createdCommunicationIds).toEqual([]);
-    expect(accepted.parsedIntent[0]?.kind).toBe("retry-node");
+    expect(accepted.parsedIntent[0]?.kind).toBe("retry-step");
 
     const loaded = await loadSession(session.sessionId, options);
     expect(loaded.ok).toBe(true);
@@ -454,7 +454,7 @@ describe("manager-message-service", () => {
         workflowExecutionId: session.sessionId,
         managerSessionId: "mgrsess-000001",
         message: "Retry the worker stage after review.",
-        actions: [{ type: "retry-node", nodeId: "main-worker" }],
+        actions: [{ type: "retry-step", stepId: "main-worker" }],
         attachments: [
           {
             path: `files/demo/${session.sessionId}/attachments/brief.txt`,
@@ -696,7 +696,7 @@ describe("manager-message-service", () => {
     );
   });
 
-  test("accepts queue-only start-sub-workflow actions without mailbox materialization", async () => {
+  test("rejects removed start-sub-workflow action type in manager messages", async () => {
     const root = await makeTempDir();
     const { options, session } =
       await createCompletedGroupedWorkflowFixture(root);
@@ -706,34 +706,23 @@ describe("manager-message-service", () => {
       managerSessionStore: managerStore,
     });
 
-    const accepted = await service.sendManagerMessage(
-      {
-        workflowId: "demo",
-        workflowExecutionId: session.sessionId,
-        managerSessionId: "mgrsess-000001",
-        message: "Re-run the main sub-workflow.",
-        actions: [{ type: "start-sub-workflow", subWorkflowId: "main" }],
-      },
-      options,
-    );
-
-    expect(accepted.accepted).toBe(true);
-    expect(accepted.createdCommunicationIds).toEqual([]);
-    expect(accepted.queuedNodeIds).toEqual(["main-divedra"]);
-    expect(accepted.parsedIntent[0]?.kind).toBe("start-sub-workflow");
-    expect(accepted.parsedIntent[0]?.targetId).toBe("main");
-
-    const loaded = await loadSession(session.sessionId, options);
-    expect(loaded.ok).toBe(true);
-    if (!loaded.ok) {
-      return;
-    }
-    expect(loaded.value.status).toBe("running");
-    expect(loaded.value.queue).toContain("main-divedra");
-
-    const messages = await managerStore.listMessages("mgrsess-000001");
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.accepted).toBe(true);
+    await expect(
+      service.sendManagerMessage(
+        {
+          workflowId: "demo",
+          workflowExecutionId: session.sessionId,
+          managerSessionId: "mgrsess-000001",
+          message: "Re-run the main sub-workflow.",
+          actions: [
+            {
+              type: "start-sub-workflow",
+              subWorkflowId: "main",
+            },
+          ] as unknown as import("./manager-control").ManagerControlAction[],
+        },
+        options,
+      ),
+    ).rejects.toThrow("is not supported");
   });
 
   test("applies optional-node execute/skip actions through manager messages", async () => {
@@ -772,10 +761,10 @@ describe("manager-message-service", () => {
         managerSessionId: "mgrsess-000001",
         message: "Execute step-1 and skip step-2.",
         actions: [
-          { type: "execute-optional-node", nodeId: "step-1" },
+          { type: "execute-optional-step", stepId: "step-1" },
           {
-            type: "skip-optional-node",
-            nodeId: "step-2",
+            type: "skip-optional-step",
+            stepId: "step-2",
             reason: "already covered by another branch",
           },
         ],
@@ -786,9 +775,9 @@ describe("manager-message-service", () => {
     expect(accepted.accepted).toBe(true);
     expect(accepted.queuedNodeIds).toEqual(["step-1", "step-2"]);
     expect(accepted.parsedIntent).toEqual([
-      { kind: "execute-optional-node", targetId: "step-1" },
+      { kind: "execute-optional-step", targetId: "step-1" },
       {
-        kind: "skip-optional-node",
+        kind: "skip-optional-step",
         targetId: "step-2",
         reason: "already covered by another branch",
       },
@@ -822,96 +811,4 @@ describe("manager-message-service", () => {
     ]);
   });
 
-  test("delivers manager-authored child-input messages with durable provenance", async () => {
-    const root = await makeTempDir();
-    const { options, session } =
-      await createCompletedGroupedWorkflowFixture(root);
-    const managerStore = await createManagerSession(
-      root,
-      session.sessionId,
-      "main-divedra",
-    );
-    const service = createManagerMessageService({
-      now: () => "2026-03-15T03:00:00.000Z",
-      managerSessionStore: managerStore,
-    });
-
-    await writeFile(
-      path.join(root, "demo", "node-workflow-input.json"),
-      `${JSON.stringify(
-        {
-          id: "workflow-input",
-          executionBackend: "codex-agent",
-          model: "gpt-5-nano",
-          promptTemplate: "Normalize the received sub-workflow instruction",
-          variables: {},
-          argumentsTemplate: { routed: { message: "" } },
-          argumentBindings: [
-            {
-              targetPath: "routed.message",
-              source: "node-output",
-              sourceRef: "main-divedra",
-              sourcePath: "output.payload.message",
-              required: true,
-            },
-          ],
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-
-    const accepted = await service.sendManagerMessage(
-      {
-        workflowId: "demo",
-        workflowExecutionId: session.sessionId,
-        managerSessionId: "mgrsess-000001",
-        message: "Forward this to the child input.",
-        actions: [
-          { type: "deliver-to-child-input", inputNodeId: "workflow-input" },
-        ],
-      },
-      options,
-    );
-
-    expect(accepted.accepted).toBe(true);
-    expect(accepted.createdCommunicationIds).toHaveLength(1);
-    expect(accepted.queuedNodeIds).toEqual(["workflow-input"]);
-
-    const loaded = await loadSession(session.sessionId, options);
-    expect(loaded.ok).toBe(true);
-    if (!loaded.ok) {
-      return;
-    }
-
-    const createdCommunication = loaded.value.communications.find(
-      (entry) => entry.communicationId === accepted.createdCommunicationIds[0],
-    );
-    expect(createdCommunication?.managerMessageId).toBe(
-      accepted.managerMessageId,
-    );
-    expect(createdCommunication?.payloadRef.kind).toBe("manager-message");
-    expect(createdCommunication?.sourceNodeExecId).toBe("exec-000001");
-
-    const managerArtifactRaw = await Bun.file(
-      path.join(
-        options.artifactRoot,
-        "demo",
-        "executions",
-        session.sessionId,
-        "manager-sessions",
-        "mgrsess-000001",
-        "messages",
-        accepted.managerMessageId,
-        "message.json",
-      ),
-    ).text();
-    expect(managerArtifactRaw).toContain('"accepted": true');
-    expect(managerArtifactRaw).toContain("Forward this to the child input.");
-
-    const messages = await managerStore.listMessages("mgrsess-000001");
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.accepted).toBe(true);
-  });
 });

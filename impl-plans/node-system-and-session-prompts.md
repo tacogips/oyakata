@@ -1,7 +1,7 @@
 # Node System And Session-Start Prompts Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-node-system-and-session-prompts.md, design-docs/specs/design-workflow-json.md#node-idjson
+**Design Reference**: design-docs/specs/architecture.md#prompt-and-input-assembly, design-docs/specs/design-workflow-json.md#node-idjson
 **Created**: 2026-03-26
 **Last Updated**: 2026-03-26
 
@@ -74,7 +74,7 @@ interface ComposedExecutionPrompts {
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
 | Workflow schema and loading | `src/workflow/types.ts`, `src/workflow/load.ts`, `src/workflow/validate.ts` | COMPLETED | `src/workflow/load.test.ts`, `src/workflow/validate.test.ts` |
-| Prompt composition and adapters | `src/workflow/prompt-composition.ts`, `src/workflow/adapter.ts`, `src/workflow/adapters/*.ts`, `src/workflow/call-node.ts`, `src/workflow/engine.ts` | COMPLETED | prompt/adapters tests, `tsc --noEmit` |
+| Prompt composition and adapters | `src/workflow/prompt-composition.ts`, `src/workflow/adapter.ts`, `src/workflow/adapters/*.ts`, `src/workflow/call-step-impl.ts`, `src/workflow/engine.ts` | COMPLETED | prompt/adapters tests, `tsc --noEmit` |
 | Example and documentation | `examples/codex-codex-euthanasia-debate/`, `design-docs/specs/*.md`, `examples/README.md` | COMPLETED | workflow validate/inspect |
 
 ## Dependencies

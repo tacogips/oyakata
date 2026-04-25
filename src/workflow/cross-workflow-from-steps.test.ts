@@ -115,6 +115,39 @@ describe("effectiveWorkflowCalls", () => {
     expect(effective[0]?.workflowId).toBe("override-target");
     expect(effective[0]?.resultNodeId).toBe("done");
   });
+
+  test("step-addressed graph uses only step-derived calls (ignores explicit workflowCalls)", () => {
+    const workflow: Pick<
+      WorkflowJson,
+      "entryStepId" | "workflowCalls" | "steps"
+    > = {
+      entryStepId: "s1",
+      workflowCalls: [
+        {
+          id: "should-be-ignored",
+          workflowId: "from-explicit",
+          callerNodeId: "s1",
+        },
+      ],
+      steps: [
+        {
+          id: "s1",
+          nodeId: "n1",
+          transitions: [
+            {
+              toStepId: "after",
+              toWorkflowId: "callee",
+              resumeStepId: "after",
+            },
+          ],
+        },
+      ],
+    };
+    const effective = effectiveWorkflowCalls(workflow);
+    expect(effective).toHaveLength(1);
+    expect(effective[0]?.id).toBe("__cw:s1");
+    expect(effective[0]?.workflowId).toBe("callee");
+  });
 });
 
 describe("workflowCallsForExecutionMatch", () => {
@@ -184,5 +217,38 @@ describe("workflowCallsForExecutionMatch", () => {
     );
     expect(ids).toEqual(["__cw:s1"]);
     expect(workflowCallsForExecutionMatch(workflow, match)).toHaveLength(1);
+  });
+
+  test("step-addressed graph ignores explicit workflowCalls for execution match", () => {
+    const workflow: Pick<
+      WorkflowJson,
+      "entryStepId" | "workflowCalls" | "steps"
+    > = {
+      entryStepId: "s1",
+      workflowCalls: [
+        {
+          id: "ex",
+          workflowId: "explicit-wf",
+          callerNodeId: "s1",
+        },
+      ],
+      steps: [
+        {
+          id: "s1",
+          nodeId: "n1",
+          transitions: [
+            {
+              toStepId: "after",
+              toWorkflowId: "derived-wf",
+              resumeStepId: "after",
+            },
+          ],
+        },
+      ],
+    };
+    const match = (c: WorkflowCallRef) => c.callerNodeId === "s1";
+    expect(
+      workflowCallsForExecutionMatch(workflow, match).map((c) => c.workflowId),
+    ).toEqual(["derived-wf"]);
   });
 });

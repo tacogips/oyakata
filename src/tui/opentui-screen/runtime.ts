@@ -149,8 +149,7 @@ export interface OpenTuiWorkflowAppOptions {
   }) => Promise<OpenTuiWorkflowExecutionHandle>;
   readonly rerunWorkflow: (input: {
     readonly sourceSessionId: string;
-    readonly fromStepId?: string;
-    readonly fromNodeId?: string;
+    readonly fromStepId: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
   }) => Promise<OpenTuiWorkflowActionResult>;
   readonly resumeWorkflow: (
@@ -1107,7 +1106,9 @@ export async function runOpenTuiWorkflowApp(
       return;
     }
     if (historyViewMode() === "subworkflow") {
-      const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+      const stepAddr = isStepAddressedAuthoring(
+        loadedWorkflow?.bundle.workflow,
+      );
       await withBusy(
         stepAddr ? "Switching subworkflow step" : "Switching subworkflow node",
         async () => {
@@ -1405,7 +1406,9 @@ export async function runOpenTuiWorkflowApp(
       const selection = opt.value;
       detailViewerBody = selection.body;
       const wf = loadedWorkflow?.bundle.workflow.workflowId ?? "workflow";
-      const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+      const stepAddr = isStepAddressedAuthoring(
+        loadedWorkflow?.bundle.workflow,
+      );
       const execution = selectedHistoryExecution();
       const placeholder = stepAddr ? "step" : "node";
       const id =
@@ -1429,7 +1432,9 @@ export async function runOpenTuiWorkflowApp(
       selection.backend === undefined ||
       selection.sessionId === undefined
     ) {
-      const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+      const stepAddr = isStepAddressedAuthoring(
+        loadedWorkflow?.bundle.workflow,
+      );
       setStatus(
         stepAddr
           ? "AI agent session is unavailable for the selected step execution"
@@ -1883,9 +1888,13 @@ export async function runOpenTuiWorkflowApp(
   }): Promise<void> => {
     if (focusPane === "sessions") {
       if (historyViewMode() === "subworkflow") {
-        const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+        const stepAddr = isStepAddressedAuthoring(
+          loadedWorkflow?.bundle.workflow,
+        );
         await withBusy(
-          stepAddr ? "Loading workflow step details" : "Loading workflow node details",
+          stepAddr
+            ? "Loading workflow step details"
+            : "Loading workflow node details",
           async () => {
             detailMode = "summary";
             agentSessionPopupOpen = false;
@@ -1920,7 +1929,9 @@ export async function runOpenTuiWorkflowApp(
         detailMode = "summary";
         detailReturnPane = "sessions";
         applyFocus("detail");
-        const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+        const stepAddr = isStepAddressedAuthoring(
+          loadedWorkflow?.bundle.workflow,
+        );
         setStatus(
           stepAddr
             ? `Focused step detail for workflow run '${runtimeSessionView.session.sessionId}'`
@@ -1935,7 +1946,9 @@ export async function runOpenTuiWorkflowApp(
         await openSubworkflowHistory(selectedChildSubworkflowId());
         return;
       }
-      const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+      const stepAddr = isStepAddressedAuthoring(
+        loadedWorkflow?.bundle.workflow,
+      );
       await withBusy(
         stepAddr ? "Loading step details" : "Loading node details",
         async () => {
@@ -2010,7 +2023,9 @@ export async function runOpenTuiWorkflowApp(
       } else {
         workflowDefinitionNodeSelect.moveDown(1);
       }
-      const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+      const stepAddr = isStepAddressedAuthoring(
+        loadedWorkflow?.bundle.workflow,
+      );
       await withBusy(
         stepAddr ? "Switching node definition" : "Switching workflow node",
         async () => {
@@ -2037,9 +2052,13 @@ export async function runOpenTuiWorkflowApp(
         sessionSelect.moveDown(1);
       }
       if (historyViewMode() === "subworkflow") {
-        const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
+        const stepAddr = isStepAddressedAuthoring(
+          loadedWorkflow?.bundle.workflow,
+        );
         await withBusy(
-          stepAddr ? "Switching subworkflow step" : "Switching subworkflow node",
+          stepAddr
+            ? "Switching subworkflow step"
+            : "Switching subworkflow node",
           async () => {
             detailMode = "summary";
             agentSessionPopupOpen = false;
@@ -2091,22 +2110,27 @@ export async function runOpenTuiWorkflowApp(
         });
         return;
       }
-      const stepAddr = isStepAddressedAuthoring(loadedWorkflow?.bundle.workflow);
-      await withBusy(stepAddr ? "Switching step" : "Switching node", async () => {
-        detailMode = "summary";
-        agentSessionPopupOpen = false;
-        await refreshManagerMessages();
-        const execution = selectedNodeExecution();
-        setStatus(
-          execution === undefined
-            ? stepAddr
-              ? "No step execution selected"
-              : "No node execution selected"
-            : stepAddr
-              ? `Selected step '${primaryStepOrNodeLabel(execution)}' (${execution.nodeExecId})`
-              : `Selected node '${execution.nodeId}' (${execution.nodeExecId})`,
-        );
-      });
+      const stepAddr = isStepAddressedAuthoring(
+        loadedWorkflow?.bundle.workflow,
+      );
+      await withBusy(
+        stepAddr ? "Switching step" : "Switching node",
+        async () => {
+          detailMode = "summary";
+          agentSessionPopupOpen = false;
+          await refreshManagerMessages();
+          const execution = selectedNodeExecution();
+          setStatus(
+            execution === undefined
+              ? stepAddr
+                ? "No step execution selected"
+                : "No node execution selected"
+              : stepAddr
+                ? `Selected step '${primaryStepOrNodeLabel(execution)}' (${execution.nodeExecId})`
+                : `Selected node '${execution.nodeId}' (${execution.nodeExecId})`,
+          );
+        },
+      );
       return;
     }
 

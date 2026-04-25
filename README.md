@@ -20,7 +20,7 @@ The current implementation remains the source of truth for shipped behavior, but
 - explicit same-session continuation for different steps that intentionally reuse one node
 - cross-workflow calls using the same execution-address contract as local step calls by targeting the callee workflow manager step
 - migration toward one shared call abstraction for local and cross-workflow dispatch instead of separate long-term paths
-- supervised `--auto-improve` execution (engine outer loop, persisted incidents/remediations, and patch audit; a nested `superviser` workflow is a follow-up; see `design-docs/specs/design-auto-improve-superviser-mode.md`)
+- supervised `--auto-improve` execution (engine outer loop, persisted incidents/remediations, and patch audit; optional phase-2 nested `superviser` workflow with `--nested-superviser`; see `design-docs/specs/architecture.md` and `impl-plans/completed/auto-improve-superviser-workflow-phase-2.md`)
 
 Those design documents describe the intended next schema and runtime direction; they are not a claim that every item is already implemented in `src/`.
 
@@ -37,8 +37,8 @@ Current runtime behavior:
 - manager nodes run inside the queue-based engine rather than replacing it with a pure external orchestrator
 - authored workflows may use role-based nodes (`manager` / `worker`) and may omit a manager when the authored entry is explicit (`entryStepId` for step-addressed bundles, `entryNodeId` for legacy compatibility bundles)
 - manager-less workflows execute today, but the normalized runtime still derives an internal effective manager/entry identity for compatibility
-- `call-step` is the primary direct-call surface; `call-node` remains a compatibility wrapper for the older node-addressed runtime contract
-- cross-workflow step transitions execute through the same queue-engine workflow-call primitive as explicit `workflowCalls`; authored `workflowCalls` remain a compatibility path for non-step bundles and transitional fixtures
+- `call-step` is the supported direct-call surface for local debugging and step-addressed execution control
+- cross-workflow execution uses the same engine primitive whether routing comes from a step transition (`toWorkflowId` / `resumeStepId`) or from an explicit call record: step-addressed bundles **must** use step transitions, because validation **rejects** top-level `workflow.workflowCalls` on `entryStepId`+`steps` workflows; legacy node-graph bundles may still author `workflowCalls` until the non-step validation path is removed
 - node-local `repeat` remains supported only in the simplified compatibility format and still synthesizes loop semantics
 - `user-action` nodes are supported and pause execution until an external reply resolves the action
 
@@ -53,7 +53,7 @@ Current execution support by node type:
 
 Additional authored shapes:
 
-- `workflowCalls`: executable workflow-to-workflow invocations. The caller's business payload is exposed to the callee as `runtimeVariables.workflowCall.input`, and `resultNodeId` can receive the callee result through a runtime-owned `workflow-call:<id>` communication.
+- `workflowCalls` (legacy node-graph bundles only; step-addressed workflows reject a top-level `workflowCalls` array and use `steps[].transitions` with `toWorkflowId` / `resumeStepId` instead): executable workflow-to-workflow invocations. The caller's business payload is exposed to the callee as `runtimeVariables.workflowCall.input`, and `resultNodeId` can receive the callee result through a runtime-owned `workflow-call:<id>` communication.
 - `nodes[].addon`: worker add-on references that resolve to effective node
   payloads while save/edit surfaces preserve the authored add-on reference.
   Current built-ins include `divedra/chat-reply-worker`,
@@ -150,7 +150,6 @@ Primary commands implemented in `src/cli.ts`:
 - `gql <graphql-document>`
 - `tui [workflow-name]`
 - `call-step <workflow-id> <workflow-run-id> <step-id>`
-- `call-node <workflow-id> <workflow-run-id> <node-id>` (compatibility)
 - `hook [--vendor claude-code|codex]`
 - `events validate`
 - `events emit <source-id> --event-file <path>`
@@ -160,9 +159,7 @@ Primary commands implemented in `src/cli.ts`:
 
 `workflow create <name>` scaffolds a role-based starter with a code-manager default manager node and a `codex-agent` worker node. The generated `workflow.json` prefers the authored-minimal surface and omits compatibility/default fields such as empty `subWorkflows`, synthesized `edges`, default `branching`, and node-level `completion: { "type": "none" }` unless they are needed. Pass `--worker-only` to scaffold a manager-less starter whose authored entry step points at `main-worker`.
 
-`call-step` is the primary direct-call surface during the step-addressed cutover. It accepts targeted continuation controls such as `--prompt-variant <name>`, `--continue-session`, `--timeout-ms <ms>`, and `--resume-step-exec <id>` (alias `--resume-node-exec`) so a reusable node can be revisited through a specific step with invocation-local overrides.
-
-`call-node` remains available only for compatibility with older node-addressed runtime paths. New direct execution tooling should prefer `call-step`.
+`call-step` is the direct-call surface during the step-addressed cutover. It accepts targeted continuation controls such as `--prompt-variant <name>`, `--continue-session`, `--timeout-ms <ms>`, and `--resume-step-exec <id>` (alias `--resume-node-exec`) so a reusable node can be revisited through a specific step with invocation-local overrides.
 
 `serve` and `web serve` start the local Bun HTTP server. The root page serves a read-only Solid workflow viewer with the workflow node graph, execution run list, and selected run logs.
 
@@ -190,9 +187,9 @@ Useful options:
 - `--output json`
 - `--format text|json|jsonl` for `session logs`
 
-`workflow inspect` surfaces the active cross-workflow count as `workflowCalls`
-and labels any remaining structural compatibility count as
-`legacySubWorkflows`.
+`workflow inspect` surfaces step and node-registry identity fields plus the
+effective cross-workflow call count as `workflowCalls` (derived from authored
+`workflowCalls` and step transitions).
 
 - `--dry-run`
 - `--max-steps <n>`
@@ -206,7 +203,7 @@ and labels any remaining structural compatibility count as
 Remote execution support:
 
 - `workflow run`, `session resume`, and `session rerun` can target a remote control plane with `--endpoint`
-- `call-step`, `call-node`, `session export`, and `session logs` are local-only today
+- `call-step`, `session export`, and `session logs` are local-only today
 - `--mock-scenario` is local-only and cannot be combined with `--endpoint`
 
 ## GraphQL Control Plane
@@ -498,7 +495,7 @@ Primary package-root exports:
 - `getSession()`
 - `listSessions()`
 - `getRuntimeSessionView()`
-- `callWorkflowNode()`
+- `callWorkflowStep()`
 - `createWorkflowExecutionClient()`
 - `createNodeAddonPayloadResolver()`
 - `createNodeAddonRegistry()`

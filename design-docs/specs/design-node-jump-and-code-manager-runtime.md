@@ -8,7 +8,7 @@ It updates the design direction currently described across:
 - `design-docs/specs/design-node-mailbox.md`
 - `design-docs/specs/design-node-output-contract.md`
 - `design-docs/specs/design-node-session-reuse.md`
-- `design-docs/specs/design-manager-driven-call-node-runtime.md`
+- `design-docs/specs/architecture.md`
 
 ## Overview
 
@@ -458,6 +458,6 @@ See also:
 - `design-docs/specs/design-node-mailbox.md`
 - `design-docs/specs/design-node-output-contract.md`
 - `design-docs/specs/design-node-session-reuse.md`
-- `design-docs/specs/design-manager-driven-call-node-runtime.md`
+- `design-docs/specs/architecture.md`
 - `design-docs/specs/design-auto-improve-superviser-mode.md`
 - `design-docs/specs/design-workflow-steps-and-node-reuse.md`

@@ -79,7 +79,6 @@ export interface ExecuteWorkflowRequest extends WorkflowRunRequest {
 
 export interface RerunWorkflowRequest extends WorkflowRunRequest {
   readonly fromStepId?: string;
-  readonly fromNodeId?: string;
 }
 
 export interface SaveWorkflowResponse {
@@ -110,7 +109,6 @@ export interface RerunWorkflowResponse {
   readonly sessionId: string;
   readonly status: SessionStatus;
   readonly rerunFromStepId?: string;
-  readonly rerunFromNodeId?: string;
   readonly exitCode?: number;
 }
 

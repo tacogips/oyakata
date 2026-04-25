@@ -10,8 +10,17 @@ import {
   createManagerSessionStore,
   hashManagerAuthToken,
 } from "./manager-session-store";
-import { createManagerMessageService } from "./manager-message-service";
-import { loadSession } from "./session-store";
+import {
+  mergeLoadOptionsForSessionMutableBundle,
+  loadWorkflowFromDisk,
+} from "./load";
+import { createManagerMessageId } from "./manager-message-service/idempotency";
+import {
+  prepareManagerMessageArtifacts,
+  persistManagerMessageCommunication,
+} from "./manager-message-service/artifacts";
+import { loadSession, saveSession } from "./session-store";
+import type { WorkflowSessionState } from "./session";
 
 const tempDirs: string[] = [];
 
@@ -450,33 +459,55 @@ describe("communication-service", () => {
       session.sessionId,
       "main-divedra",
     );
-    const managerMessageService = createManagerMessageService({
-      now: () => "2026-03-15T04:00:00.000Z",
-      managerSessionStore: managerStore,
-    });
     const service = createCommunicationService({
       now: () => "2026-03-15T04:05:00.000Z",
       idempotencyStore: managerStore,
     });
 
-    const sent = await managerMessageService.sendManagerMessage(
-      {
-        workflowId: "demo",
-        workflowExecutionId: session.sessionId,
-        managerSessionId: "mgrsess-000001",
-        message: "Deliver this updated brief.",
-        actions: [
-          { type: "deliver-to-child-input", inputNodeId: "workflow-input" },
-        ],
-      },
-      options,
+    const loadedWf = await loadWorkflowFromDisk(
+      "demo",
+      mergeLoadOptionsForSessionMutableBundle(options, session),
     );
-    expect(sent.accepted).toBe(true);
-    const sourceCommunicationId = sent.createdCommunicationIds[0];
-    expect(sourceCommunicationId).toBeDefined();
-    if (sourceCommunicationId === undefined) {
-      return;
+    if (!loadedWf.ok) {
+      throw new Error(loadedWf.error.message);
     }
+    const managerMessageId = createManagerMessageId();
+    const artifacts = await prepareManagerMessageArtifacts({
+      artifactWorkflowRoot: loadedWf.value.artifactWorkflowRoot,
+      workflowId: "demo",
+      workflowExecutionId: session.sessionId,
+      managerSessionId: "mgrsess-000001",
+      managerMessageId,
+      managerNodeId: "main-divedra",
+      managerNodeExecId: "exec-000001",
+      subWorkflowId: "main",
+      message: "Deliver this updated brief.",
+      attachments: [],
+      actions: [],
+    });
+    const communication = await persistManagerMessageCommunication({
+      artifactWorkflowRoot: loadedWf.value.artifactWorkflowRoot,
+      workflowId: "demo",
+      workflowExecutionId: session.sessionId,
+      communicationCounter: session.communicationCounter,
+      managerMessageId,
+      managerNodeId: "main-divedra",
+      managerNodeExecId: "exec-000001",
+      targetNodeId: "workflow-input",
+      subWorkflowId: "main",
+      payloadRef: artifacts.payloadRef,
+      outputRaw: artifacts.outputRaw,
+      createdAt: "2026-03-15T04:00:00.000Z",
+    });
+    const seeded: WorkflowSessionState = {
+      ...session,
+      communications: [...session.communications, communication],
+      communicationCounter: session.communicationCounter + 1,
+    };
+    const saveResult = await saveSession(seeded, options);
+    expect(saveResult.ok).toBe(true);
+
+    const sourceCommunicationId = communication.communicationId;
 
     const replayed = await service.replayCommunication(
       {

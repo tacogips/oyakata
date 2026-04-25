@@ -9,12 +9,10 @@ import type { LoadOptions } from "./types";
 export interface ManagerIntentSummary {
   readonly kind:
     | "planner-note"
-    | "start-sub-workflow"
-    | "deliver-to-child-input"
-    | "retry-node"
+    | "retry-step"
     | "replay-communication"
-    | "execute-optional-node"
-    | "skip-optional-node"
+    | "execute-optional-step"
+    | "skip-optional-step"
     | "wait"
     | "invalid";
   readonly targetId?: string;

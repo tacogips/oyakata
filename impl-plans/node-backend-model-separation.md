@@ -1,7 +1,7 @@
 # Node Backend/Model Separation Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-node-backend-model-separation.md, design-docs/specs/design-data-model.md#node-idjson, design-docs/specs/design-workflow-json.md#node-idjson, design-docs/specs/architecture.md#node-model
+**Design Reference**: design-docs/specs/notes.md, design-docs/specs/design-data-model.md#node-idjson, design-docs/specs/design-workflow-json.md#node-idjson, design-docs/specs/architecture.md
 **Created**: 2026-03-07
 **Last Updated**: 2026-03-07
 
@@ -27,7 +27,7 @@ Not included:
 
 ### 1. Design and Documentation
 
-#### `design-docs/specs/design-node-backend-model-separation.md`
+#### `design-docs/specs/notes.md`
 
 **Checklist**:
 - [x] Define canonical `executionBackend` + `model` shape
@@ -72,7 +72,7 @@ function normalizeNodePayload(
 
 | Module | File Path | Status | Tests |
 |--------|-----------|--------|-------|
-| Design | `design-docs/specs/design-node-backend-model-separation.md` | COMPLETED | - |
+| Design | `design-docs/specs/notes.md` | COMPLETED | - |
 | Defaults | `src/workflow/create.ts`, `src/server/api.ts` | COMPLETED | `src/workflow/load.test.ts`, `src/server/api.test.ts` |
 | Validation | `src/workflow/validate.ts` | COMPLETED | `src/workflow/validate.test.ts` |
 

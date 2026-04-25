@@ -136,8 +136,7 @@ interface ControllerHarnessOverrides {
   }>;
   rerunWorkflow?: (input: {
     readonly sourceSessionId: string;
-    readonly fromStepId?: string;
-    readonly fromNodeId?: string;
+    readonly fromStepId: string;
     readonly runtimeVariables: Readonly<Record<string, unknown>>;
   }) => Promise<{
     readonly exitCode: number;
@@ -455,6 +454,30 @@ describe("createOpenTuiController", () => {
     expect(harness.refreshWorkflow).toHaveBeenCalledWith("demo", "rerun-1");
     expect(harness.state.lastStatus).toBe(
       "Rerun finished: rerun-1 status=completed exitCode=0",
+    );
+  });
+
+  test("rerunWorkflow rejects legacy node-addressed executions without a step id", async () => {
+    const harness = createControllerHarness({
+      state: {
+        inputText: '{ "request": "retry" }',
+        runtimeSessionView: makeRuntimeSessionView({}),
+        selectedHistoryExecution: {
+          artifactDir: "/tmp/demo/executions/node-1",
+          endedAt: "2026-03-26T00:00:10.000Z",
+          nodeExecId: "exec-1",
+          nodeId: "shared-worker",
+          startedAt: "2026-03-26T00:00:05.000Z",
+          status: "succeeded",
+        },
+      },
+    });
+
+    await harness.controller.rerunWorkflow();
+
+    expect(harness.rerunWorkflow).not.toHaveBeenCalled();
+    expect(harness.state.lastStatus).toBe(
+      "Cannot rerun a legacy node-addressed execution; this surface requires an authored stepId",
     );
   });
 });

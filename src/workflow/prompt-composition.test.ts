@@ -375,19 +375,17 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).toContain(
       "workflow-call decisions, output assessment, and retry decisions",
     );
-    expect(prompt).toContain('"type":"retry-node","nodeId":"<node-id>"');
+    expect(prompt).toContain('"type":"retry-step","stepId":"<step-id>"');
     expect(prompt).toContain(
       '"type":"replay-communication","communicationId":"<communication-id>"',
     );
     expect(prompt).toContain(
-      '"type":"execute-optional-node","nodeId":"<node-id>"',
+      '"type":"execute-optional-step","stepId":"<step-id>"',
     );
     expect(prompt).toContain(
-      '"type":"skip-optional-node","nodeId":"<node-id>"',
+      '"type":"skip-optional-step","stepId":"<step-id>"',
     );
-    expect(prompt).toContain(
-      "run automatically from the caller step; do not emit",
-    );
+    expect(prompt).toContain("run automatically from the caller step");
     expect(prompt).not.toContain('"type":"start-sub-workflow"');
     expect(prompt).not.toContain('"type":"deliver-to-child-input"');
     expect(prompt).not.toContain("sub-workflow dispatch");

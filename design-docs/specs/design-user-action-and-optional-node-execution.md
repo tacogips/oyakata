@@ -5,6 +5,8 @@ This document proposes an additive design for two workflow capabilities:
 - a runtime-owned `user-action` node that asks an external human for a decision
 - an `optional` execution mode that lets the owning `divedra` manager decide whether a ready node should run or be skipped
 
+**Status (2026-04)**: Optional execution and manager decisions are implemented in `src/workflow/manager-control.ts` and the engine using **step-oriented** action types (`retry-step`, `execute-optional-step`, `skip-optional-step` with `stepId`). Structural manager-control actions (`start-sub-workflow`, `deliver-to-child-input`) and node-id action names are **not** supported. The "Manager Decision Surface" section below retains earlier proposal text for history; treat it as superseded where it disagrees with `design-docs/specs/architecture.md` (Manager Control Architecture) and `impl-plans/workflow-legacy-compatibility-removal.md`.
+
 ## Overview
 
 The current architecture already has the right foundations:
@@ -68,7 +70,10 @@ Rules:
 
 - omitted `execution.mode` means `required`
 - `optional` currently requires `decisionBy: "owning-manager"`
-- the owning manager is the root manager for root-scope nodes and the subworkflow-manager for nodes inside one sub-workflow
+- the owning manager is whichever manager execution currently owns the node's
+  scope; the active implementation still preserves structural-scope
+  compatibility internally, but new authored workflows should not rely on a
+  separate subworkflow-manager concept
 
 ### `node-{id}.json`
 
@@ -470,8 +475,8 @@ interface SkipOptionalNodeAction {
 
 Scope rules mirror the existing manager ownership rules:
 
-- root manager may decide only root-scope optional nodes
-- subworkflow-manager may decide only optional nodes inside its owned sub-workflow
+- a manager may decide only optional nodes in its owned scope
+- legacy structural scope distinctions remain compatibility-only behavior
 
 GraphQL parity rule:
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -47,7 +47,9 @@ class OptionalDecisionAdapter implements NodeAdapter {
           this.managerCalls >= 2
             ? {
                 managerControl: {
-                  actions: [{ type: "skip-optional-node", nodeId: "step-1" }],
+                  actions: [
+                    { type: "skip-optional-step", stepId: "step-1" },
+                  ],
                 },
               }
             : {},
@@ -2299,10 +2301,10 @@ describe("runWorkflow", () => {
     const sup = result.value.session.supervision;
     expect(sup).toBeDefined();
     expect(sup?.targetWorkflowId).toBe("managerless");
-    expect(sup?.superviserWorkflowId).toBe("divedra/default-superviser");
+    expect(sup?.superviserWorkflowId).toBe("divedra-default-superviser");
     expect(sup?.status).toBe("succeeded");
     expect(sup?.policy?.superviserWorkflowId).toBe(
-      "divedra/default-superviser",
+      "divedra-default-superviser",
     );
     expect(sup?.policy?.monitorIntervalMs).toBe(1500);
     expect(sup?.incidents).toEqual([]);
@@ -2374,6 +2376,109 @@ describe("runWorkflow", () => {
     expect(sup?.incidents[0]?.category).toBe("failure");
     expect(sup?.remediations?.map((r) => r.action)).toEqual(["rerun-workflow"]);
     expect(sup?.attemptCount).toBe(2);
+  });
+
+  test("nestedSuperviserDriver runs default-superviser bundle and completes a one-step target", async () => {
+    const artifactRoot = path.join(await makeTempDir(), "artifacts");
+    const sessionStoreRoot = await makeTempDir();
+    const examplesRoot = path.resolve(process.cwd(), "examples");
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 25,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 5,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "worker-only-single-step",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: examplesRoot,
+        artifactRoot,
+        sessionStoreRoot,
+        autoImprove: policy,
+        nestedSuperviserDriver: true,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+    const sup = result.value.session.supervision;
+    expect(sup?.superviserWorkflowId).toBe("divedra-default-superviser");
+    expect(sup?.nestedSuperviserSessionId).toBeDefined();
+    expect(sup?.status).toBe("succeeded");
+  });
+
+  test("nestedSuperviserDriver resume starts a new nested round when the superviser session completed but the target is still max-steps paused", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.resolve(process.cwd(), "examples");
+    await createManagerlessWorkflowFixture(root, "managerless");
+    await cp(
+      path.join(examplesRoot, "default-superviser"),
+      path.join(root, "default-superviser"),
+      { recursive: true },
+    );
+    const artifactRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 25,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 5,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot,
+        sessionStoreRoot,
+        runtimeVariables: { topic: "t" },
+        autoImprove: policy,
+        nestedSuperviserDriver: true,
+        maxSteps: 1,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.session.status).toBe("paused");
+    const nestedId0 = first.value.session.supervision?.nestedSuperviserSessionId;
+    expect(nestedId0).toBeDefined();
+
+    const second = await runWorkflow(
+      "managerless",
+      {
+        ...legacyAuthoredWorkflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot,
+        sessionStoreRoot,
+        runtimeVariables: { topic: "t" },
+        resumeSessionId: first.value.session.sessionId,
+        autoImprove: policy,
+        nestedSuperviserDriver: true,
+      },
+      deterministicAdapter,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) {
+      return;
+    }
+    expect(second.value.session.status).toBe("completed");
+    const nestedId1 = second.value.session.supervision?.nestedSuperviserSessionId;
+    expect(nestedId1).toBeDefined();
+    expect(nestedId1).not.toBe(nestedId0);
   });
 
   test("auto-improve records patch-workflow and patch-revisions when the same error repeats, then succeeds", async () => {
@@ -2657,7 +2762,7 @@ describe("runWorkflow", () => {
         runtimeVariables: { topic: "managerless" },
         autoImprove: policy,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-1",
+        rerunFromStepId: "step-1",
       },
       deterministicAdapter,
     );
@@ -2739,9 +2844,10 @@ describe("runWorkflow", () => {
     expect(resumed.value.session.supervision?.status).toBe("succeeded");
     expect(resumed.value.session.supervision?.attemptCount).toBe(2);
     expect(resumed.value.session.supervision?.incidents).toHaveLength(1);
+    // Failure occurs on a non-entry step after resume; supervision targets that step.
     expect(
       resumed.value.session.supervision?.remediations?.map((r) => r.action),
-    ).toEqual(["rerun-workflow"]);
+    ).toEqual(["rerun-step"]);
   });
 
   test("keeps the auto-improve retry loop active on supervised rerun", async () => {
@@ -2799,7 +2905,7 @@ describe("runWorkflow", () => {
         runtimeVariables: { topic: "managerless" },
         autoImprove: policy,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-1",
+        rerunFromStepId: "step-1",
       },
       new FailOncePerRerun(),
     );
@@ -2992,7 +3098,7 @@ describe("runWorkflow", () => {
         ...baseOpts,
         autoImprove: policy,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-1",
+        rerunFromStepId: "step-1",
       },
       deterministicAdapter,
     );
@@ -3594,7 +3700,9 @@ describe("runWorkflow", () => {
           {
             payload: {
               managerControl: {
-                actions: [{ type: "execute-optional-node", nodeId: "step-1" }],
+                actions: [
+                  { type: "execute-optional-step", stepId: "step-1" },
+                ],
               },
             },
           },
@@ -3713,8 +3821,8 @@ describe("runWorkflow", () => {
               managerControl: {
                 actions: [
                   {
-                    type: "skip-optional-node",
-                    nodeId: "step-1",
+                    type: "skip-optional-step",
+                    stepId: "step-1",
                     reason: "already satisfied by upstream evidence",
                   },
                 ],
@@ -4389,7 +4497,7 @@ describe("runWorkflow", () => {
         "divedra-manager": {
           payload: {
             managerControl: {
-              actions: [{ type: "retry-node", nodeId: "step-1" }],
+              actions: [{ type: "retry-step", stepId: "step-1" }],
             },
           },
         },
@@ -5006,10 +5114,10 @@ describe("runWorkflow", () => {
     expect(managerInput.promptText).toContain("Given data:");
     expect(managerInput.promptText).toContain("Manager control payload:");
     expect(managerInput.promptText).toContain(
-      '"type":"retry-node","nodeId":"<node-id>"',
+      '"type":"retry-step","stepId":"<step-id>"',
     );
     expect(managerInput.promptText).toContain(
-      "run automatically from the caller step; do not emit",
+      "run automatically from the caller step",
     );
     expect(managerInput.promptText).not.toContain(
       '"type":"start-sub-workflow"',
@@ -7989,7 +8097,7 @@ describe("runWorkflow", () => {
       {
         ...options,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-1",
+        rerunFromStepId: "step-1",
       },
       deterministicAdapter,
     );
@@ -8043,39 +8151,6 @@ describe("runWorkflow", () => {
     expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
   });
 
-  test("prefers rerunFromStepId when both step and node rerun ids are set", async () => {
-    const root = await makeTempDir();
-    await createWorkflowFixture(root, "rerun", false);
-    const options = {
-      ...legacyAuthoredWorkflowLoadOpts,
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    };
-
-    const first = await runWorkflow("rerun", options, deterministicAdapter);
-    expect(first.ok).toBe(true);
-    if (!first.ok) {
-      return;
-    }
-
-    const rerun = await runWorkflow(
-      "rerun",
-      {
-        ...options,
-        rerunFromSessionId: first.value.session.sessionId,
-        rerunFromStepId: "step-1",
-        rerunFromNodeId: "step-2",
-      },
-      deterministicAdapter,
-    );
-    expect(rerun.ok).toBe(true);
-    if (!rerun.ok) {
-      return;
-    }
-    expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
-  });
-
   test("reports step-oriented rerun validation errors for step-addressed workflows", async () => {
     const root = await makeTempDir();
     await createStepAddressedInheritedSessionReuseFixture(
@@ -8103,7 +8178,7 @@ describe("runWorkflow", () => {
       {
         ...options,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "missing-step",
+        rerunFromStepId: "missing-step",
       },
       new ReusableSessionAdapter(),
     );
@@ -8145,7 +8220,7 @@ describe("runWorkflow", () => {
       {
         ...options,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-b",
+        rerunFromStepId: "step-b",
       },
       rerunAdapter,
     );
@@ -8542,11 +8617,6 @@ describe("runWorkflow", () => {
         "b-manager": {
           payload: {
             marker: "from-b-manager",
-            managerControl: {
-              actions: [
-                { type: "deliver-to-child-input", inputNodeId: "b-input" },
-              ],
-            },
           },
         },
       }),
@@ -8577,7 +8647,7 @@ describe("runWorkflow", () => {
     expect(inputJson.arguments.routed.marker).toBe("from-b-manager");
   });
 
-  test("subworkflow-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
+  test("subworkflow-manager empty managerControl still allows engine child-input planning", async () => {
     const root = await makeTempDir();
     const workflowName = "subworkflow-manager-no-forward";
     await createSubWorkflowRuntimeFixture(root, workflowName);
@@ -8611,157 +8681,7 @@ describe("runWorkflow", () => {
     const bInputExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "b-input",
     );
-    expect(bInputExecutions).toHaveLength(0);
-  });
-
-  test("root manager can explicitly start a sub-workflow through managerControl", async () => {
-    const root = await makeTempDir();
-    const workflowName = "root-manager-explicit-start";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        ...legacyAuthoredWorkflowLoadOpts,
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-explicit-start",
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": [
-          {
-            payload: {
-              managerControl: {
-                actions: [
-                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-                ],
-              },
-            },
-          },
-          { payload: {} },
-        ],
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const aManagerExecution = result.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "a-manager",
-    );
-    expect(aManagerExecution).toBeDefined();
-
-    const startCommunication = result.value.session.communications.find(
-      (entry) =>
-        entry.fromNodeId === "divedra-manager" &&
-        entry.toNodeId === "a-manager" &&
-        entry.transitionWhen === "sub-workflow-start:sw-a",
-    );
-    expect(startCommunication).toBeDefined();
-  });
-
-  test("root manager can re-invoke the same sub-workflow through repeated explicit start actions", async () => {
-    const root = await makeTempDir();
-    const workflowName = "root-manager-explicit-rerun";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        ...legacyAuthoredWorkflowLoadOpts,
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-explicit-rerun",
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": [
-          {
-            payload: {
-              managerControl: {
-                actions: [
-                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-                ],
-              },
-            },
-          },
-          {
-            payload: {
-              managerControl: {
-                actions: [
-                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-                ],
-              },
-            },
-          },
-          {
-            payload: {
-              managerControl: {
-                actions: [],
-              },
-            },
-          },
-        ],
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const aManagerExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "a-manager",
-    );
-    expect(aManagerExecutions.length).toBeGreaterThanOrEqual(2);
-
-    const repeatedStartCommunications =
-      result.value.session.communications.filter(
-        (entry) =>
-          entry.fromNodeId === "divedra-manager" &&
-          entry.toNodeId === "a-manager" &&
-          entry.transitionWhen === "sub-workflow-start:sw-a",
-      );
-    expect(repeatedStartCommunications).toHaveLength(2);
-  });
-
-  test("rejects root-manager retry-node actions that target internal sub-workflow nodes", async () => {
-    const root = await makeTempDir();
-    const workflowName = "root-manager-invalid-internal-retry";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        ...legacyAuthoredWorkflowLoadOpts,
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-invalid-internal-retry",
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": {
-          payload: {
-            managerControl: {
-              actions: [{ type: "retry-node", nodeId: "a-input" }],
-            },
-          },
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    expect(result.error.exitCode).toBe(5);
-    expect(result.error.message).toContain(
-      "must re-invoke that sub-workflow with start-sub-workflow instead",
-    );
+    expect(bInputExecutions.length).toBeGreaterThan(0);
   });
 
   test("exposes conversation routing metadata in transcript bindings", async () => {

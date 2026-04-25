@@ -290,7 +290,9 @@ Resolution rules:
 - the token must expire or be revoked when the manager step completes, fails, or is cancelled
 - worker nodes must never inherit this token
 
-Runtime lifecycle details for token minting, adapter handoff, and immediate post-execution expiry are specified in `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`.
+Runtime lifecycle details for token minting, adapter handoff, and immediate
+post-execution expiry are part of the current workflow-engine architecture and
+manager session implementation described in `design-docs/specs/architecture.md`.
 
 ## GraphQL Domain Schema
 

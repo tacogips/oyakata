@@ -13,7 +13,16 @@ This document describes the current runtime architecture implemented in `src/wor
 - runtime-owned output validation and publication
 - manager-scoped control-plane access for manager nodes
 
-The current implementation is centered on the persisted workflow session and its queue. Manager nodes are important, but they do not replace the queue-based engine. The repository is in a mixed transitional state: step-addressed authoring and several public inspection surfaces are already in place, while some runtime and compatibility paths still retain older node-addressed behavior.
+The current implementation is centered on the persisted workflow session and its queue. Manager nodes are important, but they do not replace the queue-based engine. The intended architecture is now strict step-addressed execution with no backward-compatibility requirement for node-addressed or structural sub-workflow authoring. Any remaining compatibility path in the repository should be treated as technical debt scheduled for removal, not as an active architectural mode.
+
+Compatibility-removal rule for ongoing refactors:
+
+- no new public surface may introduce or preserve node-addressed aliases when a
+  step-addressed field already exists
+- new/additive control APIs must target `stepId`, `entryStepId`, and
+  `managerStepId` rather than `nodeId`, `entryNodeId`, or `managerNodeId`
+- compatibility paths that still exist are removal targets only; they are not
+  valid precedent for new runtime or API design
 
 Current direction:
 
@@ -21,12 +30,39 @@ Current direction:
 - workflows use `workflow -> steps[] + nodes[]`, where steps are the canonical execution addresses and `workflow.json.nodes[]` is a reusable node registry
 - manager nodes should default to a deterministic `code` manager, with `llm` manager retained as experimental
 - repeated visits to the same node should materialize distinct mailbox instances and support same-session continuation with prompt variants
-- `auto improve mode` currently runs as an engine-owned outer supervision loop that persists incidents, remediations, and mutable-workspace audit data on the target session; phase 2 is to lower that policy into a paired `divedra superviser` workflow without changing the operator-visible audit model
+- `auto improve mode` defaults to an engine-owned outer supervision loop that persists incidents, remediations, and mutable-workspace audit data on the target session; phase 2 optionally runs a paired `divedra superviser` workflow (`nestedSuperviserDriver` / `--nested-superviser`) using the same audit model
 
-Supporting design:
-- `design-docs/specs/design-node-jump-and-code-manager-runtime.md`
-- `design-docs/specs/design-workflow-steps-and-node-reuse.md`
-- `design-docs/specs/design-auto-improve-superviser-mode.md`
+The authoritative implementation for those behaviors lives in:
+
+- `src/workflow/engine.ts`
+- `src/workflow/call-step.ts`
+- `src/workflow/superviser.ts`
+- `src/workflow/superviser-control.ts` (phase-2 `SuperviserRuntimeControl` and add-on argument validation)
+- `src/workflow/node-addons.ts` (native `divedra/*` supervision add-ons)
+- `src/workflow/types.ts` (shared step-addressed runtime identifiers, including phase-2 superviser-control add-on names)
+- `src/workflow/validate.ts`
+
+Current compatibility-removal sequence (see
+`impl-plans/workflow-legacy-compatibility-removal.md`):
+
+- rerun, resume, and direct-control entrypoints should accept authored `stepId`
+  targets only
+- workflow validation/load/save should reject legacy **authored** fields by default
+  (`isStrictWorkflowAuthorshipValidation` in `validate.ts`, unless
+  `rejectLegacyWorkflowAuthoring: false` or `DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT=true`)
+- normalized `WorkflowJson` may still **synthesize** runtime companions
+  (for example `managerNodeId`, structural `subWorkflows`, `edges`) from
+  step-addressed authoring until that plan’s module 1 fully removes them; new
+  bundles should be step-only
+- runtime cross-workflow execution still unions explicit `workflowCalls` (legacy
+  path) with step-derived `__cw:*` calls (`cross-workflow-from-steps.ts`); the
+  target end state is step transitions only
+- phase-2 superviser-control add-on identifiers are part of the runtime control
+  surface and should stay centralized; duplicating the same `divedra/*`
+  catalog across validation, add-on resolution, and native execution is
+  implementation drift, not intended architecture
+- node ids remain reusable payload registry identifiers, not execution
+  addresses
 
 ## Core Architectural Boundaries
 
@@ -55,8 +91,8 @@ The scoped model defines:
 
 Project scope is searched before user scope for bare workflow names, while
 `--workflow-root` and `DIVEDRA_WORKFLOW_ROOT` remain direct workflow-root
-overrides for examples and automation. Supporting design:
-`design-docs/specs/design-user-scope-workflows.md`.
+overrides for examples and automation. Scope resolution is implemented in
+`src/workflow/catalog.ts`.
 
 ### Runtime State Boundary
 
@@ -99,7 +135,8 @@ Execution-time working directory is resolved separately from workflow/artifact/s
 - run-scoped override: explicit execution input working directory
 - node-scoped override: `nodePayload.workingDirectory`, resolved from the effective workflow execution working directory
 
-Supporting design: `design-docs/specs/design-workflow-working-directory.md`.
+Working-directory resolution is implemented in
+`src/workflow/working-directory.ts`.
 
 ### Auto-Improve Supervision Boundary
 
@@ -107,6 +144,8 @@ Source:
 
 - `src/workflow/engine.ts`
 - `src/workflow/superviser.ts`
+- `src/workflow/superviser-control.ts`
+- `src/workflow/node-addons.ts`
 - `src/workflow/mutable-workspace.ts`
 - `src/workflow/auto-improve-policy.ts`
 
@@ -118,12 +157,7 @@ Current phase-1 responsibilities:
 - choose deterministic remediations (`rerun-workflow`, `rerun-step`, `patch-workflow`, `stop-supervision`)
 - create execution-copy mutable workflow workspaces and patch audit records
 
-Not yet implemented in the runtime:
-
-- executing `superviserWorkflowId` as a nested workflow
-- control-plane add-ons invoked by that nested superviser workflow for target-run start/status/load/save/rerun
-
-This distinction is intentional: the current runtime architecture already persists the audit trail and policy contract required by `design-auto-improve-superviser-mode.md`, while the nested superviser workflow remains a follow-up implementation.
+**Phase 2 (optional)** is implemented as an opt-in path: with `WorkflowRunOptions.nestedSuperviserDriver` (CLI `--nested-superviser` plus `--auto-improve`), the engine runs `superviserWorkflowId` as a nested step-addressed workflow and passes a runtime `SuperviserRuntimeControl` handle to native `divedra/*` add-ons for start/status/rerun/load/save on the paired target session. Without that flag, the engine still uses the phase-1 outer `runAutoImproveLoop`. Supervision state records `nestedSuperviserSessionId` when the nested path is used; it is exposed in library/GraphQL inspection. Target-session resume with the nested flag continues the saved nested superviser session when that id is present.
 
 ## Primary Components
 
@@ -145,6 +179,7 @@ Important validation facts:
 - worker-only workflows are valid when `entryStepId` is explicit
 - `managerStepId`, when present, must resolve to an authored step
 - every step must resolve `nodeId` through the explicit node registry in `workflow.json.nodes[]`
+- node payloads distinguish `executionBackend` from `model`; model names are not used as backend selectors in newly authored workflow bundles
 - in strict step-addressed mode, dedicated authored fields such as `edges`, `loops`, `branching`, and structural sub-workflow metadata are rejected; the repository default still loads a limited compatibility set while cutover work remains in progress
 - cross-scope routing must still target the owning manager boundary
 
@@ -191,9 +226,6 @@ exports the library API from `src/lib.ts` rather than the CLI entrypoint so
 third-party add-on packages can type resolver exports from `divedra` without
 deep imports.
 
-Supporting design:
-`design-docs/specs/design-node-addon-catalog-and-chat-reply-worker.md`.
-
 ### Prompt and Input Assembly
 
 Source:
@@ -208,6 +240,7 @@ Responsibilities:
 - resolve `argumentBindings`
 - expose inbox/upstream payloads to templates
 - compose manager and worker system prompt layers
+- render workflow-level manager and worker prompt templates when authored
 - choose the default manager system prompt by the active step-based execution model so manager guidance reflects current-workflow state and any supported cross-workflow invocation contract
 - prepend node-authored session-start prompts only when a backend session is first created
 - inject workflow and cross-workflow structure summaries when applicable
@@ -219,6 +252,11 @@ The runtime distinguishes:
 - node `nodeType`: execution flavor
 
 That separation is still fundamental to the current runtime design, even though authored workflow design is moving toward `role` plus `control` rather than structural `kind`.
+
+Node payloads may also separate stable role instructions from per-turn prompts
+through `systemPromptTemplate*` and `sessionStartPromptTemplate*`, which lets
+reused backend sessions keep a stable system prompt while applying first-turn
+wrappers only when a session is first created.
 
 ### Adapter Layer
 
@@ -344,7 +382,7 @@ Current implementation status:
 
 ## Event Listener Workflow Triggers
 
-External events should be modeled as a separate trigger layer that invokes the
+External events are modeled as a separate trigger layer that invokes the
 existing workflow execution boundary. Provider-specific cron, webhook, chat, and
 UI adapters normalize incoming events into a canonical envelope, map that
 envelope into workflow runtime input, persist an event receipt for idempotency,
@@ -352,10 +390,8 @@ and then call `createWorkflowExecutionClient()` or GraphQL `executeWorkflow`.
 
 The workflow engine should not import provider SDKs or provider-specific event
 types. Event bindings live outside workflow bundles so adding or changing an
-event source does not mutate `workflow.json`.
-
-Supporting design:
-`design-docs/specs/design-event-listener-workflow-trigger.md`.
+event source does not mutate `workflow.json`. The current implementation lives
+under `src/events/`.
 
 ## Runtime Node Roles
 
@@ -373,7 +409,8 @@ Execution policies:
 - node add-ons are an authoring reuse layer, not a third role axis; after
   resolution, an add-on node executes as a normal worker with descriptor
   provenance recorded in runtime metadata
-- detailed design: `design-docs/specs/design-user-action-and-optional-node-execution.md`
+- this behavior is implemented across `src/workflow/engine.ts`,
+  `src/workflow/types.ts`, and `src/events/`
 
 ## Current Execution Flow
 
@@ -444,9 +481,9 @@ This mailbox layer is the architectural boundary that lets one workflow executio
 Worker nodes do not consume that canonical transport layout directly.
 Before each node execution, the runtime compiles a worker-facing execution
 inbox/outbox contract under the node artifact directory. That contract is the
-stable node-facing ABI across `agent`, future `command`, and future
-`container` execution. See
-`design-docs/specs/design-node-execution-inbox-contract.md`.
+stable node-facing ABI across `agent`, `command`, `container`, and `addon`
+execution. The current implementation is centered on
+`src/workflow/node-execution-mailbox.ts`.
 
 ## Output Ownership
 
@@ -458,12 +495,19 @@ That means:
 - the runtime validates it
 - the runtime writes canonical `output.json`
 - the runtime publishes downstream mailbox artifacts only after acceptance
+- external workflow publication selects the latest accepted root-scope `output`
+  node artifact in the current workflow execution rather than any arbitrary
+  "last response"
 
 Workers may target execution-local outbox paths such as
 `mailbox/outbox/output.json`, but those paths are staging surfaces only. They do
 not grant authority over canonical mailbox publication.
 
 This is especially important for nodes that declare `output.jsonSchema`.
+
+The runtime also persists handoff-oriented audit helpers alongside accepted node
+artifacts, including `handoff.json` metadata and `commit-message.txt` operator
+templates used for Git/Jujutsu checkpoint workflows.
 
 ## Control-Flow Semantics
 
@@ -482,15 +526,15 @@ In the step-addressed model, terminality comes from explicit manager decisions o
 
 Manager nodes may return `payload.managerControl.actions`.
 
-Step-addressed manager actions should normalize to:
+**Target** step-addressed naming (see `impl-plans/workflow-legacy-compatibility-removal.md`) is:
 
 - `planner-note`
-- `retry-step`
+- `retry-step` (replacing node-id-oriented `retry-node`)
 - `replay-communication`
-- `execute-optional-step`
-- `skip-optional-step`
+- `execute-optional-step` / `skip-optional-step` (replacing `execute-optional-node` / `skip-optional-node`)
+- no structural child-workflow actions
 
-Current runtime compatibility may still expose older node/sub-workflow action names while the implementation catches up to this target contract.
+**Current** implementation in `src/workflow/manager-control.ts` accepts only `retry-step`, `execute-optional-step`, and `skip-optional-step` (each with `stepId`). Removal-bound aliases `retry-node` / `execute-optional-node` / `skip-optional-node` are **rejected** (no `nodeId` field on these actions). Structural compatibility actions `start-sub-workflow` and `deliver-to-child-input` are **removed**; structural child scheduling uses engine `planRootManagerSubWorkflowStarts` / `planSubWorkflowChildInputs` only. Remaining phase 133 work is primarily authored-schema cutover and runtime union cleanup (for example `workflowCalls` vs step transitions).
 
 Scope enforcement:
 
@@ -509,8 +553,9 @@ Manager sessions are minted per manager-step execution and expire when that exec
 
 ## References
 
-- `design-docs/specs/design-workflow-json.md`
-- `design-docs/specs/design-data-model.md`
-- `design-docs/specs/design-node-execution-inbox-contract.md`
-- `design-docs/specs/design-node-addon-catalog-and-chat-reply-worker.md`
-- `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`
+- `README.md`
+- `src/workflow/`
+- `src/events/`
+- `src/graphql/`
+- `src/server/`
+- `src/tui/`

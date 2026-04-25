@@ -3,7 +3,7 @@
 **Status**: Completed (phase 1)
 **Design Reference**: `design-docs/specs/design-auto-improve-superviser-mode.md`, `design-docs/specs/design-node-jump-and-code-manager-runtime.md`, `design-docs/specs/architecture.md`, `design-docs/specs/command.md`
 **Created**: 2026-04-24
-**Last Updated**: 2026-04-26 (TASK-005 completed: `examples/supervised-mock-retry` + operator docs; nested superviser workflow = future phase)
+**Last Updated**: 2026-04-26 (sync: phase-2 nested superviser shipped in `impl-plans/completed/auto-improve-superviser-workflow-phase-2.md`; this file documents phase 1 only)
 
 ## Design Document Reference
 
@@ -94,7 +94,7 @@ export interface SupervisionRunState {
 
 #### `src/workflow/revision.ts`, `src/workflow/load.ts`, `src/workflow/save.ts`, `src/workflow/paths.ts`, `src/workflow/mutable-workspace.ts`, `src/shared/fs.ts`
 
-**Status**: SHIPPED (routing, execution-copy reload in engine, patch revision file API; superviser loop still later modules)
+**Status**: SHIPPED (routing, execution-copy reload in engine, patch revision file API; phase-1 engine loop shipped; nested superviser workflow is phase 2)
 
 ```typescript
 export interface MutableWorkflowWorkspace {
@@ -116,14 +116,14 @@ export interface WorkflowPatchRevisionInput {
 
 - [x] Create execution-scoped mutable workflow copies for supervised runs (see `src/workflow/mutable-workspace.ts` + `resolveSupervisionMutableWorkflowDirectory` in `paths.ts`)
 - [x] Track patch revisions and their provenance under the workflow artifact root (`recordWorkflowPatchRevision` / `readWorkflowPatchRevisionsFromArtifact` under `supervision/<id>/patch-revisions.json`)
-- [x] Route load/save operations through the mutable workspace when supervision is active (engine + `loadWorkflowFromDisk` / `saveWorkflowToDisk` with `LoadOptions.workflowBundleDirectoryOverride`, `session.supervision.mutableWorkflowDir`, `mergeLoadOptionsForSessionMutableBundle` for call-node and manager-message)
+- [x] Route load/save operations through the mutable workspace when supervision is active (engine + `loadWorkflowFromDisk` / `saveWorkflowToDisk` with `LoadOptions.workflowBundleDirectoryOverride`, `session.supervision.mutableWorkflowDir`, `mergeLoadOptionsForSessionMutableBundle` for the direct-call path / manager-message)
 - [x] Keep in-place mutation explicit and opt-in (`buildMutableWorkflowWorkspace` / policy `workflowMutationMode`)
 
 ### 3. Superviser Orchestration and Control Operations
 
 #### `src/workflow/superviser.ts`, `src/workflow/call-step.ts`, `src/workflow/engine.ts`, `src/workflow/node-addons.ts`, `src/workflow/local-node-addons.ts`
 
-**Status**: SHIPPED (phase 1): `superviser.ts` + `runAutoImproveLoop` (stall watch, repeat-failure `patch-workflow` audit, targeted rerun, budgets). **Phase 2** (nested `superviserWorkflowId` workflow, add-ons for target control, LLM patch edits) is tracked as follow-up work, not a blocker for this module’s phase-1 checklist.
+**Status**: SHIPPED (phase 1): `superviser.ts` + `runAutoImproveLoop` (stall watch, repeat-failure `patch-workflow` audit, targeted rerun, budgets). **Phase 2** (nested `superviserWorkflowId` workflow, `divedra/*` control add-ons, `nestedSuperviserSessionId`) is **Completed** in `impl-plans/completed/auto-improve-superviser-workflow-phase-2.md`.
 
 ```typescript
 export type SupervisionRemediationAction =
@@ -151,8 +151,8 @@ export interface StartSupervisedRunInput extends LoadOptions, SessionStoreOption
 - [x] Allow targeted rerun when enabled and the step-addressed runtime can validate the selected step (`resolveSupervisionRerunTarget` in `superviser.ts` + `runAutoImproveLoop` remediation `rerun-step` / `targetStepId`)
 - [x] Record `patch-workflow` remediation and `patch-revisions.json` on **consecutive** target failures with the same **failure** `SupervisionIncident.summary` as the latest prior failure incident (engine stores this from `lastError` / failure message; `maxWorkflowPatches` / `stop-patch-budget`)
 - [x] (phase 1) Control-plane **surface** for target session status and reruns: existing `runWorkflow` / `resumeWorkflow` / `rerun` / GraphQL session + `getSupervisionSummary`; no separate superviser add-on API yet
-- [ ] (phase 2) Built-in add-ons (or internal equivalents) invoked **from** the nested superviser workflow for start/status/rerun/load/save of the **target** run
-- [ ] (phase 2) Run `superviserWorkflowId` as an ordinary step-addressed workflow; keep `planSupervisionRemediation`-style policy in the engine only until that lands
+- [x] (phase 2) Built-in add-ons (`divedra/start-workflow`, `get-workflow-status`, `rerun-workflow`, `load-workflow-definition`, `save-workflow-definition`, etc.) invoked from the nested superviser workflow for the **target** run (`src/workflow/node-addons.ts`, `superviser-runtime-control-impl.ts`; see phase-2 plan)
+- [x] (phase 2) Run `superviserWorkflowId` as a nested step-addressed workflow when `--nested-superviser` / `nestedSuperviserDriver` is enabled; phase-1 `runAutoImproveLoop` remains the default without that flag
 
 ### 4. Public Surfaces
 
@@ -208,7 +208,7 @@ interface SuperviserExampleBundle {
 | ------ | --------- | ------ | ----- |
 | Supervision policy and persistent records | `src/workflow/types.ts`, `src/workflow/session.ts`, `src/workflow/runtime-db.ts`, `src/workflow/inspect.ts` | SHIPPED | `src/workflow/runtime-db.test.ts`, `session.test.ts`, `session-store.test.ts`, `lib.test.ts` |
 | Mutable workflow workspace and revision plumbing | `src/workflow/mutable-workspace.ts`, `src/workflow/paths.ts`, `src/workflow/revision.ts`, `src/workflow/load.ts`, `src/workflow/save.ts` | SHIPPED | `src/workflow/mutable-workspace.test.ts`, `src/workflow/engine.test.ts` (auto-improve copy + load), `src/workflow/revision.test.ts`, `load.test.ts` / `save.test.ts` as existing coverage |
-| Superviser orchestration and control operations | `src/workflow/superviser.ts`, `src/workflow/adapter-execution.ts`, `src/workflow/call-node.ts`, `src/workflow/engine.ts` | SHIPPED (phase 1); phase 2: nested workflow + add-ons | `engine.test.ts`, `superviser.test.ts` |
+| Superviser orchestration and control operations | `src/workflow/superviser.ts`, `src/workflow/adapter-execution.ts`, `src/workflow/call-step.ts` (delegates to `call-step-impl.ts` internally), `src/workflow/engine.ts` | SHIPPED (phase 1); phase 2 nested + add-ons: see phase-2 plan | `engine.test.ts`, `superviser.test.ts`, `superviser-control.test.ts`, `superviser-runtime-control-impl.test.ts` |
 | Public surfaces | `src/cli.ts`, `src/lib.ts`, `src/graphql/schema.ts`, `src/server/graphql-executable-schema.ts` | SHIPPED (phase 1) | `src/lib.test.ts`, `src/graphql/schema.test.ts` |
 | Examples, documentation, and verification | `examples/auto-improve/README.md`, `examples/supervised-mock-retry/`, `examples/README.md` | SHIPPED | `engine.test.ts`, `superviser.test.ts`, manual run per `EXPECTED_RESULTS.md` |
 
@@ -218,7 +218,7 @@ interface SuperviserExampleBundle {
 | ------- | ---------- | ------ |
 | Supervision policy and persistent records | `step-addressed-workflow-runtime-cutover` (phase **129** **Completed** in `impl-plans/PROGRESS.json`; `call-step` / step graph in production use) | Ready |
 | Mutable workflow workspace and revision plumbing | Supervision policy and persistent records | SHIPPED |
-| Superviser orchestration and control operations | Cutover core runtime, mutable workspace plumbing | SHIPPED (phase 1); phase 2 follow-up |
+| Superviser orchestration and control operations | Cutover core runtime, mutable workspace plumbing | SHIPPED (phase 1); phase 2 **Completed** (`auto-improve-superviser-workflow-phase-2`) |
 | Public surfaces | Supervision policy and orchestration | SHIPPED (phase 1) |
 | Examples, documentation, and verification | All supervision modules | SHIPPED (phase 1) |
 
@@ -227,7 +227,7 @@ interface SuperviserExampleBundle {
 - [x] `workflow run --auto-improve` launches a supervised execution with explicit policy input
 - [x] Supervision survives resume/restart because incidents and remediations are persisted
 - [x] Execution-copy mutation is the default repair mode and preserves the canonical workflow bundle
-- [x] The superviser can classify failure versus stall and choose rerun, targeted rerun, workflow patch, or stop (failure + stall + rerun + stop + **engine repeat-failure `patch-workflow` audit** shipped; **nested** superviser workflow still TBD)
+- [x] The superviser can classify failure versus stall and choose rerun, targeted rerun, workflow patch, or stop (failure + stall + rerun + stop + **engine repeat-failure `patch-workflow` audit** shipped; **nested** superviser workflow optional via `--nested-superviser`, documented in phase-2 plan)
 - [x] GraphQL/library/CLI surfaces expose auditable supervision status and artifacts
 - [x] Example bundle `examples/supervised-mock-retry` demonstrates fail-then-succeed mock sequence with `--auto-improve`
 - [x] `bun run typecheck:server`, targeted supervision tests, and the full regression suite pass
@@ -236,7 +236,7 @@ interface SuperviserExampleBundle {
 
 ### Session: 2026-04-25 (repeat-failure patch escalation hygiene)
 
-**Tasks Completed**: `planSupervisionRemediation` now compares the new failure to the **latest prior failure** incident (scan backward), not merely the last incident, so an intervening **stall** (or other non-failure) incident no longer suppresses repeat-failure `patch-workflow` escalation. Added `superviser.test.ts` coverage. **Type hygiene**: `runLocalTuiWorkflow` rerun options use explicit `rerunFromStepId` / `rerunFromNodeId` narrowing for `WorkflowRunOptions` (`cli.ts`); `lastFailureIncident` guards possibly-undefined array access (`superviser.ts`).
+**Tasks Completed**: `planSupervisionRemediation` now compares the new failure to the **latest prior failure** incident (scan backward), not merely the last incident, so an intervening **stall** (or other non-failure) incident no longer suppresses repeat-failure `patch-workflow` escalation. Added `superviser.test.ts` coverage. **Type hygiene**: `runLocalTuiWorkflow` passes `rerunFromStepId` (step-only) into `runWorkflow` options (`cli.ts`); `lastFailureIncident` guards possibly-undefined array access (`superviser.ts`).
 
 **Verification**: `bun run typecheck:server`, `env -u DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT bash scripts/run-bun-tests.sh`.
 
@@ -308,7 +308,7 @@ interface SuperviserExampleBundle {
 
 ### Session: 2026-04-25 (engine + CLI entry: autoImprove)
 
-**Tasks Completed**: `WorkflowRunOptions.autoImprove`; on new runs (not `resumeSessionId`), engine seeds `SupervisionRunState` with default `divedra/default-superviser`, policy, empty incidents/remediations. `cloneSession` deep-clones `supervision`. CLI: `--auto-improve`, `--superviser-workflow`, `--monitor-interval-ms`, `--stall-timeout-ms`, `--max-supervised-attempts`, `--max-workflow-patches`, `--workflow-mutation-mode`, `--no-allow-targeted-rerun`; `buildLocalWorkflowRunOverrides` passes policy. Library: `ExecuteWorkflowInput.autoImprove`, `RerunWorkflowInput.autoImprove`. Test: `engine.test.ts` seeds supervision. Help text updated.
+**Tasks Completed**: `WorkflowRunOptions.autoImprove`; on new runs (not `resumeSessionId`), engine seeds `SupervisionRunState` with default `divedra-default-superviser`, policy, empty incidents/remediations. `cloneSession` deep-clones `supervision`. CLI: `--auto-improve`, `--superviser-workflow`, `--monitor-interval-ms`, `--stall-timeout-ms`, `--max-supervised-attempts`, `--max-workflow-patches`, `--workflow-mutation-mode`, `--no-allow-targeted-rerun`; `buildLocalWorkflowRunOverrides` passes policy. Library: `ExecuteWorkflowInput.autoImprove`, `RerunWorkflowInput.autoImprove`. Test: `engine.test.ts` seeds supervision. Help text updated.
 
 **Verification**: `bun run typecheck:server`, `bash scripts/run-bun-tests.sh`.
 
@@ -343,5 +343,6 @@ interface SuperviserExampleBundle {
 ## Related Plans
 
 - **Previous**: `impl-plans/completed/step-addressed-workflow-runtime-cutover.md`
-- **Next**: None
+- **Next (phase 2, Completed)**: `impl-plans/completed/auto-improve-superviser-workflow-phase-2.md`
+- **Active follow-on (schema/runtime cleanup)**: `impl-plans/workflow-legacy-compatibility-removal.md`
 - **Depends On**: `impl-plans/completed/step-addressed-workflow-runtime-cutover.md`

@@ -14,7 +14,6 @@ import {
   remapAuthoredNodePayloadsByNodeFile,
   synthesizeInlineNodeFile,
 } from "./authored-node";
-import { crossWorkflowCallsFromSteps } from "./cross-workflow-from-steps";
 import { isSafeWorkflowId, isSafeWorkflowName } from "./paths";
 import { normalizeWorkingDirectoryPath } from "./working-directory";
 import {
@@ -2294,15 +2293,7 @@ function normalizeStepAddressedWorkflow(
 
   const workflowCallsRaw = workflow["workflowCalls"];
   if (workflowCallsRaw !== undefined) {
-    if (isStrictWorkflowAuthorshipValidation(options)) {
-      issues.push(
-        makeIssue(
-          "error",
-          "workflow.workflowCalls",
-          "is not part of the step-addressed workflow schema",
-        ),
-      );
-    } else if (!Array.isArray(workflowCallsRaw)) {
+    if (!Array.isArray(workflowCallsRaw)) {
       issues.push(
         makeIssue(
           "error",
@@ -2310,15 +2301,16 @@ function normalizeStepAddressedWorkflow(
           "must be an array when provided",
         ),
       );
+    } else {
+      issues.push(
+        makeIssue(
+          "error",
+          "workflow.workflowCalls",
+          "is not part of the step-addressed workflow schema; use step transitions with toWorkflowId and resumeStepId for cross-workflow calls",
+        ),
+      );
     }
   }
-  const workflowCalls =
-    Array.isArray(workflowCallsRaw) &&
-    !isStrictWorkflowAuthorshipValidation(options)
-      ? workflowCallsRaw
-          .map((entry, index) => normalizeWorkflowCall(entry, index, issues))
-          .filter((entry): entry is WorkflowCallRef => entry !== null)
-      : undefined;
 
   const nodeRegistryRaw = workflow["nodes"];
   if (!Array.isArray(nodeRegistryRaw)) {
@@ -2471,18 +2463,6 @@ function normalizeStepAddressedWorkflow(
         ),
       );
     }
-    const callsFromSameStep = (workflowCalls ?? []).filter(
-      (call) => (call.callerStepId ?? call.callerNodeId) === step.id,
-    );
-    if (crossWorkflowTransitions.length > 0 && callsFromSameStep.length > 0) {
-      issues.push(
-        makeIssue(
-          "error",
-          `workflow.steps[${index}]`,
-          "cannot combine cross-workflow transitions with workflowCalls for the same caller step",
-        ),
-      );
-    }
     step.transitions?.forEach((transition, transitionIndex) => {
       if (transition.toWorkflowId !== undefined) {
         if (transition.resumeStepId === undefined) {
@@ -2564,24 +2544,6 @@ function normalizeStepAddressedWorkflow(
       })),
   );
 
-  const derivedCrossWorkflowCalls = crossWorkflowCallsFromSteps(steps);
-  if (workflowCalls !== undefined) {
-    const authoredIds = new Set(workflowCalls.map((call) => call.id));
-    for (const derived of derivedCrossWorkflowCalls) {
-      if (authoredIds.has(derived.id)) {
-        issues.push(
-          makeIssue(
-            "error",
-            "workflow.workflowCalls",
-            `id '${derived.id}' is reserved for cross-workflow step transitions; rename the workflow call or adjust step transitions`,
-          ),
-        );
-      }
-    }
-  }
-  const mergedWorkflowCalls =
-    workflowCalls === undefined ? undefined : [...workflowCalls];
-
   return {
     workflowId,
     description,
@@ -2595,9 +2557,6 @@ function normalizeStepAddressedWorkflow(
     managerNodeId: managerStepId ?? entryStepId,
     hasManagerNode: managerStepId !== undefined,
     entryNodeId: entryStepId,
-    ...(mergedWorkflowCalls === undefined
-      ? {}
-      : { workflowCalls: mergedWorkflowCalls }),
     ...(managerStepId === undefined ? {} : { managerStepId }),
     entryStepId,
     nodeRegistry,

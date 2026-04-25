@@ -1,11 +1,12 @@
 /**
  * Superviser orchestration for `--auto-improve` (design-auto-improve-superviser-mode).
- * Remediation **types** live here. The first supervision loop (rerun on terminal target
- * failure with incident/remediation records and attempt budgets) runs in
- * `src/workflow/engine` (`runAutoImproveLoop` / `runWorkflow`) when
- * `WorkflowRunOptions.autoImprove` is set on a fresh start. Stall detection uses
- * persisted session snapshots. Running `superviserWorkflowId` as a nested workflow
- * is still a follow-up.
+ * Remediation **types** and deterministic planning live here. Phase 1 runs an engine
+ * supervision loop (`runAutoImproveLoop` / `runWorkflow` in `src/workflow/engine.ts`)
+ * when `WorkflowRunOptions.autoImprove` is set. Phase 2 optionally runs
+ * `superviserWorkflowId` as a nested step-addressed workflow when
+ * `WorkflowRunOptions.nestedSuperviserDriver` is set; native `divedra/*` add-ons receive
+ * {@link import("./superviser-control").SuperviserRuntimeControl} via `node-addons.ts`.
+ * Stall detection uses persisted session snapshots ({@link buildSupervisionStallWatch}).
  */
 
 import { resolveCurrentStepIdFromWorkflow } from "./session";
@@ -60,29 +61,96 @@ export function buildSupervisionStallWatch(
   };
 }
 
+export type StepAddressedWorkflowForSupervision = Pick<
+  WorkflowJson,
+  "managerStepId" | "entryStepId" | "steps"
+> & {
+  readonly entryStepId: string;
+  readonly steps: NonNullable<WorkflowJson["steps"]>;
+};
+
 /**
- * Execution address for a full supervised rerun from the manager/entry point. Pass as
- * {@link WorkflowRunOptions.rerunFromNodeId} when rerunning from the top (option name is
- * historical). Resolution order: {@link WorkflowJson.managerStepId} ??
- * {@link WorkflowJson.entryStepId} ?? {@link WorkflowJson.managerNodeId} ??
- * {@link WorkflowJson.entryNodeId}.
+ * Builds the step graph {@link planSupervisionRemediation} needs. Authored
+ * step-addressed bundles pass through when `entryStepId` is set and `steps` is
+ * non-empty. If `entryStepId` is set but `steps` is missing or empty, returns
+ * `null` (does not fall back to legacy `entryNodeId` / `nodes`). Legacy
+ * node-graph bundles (no `entryStepId`) are projected so step ids align with
+ * node registry ids, matching how the engine executes legacy shapes.
  */
-export function resolveSupervisionRerunAnchor(
-  workflow: Pick<
-    WorkflowJson,
-    "managerNodeId" | "managerStepId" | "entryStepId" | "entryNodeId"
-  >,
-): string {
-  return (
-    workflow.managerStepId ??
-    workflow.entryStepId ??
-    workflow.managerNodeId ??
-    workflow.entryNodeId
-  );
+export function toStepAddressedWorkflowForSupervision(
+  wf: WorkflowJson,
+): StepAddressedWorkflowForSupervision | null {
+  if (wf.entryStepId !== undefined) {
+    const steps = wf.steps;
+    if (steps === undefined || steps.length === 0) {
+      return null;
+    }
+    return {
+      entryStepId: wf.entryStepId,
+      steps,
+      ...(wf.managerStepId === undefined
+        ? {}
+        : { managerStepId: wf.managerStepId }),
+    };
+  }
+  if (wf.entryNodeId === undefined || wf.nodes === undefined) {
+    return null;
+  }
+  return {
+    entryStepId: wf.entryNodeId,
+    steps: wf.nodes.map((n) => ({
+      id: n.id,
+      nodeId: n.id,
+    })),
+    ...(wf.managerNodeId === undefined
+      ? {}
+      : { managerStepId: wf.managerNodeId }),
+  };
 }
 
 /**
- * Chooses `rerunFromNodeId` for the next supervised attempt. When
+ * Execution anchor id for a full supervised rerun from the manager/entry point.
+ * Supervision remediation is step-addressed only.
+ */
+export function resolveSupervisionRerunAnchor(
+  workflow: Pick<
+    StepAddressedWorkflowForSupervision,
+    "managerStepId" | "entryStepId"
+  >,
+): string {
+  return workflow.managerStepId ?? workflow.entryStepId;
+}
+
+/**
+ * Resolves `rerunFromStepId` for phase-2 nested `divedra/rerun-workflow` when the
+ * add-on omits it. The engine requires a step id with `rerunFromSessionId`, so
+ * this prefers the current step from the session (when it maps to the workflow
+ * graph), then the manager/entry anchor (same as
+ * {@link resolveSupervisionRerunAnchor} on the step graph).
+ */
+export function resolveNestedSuperviserAddonRerunFromStepId(
+  requested: string | undefined,
+  session: Pick<WorkflowSessionState, "currentNodeId" | "nodeExecutions">,
+  workflow: Pick<WorkflowJson, "steps">,
+  stepAddressed: StepAddressedWorkflowForSupervision,
+): string {
+  if (requested !== undefined) {
+    return requested;
+  }
+  const workflowForCurrentStep =
+    workflow.steps === undefined ? stepAddressed : workflow;
+  const fromSession = resolveCurrentStepIdFromWorkflow(
+    session,
+    workflowForCurrentStep,
+  );
+  if (fromSession !== null) {
+    return fromSession;
+  }
+  return resolveSupervisionRerunAnchor(stepAddressed);
+}
+
+/**
+ * Chooses `rerunFromStepId` for the next supervised attempt. When
  * {@link AutoImprovePolicy.allowTargetedRerun} is not `false`, uses the
  * current/failed step from the session when it is a valid rerun target and
  * differs from the manager/entry anchor; otherwise reruns from the anchor
@@ -90,59 +158,53 @@ export function resolveSupervisionRerunAnchor(
  */
 export function resolveSupervisionRerunTarget(
   policy: AutoImprovePolicy,
-  workflow: WorkflowJson,
+  workflow: StepAddressedWorkflowForSupervision,
   session: Pick<WorkflowSessionState, "currentNodeId" | "nodeExecutions">,
 ): {
-  readonly rerunFromNodeId: string;
+  readonly rerunFromStepId: string;
   readonly remediationAction: SupervisionRemediationAction;
   readonly targetStepId?: string;
 } {
   const anchor = resolveSupervisionRerunAnchor(workflow);
   if (policy.allowTargetedRerun === false) {
-    return { rerunFromNodeId: anchor, remediationAction: "rerun-workflow" };
+    return { rerunFromStepId: anchor, remediationAction: "rerun-workflow" };
   }
-  const stepOrNodeId = resolveCurrentStepIdFromWorkflow(session, workflow);
-  if (stepOrNodeId === null) {
-    return { rerunFromNodeId: anchor, remediationAction: "rerun-workflow" };
+  const stepId = resolveCurrentStepIdFromWorkflow(session, workflow);
+  if (stepId === null) {
+    return { rerunFromStepId: anchor, remediationAction: "rerun-workflow" };
   }
-  if (workflow.steps !== undefined && workflow.steps.length > 0) {
-    const stepIds = new Set(workflow.steps.map((s) => s.id));
-    if (!stepIds.has(stepOrNodeId)) {
-      return { rerunFromNodeId: anchor, remediationAction: "rerun-workflow" };
-    }
-  } else {
-    const nodeIds = new Set(workflow.nodes.map((n) => n.id));
-    if (!nodeIds.has(stepOrNodeId)) {
-      return { rerunFromNodeId: anchor, remediationAction: "rerun-workflow" };
-    }
+  const stepIds = new Set(workflow.steps.map((step) => step.id));
+  if (!stepIds.has(stepId)) {
+    return { rerunFromStepId: anchor, remediationAction: "rerun-workflow" };
   }
-  if (stepOrNodeId === anchor) {
-    return { rerunFromNodeId: anchor, remediationAction: "rerun-workflow" };
+  if (stepId === anchor) {
+    return { rerunFromStepId: anchor, remediationAction: "rerun-workflow" };
   }
   return {
-    rerunFromNodeId: stepOrNodeId,
+    rerunFromStepId: stepId,
     remediationAction: "rerun-step",
-    targetStepId: stepOrNodeId,
+    targetStepId: stepId,
   };
 }
 
 /**
  * When the same target failure message repeats across consecutive supervised attempts,
  * escalate to a `patch-workflow` remediation: record provenance and increment
- * {@link SupervisionRunState.workflowPatchCount}. Automated file edits are reserved for
- * a future nested superviser workflow; this still advances the audit trail and enforces
- * `maxWorkflowPatches` (design-auto-improve-superviser-mode).
+ * {@link SupervisionRunState.workflowPatchCount}. The engine-owned loop may not apply
+ * concrete definition edits by itself; a phase-2 superviser workflow uses
+ * `saveWorkflowDefinition` on the control surface. This escalation still advances the
+ * audit trail and enforces `maxWorkflowPatches` (design-auto-improve-superviser-mode).
  */
 export type SupervisionRemediationPlan =
   | {
       readonly kind: "rerun";
-      readonly rerunFromNodeId: string;
+      readonly rerunFromStepId: string;
       readonly remediationAction: SupervisionRemediationAction;
       readonly targetStepId?: string;
     }
   | {
       readonly kind: "patch-then-rerun";
-      readonly rerunFromNodeId: string;
+      readonly rerunFromStepId: string;
       readonly remediationAction: SupervisionRemediationAction;
       readonly targetStepId?: string;
       /** Text persisted on the patch revision record. */
@@ -215,7 +277,7 @@ function isConsecutiveSameCategoryRepeat(
 export function planSupervisionRemediation(input: {
   readonly policy: AutoImprovePolicy;
   readonly sup: SupervisionRunState;
-  readonly workflow: WorkflowJson;
+  readonly workflow: StepAddressedWorkflowForSupervision;
   readonly session: Pick<
     WorkflowSessionState,
     "currentNodeId" | "nodeExecutions"
@@ -237,7 +299,7 @@ export function planSupervisionRemediation(input: {
   if (!isConsecutiveSameCategoryRepeat(input.sup, input.failIncident)) {
     return {
       kind: "rerun",
-      rerunFromNodeId: base.rerunFromNodeId,
+      rerunFromStepId: base.rerunFromStepId,
       remediationAction: base.remediationAction,
       ...(base.targetStepId === undefined
         ? {}
@@ -250,12 +312,12 @@ export function planSupervisionRemediation(input: {
   const patchRecordReason =
     input.failIncident.category === "stall"
       ? "repeated target stall with the same condition: supervision escalation " +
-        "(audited patch record; definition edits are expected from a future superviser workflow or operator)"
+        "(audited patch record; concrete edits via nested superviser saveWorkflowDefinition or operator)"
       : "repeated target failure with the same error: supervision escalation " +
-        "(audited patch record; definition edits are expected from a future superviser workflow or operator)";
+        "(audited patch record; concrete edits via nested superviser saveWorkflowDefinition or operator)";
   return {
     kind: "patch-then-rerun",
-    rerunFromNodeId: base.rerunFromNodeId,
+    rerunFromStepId: base.rerunFromStepId,
     remediationAction: "patch-workflow",
     patchRecordReason,
     ...(base.targetStepId === undefined
@@ -274,7 +336,8 @@ export interface SupervisionRemediationDecision {
 }
 
 /**
- * Future entry point for launching a target workflow together with paired superviser control.
+ * Input shape for library callers that start a workflow together with supervision policy
+ * (`executeWorkflow` / `runWorkflow`); not a separate runtime entrypoint.
  */
 export interface StartSupervisedRunInput
   extends LoadOptions,

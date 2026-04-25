@@ -6,7 +6,7 @@ This document intentionally uses the spelling `superviser` to match the requeste
 
 ## Overview
 
-The core runtime can run, resume, rerun, and inspect workflows. **Auto improve mode** adds a first-class supervised execution path. **Phase 1** (see [Implementation phasing](#implementation-phasing)) ships this as an engine-orchestrated loop with `--auto-improve`, persisted policy and incidents, stall detection from runtime timestamps, and execution-copy patch audit records. **Phase 2** adds a nested `superviser` workflow and richer remediation nodes; until then, the bullet list below describes the intended end-to-end product shape, with Phase 1 covering the engine-driven subset.
+The core runtime can run, resume, rerun, and inspect workflows. **Auto improve mode** adds a first-class supervised execution path. **Phase 1** (see [Implementation phasing](#implementation-phasing)) ships this as an engine-orchestrated loop with `--auto-improve`, persisted policy and incidents, stall detection from runtime timestamps, and execution-copy patch audit records. **Phase 2** runs an authored `superviserWorkflowId` as a nested step-addressed workflow when the nested driver is enabled (for example `--nested-superviser` with `--auto-improve`); the bullet list below still describes the full product shape operators expect, with Phase 1 covering the engine-driven subset when the nested path is not used.
 
 In this mode:
 
@@ -44,10 +44,18 @@ The `superviser` itself should be expressible as an ordinary workflow using the 
 
 The end-state goals in this document (paired `superviser` **workflow**, add-on or GraphQL control operations, and LLM-driven definition edits) are not all implemented in a single change set. The current tree may ship in phases:
 
-- **Phase 1 (engine-orchestrated loop)**. `divedra workflow run ... --auto-improve` uses an outer `runAutoImproveLoop` in the workflow engine. It runs the **target** workflow, detects terminal **failure** and **stall** (including via persisted `sessions.updated_at` while a step is executing), records **incidents** and **remediations**, applies **attempt** and **patch** budgets, writes **patch revision** audit records under the artifact root for execution-copy bundles, and supports **targeted step rerun** when policy allows. Policy and state are **persisted** on the target session. **GraphQL** and the **library** expose `getSupervisionSummary` / `session.supervision` for inspection. The `superviserWorkflowId` field is reserved: it is stored on the session and intended for a future **nested** paired superviser execution, not executed as a separate workflow in this phase.
-- **Phase 2 (superviser as a workflow)**. Run `superviserWorkflowId` as a normal step-addressed workflow, implement the recommended add-ons (or internal equivalents) for start/status/rerun/load/save of the **target** run, and move remediation decisions and definition edits into superviser- or operator-driven nodes. Until then, the engine loop implements a deterministic, auditable subset of the **decide-remediation** behavior described in [Superviser Workflow Shape](#superviser-workflow-shape) and [Required Superviser Capabilities](#required-superviser-capabilities).
+- **Phase 1 (engine-orchestrated loop)**. `divedra workflow run ... --auto-improve` uses an outer `runAutoImproveLoop` in the workflow engine. It runs the **target** workflow, detects terminal **failure** and **stall** (including via persisted `sessions.updated_at` while a step is executing), records **incidents** and **remediations**, applies **attempt** and **patch** budgets, writes **patch revision** audit records under the artifact root for execution-copy bundles, and supports **targeted step rerun** when policy allows. Policy and state are **persisted** on the target session. **GraphQL** and the **library** expose `getSupervisionSummary` / `session.supervision` for inspection. The GraphQL execution mutations also carry the same auto-improve policy surface for start, resume, and rerun so remote execution is policy-equivalent to the local engine path. `superviserWorkflowId` is still stored on supervision state in this phase, but it is executed only when the nested phase-2 path is explicitly enabled.
+- **Phase 2 (superviser as a workflow)**. When enabled (for example CLI `--nested-superviser` with `--auto-improve`, or library `nestedSuperviserDriver` on a new supervised start), the engine runs `superviserWorkflowId` as a nested step-addressed workflow after seeding the target session and supervision workspace. Built-in `divedra/*` add-ons invoke a runtime-scoped control surface for start/status/rerun/load/save on the paired **target** session. Resuming the **target** session with the same nested flag continues the nested superviser run when the saved nested session is not yet **completed** (for example still paused or failed). If the nested superviser session has already **completed** but the **target** session is still active, the engine starts another nested superviser round and records a new `nestedSuperviserSessionId` on the same supervision run so the operator-visible audit row stays tied to one supervision run. Without the nested flag, `--auto-improve` still uses the Phase 1 engine `runAutoImproveLoop`. GraphQL and inspection expose `nestedSuperviserSessionId` on supervision state, while execution entrypoints allow the nested flag only on supervised start and resume (not step rerun).
 
 Phase 1 is intentionally compatible with the same session model, artifact layout, and policy contract described elsewhere in this spec so that Phase 2 can attach without reworking operator-visible audit data.
+
+### Step ids for remediation (and the phase 133 bridge)
+
+Supervision **remediation** is step-addressed: the engine records `rerun-step` / `rerun-workflow` with a **step id** anchor (`managerStepId ?? entryStepId`) and optional targeted `rerunFromStepId` when policy allows.
+
+While `impl-plans/workflow-legacy-compatibility-removal.md` (phase 133) is still removing authored compatibility fields from the primary workflow model, Phase 1 reloads the target bundle after a failure and passes it through `toStepAddressedWorkflowForSupervision` in `src/workflow/superviser.ts`: step-addressed workflows with a non-empty `steps` list are used as-is; an `entryStepId` with missing or empty `steps` is treated as invalid for supervision (no silent fallback to node-graph aliases); legacy **node-graph-only** targets (no `entryStepId`, with `entryNodeId` and `nodes`) are projected to a synthetic step list whose step ids match node registry ids so the same step-id remediation path applies.
+
+Phase 2 nested `divedra/*` control add-ons use **`rerunFromStepId` only** on `divedra/rerun-workflow`; `rerunFromNodeId` is rejected at parse time. Engine `WorkflowRunOptions` also uses **`rerunFromStepId` only** for `runWorkflow` reruns (no separate `rerunFromNodeId` field); see `impl-plans/workflow-legacy-compatibility-removal.md`.
 
 ## Core Model
 
@@ -99,7 +107,7 @@ Initial run-time policy should be supplied through execution input rather than r
 ```json
 {
   "enabled": true,
-  "superviserWorkflowId": "divedra/default-superviser",
+  "superviserWorkflowId": "divedra-default-superviser",
   "monitorIntervalMs": 5000,
   "stallTimeoutMs": 60000,
   "maxSupervisedAttempts": 5,
@@ -490,5 +498,4 @@ These choices should remain explicit in implementation:
 
 - `design-docs/specs/design-node-jump-and-code-manager-runtime.md`
 - `design-docs/specs/design-graphql-manager-control-plane.md`
-- `design-docs/specs/design-autonomous-execution-gap-closure.md`
 - `design-docs/specs/architecture.md`

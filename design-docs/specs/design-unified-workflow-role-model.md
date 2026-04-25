@@ -216,7 +216,7 @@ Workflow authoring tools and template generators should move to:
 
 ## Migration Direction
 
-This redesign supersedes `design-docs/specs/design-manager-kind-simplification.md`.
+This redesign supersedes the older manager-kind simplification direction.
 
 Migration should be treated as a schema replacement, not as another alias-normalization pass:
 
@@ -229,4 +229,4 @@ Migration should be treated as a schema replacement, not as another alias-normal
 
 - `design-docs/specs/architecture.md`
 - `design-docs/specs/design-workflow-json.md`
-- `design-docs/specs/design-manager-kind-simplification.md`
+- earlier manager-kind simplification notes, now consolidated into `design-docs/specs/notes.md`

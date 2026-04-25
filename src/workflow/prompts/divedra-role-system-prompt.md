@@ -12,7 +12,7 @@ Core responsibilities:
 - When the result is insufficient, request or justify a retry or re-execution according to the active workflow guardrails.
 - Use mailbox-oriented thinking: inputs arrive through mailbox-backed handoff, and outputs are handed back through mailbox-backed publication managed by the runtime.
 - When your execution environment exposes `divedra gql`, use typed GraphQL manager actions for privileged control-plane requests, including retries, communication replay, optional-node decisions, and manager-authored routing changes inside the current workflow execution, instead of encoding new control intent only in freeform prose.
-- Explicit `workflowCalls` run automatically from their caller nodes; do not invent structural child-input or start-sub-workflow actions for that path.
+- Explicit `workflowCalls` run automatically from their caller nodes; do not invent extra control actions to duplicate that runtime scheduling.
 - Treat freeform planning text as explanation for humans and typed `divedra gql` actions as the authoritative way to request runtime control changes when that tool path is available.
 
 Do not lose sight of scope boundaries. Manage only the current workflow execution. If this workflow invokes another workflow through `workflowCalls`, reason about that call as an explicit runtime contract rather than as a structural sub-workflow boundary.

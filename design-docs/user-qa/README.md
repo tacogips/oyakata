@@ -15,10 +15,10 @@ Store questions, pending decisions, and items awaiting user approval.
 
 ## Current Items
 
-- [qa-example.md](./qa-example.md) - Example: Database Selection (template example)
-- [qa-event-listener-workflow-trigger.md](./qa-event-listener-workflow-trigger.md) - Pending product and architecture decisions for external event listener workflow triggers
-- [qa-user-action-open-decisions.md](./qa-user-action-open-decisions.md) - Pending first-iteration product decisions for `user-action` nodes and optional-node skip behavior
-- [pending-example.md](./pending-example.md) - Example: CLI Output Format (template example)
+There are no active user-confirmation documents tracked in this directory.
+Historical examples and stale pre-implementation question files were removed
+after the corresponding behavior landed in `src/` or was consolidated into the
+main design docs.
 
 ## Adding New Items
 

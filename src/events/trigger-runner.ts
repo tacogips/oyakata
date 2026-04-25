@@ -10,7 +10,10 @@ import { saveSession, loadSession } from "../workflow/session-store";
 import type { WorkflowSessionState } from "../workflow/session";
 import type { MockNodeScenario } from "../workflow/adapter";
 import type { ChatReplyDispatcher } from "../workflow/types";
-import { getNormalizedNodePayload } from "../workflow/types";
+import {
+  getNormalizedNodePayload,
+  resolveWorkflowManagerRuntimeId,
+} from "../workflow/types";
 import { isEventBindingEnabled, isEventSourceEnabled } from "./config";
 import {
   deleteEventWorkflowSessionStickiness,
@@ -64,7 +67,8 @@ export interface WorkflowTriggerRunner {
 interface StickyRootManagerContext {
   readonly workflowId: string;
   readonly workflowName: string;
-  readonly managerNodeId: string;
+  /** Manager/entry runtime id: step id for step-addressed bundles, else legacy node id. */
+  readonly managerRuntimeId: string;
   readonly sourceId: string;
   readonly bindingId: string;
   readonly conversationId: string;
@@ -140,9 +144,12 @@ async function resolveStickyRootManagerContext(input: {
     throw new Error(loaded.error.message);
   }
 
+  const managerRuntimeId = resolveWorkflowManagerRuntimeId(
+    loaded.value.bundle.workflow,
+  );
   const managerNode = getNormalizedNodePayload(
     loaded.value.bundle,
-    loaded.value.bundle.workflow.managerNodeId,
+    managerRuntimeId,
   );
   if (managerNode?.sessionPolicy?.mode !== "reuse") {
     return null;
@@ -155,7 +162,7 @@ async function resolveStickyRootManagerContext(input: {
   return {
     workflowId: loaded.value.bundle.workflow.workflowId,
     workflowName: input.binding.workflowName,
-    managerNodeId: loaded.value.bundle.workflow.managerNodeId,
+    managerRuntimeId,
     sourceId: input.event.sourceId,
     bindingId: input.binding.id,
     conversationId,
@@ -219,10 +226,10 @@ async function resolveStickyDispatchResolution(input: {
     ...resumable,
     status: "running",
     queue: dedupeNodeIds([
-      stickyContext.managerNodeId,
+      stickyContext.managerRuntimeId,
       ...existing.value.queue,
     ]),
-    currentNodeId: stickyContext.managerNodeId,
+    currentNodeId: stickyContext.managerRuntimeId,
     runtimeVariables: {
       ...existing.value.runtimeVariables,
       ...input.runtimeVariables,

@@ -544,6 +544,11 @@ function createPersistedWorkflowJson(input: {
   readonly workflow: WorkflowJson;
   readonly authoredWorkflow: AuthoredWorkflowJson | undefined;
 }): AuthoredWorkflowJson {
+  const stepAddressedEntryStepId =
+    input.workflow.nodeRegistry !== undefined &&
+    input.workflow.steps !== undefined
+      ? input.workflow.entryStepId
+      : undefined;
   const shouldPersistManagerStepId = (() => {
     if (
       input.workflow.hasManagerNode === false ||
@@ -588,7 +593,9 @@ function createPersistedWorkflowJson(input: {
       ...(shouldPersistManagerStepId
         ? { managerStepId: input.workflow.managerStepId }
         : {}),
-      entryStepId: input.workflow.entryStepId ?? input.workflow.entryNodeId!,
+      ...(stepAddressedEntryStepId === undefined
+        ? {}
+        : { entryStepId: stepAddressedEntryStepId }),
       nodes: input.workflow.nodeRegistry.map((node) => ({
         id: node.id,
         ...(node.nodeFile === undefined ? {} : { nodeFile: node.nodeFile }),

@@ -61,6 +61,15 @@ a supervised outer rerun, the second entry returns success. Use with
 `--auto-improve` to exercise the failure-to-rerun path without custom adapters.
 See `examples/auto-improve/README.md` and `examples/supervised-mock-retry/EXPECTED_RESULTS.md`.
 
+### `default-superviser`
+
+Minimal **phase-2 nested superviser** reference bundle (`workflowId`:
+`divedra-default-superviser`): one step invokes `divedra/start-workflow` so a
+nested superviser run can start the paired target when the engine injects
+`supervisionRunId`, `targetSessionId`, and `superviserTargetWorkflowId` (see
+`examples/auto-improve/README.md` and `examples/default-superviser/EXPECTED_RESULTS.md`). Not
+a standalone runnable demo without a supervised target and those variables.
+
 ### `chat-reply-webhook`
 
 Minimal worker-only workflow showing the built-in node add-on catalog:
