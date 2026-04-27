@@ -3,7 +3,7 @@
 **Status**: In Progress
 **Design Reference**: `design-docs/specs/design-workflow-json.md`, `design-docs/specs/design-node-jump-and-code-manager-runtime.md`, `design-docs/specs/design-unified-workflow-role-model.md`, `design-docs/specs/architecture.md`, `design-docs/specs/command.md`, `design-docs/specs/notes.md`
 **Created**: 2026-04-25
-**Last Updated**: 2026-04-27 (module 1: authored-schema tail — verification + session log)
+**Last Updated**: 2026-04-27 (module 2: unified `executeWorkflowCallsForNode` invocation path after node completion; typecheck + full test run; session log)
 
 ## Design Document Reference
 
@@ -157,9 +157,9 @@ export interface WorkflowStepTransition {
 
 ### 2. Runtime and Control Cleanup
 
-#### `src/workflow/engine.ts`, `src/workflow/runtime-addressing.ts`, `src/workflow/manager-control.ts`, `src/workflow/call-step.ts`, `src/workflow/call-step-impl.ts`, `src/workflow/sub-workflow.ts`, `src/workflow/conversation.ts`, `src/workflow/superviser-control.ts`, `src/workflow/superviser-runtime-control-impl.ts`
+#### `src/workflow/engine.ts`, `src/workflow/runtime-addressing.ts`, `src/workflow/manager-control.ts`, `src/workflow/call-step.ts`, `src/workflow/call-step-impl.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/session.ts`, `src/workflow/superviser-control.ts`, `src/workflow/superviser-runtime-control-impl.ts` (structural `sub-workflow` / `conversation` modules removed; do not reintroduce)
 
-**Status**: IN_PROGRESS (same as above; `src/workflow/engine.test.ts` fixtures now use validation-aligned node-graph helpers without authored `subWorkflows` or `branching`, and managerless supervision tests use step-addressed bundles; root/sub structural branching cleanup in non-test code still remains)
+**Status**: IN_PROGRESS (same as above; 2026-04-27 also DRYed manager detection in `node-execution-mailbox.ts` via `isManagerNodeRef`, unified legacy `root-manager` manager reason copy with role-manager text, and replaced mailbox prompt headings that implied parent/child structural sub-workflows—persisted `structure.type` remains `root-workflow` for compatibility; remaining checklist work is deeper engine/session branching and validator `root-manager` inference rules)
 
 ```typescript
 export interface ExecutionAddress {
@@ -328,11 +328,95 @@ interface VerificationCommandSet {
 | Design direction       | Runtime/control surfaces stay step-addressed rather than reintroducing node-addressed public API                                           | PASS                                                                                                            | Keep removing remaining compatibility fields under modules 1-4                                                                                                                                                                                                                                                                                                                                                          |
 | CLI surface            | Removed direct-call aliases fail clearly and do not create parser ambiguity                                                                | PASS (this iteration tightened `--resume-node-exec` handling)                                                   | Delete other removed compatibility aliases as they surface                                                                                                                                                                                                                                                                                                                                                              |
 | Error contract         | `call-step` failure wording is centralized instead of growing one-off string rewrites                                                      | PASS (this iteration replaced ad hoc rewrites with a shared mapping table)                                      | Continue shrinking leftover node-oriented internals so fewer rewrites are needed                                                                                                                                                                                                                                                                                                                                        |
-| Shared runtime helpers | Engine, direct-step execution, and UI/read-model helpers should resolve step addresses and root-scope ownership through one implementation | PASS (new `runtime-addressing.ts` now owns shared helper logic and this iteration reuses it from the TUI model) | Keep moving legacy-only helper branches behind shared contracts as phase 133 continues                                                                                                                                                                                                                                                                                                                                  |
+| Shared runtime helpers | Engine, direct-step execution, and UI/read-model helpers should resolve step addresses and workflow output-kind selection through one implementation (`isWorkflowOutputKindNode`) | PASS (`runtime-addressing.ts` owns shared helper logic; this iteration drops misleading `isRootScopeOutputNode` naming) | Keep moving legacy-only helper branches behind shared contracts as phase 133 continues                                                                                                                                                                                                                                                                                                                                  |
 | DRY/SOLID              | Shared parser and runtime helper logic should have one responsibility and one change point                                                 | PARTIAL (improved again this iteration)                                                                         | `runtime-addressing.ts` now owns the shared `StepIdentityFields` shape, `engine.ts` / `call-step-impl.ts` reuse one projected identity payload per execution scope, `session.ts` consumes that same shared identity contract for backend-session helpers, and output-ref construction now lives in one `buildOutputRefForExecution(...)` helper; broader legacy cleanup still spans validator/runtime/inspection layers |
-| Architecture fit       | Repository still matches the intended phase-133 end state                                                                                  | PARTIAL                                                                                                         | Authored `workflow.json` rejection lists and save-only `hasManagerNode` strip are verified in `src/workflow` (2026-04-27); `design-unified-workflow-role-model.md` entry/validation bullets match step-addressed authoring and `REJECTED_AUTHORED_*`. Full end state still blocked on non-`src/workflow` examples, root/sub runtime branching, and broader fixture retirement.                                                                                                                                                          |
+| Architecture fit       | Repository still matches the intended phase-133 end state                                                                                  | PARTIAL                                                                                                         | Authored `workflow.json` rejection lists and save-only `hasManagerNode` strip are verified in `src/workflow` (2026-04-27); `design-unified-workflow-role-model.md` entry/validation bullets match step-addressed authoring and `REJECTED_AUTHORED_*`. Engine/mailbox slice (2026-04-27) removed dead `mailboxDeliveryManagerNodeId`, renamed `isRootScopeOutputNode` to `isWorkflowOutputKindNode`, and de-emphasized structural parent/child mailbox copy; `impl-plans/runtime-owned-external-output-publication.md` Summary aligned with output-**kind** semantics. Full end state still blocked on non-`src/workflow` examples, validator `root-manager` inference, and broader fixture retirement.                                                                                                                                                          |
 
 ## Progress Log
+
+### Session: 2026-04-27 (module 2: unified cross-workflow dispatch invocation path)
+
+**Tasks Completed**: `src/workflow/engine.ts`: removed the post-node-completion `isStepAddressedWorkflow(workflow)` conditional around `executeWorkflowCallsForNode`; cross-workflow execution rows are still empty for non-step-addressed bundles inside `crossWorkflowDispatchesForExecutionMatch`, so the helper already no-ops. Engine now uses one unconditional `await executeWorkflowCallsForNode(...)` after transitions (same runtime behavior as the prior inline `ok({...})` branch). Removed unused `isStepAddressedWorkflow` import from `engine.ts`. Updated `executeWorkflowCallsForNode` JSDoc to describe the single call path instead of optional skipping.
+
+**Tasks In Progress**: Module 2: validator `root-manager` / single-manager graph inference; modules 3-4: GraphQL/inspect wording, examples, fixture retirement.
+
+**Blockers**: None.
+
+**Notes / verification commands**:
+
+- `bun run typecheck:server` (pass)
+- `bun test src/workflow/engine.test.ts src/workflow/cross-workflow-from-steps.test.ts --runInBand` (105 pass)
+- `bun test --runInBand` (1105 pass, 74 files)
+
+### Session: 2026-04-27 (module 2: engine cross-workflow naming and no-op dispatch skip)
+
+**Tasks Completed**: `src/workflow/engine.ts`: renamed nested cross-workflow cycle stack parameter from `workflowCallAncestors` to `crossWorkflowInvocationStack` (through `runWorkflowInternal` / `runNestedSuperviserSessionDriver` / `executeWorkflowCallsForNode`); renamed `buildChildWorkflowCallOptions` to `buildNestedCrossWorkflowRunOptions` with JSDoc; replaced internal `loadedChild` / `childResult` / `childWorkflow` / related locals with callee-oriented names in `executeWorkflowCallsForNode` (persisted workflow-call artifact JSON keys unchanged: `childWorkflowName`, `childSessionId`, etc.). After node completion, `executeWorkflowCallsForNode` is only awaited when `isStepAddressedWorkflow(workflow)`; legacy node-graph runs use an inline `ok({...})` empty result matching prior no-op behavior (`crossWorkflowDispatchesForExecutionMatch` already returned no rows). Added JSDoc on `executeWorkflowCallsForNode` documenting the skip. Imported `isStepAddressedWorkflow` from `./types`. Protected `design-docs/specs/architecture.md` and `design-step-run-history-rerun.md` not modified.
+
+**Tasks In Progress**: Module 2: validator `root-manager` / single-manager graph inference and any deeper runtime branches; modules 3-4: GraphQL/inspect wording, examples, fixture retirement.
+
+**Blockers**: None.
+
+**Notes / verification commands**:
+
+- `bun run typecheck:server` (pass)
+- `bun test src/workflow/engine.test.ts --runInBand` (96 pass)
+- `bun test --runInBand` (1105 pass, 74 files)
+
+### Session: 2026-04-27 (module 2: engine root-wording cleanup, manager-control test titles)
+
+**Tasks Completed**: Renamed `runWorkflowInternal` flag `isFreshRootStart` to `isNotResumingOrRerunning` with JSDoc clarifying it gates session continuation (resume/rerun), not structural root/sub-workflow scope. Updated `manager-control.test.ts` titles that incorrectly implied structural "non-root" or nested-manager semantics; tests still assert the same `resolveWorkflowManagerRuntimeId` / control-scope behavior. Protected `design-docs/specs/architecture.md` and `design-step-run-history-rerun.md` not modified.
+
+**Tasks In Progress**: Module 2: validator legacy `root-manager` single-manager graph inference and any remaining runtime branches; modules 3-4: public/read-model wording, examples, fixture retirement.
+
+**Blockers**: None.
+
+**Notes / verification commands**:
+
+- `bun run typecheck:server`
+- `bun test src/workflow/engine.test.ts src/workflow/manager-control.test.ts --runInBand`
+
+### Session: 2026-04-27 (module 2 slice — code review, typecheck, full test run)
+
+**Tasks Completed**: Reviewed pending engine/mailbox/runtime-addressing slice: removed `mailboxDeliveryManagerNodeId` in favor of `resolveWorkflowManagerRuntimeId` for `deliveredByNodeId` on intra-workflow transition communications (aligned with removal of per-lane structural sub-managers; one manager runtime id per workflow). Renamed `isRootScopeOutputNode` to `isWorkflowOutputKindNode` with JSDoc clarifying it is `nodes[].kind === "output"`, not structural scope. Mailbox copy uses `isManagerNodeRef` and non-structural peer listings. `impl-plans/runtime-owned-external-output-publication.md` terminology aligned. Protected `design-docs/specs/architecture.md` and `design-step-run-history-rerun.md` unchanged.
+
+**Tasks In Progress**: Module 2: validator `root-manager` / single-manager graph inference cleanup; modules 3-4: GraphQL/inspect wording, `examples/`, fixture retirement.
+
+**Blockers**: None.
+
+**Notes / verification commands**:
+
+- `bun run typecheck:server` (pass)
+- `bun test src/workflow/runtime-addressing.test.ts src/workflow/prompt-composition.test.ts src/workflow/call-step-impl.test.ts src/workflow/engine.test.ts --runInBand` (128 pass)
+- `bun test --runInBand` (1105 pass, 74 files)
+
+### Session: 2026-04-27 (module 2: design cross-check, plan alignment, diff review, verification)
+
+**Tasks Completed**:
+- Confirmed intended behavior: external publication and `workflowOutput` are driven by `nodes[].kind === "output"` via `isWorkflowOutputKindNode` in `src/workflow/runtime-addressing.ts` (not removed structural sub-workflow scope). `impl-plans/runtime-owned-external-output-publication.md` Summary/Scope/Purpose/Last Updated now use output-**kind** wording and reference `isWorkflowOutputKindNode` in the open paragraphs (modules already had checklist updates).
+- `impl-plans/workflow-legacy-compatibility-removal.md` module-2 file list: removed deleted `sub-workflow.ts` / `conversation.ts`; added `node-execution-mailbox.ts` and `session.ts`; note not to reintroduce structural modules.
+- Review Check Matrix: **Architecture fit** follow-up now mentions the landed engine/mailbox slice and runtime-owned plan alignment (still PARTIAL for phase-133 end state).
+- Re-read `AGENTS.md` and this plan; reviewed full unstaged workflow diff: coherent continuation of prior task; no further production edits required. Protected `design-docs/specs/architecture.md` and `design-step-run-history-rerun.md` not modified.
+
+**Tasks In Progress**: Module 2: validator `root-manager` single-manager graph inference; modules 3-4: GraphQL/inspect public wording, `examples/`, fixture retirement.
+
+**Blockers**: None.
+
+**Notes / verification commands**:
+- `bun run typecheck:server` (pass)
+- `bun test src/workflow/runtime-addressing.test.ts src/workflow/prompt-composition.test.ts src/workflow/engine.test.ts src/workflow/call-step-impl.test.ts --runInBand` (128 pass)
+- `bun test --runInBand` (1105 pass, 74 files)
+
+### Session: 2026-04-27 (module 2: engine, runtime-addressing, node-execution-mailbox)
+
+**Tasks Completed**:
+- `src/workflow/node-execution-mailbox.ts`: `buildNodeReason` / `buildExpectedReturn` / `buildManagedChildren` / `buildMailboxStructure` gate on `isManagerNodeRef` (from `node-role.ts`) so legacy `root-manager` and role `manager` share one path; manager prompt headings avoid structural parent/child framing; persisted `meta.structure.type` stays `root-workflow` and `rootManagerNodeId` field name unchanged for meta compatibility. `src/workflow/prompt-composition.test.ts` updated.
+- `src/workflow/engine.ts` / `src/workflow/call-step-impl.ts`: removed dead `mailboxDeliveryManagerNodeId`; `deliveredByNodeId` uses `resolveWorkflowManagerRuntimeId` directly. Renamed `isRootScopeOutputNode` to `isWorkflowOutputKindNode` in `runtime-addressing.ts` with JSDoc; `runtime-addressing.test.ts` updated. External mailbox `promptText`: "workflow input mailbox delivery". Historical progress log (~2026-04-26) in this file references the rename. No `CommunicationRoutingScope` change.
+
+**Tasks In Progress**: Same as prior session (validator inference; modules 3-4).
+
+**Blockers**: None.
+
+**Notes / verification commands** (from prior combined runs; full suite recommended before release): `bun run typecheck:server` (pass); `bun test src/workflow/runtime-addressing.test.ts src/workflow/call-step-impl.test.ts src/workflow/engine.test.ts --runInBand` (113 pass); prior full `bun test --runInBand` (1105 pass) when the broader branch is green.
 
 ### Session: 2026-04-27 (module 1 authored-schema tail: cross-check, full `bun test`, no code delta)
 
@@ -1914,8 +1998,9 @@ the OpenTUI shared model still carried its own copy of "which structural
 sub-workflow owns this runtime node id?" while `engine.ts` and
 `call-step-impl.ts` had already moved to `src/workflow/runtime-addressing.ts`.
 Replaced the TUI-local copy with the shared helper and added focused unit tests
-for `resolveStepExecutionAddress`, `resolveBackendSessionSelection`,
-`findOwningSubWorkflowByRuntimeNodeId`, and `isRootScopeOutputNode` so future
+for `resolveStepExecutionAddress`, `resolveBackendSessionSelection`, and the
+shared workflow output-kind helper (`isWorkflowOutputKindNode`, formerly
+`isRootScopeOutputNode`) so future
 cleanup can validate the shared contract without relying only on large engine
 and call-step integration suites. Also renamed the lingering
 `createCallNodeSession` test helper in `call-step-impl.test.ts` to
@@ -4498,3 +4583,21 @@ Full-repo `bun test` not re-run this session.
 - `bun test src/workflow/load.test.ts src/workflow/save.test.ts src/workflow/types.test.ts src/workflow/validate.test.ts --runInBand`
 - `bun test src/workflow/superviser.test.ts --runInBand`
 - `bun test --runInBand`
+
+### Session: 2026-04-27 (module 2: manager-control parse context — drop unused `managerKind`)
+
+**Tasks Completed**:
+- Removed `managerKind` from `ManagerControlParseContext` in `src/workflow/manager-control.ts`; scope checks already use `managerRuntimeId` plus optional `managerRole` against `resolveWorkflowManagerRuntimeId(workflow)` (no `root-manager` vs structural sub-manager branching).
+- Updated call sites: `src/workflow/engine.ts` (`parseManagerControlPayload`), `src/workflow/manager-message-service.ts` (dropped redundant manager node lookup used only for kind), `src/graphql/schema.ts` (`assertCommunicationInManagerScope`).
+- Trimmed `src/workflow/manager-control.test.ts` fixtures accordingly.
+
+**Tasks In Progress**:
+- Module 2: deeper engine/session cleanup (e.g. cross-workflow helper naming `parent`/`child` where still misleading, `conversationTurns` transcript path if retired safely), validator legacy `root-manager` graph inference per plan checklist.
+- Modules 3–4: GraphQL/inspect wording beyond this slice, examples and fixture retirement.
+
+**Blockers**: None.
+
+**Notes / verification commands**:
+- `bun run typecheck:server` (pass)
+- `bun test src/workflow/manager-control.test.ts src/workflow/manager-message-service.test.ts --runInBand` (21 pass)
+- `bun test src/graphql/schema.test.ts --runInBand` (33 pass)

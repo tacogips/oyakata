@@ -36,15 +36,16 @@ export interface NodeExecutionMailboxManagedChild {
 }
 
 /**
- * High-level view of the workflow graph for manager mailboxes. Only the root
- * workflow graph is described; cross-workflow calls are separate executions.
+ * High-level view of the workflow graph for manager mailboxes for the current
+ * workflow execution. Cross-workflow calls are separate executions.
  */
 export interface NodeExecutionMailboxStructure {
+  /** Historical discriminant; value is always `root-workflow` in persisted mailbox meta. */
   readonly type: "root-workflow";
   /**
-   * Root manager **execution** id: for step-addressed loads this is the manager
-   * step id (`resolveWorkflowManagerRuntimeId`); for legacy node graphs, the
-   * root manager node id. Name is historical; not always a registry `nodeId`.
+   * Manager **execution** id: for step-addressed loads this is the manager step
+   * id (`resolveWorkflowManagerRuntimeId`); for legacy node graphs, the manager
+   * node id. Name is historical; not always a registry `nodeId`.
    */
   readonly rootManagerNodeId?: string;
   readonly nodes?: readonly {
@@ -168,10 +169,7 @@ function buildNodeReason(
   nodeRef: Pick<WorkflowNodeRef, "kind" | "role" | "control">,
   workflow: WorkflowJson,
 ): string {
-  if (nodeRef.kind === "root-manager") {
-    return "Coordinate the overall workflow plan, output assessment, and retry decisions.";
-  }
-  if (nodeRef.role === "manager") {
+  if (isManagerNodeRef(nodeRef)) {
     return effectiveWorkflowCalls(workflow).length > 0
       ? "Coordinate the current workflow plan, worker execution, workflow-call decisions, output assessment, and retry decisions."
       : "Coordinate the current workflow plan, worker execution, output assessment, and retry decisions.";
@@ -203,7 +201,7 @@ function buildExpectedReturn(
     return node.output.description;
   }
 
-  if (nodeRef.kind === "root-manager" || nodeRef.role === "manager") {
+  if (isManagerNodeRef(nodeRef)) {
     return "Return a manager assessment/plan JSON object that records the current state, what was judged, and what should happen next.";
   }
 
@@ -230,7 +228,7 @@ function buildManagedChildren(input: {
   const { workflow, nodeRef, nodePayloads } = input;
   const children: NodeExecutionMailboxManagedChild[] = [];
 
-  if (nodeRef.kind === "root-manager" || nodeRef.role === "manager") {
+  if (isManagerNodeRef(nodeRef)) {
     const directChildren = workflow.nodes.filter(
       (entry) => entry.id !== nodeRef.id,
     );
@@ -256,10 +254,7 @@ function buildMailboxStructure(input: {
   readonly workflow: WorkflowJson;
   readonly nodeRef: Pick<WorkflowNodeRef, "id" | "kind" | "role" | "control">;
 }): NodeExecutionMailboxStructure | undefined {
-  if (
-    input.nodeRef.kind === "root-manager" ||
-    input.nodeRef.role === "manager"
-  ) {
+  if (isManagerNodeRef(input.nodeRef)) {
     return {
       type: "root-workflow",
       rootManagerNodeId: resolveWorkflowManagerRuntimeId(input.workflow),
@@ -428,7 +423,9 @@ function renderStructureSection(
     return "";
   }
   const lines = ["Workflow structure:"];
-  lines.push(`- Root manager: ${structure.rootManagerNodeId ?? ""}`);
+  lines.push(
+    `- Manager execution id: ${structure.rootManagerNodeId ?? ""}`,
+  );
   lines.push("- Nodes:");
   for (const node of structure.nodes ?? []) {
     lines.push(`  - ${node.id} (${node.kind})`);
@@ -442,9 +439,9 @@ function renderManagedChildrenSection(
   if (children === undefined || children.length === 0) {
     return "";
   }
-  const lines = ["Managed children in current scope:"];
+  const lines = ["Other nodes in this workflow:"];
   for (const child of children) {
-    lines.push(`- Child node: ${child.id} (${child.nodeKind ?? "task"})`);
+    lines.push(`- Node: ${child.id} (${child.nodeKind ?? "task"})`);
     lines.push(`  reason=${child.reason}`);
     lines.push(`  expectedReturn=${child.expectedReturn}`);
     if (child.promptSeed !== undefined) {

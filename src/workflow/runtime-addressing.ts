@@ -69,7 +69,13 @@ export function resolveBackendSessionSelection(
   };
 }
 
-export function isRootScopeOutputNode(
+/**
+ * True when `runtimeNodeId` matches a workflow node ref with kind `output`.
+ * Used for workflow-output runtime variables and external publication selection.
+ * This is unrelated to which manager runtime id is recorded on communication
+ * delivery metadata (`deliveredByNodeId`).
+ */
+export function isWorkflowOutputKindNode(
   workflow: WorkflowJson,
   runtimeNodeId: string,
 ): boolean {

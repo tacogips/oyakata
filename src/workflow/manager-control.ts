@@ -55,7 +55,6 @@ export interface ParsedManagerControl {
 
 export interface ManagerControlParseContext {
   readonly managerRuntimeId: string;
-  readonly managerKind: string | undefined;
   readonly managerRole?: NodeRole;
 }
 

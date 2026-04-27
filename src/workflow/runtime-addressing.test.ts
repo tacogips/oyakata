@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  isRootScopeOutputNode,
+  isWorkflowOutputKindNode,
   resolveBackendSessionSelection,
   resolveStepExecutionAddress,
   type StepExecutionAddress,
@@ -180,11 +180,11 @@ describe("toStepIdentityFields", () => {
   });
 });
 
-describe("output scope helpers", () => {
-  test("treats every output node as a publishable workflow output after legacy structural scope removal", () => {
+describe("isWorkflowOutputKindNode", () => {
+  test("treats every output kind node as eligible for workflow-output runtime variables and publication", () => {
     const workflow = makeWorkflow();
-    expect(isRootScopeOutputNode(workflow, "root-output-step")).toBe(true);
-    expect(isRootScopeOutputNode(workflow, "child-output-step")).toBe(true);
-    expect(isRootScopeOutputNode(workflow, "writer-step")).toBe(false);
+    expect(isWorkflowOutputKindNode(workflow, "root-output-step")).toBe(true);
+    expect(isWorkflowOutputKindNode(workflow, "child-output-step")).toBe(true);
+    expect(isWorkflowOutputKindNode(workflow, "writer-step")).toBe(false);
   });
 });

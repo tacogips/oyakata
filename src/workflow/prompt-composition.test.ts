@@ -237,7 +237,7 @@ describe("composeExecutionPrompt", () => {
     expect(prompt).not.toContain("- Owned nodes:");
   });
 
-  test("includes direct child node catalog for the root manager", () => {
+  test("includes peer node catalog for legacy root-manager node refs", () => {
     const prompt = composeExecutionPrompt({
       workflow: makeWorkflow(),
       nodeRef: makeNodeRef({
@@ -253,13 +253,13 @@ describe("composeExecutionPrompt", () => {
       upstreamInputs: [],
     });
 
-    expect(prompt).toContain("Managed children in current scope:");
-    expect(prompt).toContain("- Child node: main-divedra (task)");
+    expect(prompt).toContain("Other nodes in this workflow:");
+    expect(prompt).toContain("- Node: main-divedra (task)");
     expect(prompt).toContain(
       "expectedReturn=Return the completed release package summary.",
     );
-    expect(prompt).toContain("- Child node: workflow-input (input)");
-    expect(prompt).toContain("- Child node: workflow-output (output)");
+    expect(prompt).toContain("- Node: workflow-input (input)");
+    expect(prompt).toContain("- Node: workflow-output (output)");
   });
 
   test("treats role-authored managers as manager prompts instead of worker prompts", () => {
@@ -305,7 +305,7 @@ describe("composeExecutionPrompt", () => {
       "sub-workflow manager to treat the received instruction",
     );
     expect(prompts.promptText).toContain("Manager control payload:");
-    expect(prompts.promptText).toContain("Managed children in current scope:");
+    expect(prompts.promptText).toContain("Other nodes in this workflow:");
     expect(prompts.promptText).toContain("Node kind: manager");
   });
 
@@ -401,7 +401,7 @@ describe("composeExecutionPrompt", () => {
       upstreamInputs: [],
     });
 
-    expect(prompt).not.toContain("Managed children in current scope:");
+    expect(prompt).not.toContain("Other nodes in this workflow:");
     expect(prompt).not.toContain("Manager control payload:");
     expect(prompt).toContain("Node kind: task");
   });

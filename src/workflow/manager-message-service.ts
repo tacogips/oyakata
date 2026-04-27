@@ -138,15 +138,11 @@ export function createManagerMessageService(
           }
           const workflow = loadedWorkflow.value.bundle.workflow;
 
-          const managerNodeRef = workflow.nodes.find(
-            (entry) => entry.id === managerSession.managerNodeId,
-          );
           const parsedActions = parseManagerControlActions(
             normalizedActions as readonly unknown[],
             workflow,
             {
               managerRuntimeId: managerSession.managerNodeId,
-              managerKind: managerNodeRef?.kind,
             },
           );
 
@@ -212,7 +208,6 @@ export function createManagerMessageService(
                     workflow,
                     {
                       managerRuntimeId: managerSession.managerNodeId,
-                      managerKind: managerNodeRef?.kind,
                     },
                     "managerControl replay-communication",
                   );

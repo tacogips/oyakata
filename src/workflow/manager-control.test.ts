@@ -110,7 +110,6 @@ describe("parseManagerControlPayload", () => {
     expect(
       parseManagerControlPayload({ marker: "plain" }, makeWorkflow(), {
         managerRuntimeId: "divedra-manager",
-        managerKind: "root-manager",
       }),
     ).toBeNull();
   });
@@ -125,7 +124,6 @@ describe("parseManagerControlPayload", () => {
       makeWorkflow(),
       {
         managerRuntimeId: "divedra-manager",
-        managerKind: "root-manager",
       },
     );
 
@@ -138,7 +136,7 @@ describe("parseManagerControlPayload", () => {
     expect(parsed?.replayCommunicationIds).toEqual([]);
   });
 
-  test("accepts role-authored workflow managers as root-manager control scope", () => {
+  test("accepts manager-role workflow nodes when managerRuntimeId matches resolveWorkflowManagerRuntimeId", () => {
     const baseWorkflow = makeWorkflow();
     const workflow = {
       ...baseWorkflow,
@@ -162,7 +160,6 @@ describe("parseManagerControlPayload", () => {
       workflow,
       {
         managerRuntimeId: "divedra-manager",
-        managerKind: undefined,
         managerRole: "manager",
       },
     );
@@ -173,7 +170,6 @@ describe("parseManagerControlPayload", () => {
   test("rejects removed structural manager control action types", () => {
     const context = {
       managerRuntimeId: "divedra-manager",
-      managerKind: undefined,
       managerRole: "manager" as const,
     };
     for (const action of [
@@ -186,7 +182,7 @@ describe("parseManagerControlPayload", () => {
     }
   });
 
-  test("rejects retry actions from non-root manager runtime ids after structural scope removal", () => {
+  test("rejects retry-step when managerRuntimeId is not the workflow manager", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -197,7 +193,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "a-manager",
-          managerKind: undefined,
         },
       ),
     ).toThrow("does not have a recognized control scope");
@@ -216,7 +211,6 @@ describe("parseManagerControlPayload", () => {
       makeWorkflow(),
       {
         managerRuntimeId: "divedra-manager",
-        managerKind: "root-manager",
       },
     );
 
@@ -243,7 +237,6 @@ describe("parseManagerControlPayload", () => {
       makeWorkflow(),
       {
         managerRuntimeId: "divedra-manager",
-        managerKind: "root-manager",
       },
     );
 
@@ -274,7 +267,6 @@ describe("parseManagerControlPayload", () => {
       makeWorkflow(),
       {
         managerRuntimeId: "divedra-manager",
-        managerKind: "root-manager",
       },
     );
 
@@ -289,7 +281,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "divedra-manager",
-          managerKind: "root-manager",
         },
       ),
     ).toThrow("is not supported");
@@ -300,7 +291,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "divedra-manager",
-          managerKind: "root-manager",
         },
       ),
     ).toThrow("is not supported");
@@ -317,7 +307,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "a-manager",
-          managerKind: undefined,
         },
       ),
     ).toThrow("does not exist");
@@ -336,7 +325,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "divedra-manager",
-          managerKind: "root-manager",
         },
       ),
     ).toThrow("reason must be a string");
@@ -349,7 +337,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "divedra-manager",
-          managerKind: "root-manager",
         },
       ),
     ).toThrow("stepId must be a non-empty string");
@@ -360,13 +347,12 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "divedra-manager",
-          managerKind: "root-manager",
         },
       ),
     ).toThrow("communicationId must be a non-empty string");
   });
 
-  test("rejects retry-step from non-root legacy nested manager runtime contexts", () => {
+  test("rejects retry-step for wrong managerRuntimeId even when step id is the workflow manager node", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -377,13 +363,12 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "a-manager",
-          managerKind: undefined,
         },
       ),
     ).toThrow("does not have a recognized control scope");
   });
 
-  test("accepts root-manager retry-step for a task step id", () => {
+  test("accepts retry-step for a task step when context matches workflow manager", () => {
     const parsed = parseManagerControlPayload(
       {
         managerControl: {
@@ -393,7 +378,6 @@ describe("parseManagerControlPayload", () => {
       makeWorkflow(),
       {
         managerRuntimeId: "divedra-manager",
-        managerKind: "root-manager",
       },
     );
     expect(parsed?.retryStepIds).toEqual(["a-input"]);
@@ -410,13 +394,12 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "a-manager",
-          managerKind: undefined,
         },
       ),
     ).toThrow("cannot target the manager itself");
   });
 
-  test("rejects optional-node decisions for non-optional nodes and allows root-manager decisions across the workflow", () => {
+  test("rejects optional-step decisions for non-optional nodes and allows workflow manager decisions across the workflow", () => {
     expect(() =>
       parseManagerControlPayload(
         {
@@ -427,7 +410,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "a-manager",
-          managerKind: undefined,
         },
       ),
     ).toThrow("workflow execution.mode 'optional'");
@@ -442,7 +424,6 @@ describe("parseManagerControlPayload", () => {
         makeWorkflow(),
         {
           managerRuntimeId: "divedra-manager",
-          managerKind: "root-manager",
         },
       ),
     ).not.toThrow();

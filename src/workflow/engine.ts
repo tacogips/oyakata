@@ -63,7 +63,7 @@ import {
   saveProcessLogsToRuntimeDb,
 } from "./runtime-db";
 import {
-  isRootScopeOutputNode,
+  isWorkflowOutputKindNode,
   resolveBackendSessionSelection,
   resolveStepExecutionAddress,
   toStepIdentityFields,
@@ -763,13 +763,6 @@ function applyOptionalManagerDecisions(input: {
   });
 }
 
-function mailboxDeliveryManagerNodeId(
-  workflow: WorkflowJson,
-  _toNodeId: string,
-): string {
-  return resolveWorkflowManagerRuntimeId(workflow);
-}
-
 function findLatestPublishedWorkflowResult(
   workflow: WorkflowJson,
   session: WorkflowSessionState,
@@ -779,7 +772,7 @@ function findLatestPublishedWorkflowResult(
     .find(
       (entry) =>
         entry.status === "succeeded" &&
-        isRootScopeOutputNode(workflow, entry.nodeId),
+        isWorkflowOutputKindNode(workflow, entry.nodeId),
     );
 }
 
@@ -834,7 +827,8 @@ function buildWorkflowCallRuntimeVariables(input: {
   };
 }
 
-function buildChildWorkflowCallOptions(
+/** Run options for a nested cross-workflow run (callee bundle); same roots as caller except `runtimeVariables`. */
+function buildNestedCrossWorkflowRunOptions(
   options: WorkflowRunOptions,
   runtimeVariables: Readonly<Record<string, unknown>>,
 ): WorkflowRunOptions {
@@ -987,6 +981,11 @@ function workflowCallMatchesCallerExecution(input: {
   return entry.callerNodeId === input.callerNodeId;
 }
 
+/**
+ * Executes cross-workflow dispatches derived from step transitions (`steps[].transitions`).
+ * Non-step-addressed bundles yield no execution rows (cross-workflow dispatch is empty);
+ * callers invoke this unconditionally after node completion so there is one code path.
+ */
 async function executeWorkflowCallsForNode(input: {
   readonly workflow: WorkflowJson;
   readonly workflowName: string;
@@ -1004,7 +1003,8 @@ async function executeWorkflowCallsForNode(input: {
   readonly currentCommunications: readonly CommunicationRecord[];
   readonly adapter: NodeAdapter;
   readonly guards: EngineExecutionGuards | undefined;
-  readonly workflowCallAncestors: readonly string[];
+  /** Workflow ids already active in nested cross-workflow execution (cycle guard). */
+  readonly crossWorkflowInvocationStack: readonly string[];
 }): Promise<Result<WorkflowCallExecutionResult, string>> {
   const matchCtx = {
     callerNodeId: input.callerNodeId,
@@ -1040,7 +1040,7 @@ async function executeWorkflowCallsForNode(input: {
 
   for (const dispatch of relevantDispatches) {
     if (
-      input.workflowCallAncestors.includes(dispatch.workflowId) ||
+      input.crossWorkflowInvocationStack.includes(dispatch.workflowId) ||
       input.workflow.workflowId === dispatch.workflowId
     ) {
       return err(
@@ -1048,19 +1048,19 @@ async function executeWorkflowCallsForNode(input: {
       );
     }
 
-    const loadedChild = await loadWorkflowByIdFromDisk(
+    const loadedCallee = await loadWorkflowByIdFromDisk(
       dispatch.workflowId,
       input.options,
     );
-    if (!loadedChild.ok) {
+    if (!loadedCallee.ok) {
       return err(
-        `workflow-call '${dispatch.id}' target '${dispatch.workflowId}' could not be loaded: ${loadedChild.error.message}`,
+        `workflow-call '${dispatch.id}' target '${dispatch.workflowId}' could not be loaded: ${loadedCallee.error.message}`,
       );
     }
 
-    const childResult = await runWorkflowInternal(
-      loadedChild.value.workflowName,
-      buildChildWorkflowCallOptions(
+    const calleeRun = await runWorkflowInternal(
+      loadedCallee.value.workflowName,
+      buildNestedCrossWorkflowRunOptions(
         input.options,
         buildWorkflowCallRuntimeVariables({
           parentRuntimeVariables: input.session.runtimeVariables,
@@ -1078,26 +1078,26 @@ async function executeWorkflowCallsForNode(input: {
       ),
       input.adapter,
       input.guards,
-      [...input.workflowCallAncestors, input.workflow.workflowId],
+      [...input.crossWorkflowInvocationStack, input.workflow.workflowId],
     );
-    if (!childResult.ok) {
+    if (!calleeRun.ok) {
       return err(
-        `workflow-call '${dispatch.id}' failed: ${childResult.error.message}`,
+        `workflow-call '${dispatch.id}' failed: ${calleeRun.error.message}`,
       );
     }
 
-    const childWorkflow = loadedChild.value.bundle.workflow;
-    const childResultExecution = findLatestWorkflowCallResultExecution(
-      childWorkflow,
-      childResult.value.session,
+    const calleeWorkflow = loadedCallee.value.bundle.workflow;
+    const calleeResultExecution = findLatestWorkflowCallResultExecution(
+      calleeWorkflow,
+      calleeRun.value.session,
     );
-    const childOutputRef =
-      childResultExecution === undefined
+    const calleeOutputRef =
+      calleeResultExecution === undefined
         ? undefined
         : buildOutputRefForExecution({
-            workflow: childWorkflow,
-            session: childResult.value.session,
-            execution: childResultExecution,
+            workflow: calleeWorkflow,
+            session: calleeRun.value.session,
+            execution: calleeResultExecution,
           });
 
     await persistWorkflowCallArtifact({
@@ -1108,34 +1108,34 @@ async function executeWorkflowCallsForNode(input: {
       ...(input.callerStepId === undefined
         ? {}
         : { callerStepId: input.callerStepId }),
-      childWorkflowName: loadedChild.value.workflowName,
-      childWorkflowId: childWorkflow.workflowId,
-      childSession: childResult.value.session,
+      childWorkflowName: loadedCallee.value.workflowName,
+      childWorkflowId: calleeWorkflow.workflowId,
+      childSession: calleeRun.value.session,
       parentNodeExecId: input.callerNodeExecId,
       ...(dispatch.resultNodeId === undefined
         ? {}
         : { resultNodeId: dispatch.resultNodeId }),
-      ...(childOutputRef === undefined
+      ...(calleeOutputRef === undefined
         ? {}
-        : { resultOutputRef: childOutputRef }),
+        : { resultOutputRef: calleeOutputRef }),
     });
 
     if (dispatch.resultNodeId === undefined) {
       continue;
     }
 
-    if (childResultExecution === undefined || childOutputRef === undefined) {
+    if (calleeResultExecution === undefined || calleeOutputRef === undefined) {
       return err(
         `workflow-call '${dispatch.id}' completed without a result execution for '${dispatch.resultNodeId}'`,
       );
     }
 
-    const childOutput = await readOutputPayloadArtifact(
-      childResultExecution.artifactDir,
+    const calleeOutput = await readOutputPayloadArtifact(
+      calleeResultExecution.artifactDir,
     );
-    if (!childOutput.ok) {
+    if (!calleeOutput.ok) {
       return err(
-        `workflow-call '${dispatch.id}' produced an unreadable result: ${childOutput.error}`,
+        `workflow-call '${dispatch.id}' produced an unreadable result: ${calleeOutput.error}`,
       );
     }
 
@@ -1151,12 +1151,9 @@ async function executeWorkflowCallsForNode(input: {
       deliveryKind: "edge-transition",
       transitionWhen: `workflow-call:${dispatch.id}`,
       sourceNodeExecId: input.callerNodeExecId,
-      payloadRef: childOutputRef,
-      outputRaw: childOutput.value.raw,
-      deliveredByNodeId: mailboxDeliveryManagerNodeId(
-        input.workflow,
-        dispatch.resultNodeId,
-      ),
+      payloadRef: calleeOutputRef,
+      outputRaw: calleeOutput.value.raw,
+      deliveredByNodeId: resolveWorkflowManagerRuntimeId(input.workflow),
       createdAt: input.createdAt,
     });
     currentCommunicationCounter += 1;
@@ -1424,7 +1421,7 @@ async function persistExternalMailboxInputCommunication(input: {
   const outputPayload = {
     provider: "external-mailbox",
     model: "workflow-input",
-    promptText: "root workflow input mailbox delivery",
+    promptText: "workflow input mailbox delivery",
     completionPassed: true,
     when: { always: true },
     payload: normalizeExternalMailboxBusinessPayload(input.humanInput),
@@ -1724,7 +1721,7 @@ async function runWorkflowInternal(
   options: WorkflowRunOptions = {},
   adapter?: NodeAdapter,
   guards?: EngineExecutionGuards,
-  workflowCallAncestors: readonly string[] = [],
+  crossWorkflowInvocationStack: readonly string[] = [],
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
   let workflowWorkingDirectory: string;
   try {
@@ -1743,7 +1740,8 @@ async function runWorkflowInternal(
           : "workingDirectory must be a non-empty path when provided",
     });
   }
-  const isFreshRootStart =
+  /** True when this run is not continuing from an existing session (resume or rerun). */
+  const isNotResumingOrRerunning =
     options.resumeSessionId === undefined &&
     options.rerunFromSessionId === undefined;
   let preloadedForBundlePath: WorkflowSessionState | undefined;
@@ -1794,7 +1792,7 @@ async function runWorkflowInternal(
   }
 
   let precomputedSupervision: SupervisionRunState | undefined;
-  if (isFreshRootStart && options.autoImprove !== undefined) {
+  if (isNotResumingOrRerunning && options.autoImprove !== undefined) {
     const policy = options.autoImprove;
     const initial = createInitialSupervisionRunState({
       policy,
@@ -2089,7 +2087,7 @@ async function runWorkflowInternal(
       options,
       adapter,
       guards,
-      workflowCallAncestors,
+      crossWorkflowInvocationStack,
     );
   }
 
@@ -2712,10 +2710,7 @@ async function runWorkflowInternal(
               sourceNodeExecId: nodeExecId,
               payloadRef: outputRef,
               outputRaw,
-              deliveredByNodeId: mailboxDeliveryManagerNodeId(
-                workflow,
-                edge.to,
-              ),
+              deliveredByNodeId: resolveWorkflowManagerRuntimeId(workflow),
               createdAt: endedAt,
             });
           }),
@@ -2744,7 +2739,7 @@ async function runWorkflowInternal(
           communicationCounter:
             session.communicationCounter + transitionCommunications.length,
           communications: currentCommunications,
-          runtimeVariables: isRootScopeOutputNode(workflow, nodeId)
+          runtimeVariables: isWorkflowOutputKindNode(workflow, nodeId)
             ? {
                 ...session.runtimeVariables,
                 workflowOutput: outputPayload["payload"],
@@ -3469,7 +3464,6 @@ async function runWorkflowInternal(
               ? null
               : parseManagerControlPayload(businessPayload, workflow, {
                   managerRuntimeId: nodeId,
-                  managerKind: nodeRef.kind,
                   ...(nodeRef.role === undefined
                     ? {}
                     : { managerRole: nodeRef.role }),
@@ -3853,7 +3847,7 @@ async function runWorkflowInternal(
       let currentCommunications: readonly CommunicationRecord[] =
         session.communications;
       let currentCommunicationCounter = session.communicationCounter;
-      const currentRuntimeVariables = isRootScopeOutputNode(workflow, nodeId)
+      const currentRuntimeVariables = isWorkflowOutputKindNode(workflow, nodeId)
         ? {
             ...session.runtimeVariables,
             workflowOutput: outputPayload["payload"],
@@ -4169,7 +4163,7 @@ async function runWorkflowInternal(
             sourceNodeExecId: nodeExecId,
             payloadRef: outputRef,
             outputRaw,
-            deliveredByNodeId: mailboxDeliveryManagerNodeId(workflow, edge.to),
+            deliveredByNodeId: resolveWorkflowManagerRuntimeId(workflow),
             createdAt: endedAt,
           });
         }),
@@ -4205,7 +4199,7 @@ async function runWorkflowInternal(
         currentCommunications,
         adapter: effectiveAdapter,
         guards,
-        workflowCallAncestors,
+        crossWorkflowInvocationStack,
       });
       if (!workflowCallResult.ok) {
         const failed: WorkflowSessionState = {
@@ -4733,7 +4727,7 @@ async function runNestedSuperviserSessionDriver(
   options: WorkflowRunOptions,
   adapter: NodeAdapter | undefined,
   guards: EngineExecutionGuards | undefined,
-  workflowCallAncestors: readonly string[],
+  crossWorkflowInvocationStack: readonly string[],
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
   const sup = session.supervision;
   if (sup === undefined || options.autoImprove === undefined) {
@@ -4875,7 +4869,7 @@ async function runNestedSuperviserSessionDriver(
     supOpts,
     adapter,
     guards,
-    workflowCallAncestors,
+    crossWorkflowInvocationStack,
   );
   const reloaded = await loadSession(session.sessionId, options);
   const target =

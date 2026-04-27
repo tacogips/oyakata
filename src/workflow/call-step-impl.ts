@@ -50,7 +50,7 @@ import { composeExecutionPrompts } from "./prompt-composition";
 import { err, ok, type Result } from "./result";
 import { inspectWorkflowRuntimeReadiness } from "./runtime-readiness";
 import {
-  isRootScopeOutputNode,
+  isWorkflowOutputKindNode,
   resolveBackendSessionSelection,
   resolveStepExecutionAddress,
   toStepIdentityFields,
@@ -1561,7 +1561,7 @@ class ExecutionDispatcher {
       nodeExecutions: [...session.nodeExecutions, nodeExecution],
       nodeBackendSessions: nextNodeBackendSessions,
       ...(finalOutputPayload !== undefined &&
-      isRootScopeOutputNode(workflow, input.stepId)
+      isWorkflowOutputKindNode(workflow, input.stepId)
         ? {
             runtimeVariables: {
               ...session.runtimeVariables,

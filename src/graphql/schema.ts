@@ -1049,15 +1049,11 @@ async function loadScopedCommunicationForManagerMutation(
   if (loadedWorkflow === null) {
     throw new Error(`workflow '${loaded.value.workflowName}' was not found`);
   }
-  const managerNodeRef = loadedWorkflow.bundle.workflow.nodes.find(
-    (entry) => entry.id === scope.session.managerNodeId,
-  );
   assertCommunicationInManagerScope(
     communication,
     loadedWorkflow.bundle.workflow,
     {
       managerRuntimeId: scope.session.managerNodeId,
-      managerKind: managerNodeRef?.kind,
     },
     "GraphQL manager mutation",
   );
