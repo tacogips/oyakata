@@ -2,13 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { makeStepAddressedAuthoredWorkflowFieldIssue } from "./authored-workflow";
 import { loadWorkflowByIdFromDisk, loadWorkflowFromDisk } from "./load";
 import {
   getStructuralEdges,
   resolveWorkflowEntryRuntimeId,
   resolveWorkflowManagerStepId,
 } from "./types";
-import { REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE } from "./validate";
 
 const tempDirs: string[] = [];
 
@@ -101,7 +101,9 @@ describe("loadWorkflowFromDisk", () => {
       workflowId: "actual-id",
     });
 
-    const result = await loadWorkflowByIdFromDisk("actual-id", { workflowRoot });
+    const result = await loadWorkflowByIdFromDisk("actual-id", {
+      workflowRoot,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
@@ -128,10 +130,8 @@ describe("loadWorkflowFromDisk", () => {
     }
 
     expect(result.error.code).toBe("VALIDATION");
-    expect(result.error.issues).toContainEqual({
-      severity: "error",
-      path: "workflow.edges",
-      message: REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
-    });
+    expect(result.error.issues).toContainEqual(
+      makeStepAddressedAuthoredWorkflowFieldIssue("edges"),
+    );
   });
 });

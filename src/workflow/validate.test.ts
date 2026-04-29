@@ -1,11 +1,10 @@
+import { makeStepAddressedAuthoredWorkflowFieldIssue } from "./authored-workflow";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { crossWorkflowDispatchesFromSteps } from "./cross-workflow-from-steps";
 import {
-  REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
-  REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
   validateWorkflowBundle,
   validateWorkflowBundleAsync,
   validateWorkflowBundleDetailed,
@@ -236,56 +235,27 @@ describe("validateWorkflowBundle", () => {
     expect("workflowCalls" in result.value.workflow).toBe(false);
   });
 
-  test("rejects top-level entryNodeId on step-addressed bundles", () => {
-    const raw = makeStepAddressedRaw();
-    raw.workflow["entryNodeId"] = "manager";
+  test.each([
+    ["entryNodeId", "manager"],
+    ["edges", [{ from: "manager", to: "worker", when: "always" }]],
+    ["workflowCalls", []],
+  ] as const)(
+    "rejects top-level workflow.%s on step-addressed bundles",
+    (fieldName, fieldValue) => {
+      const raw = makeStepAddressedRaw();
+      raw.workflow[fieldName] = fieldValue;
 
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
+      const result = validateWorkflowBundle(raw);
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
 
-    expect(result.error).toContainEqual({
-      severity: "error",
-      path: "workflow.entryNodeId",
-      message: REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-    });
-  });
-
-  test("rejects top-level workflow.edges on step-addressed bundles", () => {
-    const raw = makeStepAddressedRaw();
-    raw.workflow["edges"] = [{ from: "manager", to: "worker", when: "always" }];
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    expect(result.error).toContainEqual({
-      severity: "error",
-      path: "workflow.edges",
-      message: REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
-    });
-  });
-
-  test("rejects top-level workflowCalls on step-addressed bundles", () => {
-    const raw = makeStepAddressedRaw();
-    raw.workflow["workflowCalls"] = [];
-
-    const result = validateWorkflowBundle(raw);
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    expect(result.error).toContainEqual({
-      severity: "error",
-      path: "workflow.workflowCalls",
-      message: REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-    });
-  });
+      expect(result.error).toContainEqual(
+        makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
+      );
+    },
+  );
 
   test("keeps cross-workflow transitions on steps and derives runtime dispatch rows", () => {
     const raw = makeStepAddressedRaw();
@@ -316,18 +286,18 @@ describe("validateWorkflowBundle", () => {
       return;
     }
 
-    expect(crossWorkflowDispatchesFromSteps(result.value.workflow.steps)).toEqual(
-      [
-        {
-          id: "__cw:manager",
-          workflowId: "child-flow",
-          callerNodeId: "manager",
-          callerStepId: "manager",
-          resultNodeId: "after-child",
-          when: "handoff",
-        },
-      ],
-    );
+    expect(
+      crossWorkflowDispatchesFromSteps(result.value.workflow.steps),
+    ).toEqual([
+      {
+        id: "__cw:manager",
+        workflowId: "child-flow",
+        callerNodeId: "manager",
+        callerStepId: "manager",
+        resultNodeId: "after-child",
+        when: "handoff",
+      },
+    ]);
     expect("workflowCalls" in result.value.workflow).toBe(false);
   });
 

@@ -17,11 +17,11 @@ import { resolveWorkflowRelativePath } from "./prompt-template-file";
 import { err, ok, type Result } from "./result";
 import { isSafeWorkflowName, resolveEffectiveRoots } from "./paths";
 import {
-  REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
-  REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
-  REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-  validateWorkflowBundleAsync,
-} from "./validate";
+  collectStepAddressedAuthoredWorkflowFieldIssues,
+  isNormalizedStepAddressedWorkflow,
+  stripNormalizedWorkflowFieldsForPersistence,
+} from "./authored-workflow";
+import { validateWorkflowBundleAsync } from "./validate";
 import {
   collectPromptTemplateFiles,
   collectWorkflowRevisionNodeFiles,
@@ -37,12 +37,6 @@ import type {
 
 type AuthoredWorkflowRecord = AuthoredWorkflowJson &
   Readonly<Record<string, unknown>>;
-
-interface SaveValidationIssue {
-  readonly severity: "error" | "warning";
-  readonly path: string;
-  readonly message: string;
-}
 
 export interface SaveWorkflowInput {
   readonly workflow: unknown;
@@ -75,93 +69,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function makeSaveValidationIssue(
-  path: string,
-  message: string,
-): SaveValidationIssue {
-  return {
-    severity: "error",
-    path,
-    message,
-  };
-}
-
-function isStepAddressedNormalizedWorkflow(
-  value: unknown,
-): value is WorkflowJson {
-  return (
-    isRecord(value) &&
-    Array.isArray(value["steps"]) &&
-    Array.isArray(value["nodeRegistry"])
-  );
-}
-
-function collectStepAddressedSaveLegacyFieldIssues(
-  workflow: unknown,
-): readonly SaveValidationIssue[] {
-  if (!isRecord(workflow)) {
-    return [];
-  }
-
-  const issues: SaveValidationIssue[] = [];
-  for (const legacyField of REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS) {
-    if (workflow[legacyField] !== undefined) {
-      issues.push(
-        makeSaveValidationIssue(
-          `workflow.${legacyField}`,
-          legacyField === "edges"
-            ? REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE
-            : REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-        ),
-      );
-    }
-  }
-
-  return issues;
-}
-
 function hasOwnKey(
   value: Record<string, unknown> | undefined,
   key: string,
 ): boolean {
   return value !== undefined && Object.hasOwn(value, key);
-}
-
-/**
- * Authored `workflow.json` must not carry both `role` and redundant `kind`;
- * normalized bundles may populate both during load.
- */
-function stripRedundantKindWhenRolePresentOnNode(node: unknown): unknown {
-  if (typeof node !== "object" || node === null) {
-    return node;
-  }
-
-  const nodeRecord = { ...(node as Record<string, unknown>) };
-  if (nodeRecord["role"] !== undefined) {
-    delete nodeRecord["kind"];
-  }
-  return nodeRecord;
-}
-
-/** Strips in-memory `hasManagerNode` only; all other keys are validated as-authored. */
-function stripNormalizedOnlyWorkflowTopLevelFields(
-  workflow: unknown,
-): unknown {
-  if (typeof workflow !== "object" || workflow === null) {
-    return workflow;
-  }
-
-  const workflowRecord = { ...(workflow as Record<string, unknown>) };
-  delete workflowRecord["hasManagerNode"];
-
-  const nodesRaw = workflowRecord["nodes"];
-  if (Array.isArray(nodesRaw)) {
-    workflowRecord["nodes"] = nodesRaw.map(
-      stripRedundantKindWhenRolePresentOnNode,
-    );
-  }
-
-  return workflowRecord;
 }
 
 function collectAuthoredNodeFiles(
@@ -967,17 +879,17 @@ export async function saveWorkflowToDisk(
     return err(existingAuthoredWorkflow.error);
   }
 
-  const normalizedInputWorkflow = isStepAddressedNormalizedWorkflow(
+  const normalizedInputWorkflow = isNormalizedStepAddressedWorkflow(
     input.workflow,
   )
     ? input.workflow
     : undefined;
   const stepAddressedLegacyIssues = normalizedInputWorkflow !== undefined
-    ? collectStepAddressedSaveLegacyFieldIssues(input.workflow)
+    ? collectStepAddressedAuthoredWorkflowFieldIssues(input.workflow)
     : [];
   const authoredWorkflow =
     normalizedInputWorkflow === undefined
-      ? stripNormalizedOnlyWorkflowTopLevelFields(input.workflow)
+      ? stripNormalizedWorkflowFieldsForPersistence(input.workflow)
       : createStepAddressedWorkflowForValidation(normalizedInputWorkflow);
   const normalizedNodePayloads = preferStepAddressedRegistryIdPayloads(
     authoredWorkflow,

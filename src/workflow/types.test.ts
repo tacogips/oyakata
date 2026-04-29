@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import type { AuthoredWorkflowJson } from "./types";
 import {
   REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS,
   REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
   REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS,
-} from "./validate";
+} from "./authored-workflow";
+import type { AuthoredWorkflowJson } from "./types";
 
 function createStrictAuthoredWorkflow(): AuthoredWorkflowJson {
   return {

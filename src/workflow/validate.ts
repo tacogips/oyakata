@@ -4,6 +4,14 @@ import path from "node:path";
 import { err, ok, type Result } from "./result";
 import { validateJsonSchemaDefinition } from "./json-schema";
 import {
+  REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS,
+  REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
+  REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS,
+  REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
+  collectStepAddressedAuthoredWorkflowFieldIssues,
+} from "./authored-workflow";
+import {
   isReservedWorkflowDefinitionPath,
   isSafeWorkflowRelativePath,
 } from "./prompt-template-file";
@@ -69,50 +77,13 @@ import {
   getStructuralLoops,
 } from "./types";
 
-/** Rejection text for any authored top-level `workflow.json` field outside the step-addressed schema. */
-export const REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE =
-  "is not part of the step-addressed workflow schema";
-
-/**
- * Rejection text for top-level `workflow.edges` on step-addressed bundles (local
- * routing belongs on `workflow.steps[].transitions`).
- */
-export const REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE =
-  "is not part of the step-addressed workflow schema; local step-to-step routing must be authored on workflow.steps[].transitions";
-
-/**
- * Authored `workflow.json` only: explicit enumeration of removed top-level keys that
- * must fail validation. This is intentional schema-boundary guarding (clear paths and
- * stable rejection messages), not a runtime compatibility layer; keep lists in sync
- * with `validateWorkflowBundle` when the authored surface changes.
- */
-export const REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS = [
-  "managerNodeId",
-  "entryNodeId",
-  "subWorkflows",
-] as const;
-
-/**
- * Additional removed top-level fields for step-addressed bundles; same explicit
- * schema-guard rationale as {@link REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS}.
- */
-export const REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS = [
-  "workflowCalls",
-  "subWorkflowConversations",
-  "edges",
-  "loops",
-  "branching",
-] as const;
-
-/**
- * Full set of disallowed top-level `workflow.json` keys when the bundle is
- * treated as step-addressed (`entryStepId` with `nodes` and `steps`), including
- * {@link REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS}.
- */
-export const REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS = [
-  ...REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS,
-  ...REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS,
-] as const;
+export {
+  REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS,
+  REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
+  REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS,
+  REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
+};
 
 interface RawBundle {
   readonly workflow: unknown;
@@ -1895,19 +1866,7 @@ function normalizeStepAddressedWorkflow(
     }
   }
 
-  for (const legacyField of REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS) {
-    if (workflow[legacyField] !== undefined) {
-      issues.push(
-        makeIssue(
-          "error",
-          `workflow.${legacyField}`,
-          legacyField === "edges"
-            ? REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE
-            : REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-        ),
-      );
-    }
-  }
+  issues.push(...collectStepAddressedAuthoredWorkflowFieldIssues(workflow));
 
   const nodeRegistryRaw = workflow["nodes"];
   if (!Array.isArray(nodeRegistryRaw)) {

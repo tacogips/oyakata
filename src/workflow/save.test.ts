@@ -6,15 +6,15 @@ import { createWorkflowTemplate } from "./create";
 import { loadWorkflowFromDisk } from "./load";
 import { saveWorkflowToDisk } from "./save";
 import { resolveWorkflowManagerStepId } from "./types";
-import { REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE } from "./validate";
+import { makeStepAddressedAuthoredWorkflowFieldIssue } from "./authored-workflow";
 
 const tempDirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempDirs.splice(0).map((directory) =>
-      rm(directory, { recursive: true, force: true }),
-    ),
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
 
@@ -143,10 +143,8 @@ describe("saveWorkflowToDisk", () => {
     }
 
     expect(saved.error.code).toBe("VALIDATION");
-    expect(saved.error.issues).toContainEqual({
-      severity: "error",
-      path: "workflow.edges",
-      message: REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
-    });
+    expect(saved.error.issues).toContainEqual(
+      makeStepAddressedAuthoredWorkflowFieldIssue("edges"),
+    );
   });
 });

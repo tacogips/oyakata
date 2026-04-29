@@ -79,6 +79,12 @@ Workflow definitions live under `<workflow-root>/<workflow-name>/` and are compo
 
 The loader resolves those workflow-local prompt files into effective inline template text before validation and execution.
 
+Authored workflow boundary rules are centralized in `src/workflow/authored-workflow.ts`:
+
+- removed top-level authored fields, their rejection messages, and canonical validation issue construction live there
+- save-time persistence strips only normalized-only workflow fields from in-memory `WorkflowJson` inputs before validation and write
+- `src/workflow/load.ts`, `src/workflow/validate.ts`, and `src/workflow/save.ts` should reuse that module rather than carrying separate copies of authored-schema guard logic
+
 Workflow roots can be resolved directly or through the scoped workflow catalog.
 The scoped model defines:
 
@@ -188,6 +194,7 @@ Responsibilities:
 - read workflow bundle files
 - resolve `promptTemplateFile`
 - validate step definitions, node registry entries, transitions, and payload shapes
+- share authored-schema guard rules with the save path through `src/workflow/authored-workflow.ts` so validation and persistence reject the same removed fields with the same messages
 
 Important validation facts:
 
