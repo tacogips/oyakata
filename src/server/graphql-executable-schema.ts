@@ -49,7 +49,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     label: String!
     status: String!
     detail: String!
-    sourceNodeIds: [String!]!
+    sourceStepIds: [String!]!
   }
 
   type WorkflowRuntimeReadiness {

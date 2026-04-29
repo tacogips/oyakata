@@ -28,7 +28,7 @@ A workflow bundle contains:
 
 ### `WorkflowJson`
 
-Authoring and normalized shapes are defined in `src/workflow/types.ts` (`AuthoredWorkflowJson`, `WorkflowJson`). On-disk `workflow.json` must be **step-addressed**: `entryStepId`, `nodes` (registry), `steps`, and optional `managerStepId`. Top-level authored graph or compatibility keys such as `edges`, `loops`, `branching`, `workflowCalls`, `subWorkflows`, `entryNodeId`, and `managerRuntimeId` are **rejected** by validation (see `REJECTED_AUTHORED_*` in `src/workflow/validate.ts`). The normalized `WorkflowJson` never carries those keys. Local routing for the engine is derived from `steps[].transitions` via `getStructuralEdges(...)`; repeat metadata on nodes yields loop rules via `getStructuralLoops(...)`. Runners and inspection surfaces use `resolveWorkflowManagerStepId` / `resolveWorkflowEntryRuntimeId` on that normalized model.
+Authoring and normalized shapes are defined in `src/workflow/types.ts` (`AuthoredWorkflowJson`, `WorkflowJson`). On-disk `workflow.json` must be **step-addressed**: `entryStepId`, `nodes` (registry), `steps`, and optional `managerStepId`. Top-level authored graph or compatibility keys such as `edges`, `loops`, `branching`, `workflowCalls`, `subWorkflows`, `entryNodeId`, `managerNodeId`, and `managerRuntimeId` are **rejected** by validation through the shared authored boundary contract in `src/workflow/authored-workflow.ts` (with compatibility re-exports in `src/workflow/validate.ts`). The normalized `WorkflowJson` never carries those keys. Local routing for the engine is derived from `steps[].transitions` via `getStructuralEdges(...)`; repeat metadata on nodes yields loop rules via `getStructuralLoops(...)`. Runners and inspection surfaces use `resolveWorkflowManagerStepId` / `resolveWorkflowEntryRuntimeId` on that normalized model.
 
 ### `WorkflowDefaults`
 
@@ -152,6 +152,26 @@ Normalization behavior:
 - transition-era prompt/backend/sub-workflow aliases are rejected; legacy manager kinds are also rejected
 - `workflow.json.nodes[]` order is canonical and requires no separate visualization file
 
+## Runtime Readiness Model
+
+`WorkflowRuntimeReadiness` reports execution prerequisites for inspection,
+GraphQL, and direct-step guards.
+
+`WorkflowRuntimeRequirement` fields:
+
+- `id`
+- `kind`
+- `label`
+- `status`
+- `detail`
+- `sourceStepIds`
+
+`sourceStepIds` uses the workflow's canonical execution addresses (step ids /
+normalized runtime node ids), not node-registry ids from `workflow.json.nodes[]`.
+Readiness selection filters, such as direct-step preflight checks, should use
+the same step-id address space so shared node-registry payloads can be
+attributed and probed per authored step.
+
 ## Session Model
 
 `WorkflowSessionState` is the central persisted runtime model.
@@ -192,9 +212,10 @@ Current fields:
 
 The queue is:
 
-- initialized with the root manager node id
+- initialized with the callable entry step id (`managerStepId` when present,
+  otherwise `entryStepId`)
 - rebuilt after each execution pass
-- deduplicated by node id
+- deduplicated by queued step id
 - persisted to the session store after every step
 
 The queue is the authoritative scheduler state for `workflow run`.

@@ -68,8 +68,7 @@ function makeBundle(
                   {
                     toStepId: options.crossWorkflowTransition!.toStepId,
                     toWorkflowId: options.crossWorkflowTransition!.workflowId,
-                    resumeStepId:
-                      options.crossWorkflowTransition!.resumeStepId,
+                    resumeStepId: options.crossWorkflowTransition!.resumeStepId,
                   },
                 ],
               }
@@ -190,14 +189,14 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "agent-backend",
       status: "available",
-      sourceNodeIds: ["manager"],
+      sourceStepIds: ["manager"],
     });
     expect(
       findRequirement(readiness.requirements, "agent-backend:codex-agent"),
     ).toMatchObject({
       kind: "agent-backend",
       status: "available",
-      sourceNodeIds: ["worker"],
+      sourceStepIds: ["worker"],
     });
   });
 
@@ -227,14 +226,14 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "container-runner",
       status: "unavailable",
-      sourceNodeIds: ["container-worker"],
+      sourceStepIds: ["container-worker"],
     });
     expect(
       findRequirement(readiness.requirements, "node-executor:container"),
     ).toMatchObject({
       kind: "node-executor",
       status: "available",
-      sourceNodeIds: ["container-worker"],
+      sourceStepIds: ["container-worker"],
     });
   });
 
@@ -259,7 +258,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unsupported",
-      sourceNodeIds: ["manager"],
+      sourceStepIds: ["manager"],
     });
   });
 
@@ -285,7 +284,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unsupported",
-      sourceNodeIds: ["manager"],
+      sourceStepIds: ["manager"],
     });
   });
 
@@ -358,7 +357,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     expect(
       findRequirement(readiness.requirements, "agent-backend:codex-agent"),
     ).toMatchObject({
-      sourceNodeIds: ["worker-step"],
+      sourceStepIds: ["worker-step"],
     });
     expect(
       findRequirement(
@@ -366,7 +365,105 @@ describe("inspectWorkflowRuntimeReadiness", () => {
         "workflow-feature:code-manager-runtime",
       ),
     ).toMatchObject({
-      sourceNodeIds: ["manager-step"],
+      sourceStepIds: ["manager-step"],
+    });
+  });
+
+  test("filters readiness requirements by authored step id when reusable node payloads back multiple steps", async () => {
+    const sharedBundle: NormalizedWorkflowBundle = {
+      workflow: {
+        workflowId: "shared-runtime-ready",
+        description: "shared node payload readiness fixture",
+        defaults: {
+          maxLoopIterations: 3,
+          nodeTimeoutMs: 120_000,
+        },
+        managerStepId: "draft-step",
+        entryStepId: "draft-step",
+        nodeRegistry: [
+          {
+            id: "shared-node",
+            nodeFile: "nodes/node-shared.json",
+          },
+        ],
+        steps: [
+          {
+            id: "draft-step",
+            nodeId: "shared-node",
+            role: "manager",
+            transitions: [{ toStepId: "review-step" }],
+          },
+          {
+            id: "review-step",
+            nodeId: "shared-node",
+            role: "worker",
+          },
+        ],
+        nodes: [
+          {
+            id: "draft-step",
+            role: "manager",
+            nodeFile: "nodes/node-shared.json",
+          },
+          {
+            id: "review-step",
+            role: "worker",
+            nodeFile: "nodes/node-shared.json",
+          },
+        ],
+      },
+      nodePayloads: {
+        "shared-node": {
+          id: "shared-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "shared worker",
+          variables: {},
+        },
+        "nodes/node-shared.json": {
+          id: "shared-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "shared worker",
+          variables: {},
+        },
+        "draft-step": {
+          id: "shared-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "shared worker",
+          variables: {},
+        },
+        "review-step": {
+          id: "shared-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "shared worker",
+          variables: {},
+        },
+      },
+    };
+
+    const fullReadiness = await inspectWorkflowRuntimeReadiness(sharedBundle);
+    expect(
+      findRequirement(fullReadiness.requirements, "agent-backend:codex-agent"),
+    ).toMatchObject({
+      sourceStepIds: ["draft-step", "review-step"],
+    });
+
+    const filteredReadiness = await inspectWorkflowRuntimeReadiness(
+      sharedBundle,
+      {
+        onlyStepIds: new Set(["review-step"]),
+      },
+    );
+    expect(
+      findRequirement(
+        filteredReadiness.requirements,
+        "agent-backend:codex-agent",
+      ),
+    ).toMatchObject({
+      sourceStepIds: ["review-step"],
     });
   });
 
@@ -399,7 +496,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "container-runner",
       status: "unavailable",
-      sourceNodeIds: ["x-read"],
+      sourceStepIds: ["x-read"],
     });
   });
 
@@ -451,7 +548,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "container-runner",
       status: "available",
-      sourceNodeIds: ["x-read"],
+      sourceStepIds: ["x-read"],
     });
     expect(
       findRequirement(
@@ -461,7 +558,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "environment-variable",
       status: "unavailable",
-      sourceNodeIds: ["x-read"],
+      sourceStepIds: ["x-read"],
     });
     expect(
       readiness.requirements.find(
@@ -517,7 +614,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "container-runner",
       status: "available",
-      sourceNodeIds: ["x-post"],
+      sourceStepIds: ["x-post"],
     });
     expect(
       findRequirement(
@@ -527,7 +624,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "environment-variable",
       status: "unavailable",
-      sourceNodeIds: ["x-post"],
+      sourceStepIds: ["x-post"],
     });
   });
 
@@ -576,7 +673,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "container-runner",
       status: "available",
-      sourceNodeIds: ["mail-send"],
+      sourceStepIds: ["mail-send"],
     });
     expect(
       findRequirement(
@@ -586,7 +683,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "environment-variable",
       status: "unavailable",
-      sourceNodeIds: ["mail-send"],
+      sourceStepIds: ["mail-send"],
     });
   });
 
@@ -636,7 +733,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "environment-variable",
       status: "unavailable",
-      sourceNodeIds: ["x-read"],
+      sourceStepIds: ["x-read"],
     });
   });
 
@@ -677,7 +774,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "container-runner",
       status: "unsupported",
-      sourceNodeIds: ["x-read"],
+      sourceStepIds: ["x-read"],
     });
   });
 
@@ -760,7 +857,124 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "workflow-feature",
       status: "available",
-      sourceNodeIds: ["writer"],
+      sourceStepIds: ["writer"],
+    });
+  });
+
+  test("attributes cross-workflow dispatch readiness to the caller step id when it differs from the node registry id", async () => {
+    const root = await makeTempDir();
+    const workflowDir = path.join(root, "review-flow-bundle");
+    await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+    await writeFile(
+      path.join(workflowDir, "workflow.json"),
+      `${JSON.stringify(
+        {
+          workflowId: "review-flow",
+          description: "valid review workflow",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          entryStepId: "reviewer",
+          nodes: [
+            {
+              id: "reviewer-node",
+              nodeFile: "nodes/node-reviewer.json",
+            },
+          ],
+          steps: [
+            {
+              id: "reviewer",
+              nodeId: "reviewer-node",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(workflowDir, "nodes", "node-reviewer.json"),
+      `${JSON.stringify(
+        {
+          id: "reviewer-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "review",
+          variables: {},
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const readiness = await inspectWorkflowRuntimeReadiness(
+      {
+        workflow: {
+          workflowId: "runtime-ready",
+          description: "runtime readiness fixture",
+          defaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120_000,
+          },
+          hasManagerNode: false,
+          entryStepId: "writer-step",
+          nodeRegistry: [
+            {
+              id: "writer-node",
+              nodeFile: "nodes/node-writer.json",
+            },
+          ],
+          steps: [
+            {
+              id: "writer-step",
+              nodeId: "writer-node",
+              role: "worker",
+              transitions: [
+                {
+                  toStepId: "reviewer",
+                  toWorkflowId: "review-flow",
+                  resumeStepId: "writer-step",
+                },
+              ],
+            },
+          ],
+          nodes: [
+            {
+              id: "writer-step",
+              role: "worker",
+              nodeFile: "nodes/node-writer.json",
+            },
+          ],
+        },
+        nodePayloads: {
+          "writer-node": {
+            id: "writer-node",
+            nodeType: "command",
+            variables: {},
+            command: {
+              scriptPath: "scripts/write.sh",
+            },
+          },
+        },
+      },
+      {
+        workflowRoot: root,
+      },
+    );
+
+    expect(readiness.ready).toBe(true);
+    expect(
+      findRequirement(
+        readiness.requirements,
+        WORKFLOW_RUNTIME_REQUIREMENT_CROSS_WORKFLOW_DISPATCH_ID,
+      ),
+    ).toMatchObject({
+      kind: "workflow-feature",
+      status: "available",
+      sourceStepIds: ["writer-step"],
     });
   });
 
@@ -840,14 +1054,13 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unavailable",
-      sourceNodeIds: ["writer"],
+      sourceStepIds: ["writer"],
     });
     expect(
       findRequirement(
         readiness.requirements,
         WORKFLOW_RUNTIME_REQUIREMENT_CROSS_WORKFLOW_DISPATCH_ID,
-      )
-        .detail,
+      ).detail,
     ).toContain("workflow validation failed");
   });
 
@@ -883,7 +1096,7 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unavailable",
-      sourceNodeIds: ["writer"],
+      sourceStepIds: ["writer"],
     });
   });
 
@@ -1024,14 +1237,13 @@ describe("inspectWorkflowRuntimeReadiness", () => {
     ).toMatchObject({
       kind: "workflow-feature",
       status: "unavailable",
-      sourceNodeIds: ["manager"],
+      sourceStepIds: ["manager"],
     });
     expect(
       findRequirement(
         readiness.requirements,
         WORKFLOW_RUNTIME_REQUIREMENT_CROSS_WORKFLOW_DISPATCH_ID,
-      )
-        .detail,
+      ).detail,
     ).toContain(
       "recursive cross-workflow dispatch chains are unsupported: runtime-ready -> review-flow -> runtime-ready",
     );

@@ -7,10 +7,10 @@ import type { WorkflowJson, WorkflowStepRef } from "./types";
 export interface CrossWorkflowDispatch {
   readonly id: string;
   readonly workflowId: string;
-  /** Node registry id for the executing step (`WorkflowStepRef.nodeId`), not the step id. */
-  readonly callerNodeId: string;
-  readonly callerStepId?: string;
-  readonly resultNodeId?: string;
+  /** Authored caller execution address. */
+  readonly callerStepId: string;
+  /** Authored resume target in the caller workflow after the callee completes. */
+  readonly resumeStepId: string;
   readonly when?: string;
 }
 
@@ -41,9 +41,8 @@ export function crossWorkflowDispatchesFromSteps(
     out.push({
       id: `__cw:${step.id}`,
       workflowId: cross.toWorkflowId,
-      callerNodeId: step.nodeId,
       callerStepId: step.id,
-      resultNodeId: cross.resumeStepId,
+      resumeStepId: cross.resumeStepId,
       ...(when === undefined ? {} : { when }),
     });
   }

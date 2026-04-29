@@ -23,8 +23,7 @@ const tempDirs: string[] = [];
 const deterministicAdapter = new DeterministicNodeAdapter();
 
 /** Shared workflow-load options for engine test fixtures. */
-const workflowLoadOpts = {
-} as const;
+const workflowLoadOpts = {} as const;
 
 class OptionalDecisionAdapter implements NodeAdapter {
   managerCalls = 0;
@@ -1250,6 +1249,67 @@ async function createWorkflowCallFixture(
   });
 }
 
+async function createWorkflowCallStepIdMismatchFixture(
+  root: string,
+  workflowName: string,
+  calleeStartStepId = "reviewer-step",
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed workflow call fixture with step/node mismatch",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "writer-step",
+    nodes: [
+      {
+        id: "writer-node",
+        nodeFile: "node-writer-node.json",
+      },
+      {
+        id: "review-result-node",
+        nodeFile: "node-review-result-node.json",
+      },
+    ],
+    steps: [
+      {
+        id: "writer-step",
+        nodeId: "writer-node",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review-flow",
+            toStepId: calleeStartStepId,
+            resumeStepId: "review-result-step",
+          },
+        ],
+      },
+      {
+        id: "review-result-step",
+        nodeId: "review-result-node",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer-node.json"), {
+    id: "writer-node",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-review-result-node.json"), {
+    id: "review-result-node",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review result",
+    variables: {},
+  });
+}
+
 /**
  * Like {@link createWorkflowCallFixture} but the workflow call is conditioned with
  * `when: "need_review"`. Deterministic adapter output does not satisfy it, so the
@@ -1339,6 +1399,39 @@ async function createWorkflowCallCalleeFixture(
 
   await writeJson(path.join(workflowDir, "node-reviewer.json"), {
     id: "reviewer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review",
+    variables: {},
+  });
+}
+
+async function createWorkflowCallCalleeStepIdMismatchFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description:
+      "step-addressed workflow call callee fixture with step/node mismatch",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "reviewer-step",
+    nodes: [
+      {
+        id: "reviewer-node",
+        nodeFile: "node-reviewer-node.json",
+      },
+    ],
+    steps: [
+      { id: "reviewer-step", nodeId: "reviewer-node", role: "worker" },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-reviewer-node.json"), {
+    id: "reviewer-node",
     executionBackend: "codex-agent",
     model: "gpt-5-nano",
     promptTemplate: "review",
@@ -1866,9 +1959,7 @@ async function createManagerAfterOutputFixture(
         id: "divedra-manager",
         nodeId: "divedra-manager",
         role: "manager",
-        transitions: [
-          { toStepId: "workflow-output", label: "needs_output" },
-        ],
+        transitions: [{ toStepId: "workflow-output", label: "needs_output" }],
       },
       {
         id: "workflow-output",
@@ -3115,9 +3206,14 @@ describe("runWorkflow", () => {
     ) as Record<string, unknown>;
     expect(crossWfParsed["calleeWorkflowId"]).toBe("review-flow");
     expect(crossWfParsed["crossWorkflowDispatchId"]).toBe("__cw:writer");
+    expect(crossWfParsed["workflowId"]).toBeUndefined();
     expect(crossWfParsed["workflowCallId"]).toBeUndefined();
+    expect(crossWfParsed["callerStepId"]).toBe("writer");
+    expect(crossWfParsed["resumeStepId"]).toBe("review-result");
     expect(crossWfParsed["callerNodeExecId"]).toBeDefined();
     expect(crossWfParsed["calleeSessionId"]).toBeDefined();
+    expect(crossWfParsed["callerNodeId"]).toBeUndefined();
+    expect(crossWfParsed["resultNodeId"]).toBeUndefined();
     expect(crossWfParsed["parentNodeExecId"]).toBeUndefined();
     expect(crossWfParsed["childWorkflowId"]).toBeUndefined();
     expect(crossWfParsed["childSessionId"]).toBeUndefined();
@@ -3153,6 +3249,78 @@ describe("runWorkflow", () => {
         entry.transitionWhen.startsWith("workflow-call:"),
       ),
     ).toBe(false);
+  });
+
+  test("keeps workflowCall callerNodeId on the node-registry id when the caller step id differs", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    await createWorkflowCallStepIdMismatchFixture(
+      root,
+      "workflow-call-step-id-mismatch",
+    );
+    await createWorkflowCallCalleeStepIdMismatchFixture(root, "review-flow");
+
+    const result = await runWorkflow(
+      "workflow-call-step-id-mismatch",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(
+      result.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["writer-step", "review-result-step"]);
+
+    const writerExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "writer-step",
+    );
+    expect(writerExecution).toBeDefined();
+    const crossWfArtifactPath = path.join(
+      root,
+      "artifacts",
+      "workflow-call-step-id-mismatch",
+      "executions",
+      result.value.session.sessionId,
+      "nodes",
+      "writer-step",
+      writerExecution!.nodeExecId,
+      "workflow-calls",
+      "__cw:writer-step.json",
+    );
+    const crossWfParsed = JSON.parse(
+      await readFile(crossWfArtifactPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(crossWfParsed["callerStepId"]).toBe("writer-step");
+    expect(crossWfParsed["resumeStepId"]).toBe("review-result-step");
+
+    const calleeSessionId = crossWfParsed["calleeSessionId"];
+    expect(typeof calleeSessionId).toBe("string");
+    if (typeof calleeSessionId !== "string") {
+      return;
+    }
+
+    const calleeSession = await loadSession(calleeSessionId, {
+      sessionStoreRoot,
+    });
+    expect(calleeSession.ok).toBe(true);
+    if (!calleeSession.ok) {
+      return;
+    }
+
+    const workflowCall = calleeSession.value.runtimeVariables[
+      "workflowCall"
+    ] as Record<string, unknown>;
+    expect(workflowCall["callerNodeId"]).toBe("writer-node");
+    expect(workflowCall["callerStepId"]).toBe("writer-step");
   });
 
   test("fails early when workflow-call targets are missing", async () => {

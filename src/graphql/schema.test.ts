@@ -1301,6 +1301,14 @@ describe("createGraphqlSchema", () => {
     expect(workflow?.counts.steps).toBe(2);
     expect(workflow?.counts.crossWorkflowDispatches).toBe(0);
     expect(workflow?.runtime.ready).toBe(false);
+    expect(workflow?.runtime.requirements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "workflow-feature:code-manager-runtime",
+          sourceStepIds: ["divedra-manager"],
+        }),
+      ]),
+    );
     expect(workflow?.runtime.blockers).toEqual(
       expect.arrayContaining([expect.stringContaining("code-manager runtime")]),
     );

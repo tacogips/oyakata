@@ -57,6 +57,19 @@ Current compatibility-removal sequence (see
   `cross-workflow-from-steps.ts`); validation **rejects** authored top-level
   `workflow.workflowCalls` on every bundle kind, so the runtime does not execute
   merged explicit call records
+- derived cross-workflow dispatch rows, readiness attribution, and new
+  `workflow-calls/*.json` artifact metadata should use caller/resume **step**
+  ids as the canonical addresses; node-registry ids may remain only in explicitly
+  scoped compatibility payloads such as `runtimeVariables.workflowCall`, and
+  new artifacts should not emit redundant plain `workflowId` mirrors alongside
+  caller/callee-named fields
+- workflow inspection and runtime-readiness surfaces should expose execution
+  sources as `stepId`-named fields (`sourceStepIds`) rather than node-named
+  aliases, because the normalized runtime scheduler is step-addressed
+- runtime-readiness filtering for direct-step execution and inspection should
+  also be keyed by executing **step** ids so reusable node-registry entries can
+  back multiple authored steps without reintroducing node-addressed selection
+  assumptions
 - phase-2 superviser-control add-on identifiers are part of the runtime control
   surface and should stay centralized; duplicating the same `divedra/*`
   catalog across validation, add-on resolution, and native execution is

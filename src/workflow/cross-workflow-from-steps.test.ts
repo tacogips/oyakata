@@ -47,9 +47,8 @@ describe("crossWorkflowDispatchesFromSteps", () => {
       {
         id: "__cw:draft-write",
         workflowId: "callee",
-        callerNodeId: "draft-write",
         callerStepId: "draft-write",
-        resultNodeId: "apply-review",
+        resumeStepId: "apply-review",
         when: "need_review",
       },
     ]);
@@ -110,9 +109,8 @@ describe("effectiveCrossWorkflowDispatches", () => {
       {
         id: "__cw:writer",
         workflowId: "legacy-target",
-        callerNodeId: "writer-node",
         callerStepId: "writer",
-        resultNodeId: "resume",
+        resumeStepId: "resume",
       },
     ]);
   });
@@ -125,7 +123,7 @@ describe("crossWorkflowDispatchesForExecutionMatch", () => {
       steps: [],
     };
     const match = (dispatch: CrossWorkflowDispatch) =>
-      dispatch.callerNodeId === "s1";
+      dispatch.callerStepId === "s1";
     expect(crossWorkflowDispatchesForExecutionMatch(workflow, match)).toEqual(
       [],
     );
@@ -149,7 +147,7 @@ describe("crossWorkflowDispatchesForExecutionMatch", () => {
       ],
     };
     const match = (dispatch: CrossWorkflowDispatch) =>
-      dispatch.callerNodeId === "n1";
+      dispatch.callerStepId === "s1";
     const dispatches = crossWorkflowDispatchesForExecutionMatch(
       workflow,
       match,
@@ -166,8 +164,41 @@ describe("crossWorkflowDispatchesForExecutionMatch", () => {
     };
     const dispatches = crossWorkflowDispatchesForExecutionMatch(
       workflow,
-      (dispatch) => dispatch.callerNodeId === "writer-node",
+      (dispatch) => dispatch.callerStepId === "writer",
     );
     expect(dispatches).toEqual([]);
+  });
+
+  test("matches by caller step id when the step and node registry ids differ", () => {
+    const workflow: Pick<WorkflowJson, "entryStepId" | "steps"> = {
+      entryStepId: "writer",
+      steps: [
+        {
+          id: "writer",
+          nodeId: "writer-node",
+          transitions: [
+            {
+              toStepId: "resume",
+              toWorkflowId: "derived-wf",
+              resumeStepId: "resume",
+            },
+          ],
+        },
+      ],
+    };
+
+    const dispatches = crossWorkflowDispatchesForExecutionMatch(
+      workflow,
+      (dispatch) => dispatch.callerStepId === "writer",
+    );
+
+    expect(dispatches).toEqual([
+      {
+        id: "__cw:writer",
+        workflowId: "derived-wf",
+        callerStepId: "writer",
+        resumeStepId: "resume",
+      },
+    ]);
   });
 });

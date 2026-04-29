@@ -3,6 +3,10 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import {
+  REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  type RejectedAuthoredStepAddressedTopLevelField,
+} from "./authored-workflow";
 import { crossWorkflowDispatchesFromSteps } from "./cross-workflow-from-steps";
 import {
   validateWorkflowBundle,
@@ -107,6 +111,34 @@ function writeWorkflowBundle(input: {
   writeJson(path.join(workflowDirectory, "workflow.json"), input.workflow);
   for (const [fileName, payload] of Object.entries(input.nodePayloads)) {
     writeJson(path.join(workflowDirectory, fileName), payload);
+  }
+}
+
+function sampleRemovedTopLevelFieldValue(
+  fieldName: RejectedAuthoredStepAddressedTopLevelField,
+): unknown {
+  switch (fieldName) {
+    case "managerRuntimeId":
+    case "managerNodeId":
+    case "entryNodeId":
+      return "manager";
+    case "subWorkflows":
+    case "workflowCalls":
+    case "subWorkflowConversations":
+      return [];
+    case "edges":
+      return [{ from: "manager", to: "worker", when: "always" }];
+    case "loops":
+      return [
+        {
+          id: "loop-manager",
+          judgeNodeId: "manager",
+          continueWhen: "again",
+          exitWhen: "done",
+        },
+      ];
+    case "branching":
+      return {};
   }
 }
 
@@ -235,15 +267,11 @@ describe("validateWorkflowBundle", () => {
     expect("workflowCalls" in result.value.workflow).toBe(false);
   });
 
-  test.each([
-    ["entryNodeId", "manager"],
-    ["edges", [{ from: "manager", to: "worker", when: "always" }]],
-    ["workflowCalls", []],
-  ] as const)(
+  test.each(REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS)(
     "rejects top-level workflow.%s on step-addressed bundles",
-    (fieldName, fieldValue) => {
+    (fieldName) => {
       const raw = makeStepAddressedRaw();
-      raw.workflow[fieldName] = fieldValue;
+      raw.workflow[fieldName] = sampleRemovedTopLevelFieldValue(fieldName);
 
       const result = validateWorkflowBundle(raw);
       expect(result.ok).toBe(false);
@@ -256,6 +284,31 @@ describe("validateWorkflowBundle", () => {
       );
     },
   );
+
+  test("rejects unsupported node registry fields on step-addressed bundles", () => {
+    const raw = makeStepAddressedRaw();
+    raw.workflow["nodes"] = [
+      {
+        id: "manager",
+        nodeFile: "nodes/node-manager.json",
+        role: "manager",
+      },
+      { id: "worker", nodeFile: "nodes/node-worker.json" },
+      { id: "after-child", nodeFile: "nodes/node-after-child.json" },
+    ];
+
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error).toContainEqual({
+      severity: "error",
+      path: "workflow.nodes[0].role",
+      message: "uses an unsupported step-addressed node registry field",
+    });
+  });
 
   test("keeps cross-workflow transitions on steps and derives runtime dispatch rows", () => {
     const raw = makeStepAddressedRaw();
@@ -292,9 +345,8 @@ describe("validateWorkflowBundle", () => {
       {
         id: "__cw:manager",
         workflowId: "child-flow",
-        callerNodeId: "manager",
         callerStepId: "manager",
-        resultNodeId: "after-child",
+        resumeStepId: "after-child",
         when: "handoff",
       },
     ]);

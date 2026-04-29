@@ -162,19 +162,12 @@ export interface WorkflowNodeRef {
   readonly repeat?: WorkflowNodeRepeatPolicy;
 }
 
-export interface AuthoredWorkflowNodeRef {
-  readonly id: string;
-  readonly nodeFile?: string;
-  readonly addon?: WorkflowNodeAddonRef;
-  readonly node?: unknown;
-  readonly kind?: NodeKind;
-  readonly role?: NodeRole;
-  readonly control?: NodeControlKind;
-  readonly completion?: CompletionRule;
-  readonly execution?: WorkflowNodeExecutionPolicy;
-  readonly group?: string;
-  readonly repeat?: WorkflowNodeRepeatPolicy;
-}
+/**
+ * Authored `workflow.json.nodes[]` entries use the strict step-addressed registry
+ * surface: reusable node identity plus file/add-on binding and registry-local
+ * execution metadata only.
+ */
+export interface AuthoredWorkflowNodeRef extends WorkflowNodeRegistryRef {}
 
 export interface WorkflowEdge {
   readonly from: string;
@@ -216,10 +209,7 @@ export interface AuthoredWorkflowJson {
   readonly prompts?: WorkflowPrompts;
   readonly managerStepId?: string;
   readonly entryStepId?: string;
-  readonly nodes: readonly (
-    | AuthoredWorkflowNodeRef
-    | WorkflowNodeRegistryRef
-  )[];
+  readonly nodes: readonly AuthoredWorkflowNodeRef[];
   readonly steps?: readonly AuthoredWorkflowStepRef[];
 }
 
@@ -302,9 +292,7 @@ export function resolveWorkflowEntryRuntimeId(workflow: WorkflowJson): string {
  * Primary manager/entry **runtime** id for engine routing, mailbox handoff, and new-session
  * bootstrap. Returns `managerStepId ?? entryStepId` in the same step-id space as `session.queue`.
  */
-export function resolveWorkflowManagerStepId(
-  workflow: WorkflowJson,
-): string {
+export function resolveWorkflowManagerStepId(workflow: WorkflowJson): string {
   return workflow.managerStepId ?? workflow.entryStepId;
 }
 
@@ -716,6 +704,12 @@ export interface NormalizedWorkflowBundle {
   readonly nodePayloads: Readonly<Record<string, NodePayload>>;
 }
 
+/**
+ * Resolve a normalized bundle payload by runtime execution id. The primary key is the
+ * normalized runtime node id (`workflow.nodes[].id`, which is the step id for current
+ * step-addressed workflows), with a defensive fallback to `nodeFile` for callers that
+ * receive a partially remapped payload dictionary.
+ */
 export function getNormalizedNodePayload(
   bundle: Pick<NormalizedWorkflowBundle, "workflow" | "nodePayloads">,
   nodeId: string,

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   isWorkflowOutputKindNode,
   resolveBackendSessionSelection,
+  resolveRequiredStepExecutionAddress,
   resolveStepExecutionAddress,
   type StepExecutionAddress,
   toStepIdentityFields,
@@ -120,6 +121,26 @@ describe("resolveStepExecutionAddress", () => {
     expect(resolveStepExecutionAddress(makeWorkflow(), "missing-step")).toEqual(
       {},
     );
+  });
+});
+
+describe("resolveRequiredStepExecutionAddress", () => {
+  test("returns the required step and node-registry identities for materialized runtime nodes", () => {
+    expect(
+      resolveRequiredStepExecutionAddress(makeWorkflow(), "writer-step"),
+    ).toEqual({
+      stepId: "writer-step",
+      nodeRegistryId: "writer-node",
+      promptVariant: "review",
+      timeoutMs: 4_321,
+      inheritFromStepId: "manager-step",
+    });
+  });
+
+  test("returns undefined when the runtime node has no authored step mapping", () => {
+    expect(
+      resolveRequiredStepExecutionAddress(makeWorkflow(), "missing-step"),
+    ).toBeUndefined();
   });
 });
 

@@ -37,6 +37,7 @@ import {
   DEFAULT_MAX_LOOP_ITERATIONS,
   DEFAULT_NODE_TIMEOUT_MS,
   NODE_ID_PATTERN,
+  getNormalizedNodePayload,
   type ArgumentBinding,
   type AsyncNodeAddonPayloadResolver,
   type CommandExecution,
@@ -72,10 +73,7 @@ import {
   type NodeKind,
   type WorkflowNodeRepeatPolicy,
 } from "./types";
-import {
-  getStructuralEdges,
-  getStructuralLoops,
-} from "./types";
+import { getStructuralEdges, getStructuralLoops } from "./types";
 
 export {
   REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS,
@@ -1181,7 +1179,9 @@ function normalizeWorkflowNodeRepeatPolicy(
   }
   const whileRaw = value["while"];
   if (typeof whileRaw !== "string" || whileRaw.length === 0) {
-    issues.push(makeIssue("error", `${path}.while`, "must be a non-empty string"));
+    issues.push(
+      makeIssue("error", `${path}.while`, "must be a non-empty string"),
+    );
     return undefined;
   }
   const restartAtRaw = value["restartAt"];
@@ -3917,7 +3917,7 @@ function runSemanticValidation(
     }
     seenNodeIds.add(node.id);
 
-    const payload = bundle.nodePayloads[node.id];
+    const payload = getNormalizedNodePayload(bundle, node.id);
     if (!payload) {
       issues.push(
         makeIssue(

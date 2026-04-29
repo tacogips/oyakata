@@ -4,7 +4,7 @@ This document defines the target workflow model where `manager` and `worker` are
 
 ## Overview
 
-Strict authored `workflow.json` follows the step-addressed contract in `design-workflow-json.md` (`entryStepId`, `steps`, optional `managerStepId`); top-level `managerNodeId`, `entryNodeId`, and `subWorkflows` are rejected, and role-authored bundles reject structural boundary kinds such as `subworkflow-manager`, `input`, and `output`.
+Strict authored `workflow.json` follows the step-addressed contract in `design-workflow-json.md` (`entryStepId`, `steps`, optional `managerStepId`); top-level `managerRuntimeId`, `managerNodeId`, `entryNodeId`, and `subWorkflows` are rejected, and role-authored bundles reject structural boundary kinds such as `subworkflow-manager`, `input`, and `output`.
 
 The target execution semantics remain:
 
@@ -135,11 +135,10 @@ readiness checks (see `CrossWorkflowDispatch` in `src/workflow/cross-workflow-fr
 interface CrossWorkflowDispatch {
   readonly id: string;
   readonly workflowId: string;
-  /** Node registry id for the caller step (`WorkflowStepRef.nodeId`); distinct from the step id. */
-  readonly callerNodeId: string;
-  /** Caller step id when the step name differs from the node registry id. */
-  readonly callerStepId?: string;
-  readonly resultNodeId?: string;
+  /** Authored caller execution address. */
+  readonly callerStepId: string;
+  /** Authored resume target in the caller workflow after the callee completes. */
+  readonly resumeStepId: string;
   readonly when?: string;
 }
 ```
@@ -154,14 +153,15 @@ Principles:
 Current runtime contract for this transition:
 
 - `dispatch.workflowId` resolves another workflow bundle under the configured workflow root
-- after the caller step's node succeeds, matching cross-workflow dispatches for that caller execute in deterministic step order (at most one `toWorkflowId` transition per step). Matching pairs `callerStepId` with the completing step when present and compares `callerNodeId` against the executing node registry id.
+- after the caller step's node succeeds, matching cross-workflow dispatches for that caller execute in deterministic step order (at most one `toWorkflowId` transition per step). Matching is step-addressed and compares `callerStepId` against the completing step.
 - the callee receives a reserved `runtimeVariables.workflowCall` object (stable template key; name is historical) containing:
   - the cross-workflow dispatch id (same as `dispatch.id`, e.g. `__cw:draft-write`)
   - the invoking workflow id and execution id (serialized as `parentWorkflowId` and `parentWorkflowExecutionId` for on-disk and template compatibility; they name the caller, not a structural sub-workflow parent)
   - the caller **node registry** id (not the step id when they differ)
+  - the caller step id as `workflowCall.callerStepId`
   - the caller business payload as `workflowCall.input`
-- runtime-owned dispatch metadata is written under the caller execution artifact directory as `workflow-calls/<dispatch-id>.json` using caller/callee field names (`crossWorkflowDispatchId`, `callerNodeExecId`, `calleeWorkflowId`, `calleeSessionId`, …). Older artifacts may still contain historical `parentNodeExecId` / `child*` keys or the legacy `workflowCallId` top-level key; new runs no longer write those mirrors or `workflowCallId`
-- when `resultNodeId` is present, the callee result is delivered to that node as an ordinary upstream communication with transition key `workflow-call:<dispatch-id>` (prefix historical; kept for persisted session compatibility)
+- runtime-owned dispatch metadata is written under the caller execution artifact directory as `workflow-calls/<dispatch-id>.json` using caller/callee field names only (`crossWorkflowDispatchId`, `callerStepId`, `resumeStepId`, `callerNodeExecId`, `calleeWorkflowId`, `calleeSessionId`, …). Older artifacts may still contain historical `workflowId`, `callerNodeId`, `resultNodeId`, `parentNodeExecId`, `child*`, or the legacy `workflowCallId` top-level key; new runs no longer write those mirrors
+- when `resumeStepId` is present, the callee result is delivered to that step as an ordinary upstream communication with transition key `workflow-call:<dispatch-id>` (prefix historical; kept for persisted session compatibility)
 - the callee result is selected from the callee's published workflow output when available, and otherwise falls back to the latest succeeded callee node execution for role-authored worker-only workflows
 - recursive or self-referential cross-workflow dispatch chains are unsupported in this transition runtime and should fail readiness/execution rather than re-enter indefinitely
 
@@ -176,8 +176,8 @@ The target validator should enforce:
 - at most one node may use `role: "manager"`
 - step-addressed bundles: `entryStepId` and `steps[]` are required; optional `managerStepId` must
   reference an existing step id when present
-- authored top-level `managerNodeId`, `entryNodeId`, `subWorkflows`, `workflowCalls`, and other
-  keys listed under `REJECTED_AUTHORED_*` in `validate.ts` / `design-workflow-json.md` are rejected
+- authored top-level `managerRuntimeId`, `managerNodeId`, `entryNodeId`, `subWorkflows`, `workflowCalls`, and other
+  keys listed under `REJECTED_AUTHORED_*` in `authored-workflow.ts` / `design-workflow-json.md` are rejected
 - manager nodes must use the agent execution path only
 - structural sub-workflow authoring metadata is out of scope for the active schema (validation rejects
   top-level presence rather than normalizing it)

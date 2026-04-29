@@ -150,12 +150,13 @@ Validation rules:
 - `managerStepId`, when present, must resolve to an authored step
 - every step must reference a node registry entry through `nodeId`
 - `steps[]` must be non-empty
-- dedicated legacy top-level fields are rejected by key set: step-addressed bundles use `REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS` in `src/workflow/authored-workflow.ts` (includes `managerNodeId`, `entryNodeId`, `subWorkflows`, `workflowCalls`, `subWorkflowConversations`, `edges`, `loops`, and `branching`). `src/workflow/validate.ts` re-exports those constants for compatibility
+- dedicated legacy top-level fields are rejected by key set: step-addressed bundles use `REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS` in `src/workflow/authored-workflow.ts` (includes `managerRuntimeId`, `managerNodeId`, `entryNodeId`, `subWorkflows`, `workflowCalls`, `subWorkflowConversations`, `edges`, `loops`, and `branching`). `src/workflow/validate.ts` re-exports those constants for compatibility
 - dedicated legacy top-level field lists, rejection strings, canonical issue construction, and save-time authored-boundary stripping are centralized in `src/workflow/authored-workflow.ts`; validation re-exports those constants from `src/workflow/validate.ts` for compatibility
-- the save path may strip only normalized in-memory `hasManagerNode` and redundant node `kind` fields from workflow input before writing; it does not strip `managerNodeId`, `entryNodeId`, `subWorkflows`, or other disallowed keys (validation rejects them, same as for on-disk `workflow.json`)
+- the save path may strip only normalized in-memory `hasManagerNode` and redundant node `kind` fields from workflow input before writing; it does not strip `managerRuntimeId`, `managerNodeId`, `entryNodeId`, `subWorkflows`, or other disallowed keys (validation rejects them, same as for on-disk `workflow.json`)
 - the validator rejects top-level `workflow.workflowCalls` whenever the bundle is treated as step-addressed (`entryStepId` with `steps[]`); use step transitions instead
 - cross-workflow invocation uses the same execution-address model as ordinary step calls rather than a dedicated top-level `workflowCalls` section
 - calling another workflow means targeting an explicit step in that workflow; the canonical workflow-level entry is the callee workflow's `managerStepId`, or `entryStepId` when the callee is worker-only
+- derived runtime cross-workflow dispatch rows and new `workflow-calls/*.json` metadata are step-addressed (`callerStepId`, `resumeStepId`) because the authored source of truth is `steps[].transitions`
 
 Not part of the schema:
 

@@ -218,13 +218,14 @@ async function createCallStepSession(input: {
   readonly workflowName: string;
   readonly sessionId: string;
   readonly sessionStoreRoot: string;
+  readonly initialNodeId?: string;
 }): Promise<void> {
   const saved = await saveSession(
     createSessionState({
       sessionId: input.sessionId,
       workflowName: input.workflowName,
       workflowId: input.workflowName,
-      initialNodeId: "divedra-manager",
+      initialNodeId: input.initialNodeId ?? "divedra-manager",
       runtimeVariables: {},
     }),
     {
@@ -232,6 +233,67 @@ async function createCallStepSession(input: {
     },
   );
   expect(saved.ok).toBe(true);
+}
+
+async function createStepIdMismatchContainerFixture(
+  workflowRoot: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(workflowRoot, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "call-step step/node mismatch fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "manager-step",
+    entryStepId: "manager-step",
+    nodes: [
+      {
+        id: "manager-node",
+        nodeFile: "node-manager-node.json",
+      },
+      {
+        id: "writer-node",
+        nodeFile: "node-writer-node.json",
+      },
+    ],
+    steps: [
+      {
+        id: "manager-step",
+        nodeId: "manager-node",
+        role: "manager",
+        transitions: [{ toStepId: "writer-step", label: "always" }],
+      },
+      {
+        id: "writer-step",
+        nodeId: "writer-node",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-manager-node.json"), {
+    id: "manager-node",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "manager",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer-node.json"), {
+    id: "writer-node",
+    nodeType: "container",
+    variables: {},
+    container: {
+      runnerKind: "podman",
+      runnerPath: "/definitely/missing/podman",
+      build: {
+        contextPath: "containers/writer",
+        containerfilePath: "containers/writer/Containerfile",
+      },
+    },
+  });
 }
 
 afterEach(async () => {
@@ -880,6 +942,38 @@ describe("callStepExecution", () => {
       workflowId: workflowName,
       workflowRunId: sessionId,
       stepId: "writer",
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain("workflow runtime readiness failed");
+  });
+
+  test("fails readiness for a direct step when the step id differs from its node registry id", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-step-step-node-mismatch";
+    const sessionId = "sess-call-step-step-node-mismatch";
+
+    await createStepIdMismatchContainerFixture(root, workflowName);
+    await createCallStepSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+      initialNodeId: "manager-step",
+    });
+
+    const result = await callStepExecution({
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: artifactsRoot,
+      sessionStoreRoot,
+      workflowId: workflowName,
+      workflowRunId: sessionId,
+      stepId: "writer-step",
     });
 
     expect(result.ok).toBe(false);

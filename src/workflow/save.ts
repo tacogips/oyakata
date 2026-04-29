@@ -32,6 +32,7 @@ import type {
   AuthoredWorkflowJson,
   LoadOptions,
   WorkflowJson,
+  WorkflowNodeRegistryRef,
   WorkflowStepRef,
 } from "./types";
 
@@ -128,55 +129,37 @@ function isDefaultContainerRuntime(value: unknown): boolean {
   );
 }
 
-function createPersistedWorkflowJson(input: {
+function projectAuthoredWorkflowFromNormalized(input: {
   readonly workflow: WorkflowJson;
-  readonly authoredWorkflow: AuthoredWorkflowRecord | undefined;
+  readonly persistManagerStepId: boolean;
 }): AuthoredWorkflowJson {
-  const shouldPersistManagerStepId = (() => {
-    if (
-      input.workflow.hasManagerNode === false ||
-      input.workflow.managerStepId === undefined
-    ) {
-      return false;
-    }
-    if (hasOwnKey(input.authoredWorkflow, "managerStepId")) {
-      return true;
-    }
-    const explicitManagerSteps =
-      input.workflow.steps?.filter((step) => step.role === "manager") ?? [];
-    return !(
-      explicitManagerSteps.length === 1 &&
-      explicitManagerSteps[0]?.id === input.workflow.managerStepId
-    );
-  })();
+  const { workflow } = input;
 
   return {
-    workflowId: input.workflow.workflowId,
-    ...(input.workflow.description.length === 0
+    workflowId: workflow.workflowId,
+    ...(workflow.description.length === 0
       ? {}
-      : { description: input.workflow.description }),
+      : { description: workflow.description }),
     defaults: {
-      nodeTimeoutMs: input.workflow.defaults.nodeTimeoutMs,
-      maxLoopIterations: input.workflow.defaults.maxLoopIterations,
-      ...(input.workflow.defaults.timeoutPolicy === undefined
+      nodeTimeoutMs: workflow.defaults.nodeTimeoutMs,
+      maxLoopIterations: workflow.defaults.maxLoopIterations,
+      ...(workflow.defaults.timeoutPolicy === undefined
         ? {}
-        : { timeoutPolicy: input.workflow.defaults.timeoutPolicy }),
-      ...(input.workflow.defaults.containerRuntime === undefined ||
-      isDefaultContainerRuntime(input.workflow.defaults.containerRuntime)
+        : { timeoutPolicy: workflow.defaults.timeoutPolicy }),
+      ...(workflow.defaults.containerRuntime === undefined ||
+      isDefaultContainerRuntime(workflow.defaults.containerRuntime)
         ? {}
-        : { containerRuntime: input.workflow.defaults.containerRuntime }),
+        : { containerRuntime: workflow.defaults.containerRuntime }),
     },
-    ...(shouldPersistManagerStepId
-      ? { managerStepId: input.workflow.managerStepId }
+    ...(workflow.prompts === undefined ? {} : { prompts: workflow.prompts }),
+    ...(input.persistManagerStepId &&
+    workflow.hasManagerNode !== false &&
+    workflow.managerStepId !== undefined
+      ? { managerStepId: workflow.managerStepId }
       : {}),
-    entryStepId: input.workflow.entryStepId,
-    nodes: input.workflow.nodeRegistry.map((node) => ({
-      id: node.id,
-      ...(node.nodeFile === undefined ? {} : { nodeFile: node.nodeFile }),
-      ...(node.addon === undefined ? {} : { addon: node.addon }),
-      ...(node.execution === undefined ? {} : { execution: node.execution }),
-    })),
-    steps: input.workflow.steps.map((step) =>
+    entryStepId: workflow.entryStepId,
+    nodes: workflow.nodeRegistry.map(projectAuthoredWorkflowRegistryNode),
+    steps: workflow.steps.map((step) =>
       step.stepFile === undefined
         ? {
             id: step.id,
@@ -203,65 +186,51 @@ function createPersistedWorkflowJson(input: {
             stepFile: step.stepFile,
           },
     ),
-    ...(input.workflow.prompts === undefined
-      ? {}
-      : { prompts: input.workflow.prompts }),
   };
+}
+
+function projectAuthoredWorkflowRegistryNode(
+  node: WorkflowNodeRegistryRef,
+): WorkflowNodeRegistryRef {
+  return { ...node };
+}
+
+function createPersistedWorkflowJson(input: {
+  readonly workflow: WorkflowJson;
+  readonly authoredWorkflow: AuthoredWorkflowRecord | undefined;
+}): AuthoredWorkflowJson {
+  const shouldPersistManagerStepId = (() => {
+    if (
+      input.workflow.hasManagerNode === false ||
+      input.workflow.managerStepId === undefined
+    ) {
+      return false;
+    }
+    if (hasOwnKey(input.authoredWorkflow, "managerStepId")) {
+      return true;
+    }
+    const explicitManagerSteps =
+      input.workflow.steps?.filter((step) => step.role === "manager") ?? [];
+    return !(
+      explicitManagerSteps.length === 1 &&
+      explicitManagerSteps[0]?.id === input.workflow.managerStepId
+    );
+  })();
+
+  return projectAuthoredWorkflowFromNormalized({
+    workflow: input.workflow,
+    persistManagerStepId: shouldPersistManagerStepId,
+  });
 }
 
 function createStepAddressedWorkflowForValidation(
   workflow: WorkflowJson,
 ): AuthoredWorkflowJson {
-  return {
-    workflowId: workflow.workflowId,
-    ...(workflow.description.length === 0
-      ? {}
-      : { description: workflow.description }),
-    defaults: {
-      nodeTimeoutMs: workflow.defaults.nodeTimeoutMs,
-      maxLoopIterations: workflow.defaults.maxLoopIterations,
-      ...(workflow.defaults.timeoutPolicy === undefined
-        ? {}
-        : { timeoutPolicy: workflow.defaults.timeoutPolicy }),
-      ...(workflow.defaults.containerRuntime === undefined ||
-      isDefaultContainerRuntime(workflow.defaults.containerRuntime)
-        ? {}
-        : { containerRuntime: workflow.defaults.containerRuntime }),
-    },
-    ...(workflow.prompts === undefined ? {} : { prompts: workflow.prompts }),
-    ...(workflow.hasManagerNode === false ||
-    workflow.managerStepId === undefined
-      ? {}
-      : { managerStepId: workflow.managerStepId }),
-    ...(workflow.entryStepId === undefined
-      ? {}
-      : { entryStepId: workflow.entryStepId }),
-    nodes: (workflow.nodeRegistry ?? []).map((node) => ({
-      id: node.id,
-      ...(node.nodeFile === undefined ? {} : { nodeFile: node.nodeFile }),
-      ...(node.addon === undefined ? {} : { addon: node.addon }),
-      ...(node.execution === undefined ? {} : { execution: node.execution }),
-    })),
-    steps: (workflow.steps ?? []).map((step) => ({
-      id: step.id,
-      ...(step.stepFile === undefined ? {} : { stepFile: step.stepFile }),
-      nodeId: step.nodeId,
-      ...(step.description === undefined
-        ? {}
-        : { description: step.description }),
-      ...(step.role === undefined ? {} : { role: step.role }),
-      ...(step.promptVariant === undefined
-        ? {}
-        : { promptVariant: step.promptVariant }),
-      ...(step.timeoutMs === undefined ? {} : { timeoutMs: step.timeoutMs }),
-      ...(step.sessionPolicy === undefined
-        ? {}
-        : { sessionPolicy: step.sessionPolicy }),
-      ...(step.transitions === undefined
-        ? {}
-        : { transitions: step.transitions }),
-    })),
-  };
+  return projectAuthoredWorkflowFromNormalized({
+    workflow,
+    persistManagerStepId:
+      workflow.hasManagerNode !== false && workflow.managerStepId !== undefined,
+  });
 }
 
 function collectReferencedNodePayloads(input: {
@@ -884,9 +853,10 @@ export async function saveWorkflowToDisk(
   )
     ? input.workflow
     : undefined;
-  const stepAddressedLegacyIssues = normalizedInputWorkflow !== undefined
-    ? collectStepAddressedAuthoredWorkflowFieldIssues(input.workflow)
-    : [];
+  const stepAddressedLegacyIssues =
+    normalizedInputWorkflow !== undefined
+      ? collectStepAddressedAuthoredWorkflowFieldIssues(input.workflow)
+      : [];
   const authoredWorkflow =
     normalizedInputWorkflow === undefined
       ? stripNormalizedWorkflowFieldsForPersistence(input.workflow)
@@ -1059,9 +1029,12 @@ export async function saveWorkflowToDisk(
         referencedNodePayloads,
       ),
     });
-    await rm(path.join(workflowDirectory, OBSOLETE_WORKFLOW_VISUALIZATION_FILE), {
-      force: true,
-    });
+    await rm(
+      path.join(workflowDirectory, OBSOLETE_WORKFLOW_VISUALIZATION_FILE),
+      {
+        force: true,
+      },
+    );
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "unknown error";
     return err({

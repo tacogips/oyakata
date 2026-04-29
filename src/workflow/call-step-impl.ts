@@ -51,7 +51,7 @@ import { inspectWorkflowRuntimeReadiness } from "./runtime-readiness";
 import {
   isWorkflowOutputKindNode,
   resolveBackendSessionSelection,
-  resolveStepExecutionAddress,
+  resolveRequiredStepExecutionAddress,
   toStepIdentityFields,
 } from "./runtime-addressing";
 import {
@@ -76,17 +76,18 @@ import {
   type OutputRef,
   type WorkflowSessionState,
 } from "./session";
-import type {
-  AgentNodePayload,
-  ChatReplyDispatcher,
-  JsonObject,
-  LoadOptions,
-  NodePayload,
-  NodePromptVariant,
-  NodeSessionMode,
-  WorkflowJson,
+import {
+  asAgentNodePayload,
+  getNormalizedNodePayload,
+  type AgentNodePayload,
+  type ChatReplyDispatcher,
+  type JsonObject,
+  type LoadOptions,
+  type NodePayload,
+  type NodePromptVariant,
+  type NodeSessionMode,
+  type WorkflowJson,
 } from "./types";
-import { asAgentNodePayload } from "./types";
 import type { SuperviserRuntimeControl } from "./superviser-control";
 
 export interface DirectExecutionOverrides {
@@ -807,7 +808,10 @@ class ExecutionDispatcher {
 
     const workflow = loaded.value.bundle.workflow;
     const nodeRef = workflow.nodes.find((entry) => entry.id === input.stepId);
-    const nodePayload = loaded.value.bundle.nodePayloads[input.stepId];
+    const nodePayload = getNormalizedNodePayload(
+      loaded.value.bundle,
+      input.stepId,
+    );
     if (nodeRef === undefined || nodePayload === undefined) {
       return err({
         session,
@@ -815,10 +819,17 @@ class ExecutionDispatcher {
         message: `missing step definition for '${input.stepId}'`,
       });
     }
-    const stepExecutionAddress = resolveStepExecutionAddress(
+    const stepExecutionAddress = resolveRequiredStepExecutionAddress(
       workflow,
       input.stepId,
     );
+    if (stepExecutionAddress === undefined) {
+      return err({
+        session,
+        exitCode: 1,
+        message: `missing step definition for '${input.stepId}'`,
+      });
+    }
     const stepIdentityFields = toStepIdentityFields(stepExecutionAddress);
     if (nodeRef.execution?.mode === "optional") {
       return err({
@@ -858,7 +869,7 @@ class ExecutionDispatcher {
         {
           ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
           ...(input.env === undefined ? {} : { env: input.env }),
-          onlyNodeIds: new Set([input.stepId]),
+          onlyStepIds: new Set([input.stepId]),
         },
       );
       if (!readiness.ready) {

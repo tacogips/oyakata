@@ -426,6 +426,10 @@ describe("GraphQL HTTP transport", () => {
                 runtime {
                   ready
                   blockers
+                  requirements {
+                    id
+                    sourceStepIds
+                  }
                 }
               }
             }
@@ -455,6 +459,12 @@ describe("GraphQL HTTP transport", () => {
             ready: false,
             blockers: expect.arrayContaining([
               expect.stringContaining("code-manager runtime"),
+            ]),
+            requirements: expect.arrayContaining([
+              expect.objectContaining({
+                id: "workflow-feature:code-manager-runtime",
+                sourceStepIds: ["divedra-manager"],
+              }),
             ]),
           },
         },

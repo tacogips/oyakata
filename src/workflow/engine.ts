@@ -47,6 +47,7 @@ import {
   writeNodeExecutionMailboxArtifacts,
 } from "./node-execution-mailbox";
 import {
+  effectiveCrossWorkflowDispatches,
   crossWorkflowDispatchesForExecutionMatch,
   type CrossWorkflowDispatch,
 } from "./cross-workflow-from-steps";
@@ -65,7 +66,7 @@ import {
 import {
   isWorkflowOutputKindNode,
   resolveBackendSessionSelection,
-  resolveStepExecutionAddress,
+  resolveRequiredStepExecutionAddress,
   toStepIdentityFields,
 } from "./runtime-addressing";
 import { inspectWorkflowRuntimeReadiness } from "./runtime-readiness";
@@ -131,6 +132,7 @@ import {
   asAgentNodePayload,
   getStructuralEdges,
   getStructuralLoops,
+  getNormalizedNodePayload,
   resolveWorkflowManagerStepId,
 } from "./types";
 
@@ -817,8 +819,8 @@ function buildCrossWorkflowCalleeRuntimeVariables(input: {
   readonly callerRuntimeVariables: Readonly<Record<string, unknown>>;
   readonly callerWorkflowId: string;
   readonly callerWorkflowExecutionId: string;
-  readonly callerNodeId: string;
-  readonly callerStepId?: string;
+  readonly callerNodeRegistryId: string;
+  readonly callerStepId: string;
   readonly crossWorkflowDispatchId: string;
   readonly payload: Readonly<Record<string, unknown>>;
 }): Readonly<Record<string, unknown>> {
@@ -837,10 +839,8 @@ function buildCrossWorkflowCalleeRuntimeVariables(input: {
       id: input.crossWorkflowDispatchId,
       parentWorkflowId: input.callerWorkflowId,
       parentWorkflowExecutionId: input.callerWorkflowExecutionId,
-      callerNodeId: input.callerNodeId,
-      ...(input.callerStepId === undefined
-        ? {}
-        : { callerStepId: input.callerStepId }),
+      callerNodeId: input.callerNodeRegistryId,
+      callerStepId: input.callerStepId,
       input: input.payload,
     },
   };
@@ -922,19 +922,17 @@ function buildCrossWorkflowCalleeRunOptions(
 /**
  * Persists cross-workflow dispatch metadata under the caller's artifact tree (`workflow-calls/`).
  * JSON includes `crossWorkflowDispatchId` (same value as the `workflow-call:*` transition suffix and the file basename).
- * Other field names use caller/callee semantics (flat handoff, not a structural sub-workflow tree).
+ * Other field names use caller/callee semantics only (flat handoff, not a structural sub-workflow tree).
  */
 async function persistCrossWorkflowDispatchArtifact(input: {
   readonly artifactDir: string;
   readonly callId: string;
-  readonly workflowId: string;
-  readonly callerNodeId: string;
-  readonly callerStepId?: string;
+  readonly callerStepId: string;
   readonly calleeWorkflowName: string;
   readonly calleeWorkflowId: string;
   readonly calleeSession: WorkflowSessionState;
   readonly callerNodeExecId: string;
-  readonly resultNodeId?: string;
+  readonly resumeStepId: string;
   readonly resultOutputRef?: OutputRef;
 }): Promise<void> {
   await mkdir(path.join(input.artifactDir, "workflow-calls"), {
@@ -949,19 +947,13 @@ async function persistCrossWorkflowDispatchArtifact(input: {
     path.join(input.artifactDir, "workflow-calls", `${input.callId}.json`),
     {
       crossWorkflowDispatchId: input.callId,
-      workflowId: input.workflowId,
-      callerNodeId: input.callerNodeId,
-      ...(input.callerStepId === undefined
-        ? {}
-        : { callerStepId: input.callerStepId }),
+      callerStepId: input.callerStepId,
       callerNodeExecId: callerExecId,
       calleeWorkflowName: calleeName,
       calleeWorkflowId: calleeId,
       calleeSessionId,
       calleeSessionStatus,
-      ...(input.resultNodeId === undefined
-        ? {}
-        : { resultNodeId: input.resultNodeId }),
+      resumeStepId: input.resumeStepId,
       ...(input.resultOutputRef === undefined
         ? {}
         : { resultOutputRef: input.resultOutputRef }),
@@ -982,8 +974,7 @@ interface CrossWorkflowDispatchExecutionResult {
 
 function crossWorkflowDispatchMatchesCallerExecution(input: {
   readonly entry: CrossWorkflowDispatch;
-  readonly callerNodeId: string;
-  readonly callerStepId?: string;
+  readonly callerStepId: string;
   readonly callerOutputPayload: Readonly<Record<string, unknown>>;
 }): boolean {
   const { entry } = input;
@@ -997,16 +988,7 @@ function crossWorkflowDispatchMatchesCallerExecution(input: {
       return false;
     }
   }
-  if (entry.callerStepId !== undefined) {
-    if (input.callerStepId === undefined) {
-      return false;
-    }
-    return (
-      entry.callerStepId === input.callerStepId &&
-      entry.callerNodeId === input.callerNodeId
-    );
-  }
-  return entry.callerNodeId === input.callerNodeId;
+  return entry.callerStepId === input.callerStepId;
 }
 
 /**
@@ -1021,7 +1003,8 @@ async function executeCrossWorkflowDispatchesForNode(input: {
   readonly options: WorkflowRunOptions;
   readonly artifactWorkflowRoot: string;
   readonly callerNodeId: string;
-  readonly callerStepId?: string;
+  readonly callerStepId: string;
+  readonly callerNodeRegistryId: string;
   readonly callerNodeExecId: string;
   readonly callerArtifactDir: string;
   readonly callerOutputPayload: Readonly<Record<string, unknown>>;
@@ -1034,20 +1017,26 @@ async function executeCrossWorkflowDispatchesForNode(input: {
   /** Workflow ids already on the active cross-workflow call stack (cycle guard). */
   readonly crossWorkflowInvocationStack: readonly string[];
 }): Promise<Result<CrossWorkflowDispatchExecutionResult, string>> {
-  const matchCtx = {
-    callerNodeId: input.callerNodeId,
-    ...(input.callerStepId === undefined
-      ? {}
-      : { callerStepId: input.callerStepId }),
-    callerOutputPayload: input.callerOutputPayload,
-  };
+  const workflowDispatches = effectiveCrossWorkflowDispatches(input.workflow);
+  if (workflowDispatches.length === 0) {
+    return ok({
+      communications: input.currentCommunications,
+      communicationCounter: input.communicationCounter,
+      queuedNodeIds: [],
+      transitions: [],
+    });
+  }
   // Cross-workflow dispatch: only step-addressed bundles derive execution rows
   // from `steps[].transitions`. Legacy node-graph bundles no longer dispatch
   // authored top-level `workflow.workflowCalls`.
   const relevantDispatches = crossWorkflowDispatchesForExecutionMatch(
     input.workflow,
     (entry) =>
-      crossWorkflowDispatchMatchesCallerExecution({ entry, ...matchCtx }),
+      crossWorkflowDispatchMatchesCallerExecution({
+        entry,
+        callerStepId: input.callerStepId,
+        callerOutputPayload: input.callerOutputPayload,
+      }),
   );
   if (relevantDispatches.length === 0) {
     return ok({
@@ -1089,19 +1078,17 @@ async function executeCrossWorkflowDispatchesForNode(input: {
 
     const calleeRun = await runWorkflowInternal(
       loadedCallee.value.workflowName,
-      buildCrossWorkflowCalleeRunOptions(
-        input.options,
-        buildCrossWorkflowCalleeRuntimeVariables({
-          callerRuntimeVariables: input.session.runtimeVariables,
-          callerWorkflowId: input.workflow.workflowId,
-          callerWorkflowExecutionId: input.session.sessionId,
-          callerNodeId: input.callerNodeId,
-          ...(input.callerStepId === undefined
-            ? {}
-            : { callerStepId: input.callerStepId }),
-          crossWorkflowDispatchId: dispatch.id,
-          payload: input.callerOutputPayload["payload"] as Readonly<
-            Record<string, unknown>
+        buildCrossWorkflowCalleeRunOptions(
+          input.options,
+          buildCrossWorkflowCalleeRuntimeVariables({
+            callerRuntimeVariables: input.session.runtimeVariables,
+            callerWorkflowId: input.workflow.workflowId,
+            callerWorkflowExecutionId: input.session.sessionId,
+            callerNodeRegistryId: input.callerNodeRegistryId,
+            callerStepId: input.callerStepId,
+            crossWorkflowDispatchId: dispatch.id,
+            payload: input.callerOutputPayload["payload"] as Readonly<
+              Record<string, unknown>
           >,
         }),
       ),
@@ -1132,30 +1119,20 @@ async function executeCrossWorkflowDispatchesForNode(input: {
     await persistCrossWorkflowDispatchArtifact({
       artifactDir: input.callerArtifactDir,
       callId: dispatch.id,
-      workflowId: dispatch.workflowId,
-      callerNodeId: input.callerNodeId,
-      ...(input.callerStepId === undefined
-        ? {}
-        : { callerStepId: input.callerStepId }),
+      callerStepId: dispatch.callerStepId,
       calleeWorkflowName: loadedCallee.value.workflowName,
       calleeWorkflowId: calleeWorkflow.workflowId,
       calleeSession: calleeRun.value.session,
       callerNodeExecId: input.callerNodeExecId,
-      ...(dispatch.resultNodeId === undefined
-        ? {}
-        : { resultNodeId: dispatch.resultNodeId }),
+      resumeStepId: dispatch.resumeStepId,
       ...(calleeOutputRef === undefined
         ? {}
         : { resultOutputRef: calleeOutputRef }),
     });
 
-    if (dispatch.resultNodeId === undefined) {
-      continue;
-    }
-
     if (calleeResultExecution === undefined || calleeOutputRef === undefined) {
       return err(
-        `cross-workflow dispatch '${dispatch.id}' completed without a result execution for '${dispatch.resultNodeId}'`,
+        `cross-workflow dispatch '${dispatch.id}' completed without a result execution for '${dispatch.resumeStepId}'`,
       );
     }
 
@@ -1175,7 +1152,7 @@ async function executeCrossWorkflowDispatchesForNode(input: {
       workflowExecutionId: input.session.sessionId,
       communicationCounter: currentCommunicationCounter,
       fromNodeId: input.callerNodeId,
-      toNodeId: dispatch.resultNodeId,
+      toNodeId: dispatch.resumeStepId,
       routingScope: "intra-workflow",
       deliveryKind: "edge-transition",
       transitionWhen: `${CROSS_WORKFLOW_DISPATCH_TRANSITION_WHEN_PREFIX}${dispatch.id}`,
@@ -1187,10 +1164,10 @@ async function executeCrossWorkflowDispatchesForNode(input: {
     });
     currentCommunicationCounter += 1;
     currentCommunications.push(communication);
-    queuedNodeIds.push(dispatch.resultNodeId);
+    queuedNodeIds.push(dispatch.resumeStepId);
     transitions.push({
-      from: input.callerNodeId,
-      to: dispatch.resultNodeId,
+      from: dispatch.callerStepId,
+      to: dispatch.resumeStepId,
       when: `${CROSS_WORKFLOW_DISPATCH_TRANSITION_WHEN_PREFIX}${dispatch.id}`,
     });
   }
@@ -2194,7 +2171,7 @@ async function runWorkflowInternal(
     }
 
     const nodeRef = workflowNodes.get(nodeId);
-    const nodePayload = nodeMap[nodeId];
+    const nodePayload = getNormalizedNodePayload(loaded.value.bundle, nodeId);
     if (!nodeRef || !nodePayload) {
       const failed: WorkflowSessionState = {
         ...session,
@@ -2320,10 +2297,29 @@ async function runWorkflowInternal(
       await mkdir(artifactDir, { recursive: true });
 
       const executionNodePayload = agentNodePayload ?? nodePayload;
-      const stepExecutionAddress = resolveStepExecutionAddress(
+      const stepExecutionAddress = resolveRequiredStepExecutionAddress(
         workflow,
         nodeId,
       );
+      if (stepExecutionAddress === undefined) {
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt: nowIso(),
+          lastError:
+            `normalized workflow runtime node '${nodeId}' is missing its authored step definition`,
+        };
+        await saveSession(failed, options);
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ?? "missing step execution address",
+            failed,
+          ),
+        );
+      }
       const stepIdentityFields = toStepIdentityFields(stepExecutionAddress);
       const mailboxInstanceId = nodeExecId;
       const mergedVariables = mergeVariables(
@@ -4217,9 +4213,8 @@ async function runWorkflowInternal(
           options,
           artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
           callerNodeId: nodeId,
-          ...(stepExecutionAddress.stepId === undefined
-            ? {}
-            : { callerStepId: stepExecutionAddress.stepId }),
+          callerStepId: stepExecutionAddress.stepId,
+          callerNodeRegistryId: stepExecutionAddress.nodeRegistryId,
           callerNodeExecId: nodeExecId,
           callerArtifactDir: artifactDir,
           callerOutputPayload: outputPayload,

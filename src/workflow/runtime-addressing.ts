@@ -14,28 +14,44 @@ export interface StepExecutionAddress extends StepIdentityFields {
   readonly inheritFromStepId?: string;
 }
 
+export interface ResolvedStepExecutionAddress extends StepExecutionAddress {
+  readonly stepId: string;
+  readonly nodeRegistryId: string;
+}
+
 export interface BackendSessionSelection extends StepIdentityFields {
   readonly sessionLookupNodeId?: string;
   readonly inheritFromStepId?: string;
   readonly promptVariant?: string;
 }
 
+export function resolveRequiredStepExecutionAddress(
+  workflow: WorkflowJson,
+  runtimeNodeId: string,
+): ResolvedStepExecutionAddress | undefined {
+  const step = workflow.steps.find((entry) => entry.id === runtimeNodeId);
+  if (step === undefined) {
+    return undefined;
+  }
+
+  return {
+    stepId: step.id,
+    nodeRegistryId: step.nodeId,
+    ...(step.promptVariant === undefined
+      ? {}
+      : { promptVariant: step.promptVariant }),
+    ...(step.timeoutMs === undefined ? {} : { timeoutMs: step.timeoutMs }),
+    ...(step.sessionPolicy?.inheritFromStepId === undefined
+      ? {}
+      : { inheritFromStepId: step.sessionPolicy.inheritFromStepId }),
+  };
+}
+
 export function resolveStepExecutionAddress(
   workflow: WorkflowJson,
   runtimeNodeId: string,
 ): StepExecutionAddress {
-  const step = workflow.steps?.find((entry) => entry.id === runtimeNodeId);
-  return {
-    ...(step?.id === undefined ? {} : { stepId: step.id }),
-    ...(step?.nodeId === undefined ? {} : { nodeRegistryId: step.nodeId }),
-    ...(step?.promptVariant === undefined
-      ? {}
-      : { promptVariant: step.promptVariant }),
-    ...(step?.timeoutMs === undefined ? {} : { timeoutMs: step.timeoutMs }),
-    ...(step?.sessionPolicy?.inheritFromStepId === undefined
-      ? {}
-      : { inheritFromStepId: step.sessionPolicy.inheritFromStepId }),
-  };
+  return resolveRequiredStepExecutionAddress(workflow, runtimeNodeId) ?? {};
 }
 
 export function toStepIdentityFields(

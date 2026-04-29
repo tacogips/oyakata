@@ -89,8 +89,9 @@ export function collectStepAddressedAuthoredWorkflowFieldIssues(
 }
 
 /**
- * Persist only authored workflow fields. `hasManagerNode` is a normalized runtime flag,
- * and node-level `kind` is redundant when the authored node already uses `role`.
+ * Persist only authored workflow fields. `hasManagerNode` is a normalized runtime flag.
+ * If a caller passes a materialized runtime node list instead of authored registry entries,
+ * drop redundant `kind` when that node also carries `role`.
  */
 export function stripNormalizedWorkflowFieldsForPersistence(
   workflow: unknown,

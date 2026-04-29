@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { makeStepAddressedAuthoredWorkflowFieldIssue } from "./authored-workflow";
+import {
+  REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  makeStepAddressedAuthoredWorkflowFieldIssue,
+  type RejectedAuthoredStepAddressedTopLevelField,
+} from "./authored-workflow";
 import { loadWorkflowByIdFromDisk, loadWorkflowFromDisk } from "./load";
 import {
   getStructuralEdges,
@@ -27,6 +31,34 @@ function makeTempDir(): string {
 function writeJson(filePath: string, payload: unknown): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
+function sampleRemovedTopLevelFieldValue(
+  fieldName: RejectedAuthoredStepAddressedTopLevelField,
+): unknown {
+  switch (fieldName) {
+    case "managerRuntimeId":
+    case "managerNodeId":
+    case "entryNodeId":
+      return "manager";
+    case "subWorkflows":
+    case "workflowCalls":
+    case "subWorkflowConversations":
+      return [];
+    case "edges":
+      return [{ from: "manager", to: "worker", when: "always" }];
+    case "loops":
+      return [
+        {
+          id: "loop-manager",
+          judgeNodeId: "manager",
+          continueWhen: "again",
+          exitWhen: "done",
+        },
+      ];
+    case "branching":
+      return {};
+  }
 }
 
 function writeWorkflowBundle(input: {
@@ -113,25 +145,28 @@ describe("loadWorkflowFromDisk", () => {
     expect(result.value.bundle.workflow.workflowId).toBe("actual-id");
   });
 
-  test("rejects top-level workflow.edges on step-addressed workflow.json", async () => {
-    const workflowRoot = makeTempDir();
-    writeWorkflowBundle({
-      workflowRoot,
-      workflowName: "demo",
-      extraWorkflowFields: {
-        edges: [{ from: "manager", to: "worker", when: "always" }],
-      },
-    });
+  test.each(REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS)(
+    "rejects top-level workflow.%s on step-addressed workflow.json",
+    async (fieldName) => {
+      const workflowRoot = makeTempDir();
+      writeWorkflowBundle({
+        workflowRoot,
+        workflowName: "demo",
+        extraWorkflowFields: {
+          [fieldName]: sampleRemovedTopLevelFieldValue(fieldName),
+        },
+      });
 
-    const result = await loadWorkflowFromDisk("demo", { workflowRoot });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
+      const result = await loadWorkflowFromDisk("demo", { workflowRoot });
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
 
-    expect(result.error.code).toBe("VALIDATION");
-    expect(result.error.issues).toContainEqual(
-      makeStepAddressedAuthoredWorkflowFieldIssue("edges"),
-    );
-  });
+      expect(result.error.code).toBe("VALIDATION");
+      expect(result.error.issues).toContainEqual(
+        makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
+      );
+    },
+  );
 });

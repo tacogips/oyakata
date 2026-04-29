@@ -72,10 +72,10 @@ export const REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS = [
 
 ## Dependencies
 
-| Feature | Depends On | Status |
-|---------|------------|--------|
-| Design alignment | review findings | COMPLETED |
-| Boundary/save refactor | design alignment | COMPLETED |
+| Feature                 | Depends On             | Status    |
+| ----------------------- | ---------------------- | --------- |
+| Design alignment        | review findings        | COMPLETED |
+| Boundary/save refactor  | design alignment       | COMPLETED |
 | Regression verification | boundary/save refactor | COMPLETED |
 
 ## Completion Criteria
@@ -88,6 +88,7 @@ export const REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS = [
 ## Progress Log
 
 ### Session: 2026-04-29 23:55
+
 **Tasks Completed**: Post-cleanup diff review, design/architecture re-check, implementation plan creation, shared rejection-set fix, save-path projection dedup, regression updates, targeted verification
 **Tasks In Progress**: None
 **Blockers**: None

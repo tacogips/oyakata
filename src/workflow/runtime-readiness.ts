@@ -14,6 +14,7 @@ import {
   asAgentNodePayload,
   DEFAULT_CONTAINER_RUNNER_KIND,
   type ContainerRunnerKind,
+  getNormalizedNodePayload,
   type LoadOptions,
   type NodeExecutionBackend,
   type NormalizedWorkflowBundle,
@@ -37,7 +38,7 @@ export interface WorkflowRuntimeRequirement {
   readonly label: string;
   readonly status: WorkflowRuntimeRequirementStatus;
   readonly detail: string;
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
 }
 
 export interface WorkflowRuntimeReadiness {
@@ -55,37 +56,41 @@ export const WORKFLOW_RUNTIME_REQUIREMENT_CROSS_WORKFLOW_DISPATCH_ID =
   "workflow-feature:crossWorkflowDispatches" as const;
 
 interface RequirementProbeOptions extends LoadOptions {
-  readonly onlyNodeIds?: ReadonlySet<string>;
+  readonly onlyStepIds?: ReadonlySet<string>;
+}
+
+interface RequirementSelection {
+  readonly onlyStepIds?: ReadonlySet<string>;
 }
 
 interface AgentBackendRequirementCandidate {
   readonly backend: NodeExecutionBackend;
   readonly models: ReadonlySet<string>;
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
 }
 
 interface ContainerRunnerRequirementCandidate {
   readonly runnerKind: ContainerRunnerKind;
   readonly runnerPath?: string;
   readonly dockerCliRequired?: boolean;
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
 }
 
 interface CrossWorkflowDispatchRequirementCandidate {
   readonly rootWorkflowId: string;
   readonly callIds: readonly string[];
   readonly targetWorkflowIds: readonly string[];
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
 }
 
 interface CodeManagerRequirementCandidate {
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
 }
 
 interface AddonEnvRequirementCandidate {
   readonly envName: string;
   readonly addonEnvNames: readonly string[];
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
 }
 
 interface CommandExecutionResult {
@@ -103,8 +108,8 @@ function toSortedArray(values: Iterable<string>): readonly string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-function buildSourceNodeList(sourceNodeIds: readonly string[]): string {
-  return sourceNodeIds.join(", ");
+function buildSourceStepList(sourceStepIds: readonly string[]): string {
+  return sourceStepIds.join(", ");
 }
 
 function formatRequirementBlocker(
@@ -232,7 +237,7 @@ async function probeCodexBackend(
     detail:
       `local SDK execution; models=${toSortedArray(candidate.models).join(", ")}; ` +
       `local tools: ${commandSummary}`,
-    sourceNodeIds: candidate.sourceNodeIds,
+    sourceStepIds: candidate.sourceStepIds,
   };
 }
 
@@ -302,7 +307,7 @@ async function probeClaudeBackend(
     detail:
       `local SDK execution; models=${toSortedArray(candidate.models).join(", ")}; ` +
       `local tools: ${commandSummary}`,
-    sourceNodeIds: candidate.sourceNodeIds,
+    sourceStepIds: candidate.sourceStepIds,
   };
 }
 
@@ -348,7 +353,9 @@ async function probeCrossWorkflowDispatchRuntime(
   }
 
   for (const workflowId of candidate.targetWorkflowIds) {
-    await visitCrossWorkflowDispatchTarget(workflowId, [candidate.rootWorkflowId]);
+    await visitCrossWorkflowDispatchTarget(workflowId, [
+      candidate.rootWorkflowId,
+    ]);
   }
 
   return {
@@ -360,14 +367,14 @@ async function probeCrossWorkflowDispatchRuntime(
       targetFailures.size === 0
         ? `runtime cross-workflow dispatch is available; calls=${candidate.callIds.join(", ")}; targetWorkflows=${candidate.targetWorkflowIds.join(", ")}`
         : `cross-workflow dispatch targets must resolve to loadable, non-recursive workflows; failures=${[...targetFailures].join(" | ")}; calls=${candidate.callIds.join(", ")}`,
-    sourceNodeIds: candidate.sourceNodeIds,
+    sourceStepIds: candidate.sourceStepIds,
   };
 }
 
 function probeEnvConfiguredBackend(input: {
   readonly backend: "official/openai-sdk" | "official/anthropic-sdk";
   readonly envName: string;
-  readonly sourceNodeIds: readonly string[];
+  readonly sourceStepIds: readonly string[];
   readonly models: ReadonlySet<string>;
   readonly env: Readonly<Record<string, string | undefined>> | undefined;
 }): WorkflowRuntimeRequirement {
@@ -380,7 +387,7 @@ function probeEnvConfiguredBackend(input: {
     detail:
       `${input.envName} ${value === undefined ? "is not set" : "is configured"}; ` +
       `models=${toSortedArray(input.models).join(", ")}`,
-    sourceNodeIds: input.sourceNodeIds,
+    sourceStepIds: input.sourceStepIds,
   };
 }
 
@@ -399,7 +406,7 @@ function probeRequiredAddonEnv(
       value === undefined
         ? `required add-on environment source ${candidate.envName} is not set; addonEnv=${addonEnvSummary}`
         : `required add-on environment source ${candidate.envName} is configured; addonEnv=${addonEnvSummary}`,
-    sourceNodeIds: candidate.sourceNodeIds,
+    sourceStepIds: candidate.sourceStepIds,
   };
 }
 
@@ -417,7 +424,7 @@ async function probeContainerRunner(
       label: `${candidate.runnerKind} container runner`,
       status: "unsupported",
       detail: `runner kind '${candidate.runnerKind}' is not supported for Docker-compatible add-on execution`,
-      sourceNodeIds: candidate.sourceNodeIds,
+      sourceStepIds: candidate.sourceStepIds,
     };
   }
 
@@ -431,7 +438,7 @@ async function probeContainerRunner(
     detail: versionResult.ok
       ? `runner ${command} is available`
       : `runner ${command} is unavailable: ${versionResult.message ?? "unknown error"}`,
-    sourceNodeIds: candidate.sourceNodeIds,
+    sourceStepIds: candidate.sourceStepIds,
   };
 }
 
@@ -445,8 +452,8 @@ function probeCodeManagerRuntime(
     status: "unsupported",
     detail:
       "managerType='code' execution is not available on the current runtime path yet; " +
-      `nodes=${buildSourceNodeList(candidate.sourceNodeIds)}`,
-    sourceNodeIds: candidate.sourceNodeIds,
+      `steps=${buildSourceStepList(candidate.sourceStepIds)}`,
+    sourceStepIds: candidate.sourceStepIds,
   };
 }
 
@@ -478,11 +485,11 @@ function addContainerRunnerCandidate(
       runnerKind: ContainerRunnerKind;
       runnerPath?: string;
       dockerCliRequired?: boolean;
-      nodeIds: Set<string>;
+      stepIds: Set<string>;
     }
   >,
   input: {
-    readonly nodeId: string;
+    readonly stepId: string;
     readonly runnerKind: ContainerRunnerKind;
     readonly runnerPath?: string;
     readonly dockerCliRequired?: boolean;
@@ -492,33 +499,33 @@ function addContainerRunnerCandidate(
     runnerKind: input.runnerKind,
     ...(input.runnerPath === undefined ? {} : { runnerPath: input.runnerPath }),
     ...(input.dockerCliRequired === true ? { dockerCliRequired: true } : {}),
-    sourceNodeIds: [],
+    sourceStepIds: [],
   });
   const existing = candidates.get(key) ?? {
     runnerKind: input.runnerKind,
     ...(input.runnerPath === undefined ? {} : { runnerPath: input.runnerPath }),
     ...(input.dockerCliRequired === true ? { dockerCliRequired: true } : {}),
-    nodeIds: new Set<string>(),
+    stepIds: new Set<string>(),
   };
-  existing.nodeIds.add(input.nodeId);
+  existing.stepIds.add(input.stepId);
   candidates.set(key, existing);
 }
 
 function collectRequirements(
   bundle: NormalizedWorkflowBundle,
-  onlyNodeIds: ReadonlySet<string> | undefined,
+  selection: RequirementSelection,
 ): {
   readonly agentBackends: readonly AgentBackendRequirementCandidate[];
   readonly containerRunners: readonly ContainerRunnerRequirementCandidate[];
   readonly addonEnvSources: readonly AddonEnvRequirementCandidate[];
   readonly codeManager?: CodeManagerRequirementCandidate;
   readonly crossWorkflowDispatch?: CrossWorkflowDispatchRequirementCandidate;
-  readonly commandNodeIds: readonly string[];
-  readonly containerNodeIds: readonly string[];
+  readonly commandStepIds: readonly string[];
+  readonly containerStepIds: readonly string[];
 } {
   const agentBackends = new Map<
     NodeExecutionBackend,
-    { nodeIds: Set<string>; models: Set<string> }
+    { stepIds: Set<string>; models: Set<string> }
   >();
   const containerRunners = new Map<
     string,
@@ -526,37 +533,38 @@ function collectRequirements(
       runnerKind: ContainerRunnerKind;
       runnerPath?: string;
       dockerCliRequired?: boolean;
-      nodeIds: Set<string>;
+      stepIds: Set<string>;
     }
   >();
   const addonEnvSources = new Map<
     string,
     {
       addonEnvNames: Set<string>;
-      nodeIds: Set<string>;
+      stepIds: Set<string>;
     }
   >();
-  const codeManagerNodeIds = new Set<string>();
-  const commandNodeIds = new Set<string>();
-  const containerNodeIds = new Set<string>();
+  const codeManagerStepIds = new Set<string>();
+  const commandStepIds = new Set<string>();
+  const containerStepIds = new Set<string>();
   const defaults = bundle.workflow.defaults.containerRuntime;
   const relevantCrossWorkflowDispatches = effectiveCrossWorkflowDispatches(
     bundle.workflow,
   ).filter(
     (dispatch) =>
-      onlyNodeIds === undefined || onlyNodeIds.has(dispatch.callerNodeId),
+      selection.onlyStepIds === undefined ||
+      selection.onlyStepIds.has(dispatch.callerStepId),
   );
 
   for (const nodeRef of bundle.workflow.nodes) {
-    const nodeId = nodeRef.id;
-    if (onlyNodeIds !== undefined && !onlyNodeIds.has(nodeId)) {
+    const stepId = nodeRef.id;
+    if (
+      selection.onlyStepIds !== undefined &&
+      !selection.onlyStepIds.has(stepId)
+    ) {
       continue;
     }
 
-    const node =
-      bundle.nodePayloads[nodeId] ??
-      bundle.nodePayloads[nodeRef.nodeFile] ??
-      null;
+    const node = getNormalizedNodePayload(bundle, stepId) ?? null;
     if (node === null) {
       continue;
     }
@@ -567,40 +575,40 @@ function collectRequirements(
         agentNode.managerType === "code" &&
         agentNode.executionBackend === undefined
       ) {
-        codeManagerNodeIds.add(nodeId);
+        codeManagerStepIds.add(stepId);
         continue;
       }
 
       const backend = resolveNodeExecutionBackend(agentNode);
       const existing = agentBackends.get(backend) ?? {
-        nodeIds: new Set<string>(),
+        stepIds: new Set<string>(),
         models: new Set<string>(),
       };
-      existing.nodeIds.add(nodeId);
+      existing.stepIds.add(stepId);
       existing.models.add(agentNode.model);
       agentBackends.set(backend, existing);
       continue;
     }
 
     if (node.managerType === "code") {
-      codeManagerNodeIds.add(nodeId);
+      codeManagerStepIds.add(stepId);
       continue;
     }
 
     if (node.nodeType === "command") {
-      commandNodeIds.add(nodeId);
+      commandStepIds.add(stepId);
       continue;
     }
 
     if (node.nodeType === "container") {
-      containerNodeIds.add(nodeId);
+      containerStepIds.add(stepId);
       const runnerKind =
         node.container?.runnerKind ??
         defaults?.runnerKind ??
         DEFAULT_CONTAINER_RUNNER_KIND;
       const runnerPath = node.container?.runnerPath ?? defaults?.runnerPath;
       addContainerRunnerCandidate(containerRunners, {
-        nodeId,
+        stepId,
         runnerKind,
         ...(runnerPath === undefined ? {} : { runnerPath }),
       });
@@ -619,7 +627,7 @@ function collectRequirements(
         DEFAULT_CONTAINER_RUNNER_KIND;
       const runnerPath = node.addon.config.runnerPath ?? defaults?.runnerPath;
       addContainerRunnerCandidate(containerRunners, {
-        nodeId,
+        stepId,
         runnerKind,
         ...(runnerPath === undefined ? {} : { runnerPath }),
         dockerCliRequired: true,
@@ -633,10 +641,10 @@ function collectRequirements(
         }
         const existing = addonEnvSources.get(binding.fromEnv) ?? {
           addonEnvNames: new Set<string>(),
-          nodeIds: new Set<string>(),
+          stepIds: new Set<string>(),
         };
         existing.addonEnvNames.add(addonEnvName);
-        existing.nodeIds.add(nodeId);
+        existing.stepIds.add(stepId);
         addonEnvSources.set(binding.fromEnv, existing);
       }
     }
@@ -646,7 +654,7 @@ function collectRequirements(
     agentBackends: [...agentBackends.entries()].map(([backend, entry]) => ({
       backend,
       models: entry.models,
-      sourceNodeIds: toSortedArray(entry.nodeIds),
+      sourceStepIds: toSortedArray(entry.stepIds),
     })),
     containerRunners: [...containerRunners.values()].map((entry) => ({
       runnerKind: entry.runnerKind,
@@ -654,18 +662,18 @@ function collectRequirements(
         ? {}
         : { runnerPath: entry.runnerPath }),
       ...(entry.dockerCliRequired === true ? { dockerCliRequired: true } : {}),
-      sourceNodeIds: toSortedArray(entry.nodeIds),
+      sourceStepIds: toSortedArray(entry.stepIds),
     })),
     addonEnvSources: [...addonEnvSources.entries()].map(([envName, entry]) => ({
       envName,
       addonEnvNames: toSortedArray(entry.addonEnvNames),
-      sourceNodeIds: toSortedArray(entry.nodeIds),
+      sourceStepIds: toSortedArray(entry.stepIds),
     })),
-    ...(codeManagerNodeIds.size === 0
+    ...(codeManagerStepIds.size === 0
       ? {}
       : {
           codeManager: {
-            sourceNodeIds: toSortedArray(codeManagerNodeIds),
+            sourceStepIds: toSortedArray(codeManagerStepIds),
           },
         }),
     ...(relevantCrossWorkflowDispatches.length === 0
@@ -677,13 +685,13 @@ function collectRequirements(
             targetWorkflowIds: toSortedArray(
               relevantCrossWorkflowDispatches.map((d) => d.workflowId),
             ),
-            sourceNodeIds: toSortedArray(
-              relevantCrossWorkflowDispatches.map((d) => d.callerNodeId),
+            sourceStepIds: toSortedArray(
+              relevantCrossWorkflowDispatches.map((d) => d.callerStepId),
             ),
           },
         }),
-    commandNodeIds: toSortedArray(commandNodeIds),
-    containerNodeIds: toSortedArray(containerNodeIds),
+    commandStepIds: toSortedArray(commandStepIds),
+    containerStepIds: toSortedArray(containerStepIds),
   };
 }
 
@@ -691,7 +699,7 @@ export async function inspectWorkflowRuntimeReadiness(
   bundle: NormalizedWorkflowBundle,
   options: RequirementProbeOptions = {},
 ): Promise<WorkflowRuntimeReadiness> {
-  const collected = collectRequirements(bundle, options.onlyNodeIds);
+  const collected = collectRequirements(bundle, options);
   const requirements: WorkflowRuntimeRequirement[] = [];
 
   for (const candidate of collected.agentBackends) {
@@ -707,7 +715,7 @@ export async function inspectWorkflowRuntimeReadiness(
           probeEnvConfiguredBackend({
             backend: candidate.backend,
             envName: "OPENAI_API_KEY",
-            sourceNodeIds: candidate.sourceNodeIds,
+            sourceStepIds: candidate.sourceStepIds,
             models: candidate.models,
             env: options.env,
           }),
@@ -718,7 +726,7 @@ export async function inspectWorkflowRuntimeReadiness(
           probeEnvConfiguredBackend({
             backend: candidate.backend,
             envName: "ANTHROPIC_API_KEY",
-            sourceNodeIds: candidate.sourceNodeIds,
+            sourceStepIds: candidate.sourceStepIds,
             models: candidate.models,
             env: options.env,
           }),
@@ -748,7 +756,7 @@ export async function inspectWorkflowRuntimeReadiness(
     );
   }
 
-  if (collected.commandNodeIds.length > 0) {
+  if (collected.commandStepIds.length > 0) {
     requirements.push({
       id: "node-executor:command",
       kind: "node-executor",
@@ -756,12 +764,12 @@ export async function inspectWorkflowRuntimeReadiness(
       status: "available",
       detail:
         `command node execution is built into the local runtime; ` +
-        `nodes=${buildSourceNodeList(collected.commandNodeIds)}`,
-      sourceNodeIds: collected.commandNodeIds,
+        `steps=${buildSourceStepList(collected.commandStepIds)}`,
+      sourceStepIds: collected.commandStepIds,
     });
   }
 
-  if (collected.containerNodeIds.length > 0) {
+  if (collected.containerStepIds.length > 0) {
     requirements.push({
       id: "node-executor:container",
       kind: "node-executor",
@@ -769,8 +777,8 @@ export async function inspectWorkflowRuntimeReadiness(
       status: "available",
       detail:
         `container node execution is built into the local runtime; ` +
-        `nodes=${buildSourceNodeList(collected.containerNodeIds)}`,
-      sourceNodeIds: collected.containerNodeIds,
+        `steps=${buildSourceStepList(collected.containerStepIds)}`,
+      sourceStepIds: collected.containerStepIds,
     });
   }
 
