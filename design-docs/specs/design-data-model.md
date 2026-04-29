@@ -28,7 +28,7 @@ A workflow bundle contains:
 
 ### `WorkflowJson`
 
-Authoring and normalized shapes are defined in `src/workflow/types.ts` (`AuthoredWorkflowJson`, `WorkflowJson`). Step-addressed bundles use `entryStepId`, `steps`, and a parallel `nodeRegistry` (plus optional `managerStepId`). Legacy node-graph `workflow.json` may list companion fields such as `edges` / optional `loops`; removed top-level node-addressed entry/manager aliases are **rejected** by validation (use node `kind` / `role` and structural edges; the normalized `WorkflowJson` never carries those keys). Runners and UI use `resolveWorkflowManagerStepId` / `resolveWorkflowEntryRuntimeId` and structural edge projection instead. Authored `subWorkflows`, `branching`, `workflowCalls`, and related structural conversation metadata are rejected by validation.
+Authoring and normalized shapes are defined in `src/workflow/types.ts` (`AuthoredWorkflowJson`, `WorkflowJson`). On-disk `workflow.json` must be **step-addressed**: `entryStepId`, `nodes` (registry), `steps`, and optional `managerStepId`. Top-level authored graph or compatibility keys such as `edges`, `loops`, `branching`, `workflowCalls`, `subWorkflows`, `entryNodeId`, and `managerRuntimeId` are **rejected** by validation (see `REJECTED_AUTHORED_*` in `src/workflow/validate.ts`). The normalized `WorkflowJson` never carries those keys. Local routing for the engine is derived from `steps[].transitions` via `getStructuralEdges(...)`; repeat metadata on nodes yields loop rules via `getStructuralLoops(...)`. Runners and inspection surfaces use `resolveWorkflowManagerStepId` / `resolveWorkflowEntryRuntimeId` on that normalized model.
 
 ### `WorkflowDefaults`
 
@@ -437,13 +437,14 @@ SQLite stores query-oriented copies of node execution data such as:
 
 This DB is intentionally secondary to the filesystem artifact contract.
 
-## Current Validation and Compatibility Rules
+## Current validation rules
 
 Important current rules:
 
 - node ids must match the repository's slug-like id pattern
-- for legacy node-graph bundles, exactly one manager-role node is required unless the flow is manager-less, with manager/entry **runtime** ids derived from the graph; normalized bundles do not carry removed top-level manager convenience fields
-- branch/loop block semantics are validated against edges and loops
+- step-addressed bundles require a non-empty `steps` list, `entryStepId` referencing an existing step, and a non-empty `nodes` registry; optional `managerStepId` must reference a step whose role is `manager` (or the single manager-role step is inferred when exactly one exists)
+- transitions are validated against declared steps; cross-workflow transitions carry `toWorkflowId` / optional `resumeStepId` per `design-workflow-json.md`
+- repeat/loop semantics on registry nodes are validated; derived loop rules exist only on the normalized model, not as authored top-level `loops`
 - `output` contracts reject unsupported fields
 - structural `subworkflow-manager` kind strings are rejected
 

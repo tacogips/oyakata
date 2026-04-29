@@ -53,7 +53,7 @@ Supporting design: `design-docs/specs/design-workflow-steps-and-node-reuse.md`.
 - Make `code` manager the default manager mode.
 - Keep `llm` manager available as an experimental alternative while making `code` manager authoritative.
 - Treat calling another workflow manager and calling another worker step as the same runtime primitive, distinguished only by the execution address being targeted.
-- Require any current implementation differences between `workflowCalls` and ordinary step calls to be hidden behind one common call abstraction rather than preserved as two long-term orchestration models.
+- Treat cross-workflow calls as ordinary step transitions (`steps[].transitions` with `toWorkflowId` / `resumeStepId`); validation rejects authored top-level `workflow.workflowCalls`, and the runtime derives deterministic dispatch from transitions rather than maintaining a parallel orchestration model.
 
 ## Non-Goals
 
@@ -341,7 +341,7 @@ Rules:
 - `targetWorkflowId`, when omitted, means the current workflow
 - `targetStepId` resolves within `targetWorkflowId ?? currentWorkflowId` and then to its backing node definition before dispatch
 - targeting another workflow is just a call to that workflow's callable entry step rather than a separate `start-sub-workflow` primitive
-- if the current runtime still needs a compatibility adapter for authored `workflowCalls`, that adapter should lower into this same normalized decision/call contract
+- authored `workflowCalls` is rejected at validation; cross-workflow dispatch uses `steps[].transitions` and the same normalized call contract as local jumps (no separate compatibility projection layer)
 
 ### `code` Manager
 
@@ -355,7 +355,7 @@ Responsibilities:
 - launch node revisits with explicit `promptVariant`, `sessionMode`, and timeout overrides
 - dispatch cross-workflow manager calls through the same validated `call-step` path
 - keep deterministic workflow progression without asking an LLM to interpret routing rules
-- keep one normalized call abstraction for local worker-step calls and cross-workflow manager-step calls even if the migration period temporarily needs compatibility wrappers
+- keep one normalized call abstraction for local worker-step calls and cross-workflow manager-step calls (no retained compatibility wrappers for removed authored shapes)
 
 Decision order:
 
@@ -422,14 +422,7 @@ The target validator should enforce:
 
 ## Migration Requirement
 
-If the current runtime implementation of `workflowCalls` differs materially from ordinary step calls, the migration direction should be:
-
-1. normalize both into one execution-address call abstraction
-2. lower compatibility `workflowCalls` authoring into that abstraction
-3. share validation, dispatch, result publication, and retry handling
-4. remove duplicated orchestration logic once compatibility is no longer needed
-
-The target architecture should not preserve separate long-lived engines for "workflow call" versus "node/step call".
+Target state (current direction): authored `workflowCalls` is rejected; cross-workflow work is expressed only through step transitions and runtime-derived dispatch rows. Local worker calls and cross-workflow calls share validation, dispatch, result publication, and retry handling through one execution-address path.
 
 ## Testing Requirements
 

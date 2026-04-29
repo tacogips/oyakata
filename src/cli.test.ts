@@ -452,15 +452,6 @@ describe("runCli", () => {
     expect(help).toContain("--disable-targeted-rerun");
   });
 
-  test("call-node reports that the legacy command was removed", async () => {
-    const capture = createIoCapture();
-    const code = await runCli(["call-node", "wf", "run"], capture.io);
-    expect(code).toBe(1);
-    const err = capture.stderr.join("\n");
-    expect(err).toContain("call-node has been removed");
-    expect(err).toContain("call-step <workflow-id> <workflow-run-id> <step-id>");
-  });
-
   test("call-step executes locally with structured manager message input", async () => {
     const root = await makeTempDir();
     const workflowName = "call-step-cli";

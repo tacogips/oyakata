@@ -776,8 +776,9 @@ function findLatestPublishedWorkflowResult(
 
 /**
  * Prefix for `transitionWhen` and queued transition `when` strings from
- * step-derived cross-workflow dispatches. Value is historical; kept for persisted
- * session compatibility. Dispatch ids are `__cw:<stepId>`, not authored `workflowCalls`.
+ * step-derived cross-workflow dispatches. Value is historical; kept so existing
+ * persisted sessions and logs that already store this prefix keep matching.
+ * Dispatch ids are `__cw:<stepId>`, not authored `workflowCalls`.
  */
 const CROSS_WORKFLOW_DISPATCH_TRANSITION_WHEN_PREFIX = "workflow-call:";
 

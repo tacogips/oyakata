@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { DeterministicNodeAdapter } from "./adapter";
-import { callStep, rewriteCallStepFailureMessage } from "./call-step";
+import { callStep } from "./call-step";
 import { listRuntimeNodeExecutions } from "./runtime-db";
 import { createSessionState } from "./session";
 import { saveSession } from "./session-store";
@@ -727,123 +727,6 @@ describe("callStep", () => {
     });
   });
 
-  test("rewriteCallStepFailureMessage maps generic node-oriented execution errors to step wording", () => {
-    const stepId = "writer-step";
-    expect(rewriteCallStepFailureMessage("node execution failed", stepId)).toBe(
-      "step execution failed",
-    );
-    expect(rewriteCallStepFailureMessage("node call failed", stepId)).toBe(
-      "step call failed",
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        "node execution produced no output",
-        stepId,
-      ),
-    ).toBe("step execution produced no output");
-    expect(
-      rewriteCallStepFailureMessage(
-        `node '${stepId}' is missing executable node fields`,
-        stepId,
-      ),
-    ).toBe(`step '${stepId}' is missing executable fields`);
-    expect(
-      rewriteCallStepFailureMessage(
-        `cannot call node '${stepId}' on terminal session 'sess-1' with status 'completed'`,
-        stepId,
-      ),
-    ).toBe(
-      `cannot call step '${stepId}' on terminal session 'sess-1' with status 'completed'`,
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        `node '${stepId}' is optional and must be executed through the workflow scheduler after an owning-manager decision`,
-        stepId,
-      ),
-    ).toBe(
-      `step '${stepId}' is optional and must be executed through the workflow scheduler after an owning-manager decision`,
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        `node '${stepId}' requests nodeType='user-action', but direct call-node execution is not supported`,
-        stepId,
-      ),
-    ).toBe(
-      `step '${stepId}' requests nodeType='user-action', but direct step execution is not supported`,
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        `failed to persist execution mailbox at '${stepId}': disk full`,
-        stepId,
-      ),
-    ).toBe(
-      `failed to persist execution mailbox for step '${stepId}': disk full`,
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        `node '${stepId}' does not define prompt variant 'missing-variant'`,
-        stepId,
-      ),
-    ).toBe(
-      `step '${stepId}' does not define prompt variant 'missing-variant'`,
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        "native node execution timed out",
-        stepId,
-      ),
-    ).toBe("native step execution timed out");
-    expect(
-      rewriteCallStepFailureMessage(
-        "unknown native node execution failure",
-        stepId,
-      ),
-    ).toBe("unknown native step execution failure");
-    expect(
-      rewriteCallStepFailureMessage(
-        "native node execution failed: boom",
-        stepId,
-      ),
-    ).toBe("native step execution failed: boom");
-    expect(
-      rewriteCallStepFailureMessage(
-        "native node did not produce mailbox output at '/tmp/outbox': ENOENT",
-        stepId,
-      ),
-    ).toBe(
-      "native step did not produce mailbox output at '/tmp/outbox': ENOENT",
-    );
-    expect(
-      rewriteCallStepFailureMessage(
-        "native node execution exited with code 1",
-        stepId,
-      ),
-    ).toBe("native step execution exited with code 1");
-    expect(
-      rewriteCallStepFailureMessage(
-        "native node execution exited via signal SIGKILL",
-        stepId,
-      ),
-    ).toBe("native step execution exited via signal SIGKILL");
-    expect(
-      rewriteCallStepFailureMessage(
-        `node '${stepId}' requests nodeType='user-action', but direct call-step execution is not supported`,
-        stepId,
-      ),
-    ).toBe(
-      `step '${stepId}' requests nodeType='user-action', but direct step execution is not supported`,
-    );
-    const stepWithMeta = "writer-step+meta";
-    expect(
-      rewriteCallStepFailureMessage(
-        `node '${stepWithMeta}' does not define prompt variant 'v'`,
-        stepWithMeta,
-      ),
-    ).toBe(
-      `step '${stepWithMeta}' does not define prompt variant 'v'`,
-    );
-  });
-
   test("reports terminal-session direct-call failures with step-oriented wording", async () => {
     const root = await makeTempDir();
     const workflowName = "call-step-terminal-session";
@@ -889,7 +772,7 @@ describe("callStep", () => {
     expect(result.error.message).not.toContain("cannot call node");
   });
 
-  test("rewrites session lastError in failures to match step-oriented call-step wording", async () => {
+  test("surfaces step-oriented mailbox persistence errors on session lastError", async () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
     const sessionStoreRoot = path.join(root, "sessions");

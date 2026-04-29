@@ -510,7 +510,7 @@ function renderManagerControlSection(
   return [
     "Manager control payload:",
     "When `divedra gql` is available in the execution environment, prefer typed GraphQL manager actions over freeform control prose.",
-    "Use payload `managerControl` only as the compatibility fallback when `divedra gql` is unavailable for that execution backend.",
+    "Use payload `managerControl` when typed GraphQL manager actions are unavailable for that execution backend (e.g. no `divedra gql` in the environment).",
     "Include workflow assessment in normal JSON fields, and place runtime control decisions under `managerControl`.",
     "Supported actions:",
     ...managerControl.supportedActions.map((action) =>

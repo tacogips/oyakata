@@ -1,6 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   buildAmbientManagerControlPlaneEnvironment,
@@ -30,6 +31,166 @@ afterEach(async () => {
 });
 
 describe("manager-session-store", () => {
+  test("migrates manager_runtime_id columns to manager_step_id for legacy runtime databases", async () => {
+    const root = await makeTempDir();
+    const rootDataDir = path.join(root, "data");
+    await mkdir(rootDataDir, { recursive: true });
+    const dbPath = path.join(rootDataDir, "divedra.db");
+
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE manager_sessions (
+        manager_session_id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        workflow_execution_id TEXT NOT NULL,
+        manager_runtime_id TEXT NOT NULL,
+        manager_node_exec_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_message_id TEXT,
+        control_mode TEXT,
+        auth_token_hash TEXT NOT NULL,
+        auth_token_expires_at TEXT NOT NULL
+      );
+      CREATE TABLE manager_messages (
+        manager_message_id TEXT PRIMARY KEY,
+        manager_session_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        workflow_execution_id TEXT NOT NULL,
+        manager_runtime_id TEXT NOT NULL,
+        manager_node_exec_id TEXT NOT NULL,
+        message TEXT,
+        parsed_intent_json TEXT NOT NULL,
+        accepted INTEGER NOT NULL,
+        rejection_reason TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS idempotent_mutations (
+        mutation_name TEXT NOT NULL,
+        manager_session_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        normalized_request_hash TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        PRIMARY KEY (mutation_name, manager_session_id, idempotency_key)
+      );
+    `);
+    legacyDb
+      .prepare(
+        `
+      INSERT INTO manager_sessions (
+        manager_session_id, workflow_id, workflow_execution_id, manager_runtime_id,
+        manager_node_exec_id, status, created_at, updated_at, last_message_id,
+        control_mode, auth_token_hash, auth_token_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      )
+      .run(
+        "mgrsess-legacy-runtime",
+        "wf",
+        "exec-1",
+        "manager-step-from-legacy-col",
+        "node-exec-1",
+        "active",
+        "2026-04-29T00:00:00.000Z",
+        "2026-04-29T00:00:00.000Z",
+        null,
+        null,
+        "hash",
+        "2026-05-29T00:00:00.000Z",
+      );
+    legacyDb.close();
+
+    const store = createManagerSessionStore({
+      cwd: root,
+      rootDataDir,
+    });
+    const loaded = await store.loadSession("mgrsess-legacy-runtime");
+    expect(loaded).not.toBeNull();
+    expect(loaded?.managerStepId).toBe("manager-step-from-legacy-col");
+  });
+
+  test("migrates manager_node_id columns to manager_step_id when legacy runtime id column used node naming", async () => {
+    const root = await makeTempDir();
+    const rootDataDir = path.join(root, "data");
+    await mkdir(rootDataDir, { recursive: true });
+    const dbPath = path.join(rootDataDir, "divedra.db");
+
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE manager_sessions (
+        manager_session_id TEXT PRIMARY KEY,
+        workflow_id TEXT NOT NULL,
+        workflow_execution_id TEXT NOT NULL,
+        manager_node_id TEXT NOT NULL,
+        manager_node_exec_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_message_id TEXT,
+        control_mode TEXT,
+        auth_token_hash TEXT NOT NULL,
+        auth_token_expires_at TEXT NOT NULL
+      );
+      CREATE TABLE manager_messages (
+        manager_message_id TEXT PRIMARY KEY,
+        manager_session_id TEXT NOT NULL,
+        workflow_id TEXT NOT NULL,
+        workflow_execution_id TEXT NOT NULL,
+        manager_node_id TEXT NOT NULL,
+        manager_node_exec_id TEXT NOT NULL,
+        message TEXT,
+        parsed_intent_json TEXT NOT NULL,
+        accepted INTEGER NOT NULL,
+        rejection_reason TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS idempotent_mutations (
+        mutation_name TEXT NOT NULL,
+        manager_session_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        normalized_request_hash TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        PRIMARY KEY (mutation_name, manager_session_id, idempotency_key)
+      );
+    `);
+    legacyDb
+      .prepare(
+        `
+      INSERT INTO manager_sessions (
+        manager_session_id, workflow_id, workflow_execution_id, manager_node_id,
+        manager_node_exec_id, status, created_at, updated_at, last_message_id,
+        control_mode, auth_token_hash, auth_token_expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+      )
+      .run(
+        "mgrsess-legacy-node-col",
+        "wf",
+        "exec-1",
+        "manager-step-from-node-col",
+        "node-exec-1",
+        "active",
+        "2026-04-29T00:00:00.000Z",
+        "2026-04-29T00:00:00.000Z",
+        null,
+        null,
+        "hash",
+        "2026-05-29T00:00:00.000Z",
+      );
+    legacyDb.close();
+
+    const store = createManagerSessionStore({
+      cwd: root,
+      rootDataDir,
+    });
+    const loaded = await store.loadSession("mgrsess-legacy-node-col");
+    expect(loaded).not.toBeNull();
+    expect(loaded?.managerStepId).toBe("manager-step-from-node-col");
+  });
+
   test("persists sessions, messages, and idempotent mutation records", async () => {
     const root = await makeTempDir();
     const store = createManagerSessionStore({

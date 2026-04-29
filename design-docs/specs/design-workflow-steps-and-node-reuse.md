@@ -256,8 +256,8 @@ If multiple steps share one node, node id alone is no longer enough to answer:
 Therefore:
 
 - jumps target `stepId`
-- mailbox artifacts record both `stepId` and `nodeId`
-- execution state is step-addressed first, node-addressed second
+- mailbox artifacts record both `stepId` and the backing registry `nodeId`
+- scheduling and routing use `stepId` as the canonical execution position; `nodeId` remains the template and backend-session identity for artifacts and reuse
 
 ## Step Reuse And Session Continuation
 

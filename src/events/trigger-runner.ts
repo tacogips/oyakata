@@ -67,7 +67,7 @@ export interface WorkflowTriggerRunner {
 interface StickyRootManagerContext {
   readonly workflowId: string;
   readonly workflowName: string;
-  /** Manager/entry runtime id: step id for step-addressed bundles, else legacy node id. */
+  /** Manager step id in the workflow bundle (same id namespace as `workflow.steps[].id`). */
   readonly managerStepId: string;
   readonly sourceId: string;
   readonly bindingId: string;

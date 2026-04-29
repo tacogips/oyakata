@@ -1,8 +1,4 @@
-import {
-  isStepAddressedWorkflow,
-  type WorkflowJson,
-  type WorkflowStepRef,
-} from "./types";
+import type { WorkflowJson, WorkflowStepRef } from "./types";
 
 /**
  * Runtime/inspection projection for cross-workflow links derived from
@@ -61,9 +57,6 @@ export function crossWorkflowDispatchesFromSteps(
 export function effectiveCrossWorkflowDispatches(
   workflow: Pick<WorkflowJson, "entryStepId" | "steps">,
 ): readonly CrossWorkflowDispatch[] {
-  if (!isStepAddressedWorkflow(workflow)) {
-    return [];
-  }
   return crossWorkflowDispatchesFromSteps(workflow.steps);
 }
 
@@ -75,8 +68,5 @@ export function crossWorkflowDispatchesForExecutionMatch(
   workflow: Pick<WorkflowJson, "entryStepId" | "steps">,
   match: (dispatch: CrossWorkflowDispatch) => boolean,
 ): readonly CrossWorkflowDispatch[] {
-  if (!isStepAddressedWorkflow(workflow)) {
-    return [];
-  }
   return crossWorkflowDispatchesFromSteps(workflow.steps).filter(match);
 }

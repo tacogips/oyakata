@@ -61,6 +61,8 @@ import {
   type WorkflowStepTransition,
   type WorkflowTimeoutPolicy,
   type UserActionNodeConfig,
+  type NodeKind,
+  type WorkflowNodeRepeatPolicy,
 } from "./types";
 import {
   getStructuralEdges,
@@ -79,8 +81,10 @@ export const REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE =
   "is not part of the step-addressed workflow schema; local step-to-step routing must be authored on workflow.steps[].transitions";
 
 /**
- * Authored `workflow.json` only: removed top-level compatibility aliases rejected by the strict
- * step-addressed schema.
+ * Authored `workflow.json` only: explicit enumeration of removed top-level keys that
+ * must fail validation. This is intentional schema-boundary guarding (clear paths and
+ * stable rejection messages), not a runtime compatibility layer; keep lists in sync
+ * with `validateWorkflowBundle` when the authored surface changes.
  */
 export const REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS = [
   "managerNodeId",
@@ -88,7 +92,10 @@ export const REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS = [
   "subWorkflows",
 ] as const;
 
-/** Additional removed top-level fields outside the active step-addressed workflow schema. */
+/**
+ * Additional removed top-level fields for step-addressed bundles; same explicit
+ * schema-guard rationale as {@link REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS}.
+ */
 export const REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS = [
   "workflowCalls",
   "subWorkflowConversations",
@@ -1160,6 +1167,89 @@ function normalizeWorkflowTimeoutPolicy(
   };
 }
 
+const NODE_KIND_VALUES = new Set<NodeKind>([
+  "task",
+  "branch-judge",
+  "loop-judge",
+  "input",
+  "output",
+]);
+
+function normalizeRegistryNodeKind(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): NodeKind | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || !NODE_KIND_VALUES.has(value as NodeKind)) {
+    issues.push(
+      makeIssue(
+        "error",
+        path,
+        "must be 'task', 'branch-judge', 'loop-judge', 'input', or 'output'",
+      ),
+    );
+    return undefined;
+  }
+  return value as NodeKind;
+}
+
+function normalizeWorkflowNodeRepeatPolicy(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): WorkflowNodeRepeatPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return undefined;
+  }
+  const whileRaw = value["while"];
+  if (typeof whileRaw !== "string" || whileRaw.length === 0) {
+    issues.push(makeIssue("error", `${path}.while`, "must be a non-empty string"));
+    return undefined;
+  }
+  const restartAtRaw = value["restartAt"];
+  const maxIterationsRaw = value["maxIterations"];
+  let restartAt: string | undefined;
+  if (restartAtRaw !== undefined) {
+    if (typeof restartAtRaw !== "string" || restartAtRaw.length === 0) {
+      issues.push(
+        makeIssue("error", `${path}.restartAt`, "must be a non-empty string"),
+      );
+    } else {
+      restartAt = restartAtRaw;
+    }
+  }
+  let maxIterations: number | undefined;
+  if (maxIterationsRaw !== undefined) {
+    if (
+      typeof maxIterationsRaw !== "number" ||
+      !Number.isInteger(maxIterationsRaw) ||
+      maxIterationsRaw < 1
+    ) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.maxIterations`,
+          "must be a positive integer when provided",
+        ),
+      );
+    } else {
+      maxIterations = maxIterationsRaw;
+    }
+  }
+  return {
+    while: whileRaw,
+    ...(restartAt === undefined ? {} : { restartAt }),
+    ...(maxIterations === undefined ? {} : { maxIterations }),
+  };
+}
+
 function normalizeWorkflowNodeRegistryRef(
   value: unknown,
   index: number,
@@ -1171,7 +1261,14 @@ function normalizeWorkflowNodeRegistryRef(
     return null;
   }
 
-  const allowedKeys = new Set(["id", "nodeFile", "addon", "execution"]);
+  const allowedKeys = new Set([
+    "id",
+    "nodeFile",
+    "addon",
+    "execution",
+    "kind",
+    "repeat",
+  ]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
       issues.push(
@@ -1213,6 +1310,12 @@ function normalizeWorkflowNodeRegistryRef(
     `${path}.execution`,
     issues,
   );
+  const kind = normalizeRegistryNodeKind(value["kind"], `${path}.kind`, issues);
+  const repeat = normalizeWorkflowNodeRepeatPolicy(
+    value["repeat"],
+    `${path}.repeat`,
+    issues,
+  );
 
   if ((nodeFile === undefined) === (addon === undefined)) {
     issues.push(
@@ -1229,6 +1332,8 @@ function normalizeWorkflowNodeRegistryRef(
     ...(nodeFile === undefined ? {} : { nodeFile }),
     ...(addon === undefined ? {} : { addon }),
     ...(execution === undefined ? {} : { execution }),
+    ...(kind === undefined ? {} : { kind }),
+    ...(repeat === undefined ? {} : { repeat }),
   };
 }
 
@@ -2012,7 +2117,7 @@ function normalizeStepAddressedWorkflow(
     return null;
   }
 
-  const compatNodes: WorkflowNodeRef[] = steps.map((step) => {
+  const nodesMaterializedFromSteps: WorkflowNodeRef[] = steps.map((step) => {
     const registryNode = nodeRegistry.find((node) => node.id === step.nodeId);
     const role =
       step.role ?? (step.id === managerStepId ? "manager" : "worker");
@@ -2025,6 +2130,10 @@ function normalizeStepAddressedWorkflow(
       ...(registryNode?.execution === undefined
         ? {}
         : { execution: registryNode.execution }),
+      ...(registryNode?.kind === undefined ? {} : { kind: registryNode.kind }),
+      ...(registryNode?.repeat === undefined
+        ? {}
+        : { repeat: registryNode.repeat }),
       role,
     };
   });
@@ -2043,7 +2152,7 @@ function normalizeStepAddressedWorkflow(
     entryStepId,
     nodeRegistry,
     steps,
-    nodes: compatNodes,
+    nodes: nodesMaterializedFromSteps,
   };
 }
 

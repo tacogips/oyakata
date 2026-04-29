@@ -190,20 +190,21 @@ describe("parseRerunTargetWorkflowControlArguments", () => {
     expect(r).toEqual(ok({ sessionId: "t1", rerunFromStepId: "step-b" }));
   });
 
-  test("rejects legacy rerunFromNodeId", () => {
+  test("rejects unknown arguments on nested superviser rerun-workflow", () => {
     const r = parseRerunTargetWorkflowControlArguments(
       {
         supervisionRunId: "s1",
         targetSessionId: "t1",
         sessionId: "t1",
-        rerunFromNodeId: "n1",
+        rerunFromNodeId: "old-node",
       },
       "p",
       expected,
     );
     expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.error).toContain("rerunFromStepId");
+      expect(r.error).toContain("rerunFromNodeId");
+      expect(r.error).toContain("not a supported argument");
     }
   });
 });

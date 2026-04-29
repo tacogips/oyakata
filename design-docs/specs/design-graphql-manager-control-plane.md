@@ -249,7 +249,7 @@ This separation avoids overloading a user- or manager-authored freeform message 
 
 Manager send must be scope-bound:
 
-- the active manager (root or step-addressed manager role) may request actions allowed for the current workflow graph and `workflowCall` / cross-execution handoffs; structural nested sub-workflow managers are not a separate scope
+- the active manager (the single manager step for the execution, identified by `managerStepId` / step-addressed manager role) may request actions allowed for the current workflow graph and `workflowCall` / cross-execution handoffs; structural nested sub-workflow managers are not a separate scope
 - worker nodes do not get manager-session credentials
 
 Required ambient identity for LLM-triggered CLI use:

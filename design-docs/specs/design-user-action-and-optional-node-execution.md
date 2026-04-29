@@ -71,9 +71,9 @@ Rules:
 - omitted `execution.mode` means `required`
 - `optional` currently requires `decisionBy: "owning-manager"`
 - the owning manager is whichever manager execution currently owns the node's
-  scope; the active implementation still preserves structural-scope
-  compatibility internally, but new authored workflows should not rely on a
-  separate subworkflow-manager concept
+  scope; authored workflows use the unified step-addressed role model
+  (`manager` / `worker`) and step transitions rather than structural
+  sub-workflow manager boundaries
 
 ### `node-{id}.json`
 

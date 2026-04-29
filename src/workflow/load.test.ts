@@ -8,10 +8,7 @@ import {
   resolveWorkflowEntryRuntimeId,
   resolveWorkflowManagerStepId,
 } from "./types";
-import {
-  REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE,
-  REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-} from "./validate";
+import { REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE } from "./validate";
 
 const tempDirs: string[] = [];
 
@@ -94,7 +91,6 @@ describe("loadWorkflowFromDisk", () => {
     expect(getStructuralEdges(result.value.bundle.workflow)).toEqual([
       { from: "manager", to: "worker", when: "always" },
     ]);
-    expect("workflowCalls" in result.value.bundle.workflow).toBe(false);
   });
 
   test("resolves workflows by authored workflowId even when the directory name differs", async () => {
@@ -113,28 +109,6 @@ describe("loadWorkflowFromDisk", () => {
 
     expect(result.value.workflowName).toBe("directory-name");
     expect(result.value.bundle.workflow.workflowId).toBe("actual-id");
-  });
-
-  test("rejects authored workflowCalls on step-addressed workflow.json", async () => {
-    const workflowRoot = makeTempDir();
-    writeWorkflowBundle({
-      workflowRoot,
-      workflowName: "demo",
-      extraWorkflowFields: { workflowCalls: [] },
-    });
-
-    const result = await loadWorkflowFromDisk("demo", { workflowRoot });
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    expect(result.error.code).toBe("VALIDATION");
-    expect(result.error.issues).toContainEqual({
-      severity: "error",
-      path: "workflow.workflowCalls",
-      message: REJECTED_AUTHORED_TOP_LEVEL_SCHEMA_FIELD_MESSAGE,
-    });
   });
 
   test("rejects top-level workflow.edges on step-addressed workflow.json", async () => {

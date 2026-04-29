@@ -1,7 +1,6 @@
 /**
  * Internal direct step execution engine used only by {@link ./call-step.callStep}.
- * The CLI and package API expose `call-step` only; phase 133 removes remaining
- * legacy compatibility surfaces in `impl-plans/workflow-legacy-compatibility-removal.md`.
+ * The CLI and package API expose `call-step` only (strict step-addressed execution).
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
@@ -115,8 +114,9 @@ export interface CallStepExecutionInput
   readonly defaultTimeoutMs?: number;
   readonly overrides?: DirectExecutionOverrides;
   /**
-   * When calling nodes inside a phase-2 nested superviser run, pass the
-   * engine-owned control surface for `divedra/*` superviser control add-ons.
+   * When calling nodes inside a nested auto-improve superviser workflow run
+   * (`--nested-superviser`), pass the engine-owned control surface for
+   * `divedra/*` superviser control add-ons.
    */
   readonly superviserControl?: SuperviserRuntimeControl;
 }
@@ -434,7 +434,7 @@ function applyPromptVariantOverride(input: {
   const variant = input.node.promptVariants?.[input.promptVariant];
   if (variant === undefined) {
     return err(
-      `node '${input.node.id}' does not define prompt variant '${input.promptVariant}'`,
+      `step '${input.node.id}' does not define prompt variant '${input.promptVariant}'`,
     );
   }
 

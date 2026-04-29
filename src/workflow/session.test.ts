@@ -149,7 +149,7 @@ describe("resolveCurrentStepId", () => {
     expect(resolveCurrentStepId(makeSession())).toBeNull();
   });
 
-  test("returns null for legacy node-addressed sessions without step records", () => {
+  test("returns null when executions lack stepId and currentNodeId is only a node registry id", () => {
     expect(
       resolveCurrentStepId(
         makeSession({
@@ -191,7 +191,7 @@ describe("resolveCurrentStepId", () => {
     ).toBe("review-step");
   });
 
-  test("prefers the latest execution step id when currentNodeId still carries a node id", () => {
+  test("prefers the latest execution step id when currentNodeId matches node registry id", () => {
     expect(
       resolveCurrentStepId(
         makeSession({

@@ -336,11 +336,11 @@ Rules:
 
 - when `toWorkflowId` is omitted, the transition stays inside the current workflow
 - when `toWorkflowId` is present, the transition targets another workflow using the same execution-address contract as any other step call
-- when `toWorkflowId` is present, `resumeStepId` must name a step in the **current** workflow to queue after the callee workflow completes (same role as legacy `workflowCalls[].resultNodeId` in compatibility bundles)
+- when `toWorkflowId` is present, `resumeStepId` must name a step in the **current** workflow to queue after the callee workflow completes (same handoff role historically associated with removed top-level `workflowCalls[].resultNodeId` authoring)
 - `resumeStepId` must be omitted for local in-workflow transitions (`toWorkflowId` absent)
 - cross-workflow transitions must target the callee workflow's callable entry step, which is normally its `managerStepId`, or `entryStepId` for a worker-only workflow
 - transitions always target steps, never raw node ids
-- optional `label` uses the same expression grammar as legacy edge `when` strings: omitted means unconditional (`always` when the runtime projects local transitions onto compatibility `edges[]`). For cross-workflow transitions, omitted `label` means the derived cross-workflow dispatch is unconditional (same as legacy `workflowCalls[].when` omitted). When set, `label` gates both that edge projection and the derived dispatch (the engine matches it like a `workflowCalls[].when` predicate). Step-authored cross-workflow transitions are **not** copied onto `workflow.workflowCalls` during normalization; the engine and inspection surfaces derive the effective call list (deterministic ids `__cw:<callerStepId>`) from `steps[]`
+- optional `label` uses the same expression grammar as the `when` field on step-derived routing edges (`getStructuralEdges` in `src/workflow/types.ts` maps omitted `label` to `always`). For cross-workflow transitions, omitted `label` means the derived cross-workflow dispatch is unconditional. When set, `label` gates both local transition selection and cross-workflow dispatch matching. Step-authored cross-workflow transitions are **not** copied onto `workflow.workflowCalls` during normalization; the engine and inspection surfaces derive the effective dispatch list (deterministic ids `__cw:<callerStepId>`) from `steps[]`
 
 ## Removed Fields
 

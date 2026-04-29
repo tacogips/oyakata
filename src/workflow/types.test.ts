@@ -26,7 +26,7 @@ test("AuthoredWorkflowJson accepts the supported step-addressed authored surface
   expect(workflow.entryStepId).toBe("main-worker");
 });
 
-test("REJECTED_AUTHORED step-addressed list is legacy rejects plus step-only extras", () => {
+test("REJECTED_AUTHORED step-addressed list is removed-field rejects plus step-only extras", () => {
   expect([...REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS]).toEqual([
     ...REJECTED_AUTHORED_DISALLOWED_TOP_LEVEL_FIELD_KEYS,
     ...REJECTED_AUTHORED_STEP_ADDRESSED_EXTRA_TOP_LEVEL_KEYS,

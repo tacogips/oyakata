@@ -67,7 +67,8 @@ export interface SaveWorkflowFailure {
   readonly currentRevision?: string;
 }
 
-const LEGACY_WORKFLOW_VISUALIZATION_FILE = "workflow-vis.json";
+/** Obsolete sidecar filename from an earlier tooling path; removed on save if still present. */
+const OBSOLETE_WORKFLOW_VISUALIZATION_FILE = "workflow-vis.json";
 const WORKFLOW_DEFINITION_FILE = "workflow.json";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1146,7 +1147,7 @@ export async function saveWorkflowToDisk(
         referencedNodePayloads,
       ),
     });
-    await rm(path.join(workflowDirectory, LEGACY_WORKFLOW_VISUALIZATION_FILE), {
+    await rm(path.join(workflowDirectory, OBSOLETE_WORKFLOW_VISUALIZATION_FILE), {
       force: true,
     });
   } catch (error: unknown) {

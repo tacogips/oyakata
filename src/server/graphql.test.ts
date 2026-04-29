@@ -1941,7 +1941,7 @@ describe("GraphQL HTTP transport", () => {
     });
   });
 
-  test("rejects legacy managerRuntimeId on sendManagerMessage GraphQL input", async () => {
+  test("rejects removed managerRuntimeId field on sendManagerMessage GraphQL input", async () => {
     const root = await makeTempDir();
     const { options, session } = await createCompletedWorkflowFixture(root);
     await createManagerSession(root, session.sessionId);

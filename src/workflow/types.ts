@@ -107,6 +107,9 @@ export interface WorkflowNodeRegistryRef {
   readonly nodeFile?: string;
   readonly addon?: WorkflowNodeAddonRef;
   readonly execution?: WorkflowNodeExecutionPolicy;
+  /** Present on the authored registry when the node carries loop/output semantics in the graph. */
+  readonly kind?: NodeKind;
+  readonly repeat?: WorkflowNodeRepeatPolicy;
 }
 
 export interface WorkflowStepTransition {
@@ -235,16 +238,6 @@ export interface WorkflowJson {
   readonly nodeRegistry: readonly WorkflowNodeRegistryRef[];
   readonly steps: readonly WorkflowStepRef[];
   readonly nodes: readonly WorkflowNodeRef[];
-}
-
-export function isStepAddressedWorkflow(
-  workflow: Pick<WorkflowJson, "entryStepId" | "steps">,
-): workflow is Pick<WorkflowJson, "entryStepId" | "steps"> & {
-  readonly entryStepId: string;
-  readonly steps: readonly WorkflowStepRef[];
-} {
-  void workflow;
-  return true;
 }
 
 function buildRepeatExitExpression(whileExpression: string): string {

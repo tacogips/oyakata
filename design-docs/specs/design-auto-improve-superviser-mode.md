@@ -49,13 +49,13 @@ The end-state goals in this document (paired `superviser` **workflow**, add-on o
 
 Phase 1 is intentionally compatible with the same session model, artifact layout, and policy contract described elsewhere in this spec so that Phase 2 can attach without reworking operator-visible audit data.
 
-### Step ids for remediation (and the phase 133 bridge)
+### Step ids for remediation
 
 Supervision **remediation** is step-addressed: the engine records `rerun-step` / `rerun-workflow` with a **step id** anchor (`managerStepId ?? entryStepId`) and optional targeted `rerunFromStepId` when policy allows.
 
-While `impl-plans/workflow-legacy-compatibility-removal.md` (phase 133) is still removing authored compatibility fields from the primary workflow model, Phase 1 reloads the target bundle after a failure and passes it through `toStepAddressedWorkflowForSupervision` in `src/workflow/superviser.ts`: step-addressed workflows with a non-empty `steps` list are used as-is; an `entryStepId` with missing or empty `steps` is treated as invalid for supervision (no silent fallback to node-graph aliases); legacy **node-graph-only** targets (no `entryStepId`, with `entryNodeId` and `nodes`) are projected to a synthetic step list whose step ids match node registry ids so the same step-id remediation path applies.
+Phase 1 reloads the target workflow bundle after a failure on the same strict step-addressed validation path as ordinary execution. Authored bundles must carry `entryStepId` and `steps[]` alongside the node registry; legacy node-graph-only shapes and removed top-level compatibility fields are **rejected at validation** rather than projected or adapted at runtime.
 
-Phase 2 nested `divedra/*` control add-ons use **`rerunFromStepId` only** on `divedra/rerun-workflow`; `rerunFromNodeId` is rejected at parse time. Engine `WorkflowRunOptions` also uses **`rerunFromStepId` only** for `runWorkflow` reruns (no separate `rerunFromNodeId` field); see `impl-plans/workflow-legacy-compatibility-removal.md`.
+Phase 2 nested `divedra/*` control add-ons accept only documented keys on `divedra/rerun-workflow` (auth fields, `sessionId`, and optional `rerunFromStepId`); any other argument key is rejected at parse time in `parseRerunTargetWorkflowControlArguments`. Engine `WorkflowRunOptions` also uses **`rerunFromStepId` only** for targeted `runWorkflow` reruns (no `rerunFromNodeId` field); see `impl-plans/workflow-legacy-compatibility-removal.md` and `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`.
 
 ## Core Model
 

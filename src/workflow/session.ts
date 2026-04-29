@@ -197,6 +197,10 @@ export interface WorkflowSessionState {
   readonly startedAt: string;
   readonly endedAt?: string;
   readonly queue: readonly string[];
+  /**
+   * Active step id (`workflow.steps[].id`). Persisted JSON still uses this property name;
+   * it is not a separate node-graph id.
+   */
   readonly currentNodeId?: string;
   readonly nodeExecutionCounter: number;
   readonly nodeExecutionCounts: Readonly<Record<string, number>>;
@@ -258,6 +262,7 @@ export interface CreateSessionInput {
   readonly sessionId: string;
   readonly workflowName: string;
   readonly workflowId: string;
+  /** Entry step id seeded as the first `queue` entry. */
   readonly initialNodeId: string;
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
 }
@@ -335,6 +340,11 @@ export function normalizeSessionState(
   };
 }
 
+/**
+ * Resolves the current step id from session state. Matches either `execution.stepId` or
+ * `execution.nodeId` against `currentNodeId` because persisted execution rows may populate one or
+ * both fields for the same runtime step.
+ */
 export function resolveCurrentStepId(
   session: Pick<WorkflowSessionState, "currentNodeId" | "nodeExecutions">,
 ): string | null {

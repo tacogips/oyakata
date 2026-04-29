@@ -35,21 +35,27 @@ async function createWorkflowFixture(
     workflowId,
     description: "fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        kind: "task",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "step-1", when: "always" }],
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1" }],
+      },
+      { id: "step-1", nodeId: "step-1" },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {

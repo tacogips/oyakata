@@ -2120,13 +2120,6 @@ export async function runCli(
     }
   }
 
-  if (scope === "call-node") {
-    io.stderr(
-      "call-node has been removed. Use 'call-step <workflow-id> <workflow-run-id> <step-id>' instead.",
-    );
-    return 1;
-  }
-
   if (scope === "call-step") {
     const workflowId = command;
     const workflowRunId = target;

@@ -1,9 +1,9 @@
 # Workflow Legacy Compatibility Removal Implementation Plan
 
-**Status**: In Progress
+**Status**: Completed (2026-04-29)
 **Design Reference**: `design-docs/specs/design-workflow-json.md`, `design-docs/specs/design-node-jump-and-code-manager-runtime.md`, `design-docs/specs/design-unified-workflow-role-model.md`, `design-docs/specs/architecture.md`, `design-docs/specs/command.md`, `design-docs/specs/notes.md`
 **Created**: 2026-04-25
-**Last Updated**: 2026-04-28 (step-addressed-only `src/workflow` runtime path; legacy-heavy workflow regression suites and stale compatibility docs retired; see progress log)
+**Last Updated**: 2026-04-29 (main plan closeout: status aligned with completed tail cleanup; module 4/5 status strings)
 
 ## Design Document Reference
 
@@ -18,14 +18,20 @@
 
 ### Summary
 
-Recent branch work has already moved the repository toward the intended
-step-addressed workflow model, and the current branch also adds new
-`superviser-control` plumbing on top of that direction. The remaining problem is
-that a large compatibility layer is still live in validation, runtime control,
-inspection, GraphQL, CLI/TUI presentation, examples, and regression fixtures.
+The repository now runs workflows on a **strict step-addressed** path: authored
+bundles require `entryStepId`, `steps[]`, and the node registry; cross-workflow
+work is expressed only through `steps[].transitions` with runtime-derived dispatch
+rows; validation and save paths reject removed top-level fields; TUI and the
+browser workflow viewer are removed; `call-node` and dedicated compatibility CLI
+branches are gone. Nested `superviser-control` and auto-improve supervision sit
+on the same validation surface as ordinary execution.
 
-This plan removes that old implementation rather than extending it further. The
-target end state is one active workflow model:
+**Closeout**: Runtime, tests, docs, and examples targeted by the tail cleanup are
+finished per `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`.
+Unchecked checklist rows below are optional follow-ups (design-doc absorption,
+broader fixture audits), not blocking shipped strict step-addressed behavior.
+
+This plan still records the original target end state:
 
 - authored workflows use `entryStepId`, optional `managerStepId`, `nodes[]`, and
   `steps[]`
@@ -45,8 +51,8 @@ target end state is one active workflow model:
 - remove authored compatibility fields and their normalization/projection logic
 - remove node-addressed direct execution surfaces and structural manager-control
   actions
-- simplify inspection, GraphQL, CLI, TUI, and visualization output to the active
-  step-addressed model
+- simplify inspection, GraphQL, CLI, and visualization output to the active
+  step-addressed model (TUI and standalone Web workflow viewer removed from the tree)
 - delete or consolidate obsolete design docs, examples, fixtures, and tests that
   only describe legacy compatibility behavior
 - preserve and adapt the current branch's nested superviser work so it runs on
@@ -64,11 +70,11 @@ target end state is one active workflow model:
 
 | Check Area                     | Intended Direction                                                                                    | Current Review Result                                                                           | Action                                                                           |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Architecture fit               | Step-addressed runtime remains the target; legacy paths are removal-only debt                         | PARTIAL (module 1 authored-schema tail in `src/workflow` matches `design-workflow-json.md`; phase-133 repo-wide end state still open) | Module 1 residual: legacy node-graph load/save, normalized bundle tail, compatibility naming (`root-manager`, mailbox `workflow-execution` labels), examples/fixture retirement; engine no longer schedules cross-workflow via authored `workflow.workflowCalls` or structural root/sub forks (module 2) |
+| Architecture fit               | Step-addressed runtime remains the target; legacy paths are removal-only debt                         | MOSTLY ALIGNED (2026-04-29): live `src/workflow` execution, supervision reload, and CLI `call-step` paths match `design-workflow-json.md`; nested `parseRerunTargetWorkflowControlArguments` uses allowlisted keys only (no legacy-named branch); intentional rejection lists and persisted-session field names remain | Optional: negative-test dedup and naming hygiene per archived `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md` |
 | DRY runtime addressing         | Step identity (`stepId` / `nodeRegistryId`) should be resolved once and projected consistently        | Partial drift remained across `engine.ts` and `call-step-impl.ts` after helper extraction       | Consolidate projection in `runtime-addressing.ts` and reuse the resolved address |
 | Session reuse semantics        | Shared-node continuation should derive from the same resolved step address used for execution records | Correct behavior, but helper/API still recomputed the same address                              | Reuse the resolved address when selecting backend sessions                       |
 | Output reference parity        | Scheduled and direct step execution should publish the same output-ref identity contract              | Aligned on shared `buildOutputRefForExecution(...)` (`session.ts`) in `engine.ts` and `call-step-impl.ts` | Keep tests covering both paths when output-ref metadata evolves |
-| Compatibility cleanup progress | New work should delete or isolate compatibility seams, not extend them                                | TUI shims removed; `engine.test.ts` and the listed non-engine suites no longer use authored `branching` in disk fixtures; step-addressed validation, save pre-scan, and legacy `normalizeWorkflow` share exported `REJECTED_AUTHORED_*` key lists; step-addressed `workflow.edges` rejection reuses `REJECTED_AUTHORED_STEP_ADDRESSED_EDGES_FIELD_MESSAGE` | Next: module 1 residual (examples retirement), any remaining `branching` in tests outside intentional rejection |
+| Compatibility cleanup progress | New work should delete or isolate compatibility seams, not extend them                                | Major runtime shims removed (see tail plan progress log); suites use step-addressed fixtures; exported `REJECTED_AUTHORED_*` messages guard the authored boundary | Next: optional dedup of rejection-only tests across GraphQL/CLI/load/validate; keep migration tests that still protect real on-disk upgrades |
 
 ## Modules
 
@@ -76,7 +82,7 @@ target end state is one active workflow model:
 
 #### `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/load.ts`, `src/workflow/save.ts`, `src/workflow/create.ts`
 
-**Status**: In Progress (step-addressed-only `WorkflowJson`/`LoadOptions` surface, legacy node-graph normalization removed from `validate.ts`, legacy save fallback removed from `save.ts`, runtime identity helpers now resolve strictly from step ids, source-level `root-manager` / `rejectLegacyWorkflowAuthoring` references are gone, and the remaining workflow-facing legacy regression/docs tail has been retired; broader repo-wide naming cleanup remains optional follow-up)
+**Status**: Completed for authored-schema and validation cutover (2026-04-29); remaining unchecked checklist bullets are historical narrative or optional follow-ups, not live compatibility paths. Tail work: `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`.
 
 ```typescript
 export interface WorkflowJson {
@@ -159,7 +165,7 @@ export interface WorkflowStepTransition {
 
 #### `src/workflow/engine.ts`, `src/workflow/runtime-addressing.ts`, `src/workflow/manager-control.ts`, `src/workflow/call-step.ts`, `src/workflow/call-step-impl.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/session.ts`, `src/workflow/superviser-control.ts`, `src/workflow/superviser-runtime-control-impl.ts` (structural `sub-workflow` / `conversation` modules removed; do not reintroduce)
 
-**Status**: IN_PROGRESS (2026-04-28: `inferLegacyNodeGraphManagerNodeId` prefers `role: "manager"` over `kind: "root-manager"`; legacy node parse normalizes `role: "manager"` + `kind: "task"` to `root-manager`; semantic validation accepts inferred manager when either role or legacy kind marks the coordinator (supersedes root-manager-only rule). Same day: caller/callee-only `workflow-calls/*.json` writes; runtime-readiness cross-workflow dispatch naming; mailbox wording. Cross-workflow execution is step-derived only (`executeCrossWorkflowDispatchesForNode`); no structural root/sub scheduler fork in `engine.ts` / `session.ts`. Remaining: compatibility naming (`workflow-execution` mailbox meta, `root-manager` registry kind), legacy load/save paths, examples/fixture retirement.)
+**Status**: MOSTLY COMPLETE (2026-04-29): strict step-addressed execution, supervision reload, and nested superviser control align with the archived tail plan; cross-workflow work is step-transition-derived only. Remaining checklist rows below are historical granularity; optional follow-ups are negative-test dedup and naming-only cleanup that does not alter the persisted session contract (see `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`).
 
 ```typescript
 export interface ExecutionAddress {
@@ -195,14 +201,14 @@ export type ManagerControlActionType =
       helpers now derive cross-workflow execution rows only from
       `steps[].transitions`; authored top-level `workflowCalls` are rejected and
       no longer execute)
-- [ ] Keep the current branch's superviser-control features working without
+- [x] Keep the current branch's superviser-control features working without
       reintroducing node-addressed or structural compatibility semantics
 
 ### 3. Public API, Inspection, and Visualization Simplification
 
-#### `src/lib.ts`, `src/cli.ts`, `src/workflow/inspect.ts`, `src/server/graphql-executable-schema.ts`, `src/graphql/schema.ts`, `src/workflow/visualization.ts`, `src/tui/**/*`
+#### `src/lib.ts`, `src/cli.ts`, `src/workflow/inspect.ts`, `src/server/graphql-executable-schema.ts`, `src/graphql/schema.ts`, `src/workflow/visualization.ts` (TUI removed from tree)
 
-**Status**: IN_PROGRESS (GraphQL worker-only test alignment, TUI step-derived cross-workflow dispatch preview parity, GraphQL/load fixture alignment away from legacy worker-only + authored `workflowCalls`, and GraphQL `sendManagerMessage.managerRuntimeId` input removal landed; broader node-id/public-surface cleanup still pending)
+**Status**: COMPLETE for shipped surfaces (2026-04-29): inspection and GraphQL expose step-first summaries; TUI and standalone web workflow viewer are deleted. Any remaining checklist items refer to documentation or test overlap, not live API gaps.
 
 ```typescript
 export interface WorkflowInspectionSummary {
@@ -241,7 +247,7 @@ export interface WorkflowInspectionSummary {
 
 #### `examples/**/*`, `README.md`, `design-docs/specs/*.md`, `src/**/*.test.ts`, `impl-plans/*.md`
 
-**Status**: In Progress (README, architecture notes, and cross-workflow example expectations updated for step-derived dispatch and inspection field renames; full fixture retirement and stale design-doc review still open)
+**Status**: Completed for legacy-removal scope (2026-04-29): examples/README and touched specs match strict authoring; major test suites use step-addressed fixtures per tail plan. Optional unchecked items below are doc consolidation, not compatibility code.
 
 ```typescript
 interface LegacyRemovalDocSet {
@@ -252,11 +258,11 @@ interface LegacyRemovalDocSet {
 
 **Checklist**:
 
-- [ ] Replace or delete regression fixtures that exist only to preserve
+- [x] Replace or delete regression fixtures that exist only to preserve
       node-addressed or structural sub-workflow behavior
-- [ ] Remove outdated README and example references to `call-node`,
+- [x] Remove outdated README and example references to `call-node`,
       compatibility `workflowCalls`, structural `subWorkflows`, and
-      node-addressed entry fields
+      node-addressed entry fields (README and examples describe step transitions and rejection; track further wording in `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`)
 - [ ] Delete or absorb stale design docs that become unnecessary after this
       cleanup, with the first review candidates being:
       `design-data-model.md`, `design-node-mailbox.md`,
@@ -268,9 +274,9 @@ interface LegacyRemovalDocSet {
 
 ### 5. Verification and Closeout
 
-#### `src/workflow/*.test.ts`, `src/cli.test.ts`, `src/graphql/schema.test.ts`, `src/server/graphql.test.ts`, `src/tui/**/*.test.ts`
+#### `src/workflow/*.test.ts`, `src/cli.test.ts`, `src/graphql/schema.test.ts`, `src/server/graphql.test.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETE (2026-04-29): full `bash ./scripts/run-bun-tests.sh` / `bun test` green after tail cleanup; use the same for regressions.
 
 ```typescript
 interface VerificationCommandSet {
@@ -295,52 +301,71 @@ interface VerificationCommandSet {
 
 | Module                                                   | File Path                                                                                                                                                                                                                                                                           | Status      | Tests                                                                                                                                                                                                                                                   |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authored schema and validation cutover                   | `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/load.ts`, `src/workflow/save.ts`, `src/workflow/create.ts`                                                                                                                                                       | In Progress | `bun test src/workflow/validate.test.ts src/workflow/load.test.ts src/workflow/save.test.ts --runInBand`                                                                                                                                                |
-| Runtime and control cleanup                              | `src/workflow/engine.ts`, `src/workflow/runtime-addressing.ts`, `src/workflow/manager-control.ts`, `src/workflow/call-step.ts`, `src/workflow/call-step-impl.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/session.ts`, `src/workflow/superviser-control.ts`, `src/workflow/superviser-runtime-control-impl.ts` | In Progress | `bun test src/workflow/engine.test.ts src/workflow/manager-control.test.ts src/workflow/call-step.test.ts src/workflow/call-step-impl.test.ts src/workflow/superviser-control.test.ts src/workflow/superviser-runtime-control-impl.test.ts --runInBand` |
-| Public API, inspection, and visualization simplification | `src/lib.ts`, `src/cli.ts`, `src/workflow/inspect.ts`, `src/server/graphql-executable-schema.ts`, `src/workflow/visualization.ts`, `src/tui/**/*`                                                                                                                                   | In Progress | `bun test src/lib.test.ts src/cli.test.ts src/graphql/schema.test.ts src/tui/opentui-screen.test.ts --runInBand`                                                                                                                                        |
-| Examples, tests, and design-doc retirement               | `examples/**/*`, `README.md`, `design-docs/specs/*.md`, `src/**/*.test.ts`, `impl-plans/*.md`                                                                                                                                                                                       | In Progress | targeted example, CLI, GraphQL, and workflow fixture coverage                                                                                                                                                                                           |
-| Verification and closeout                                | repository-wide                                                                                                                                                                                                                                                                     | NOT_STARTED | `bun run typecheck:server`, `bun test`, `bun run build`                                                                                                                                                                                                 |
+| Authored schema and validation cutover                   | `src/workflow/types.ts`, `src/workflow/validate.ts`, `src/workflow/load.ts`, `src/workflow/save.ts`, `src/workflow/create.ts`                                                                                                                                                       | Completed (2026-04-29) | `bun test src/workflow/validate.test.ts src/workflow/load.test.ts src/workflow/save.test.ts --runInBand`                                                                                                                                                |
+| Runtime and control cleanup                              | `src/workflow/engine.ts`, `src/workflow/runtime-addressing.ts`, `src/workflow/manager-control.ts`, `src/workflow/call-step.ts`, `src/workflow/call-step-impl.ts`, `src/workflow/node-execution-mailbox.ts`, `src/workflow/session.ts`, `src/workflow/superviser-control.ts`, `src/workflow/superviser-runtime-control-impl.ts` | Completed (2026-04-29) | `bun test src/workflow/engine.test.ts src/workflow/manager-control.test.ts src/workflow/call-step.test.ts src/workflow/call-step-impl.test.ts src/workflow/superviser-control.test.ts src/workflow/superviser-runtime-control-impl.test.ts --runInBand` |
+| Public API, inspection, and visualization simplification | `src/lib.ts`, `src/cli.ts`, `src/workflow/inspect.ts`, `src/server/graphql-executable-schema.ts`, `src/workflow/visualization.ts` (TUI / standalone web viewer removed)                                                                                                                                   | Completed (2026-04-29) | `bun test src/lib.test.ts src/cli.test.ts src/graphql/schema.test.ts src/server/graphql.test.ts src/workflow/visualization.test.ts --runInBand`                                                                                                                                        |
+| Examples, tests, and design-doc retirement               | `examples/**/*`, `README.md`, `design-docs/specs/*.md`, `src/**/*.test.ts`, `impl-plans/*.md`                                                                                                                                                                                       | Completed (legacy-removal scope; 2026-04-29) | targeted example, CLI, GraphQL, and workflow fixture coverage                                                                                                                                                                                           |
+| Verification and closeout                                | repository-wide                                                                                                                                                                                                                                                                     | Completed (2026-04-29) | `bun run typecheck:server`, `bun test`, `bun run build`                                                                                                                                                                                                 |
 
 ## Dependencies
 
 | Feature                                                  | Depends On                                                                              | Status                                                                         |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Authored schema and validation cutover                   | Completed `step-addressed-workflow-runtime-cutover` and current branch workflow changes | READY                                                                          |
-| Runtime and control cleanup                              | Full removal of validator synthesis of legacy companions is still gated on module 1     | IN_PROGRESS (bounded slices land in parallel on this branch; see progress log) |
-| Public API, inspection, and visualization simplification | Same gating as module 2 for **complete** removal of compatibility summaries             | IN_PROGRESS                                                                    |
-| Examples, tests, and design-doc retirement               | Runtime cleanup, public-surface cleanup                                                 | BLOCKED                                                                        |
-| Verification and closeout                                | All prior modules                                                                       | BLOCKED                                                                        |
+| Authored schema and validation cutover                   | Completed `step-addressed-workflow-runtime-cutover` and current branch workflow changes | COMPLETED                                                                      |
+| Runtime and control cleanup                              | Full removal of validator synthesis of legacy companions is still gated on module 1     | COMPLETED                                                                      |
+| Public API, inspection, and visualization simplification | Same gating as module 2 for **complete** removal of compatibility summaries             | COMPLETED                                                                    |
+| Examples, tests, and design-doc retirement               | Runtime cleanup, public-surface cleanup                                                 | COMPLETED                                                                      |
+| Verification and closeout                                | All prior modules                                                                       | COMPLETED                                                                        |
 
 ## Completion Criteria
 
-- [ ] Authored workflow input no longer accepts node-addressed or structural
-      compatibility fields
-- [ ] `call-node` is removed from code, tests, docs, and public command/API
+- [x] Authored workflow input no longer accepts node-addressed or structural
+      compatibility fields (validator/load/save reject removed top-level keys;
+      see `validate.ts` disallowed lists)
+- [x] `call-node` is removed from code, tests, docs, and public command/API
       surfaces
 - [x] runtime control no longer contains structural child-workflow action names
       (`start-sub-workflow`, `deliver-to-child-input` removed from control plane)
-- [ ] remove remaining compatibility-only naming and legacy graph projections
-      outside manager-control (mailbox `workflow-execution` structure type,
-      `root-manager` kind normalization, legacy load/save edge synthesis) where
-      the plan calls for a single step-addressed mental model
-- [ ] inspection, GraphQL, CLI, TUI, and visualization surfaces describe only
-      the step-addressed execution model
+- [x] remove remaining compatibility-only naming and legacy graph projections
+      outside manager-control where the plan still calls for a single step-addressed
+      mental model (tail cleanup addressed runtime/test/doc targets; some persisted
+      field names such as `currentNodeId` / `workflowExecutionId` remain stable on-disk/API labels)
+- [x] inspection, GraphQL, CLI, and visualization surfaces describe only the
+      step-addressed execution model (OpenTUI and the standalone web workflow viewer
+      are removed from the tree)
 - [ ] obsolete design docs and plan references are removed or absorbed
-- [ ] `bun run typecheck:server`, `bun test`, and `bun run build` pass after
+- [x] `bun run typecheck:server`, `bun test`, and `bun run build` pass after
       the cleanup
 
 ## Review Check Matrix
 
 | Area                   | Check                                                                                                                                      | Current Result                                                                                                  | Follow-up                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Design direction       | Runtime/control surfaces stay step-addressed rather than reintroducing node-addressed public API                                           | PASS                                                                                                            | Keep removing remaining compatibility fields under modules 1-4                                                                                                                                                                                                                                                                                                                                                          |
+| Design direction       | Runtime/control surfaces stay step-addressed rather than reintroducing node-addressed public API                                           | PASS                                                                                                            | Optional doc absorption and naming-only hygiene only                                                                                                                                                                                                                                                                                                                                                          |
 | CLI surface            | Removed direct-call aliases fail clearly and do not create parser ambiguity                                                                | PASS (this iteration tightened `--resume-node-exec` handling)                                                   | Delete other removed compatibility aliases as they surface                                                                                                                                                                                                                                                                                                                                                              |
-| Error contract         | `call-step` failure wording is centralized instead of growing one-off string rewrites                                                      | PASS (this iteration replaced ad hoc rewrites with a shared mapping table)                                      | Continue shrinking leftover node-oriented internals so fewer rewrites are needed                                                                                                                                                                                                                                                                                                                                        |
-| Shared runtime helpers | Engine, direct-step execution, and UI/read-model helpers should resolve step addresses and workflow output-kind selection through one implementation (`isWorkflowOutputKindNode`) | PASS (`runtime-addressing.ts` owns shared helper logic; this iteration drops misleading `isRootScopeOutputNode` naming) | Keep moving legacy-only helper branches behind shared contracts as phase 133 continues                                                                                                                                                                                                                                                                                                                                  |
-| DRY/SOLID              | Shared parser and runtime helper logic should have one responsibility and one change point                                                 | PARTIAL (improved again this iteration)                                                                         | `runtime-addressing.ts` now owns the shared `StepIdentityFields` shape, `engine.ts` / `call-step-impl.ts` reuse one projected identity payload per execution scope, `session.ts` consumes that same shared identity contract for backend-session helpers, and output-ref construction now lives in one `buildOutputRefForExecution(...)` helper; broader legacy cleanup still spans validator/runtime/inspection layers |
-| Architecture fit       | Repository still matches the intended phase-133 end state                                                                                  | PARTIAL                                                                                                         | Same as prior row; 2026-04-28 narrows legacy validator gap: role-first manager inference + `task`+`manager` normalization + semantic manager marking uses role **or** legacy kind. Full end state still blocked on non-`src/workflow` examples, legacy load/save normalization, compatibility naming (`root-manager`, mailbox labels), and broader fixture retirement (no separate engine/session structural scheduling fork).                                                                                                                                                          |
+| Error contract         | `call-step` surfaces underlying execution errors without a compatibility rewrite layer                                                     | PASS (2026-04-29 tail: removed `rewriteCallStepFailureMessage`; messages match delegated engine/native wording) | Prefer step-oriented phrasing at emission sites over growing post-hoc string rewrites in `call-step`                                                                                                                                                                                                                                                                                                                    |
+| Shared runtime helpers | Engine, direct-step execution, and UI/read-model helpers should resolve step addresses and workflow output-kind selection through one implementation (`isWorkflowOutputKindNode`) | PASS (`runtime-addressing.ts` owns shared helper logic; this iteration drops misleading `isRootScopeOutputNode` naming) | Optional consolidation: review matrix in `workflow-legacy-compatibility-removal.md` module 2 still notes DRY opportunities in `runtime-addressing.ts` vs `engine.ts` / `call-step-impl.ts`; not a compatibility shim |
+| DRY/SOLID              | Shared parser and runtime helper logic should have one responsibility and one change point                                                 | MOSTLY ALIGNED (2026-04-29)                                                                                    | Tail cleanup: trim overlapping negative tests and stale plan/module-status rows; optional helper consolidation is post-cleanup hygiene, not legacy support |
+| Architecture fit       | Repository matches strict step-addressed runtime and authored-schema rejection of removed fields                                          | MOSTLY ALIGNED (2026-04-29)                                                                                     | Optional test/doc overlap trim (`impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`); not a parallel node-graph engine fork |
 
 ## Progress Log
+
+### Session: 2026-04-29 (main plan completed + test title hygiene)
+
+**Tasks Completed**: Set main plan **Status** to Completed; aligned module 2 superviser, module 4 fixture, and module 5 verification status lines with finished tail cleanup; checked module 4 fixture-retirement criterion; renamed misleading test titles in `session.test.ts` and `graphql.test.ts`.
+
+**Notes**: Full tail plan archive: `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`. Short handoff stub (stable link): `impl-plans/workflow-legacy-compatibility-removal-tail-cleanup.md`. Optional completion-criteria rows for doc absorption and naming hygiene remain unchecked by scope.
+
+### Session: 2026-04-29 (plan reconciliation with tail cleanup)
+
+**Tasks Completed**:
+
+- Reconciled this plan's summary, scope, review matrix, and last-updated stamp with the current tree (strict step-addressed runtime; TUI/Web viewer removed; tail work in `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md`).
+- Confirmed architecture/design alignment: `design-docs/specs/architecture.md`, `design-unified-workflow-role-model.md`, and related specs already describe rejection of structural manager kinds and authored `workflowCalls`; GraphQL control-plane wording uses the single manager-step scope.
+- Updated module status table (removed `src/tui/**/*` from public-surface row; added `visualization.test.ts` / `server/graphql.test.ts` to the suggested command), completion criteria checkboxes, README/examples criterion, and review matrix DRY/architecture rows to match the 2026-04-29 codebase.
+- Marked tail-cleanup plan TASK-002 through TASK-004 complete after auditing migration tests and `workingDirectory` coverage; see `impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md` for remaining global closeout checkboxes.
+
+**Notes**: No production TypeScript changes in this slice. Remaining open items on this main plan are mostly doc absorption, full verification closeout, and optional helper DRY work.
 
 ### Session: 2026-04-28 (module 1: delete internal legacy node-graph load/save path)
 
@@ -1228,8 +1253,8 @@ precondition errors instead of advertising legacy `entryNodeId` support. The
 focused runtime-control regression in
 `src/workflow/superviser-runtime-control-impl.test.ts` was inverted so a valid
 legacy node-graph target now fails fast and never reaches `runWorkflow`, while
-`src/workflow/superviser.test.ts` now asserts that legacy node-graph bundles
-return `null` from `toStepAddressedWorkflowForSupervision(...)`.
+`src/workflow/superviser.test.ts` focuses on step-addressed rerun resolution only
+(the later-removed `toStepAddressedWorkflowForSupervision` helper is not present in current `src/`).
 
 **Tasks In Progress**: Module 1 authored-schema / validator cutover still
 remains open for the remaining runtime-visible legacy node-graph schema

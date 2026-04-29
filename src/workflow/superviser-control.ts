@@ -341,6 +341,14 @@ export function parseGetWorkflowExecutionDetailsControlArguments(
   return ok({ sessionId: parsed.value.sessionId });
 }
 
+/** Nested `divedra/rerun-workflow` accepts auth + session pairing plus optional step rerun only. */
+const NESTED_RERUN_WORKFLOW_ALLOWED_KEYS = new Set([
+  "supervisionRunId",
+  "targetSessionId",
+  "sessionId",
+  "rerunFromStepId",
+]);
+
 export function parseRerunTargetWorkflowControlArguments(
   args: Readonly<Record<string, unknown>> | null,
   path: string,
@@ -350,10 +358,12 @@ export function parseRerunTargetWorkflowControlArguments(
   if (!parsed.ok) {
     return parsed;
   }
-  if (parsed.value.args["rerunFromNodeId"] !== undefined) {
-    return err(
-      `${path}.rerunFromNodeId is not supported for nested superviser control; use rerunFromStepId`,
-    );
+  for (const key of Object.keys(parsed.value.args)) {
+    if (!NESTED_RERUN_WORKFLOW_ALLOWED_KEYS.has(key)) {
+      return err(
+        `${path}.${key} is not a supported argument for nested superviser rerun-workflow`,
+      );
+    }
   }
   const rerun = parsed.value.args["rerunFromStepId"];
   if (rerun === undefined) {

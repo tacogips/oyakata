@@ -10,10 +10,6 @@ import {
 import { loadWorkflowFromDisk } from "./load";
 import type { NormalizedWorkflowBundle, NodePayload } from "./types";
 
-type LegacyEdgeWorkflow = NormalizedWorkflowBundle["workflow"] & {
-  readonly edges?: readonly { from: string; to: string; when: string }[];
-};
-
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
@@ -98,14 +94,29 @@ function makeBundle(
         nodeTimeoutMs: 120_000,
       },
       managerStepId,
+      entryStepId: managerStepId,
+      nodeRegistry: nodeIds.map((id) => ({
+        id,
+        nodeFile: `nodes/node-${id}.json`,
+      })),
+      steps: nodeIds.map((id, index) => {
+        const nextId = nodeIds[index + 1];
+        return {
+          id,
+          nodeId: id,
+          role: index === 0 ? "manager" : "worker",
+          ...(nextId !== undefined
+            ? { transitions: [{ toStepId: nextId, label: "always" }] }
+            : {}),
+        };
+      }),
       nodes: nodeIds.map((id, index) => ({
         id,
-        kind: index === 0 ? "manager" : "task",
+        role: index === 0 ? "manager" : "worker",
         nodeFile: `nodes/node-${id}.json`,
         completion: { type: "none" },
       })),
-      edges: [],
-    } as unknown as LegacyEdgeWorkflow,
+    },
     nodePayloads,
   };
 }
@@ -684,14 +695,14 @@ describe("inspectWorkflowRuntimeReadiness", () => {
             maxLoopIterations: 3,
             nodeTimeoutMs: 120_000,
           },
+          entryStepId: "reviewer",
           nodes: [
             {
               id: "reviewer",
-              role: "worker",
               nodeFile: "nodes/node-reviewer.json",
-              completion: { type: "none" },
             },
           ],
+          steps: [{ id: "reviewer", nodeId: "reviewer" }],
         },
         null,
         2,

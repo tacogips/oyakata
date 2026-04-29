@@ -62,21 +62,27 @@ async function createWorkflowFixture(
     workflowId: workflowName,
     description: "fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        kind: "task",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "step-1", when: "always" }],
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1" }],
+      },
+      { id: "step-1", nodeId: "step-1" },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -106,37 +112,48 @@ async function createNodeSessionReuseFixture(
     workflowId: workflowName,
     description: "node session reuse fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-a",
-        kind: "task",
         nodeFile: "node-step-a.json",
-        completion: { type: "none" },
       },
       {
         id: "step-b",
-        kind: "task",
         nodeFile: "node-step-b.json",
-        completion: { type: "none" },
       },
       {
         id: "step-c",
-        kind: "task",
         nodeFile: "node-step-c.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "step-a", when: "always" },
-      { from: "step-a", to: "step-b", when: "always" },
-      { from: "step-b", to: "step-c", when: "go_c" },
-      { from: "step-c", to: "step-b", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-a" }],
+      },
+      {
+        id: "step-a",
+        nodeId: "step-a",
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "step-b",
+        transitions: [{ toStepId: "step-c", label: "go_c" }],
+      },
+      {
+        id: "step-c",
+        nodeId: "step-c",
+        transitions: [{ toStepId: "step-b" }],
+      },
     ],
   });
 

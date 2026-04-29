@@ -28,7 +28,7 @@ Expected stable inspection facts:
 - `stepIds` are `["divedra-manager", "draft-write", "apply-review"]`
 - `counts.crossWorkflowDispatches` is `1`
 - `crossWorkflowDispatchIds` contains `__cw:draft-write` (derived from the cross-workflow step transition)
-- `subWorkflows` remains omitted from the authored bundle
+- the authored bundle does not include structural `subWorkflows` (validation rejects that field)
 
 ## Run
 

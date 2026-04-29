@@ -24,15 +24,14 @@ impl-plans/
 
 ## Active Plans
 
-| Plan | Status | Design Reference |
-| ---- | ------ | ---------------- |
-| `workflow-legacy-compatibility-removal` | In Progress | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes` |
-| `workflow-legacy-compatibility-removal-tail-cleanup` | Ready | `design-workflow-json`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes` |
+No plans currently active.
 
 ## Completed Plans
 
 | Plan                                                     | Completed  | Design Reference                                                                                                 |
 | -------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
+| `workflow-legacy-compatibility-removal`                  | 2026-04-29 | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes` |
+| `workflow-legacy-compatibility-removal-tail-cleanup`     | 2026-04-29 | `design-workflow-json`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes`                 |
 | `auto-improve-superviser-workflow-phase-2`               | 2026-04-25 | `design-auto-improve-superviser-mode`, `architecture`, `command`                                                  |
 | `graphql-supervision-execution-parity`                 | 2026-04-26 | `design-auto-improve-superviser-mode`, `command`                                                                  |
 | `step-addressed-workflow-runtime-cutover`               | 2026-04-29 | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-workflow-steps-and-node-reuse`, `architecture`, `command` |
@@ -295,7 +294,7 @@ impl-plans/
 | 130   | COMPLETED   | Phases 125, 128, 129 (+ earlier foundations) |
 | 131   | COMPLETED   | Phase 130 |
 | 132   | COMPLETED   | Phase 130 |
-| 133   | IN_PROGRESS | Phases 129, 132 |
+| 133   | COMPLETED   | Phases 129, 132 |
 
 ### Phase to Plans Mapping
 
@@ -433,7 +432,7 @@ PHASE_TO_PLANS = {
   130: ["impl-plans/completed/auto-improve-superviser-mode.md"],
   131: ["impl-plans/completed/auto-improve-supervision-review-follow-up.md"],
   132: ["impl-plans/completed/auto-improve-superviser-workflow-phase-2.md"],
-  133: ["impl-plans/workflow-legacy-compatibility-removal.md", "impl-plans/workflow-legacy-compatibility-removal-tail-cleanup.md"],
+  133: ["impl-plans/workflow-legacy-compatibility-removal.md", "impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md"],
   134: ["impl-plans/graphql-supervision-execution-parity.md"],
 }
 ```

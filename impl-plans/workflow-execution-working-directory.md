@@ -49,7 +49,7 @@ export function resolveNodeExecutionWorkingDirectory(
 
 #### `src/workflow/engine.ts`
 
-#### `src/workflow/call-node.ts`
+#### `src/workflow/call-step-impl.ts`
 
 #### `src/workflow/native-node-executor.ts`
 
@@ -75,7 +75,7 @@ export interface AdapterExecutionInput {
 - [x] Add node-level `workingDirectory` to normalized payloads
 - [x] Thread resolved working directory into local agent adapters
 - [x] Thread resolved working directory into native command execution
-- [x] Confirm direct `call-node` execution follows the same rules
+- [x] Confirm direct `call-step` execution follows the same rules
 
 ### 3. Validation and Public Surfaces
 
@@ -159,7 +159,7 @@ interface ExecuteWorkflowInput {
 **Notes**:
 
 - Added a supporting design doc for workflow execution working-directory semantics.
-- Implemented run-scoped and node-scoped working-directory resolution across engine, call-node, adapters, native execution, CLI, library, and GraphQL surfaces.
+- Implemented run-scoped and node-scoped working-directory resolution across engine, `call-step` implementation (`call-step-impl.ts`), adapters, native execution, CLI, library, and GraphQL surfaces.
 - Added regression coverage for path resolution, native command execution cwd behavior, validation, adapter propagation, and API parsing.
 - Verified with targeted `bun test` and `bun run typecheck`.
 

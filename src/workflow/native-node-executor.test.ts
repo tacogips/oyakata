@@ -1413,12 +1413,12 @@ describe("executeNativeNode", () => {
     await expectPayloadCwd(output.payload, nodeWorkingDirectory);
   });
 
-  test("keeps command.workingDirectory as a compatibility override", async () => {
+  test("honors command.workingDirectory when set on the native command", async () => {
     const workflowDirectory = await makeTempDir();
     const workflowWorkingDirectory = path.join(workflowDirectory, "workspace");
     const commandWorkingDirectory = path.join(
       workflowWorkingDirectory,
-      "legacy-worker",
+      "cmd-working-dir",
     );
     await mkdir(commandWorkingDirectory, { recursive: true });
     const scriptPath = await writeReportCwdScript(workflowDirectory);
@@ -1439,7 +1439,7 @@ describe("executeNativeNode", () => {
           variables: {},
           command: {
             scriptPath,
-            workingDirectory: "legacy-worker",
+            workingDirectory: "cmd-working-dir",
           },
         },
         workflowDefaults: {

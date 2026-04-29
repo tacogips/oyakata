@@ -1,7 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   AdapterExecutionError,
   DeterministicNodeAdapter,
@@ -941,67 +941,76 @@ async function createWorkflowFixture(
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
-  const nodes = withLoop
-    ? [
-        {
-          id: "divedra-manager",
-          role: "manager",
-          nodeFile: "node-divedra-manager.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "step-1",
-          kind: "loop-judge",
-          nodeFile: "node-step-1.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "done",
-          kind: "output",
-          nodeFile: "node-done.json",
-          completion: { type: "none" },
-        },
-      ]
-    : [
-        {
-          id: "divedra-manager",
-          role: "manager",
-          nodeFile: "node-divedra-manager.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "step-1",
-          kind: "task",
-          nodeFile: "node-step-1.json",
-          completion: { type: "none" },
-        },
-      ];
-
-  const edges = withLoop
-    ? [
-        { from: "divedra-manager", to: "step-1", when: "always" },
-        { from: "step-1", to: "step-1", when: "continue_round" },
-        { from: "step-1", to: "done", when: "loop_exit" },
-      ]
-    : [{ from: "divedra-manager", to: "step-1", when: "always" }];
-
-  await writeJson(path.join(workflowDir, "workflow.json"), {
-    workflowId: workflowName,
-    description: "fixture",
-    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    nodes,
-    edges,
-    loops: withLoop
-      ? [
+  const workflowJson = withLoop
+    ? {
+        workflowId: workflowName,
+        description: "fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        managerStepId: "divedra-manager",
+        entryStepId: "divedra-manager",
+        nodes: [
           {
-            id: "main-loop",
-            judgeNodeId: "step-1",
-            continueWhen: "continue_round",
-            exitWhen: "loop_exit",
+            id: "divedra-manager",
+            nodeFile: "node-divedra-manager.json",
           },
-        ]
-      : [],
-  });
+          {
+            id: "step-1",
+            kind: "loop-judge" as const,
+            nodeFile: "node-step-1.json",
+            repeat: { while: "continue_round" },
+          },
+          {
+            id: "done",
+            kind: "output" as const,
+            nodeFile: "node-done.json",
+          },
+        ],
+        steps: [
+          {
+            id: "divedra-manager",
+            nodeId: "divedra-manager",
+            role: "manager" as const,
+            transitions: [{ toStepId: "step-1" }],
+          },
+          {
+            id: "step-1",
+            nodeId: "step-1",
+            transitions: [
+              { toStepId: "step-1", label: "continue_round" },
+              { toStepId: "done", label: "!(continue_round)" },
+            ],
+          },
+          { id: "done", nodeId: "done" },
+        ],
+      }
+    : {
+        workflowId: workflowName,
+        description: "fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        managerStepId: "divedra-manager",
+        entryStepId: "divedra-manager",
+        nodes: [
+          {
+            id: "divedra-manager",
+            nodeFile: "node-divedra-manager.json",
+          },
+          {
+            id: "step-1",
+            nodeFile: "node-step-1.json",
+          },
+        ],
+        steps: [
+          {
+            id: "divedra-manager",
+            nodeId: "divedra-manager",
+            role: "manager" as const,
+            transitions: [{ toStepId: "step-1" }],
+          },
+          { id: "step-1", nodeId: "step-1" },
+        ],
+      };
+
+  await writeJson(path.join(workflowDir, "workflow.json"), workflowJson);
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
     id: "divedra-manager",
@@ -1506,18 +1515,16 @@ async function createOptionalExecutionFixture(
     workflowId: workflowName,
     description: "optional fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        kind: "task",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
         execution: {
           mode: "optional",
           decisionBy: "owning-manager",
@@ -1527,14 +1534,22 @@ async function createOptionalExecutionFixture(
         id: "done",
         kind: "output",
         nodeFile: "node-done.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "step-1", when: "always" },
-      { from: "step-1", to: "done", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1" }],
+      },
+      {
+        id: "step-1",
+        nodeId: "step-1",
+        transitions: [{ toStepId: "done" }],
+      },
+      { id: "done", nodeId: "done" },
     ],
-    loops: [],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1571,22 +1586,27 @@ async function createUserActionFixture(
     workflowId: workflowName,
     description: "user action fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "approval",
-        kind: "task",
         nodeFile: "node-approval.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "approval", when: "always" }],
-    loops: [],
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "approval" }],
+      },
+      { id: "approval", nodeId: "approval" },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1620,39 +1640,49 @@ async function createNodeSessionReuseFixture(
     workflowId: workflowName,
     description: "node session reuse fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-a",
-        kind: "task",
         nodeFile: "node-step-a.json",
-        completion: { type: "none" },
       },
       {
         id: "step-b",
-        kind: "task",
         nodeFile: "node-step-b.json",
-        completion: { type: "none" },
       },
       {
         id: "step-c",
-        kind: "task",
         nodeFile: "node-step-c.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "step-a", when: "always" },
-      { from: "step-a", to: "step-b", when: "always" },
-      { from: "step-b", to: "step-c", when: "go_c" },
-      { from: "step-c", to: "step-b", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-a" }],
+      },
+      {
+        id: "step-a",
+        nodeId: "step-a",
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "step-b",
+        transitions: [{ toStepId: "step-c", label: "go_c" }],
+      },
+      {
+        id: "step-c",
+        nodeId: "step-c",
+        transitions: [{ toStepId: "step-b" }],
+      },
     ],
-    loops: [],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1818,25 +1848,34 @@ async function createManagerAfterOutputFixture(
     workflowId: workflowName,
     description: "manager-after-output fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "workflow-output",
         kind: "output",
         nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "workflow-output", when: "needs_output" },
-      { from: "workflow-output", to: "divedra-manager", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [
+          { toStepId: "workflow-output", label: "needs_output" },
+        ],
+      },
+      {
+        id: "workflow-output",
+        nodeId: "workflow-output",
+        transitions: [{ toStepId: "divedra-manager" }],
+      },
     ],
-    loops: [],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1866,22 +1905,28 @@ async function createSingleRootOutputFixture(
     workflowId: workflowName,
     description: "single-root-output fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "workflow-output",
         kind: "output",
         nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "workflow-output", when: "always" }],
-    loops: [],
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "workflow-output" }],
+      },
+      { id: "workflow-output", nodeId: "workflow-output" },
+    ],
   });
 
   for (const nodeId of ["divedra-manager", "workflow-output"]) {
@@ -1906,31 +1951,38 @@ async function createMultipleRootOutputsFixture(
     workflowId: workflowName,
     description: "multiple-root-outputs fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "first-output",
         kind: "output",
         nodeFile: "node-first-output.json",
-        completion: { type: "none" },
       },
       {
         id: "second-output",
         kind: "output",
         nodeFile: "node-second-output.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "first-output", when: "always" },
-      { from: "first-output", to: "second-output", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "first-output" }],
+      },
+      {
+        id: "first-output",
+        nodeId: "first-output",
+        transitions: [{ toStepId: "second-output" }],
+      },
+      { id: "second-output", nodeId: "second-output" },
     ],
-    loops: [],
   });
 
   for (const nodeId of ["divedra-manager", "first-output", "second-output"]) {
@@ -1955,31 +2007,37 @@ async function createRootOutputThenTaskFixture(
     workflowId: workflowName,
     description: "root-output-then-task fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "workflow-output",
         kind: "output",
         nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
       },
       {
         id: "final-task",
-        kind: "task",
         nodeFile: "node-final-task.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "workflow-output", when: "always" },
-      { from: "workflow-output", to: "final-task", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "workflow-output" }],
+      },
+      {
+        id: "workflow-output",
+        nodeId: "workflow-output",
+        transitions: [{ toStepId: "final-task" }],
+      },
+      { id: "final-task", nodeId: "final-task" },
     ],
-    loops: [],
   });
 
   for (const nodeId of ["divedra-manager", "workflow-output", "final-task"]) {
@@ -2529,7 +2587,12 @@ describe("runWorkflow", () => {
     const next = rerun.value.session.supervision;
     expect(next).toBeDefined();
     expect(next?.supervisionRunId).toBe(firstSup.supervisionRunId);
-    expect(next?.mutableWorkflowDir).toBe(firstSup.mutableWorkflowDir);
+    const expectedDir = firstSup.mutableWorkflowDir;
+    expect(expectedDir).toBeDefined();
+    if (expectedDir === undefined) {
+      return;
+    }
+    expect(next?.mutableWorkflowDir).toBe(expectedDir);
   });
 
   test("keeps the auto-improve retry loop active on resume", async () => {
@@ -3756,7 +3819,7 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    expect(result.error.message).toContain("adapter failure for node 'step-1'");
+    expect(result.error.message).toContain("adapter failure for step 'step-1'");
   });
 
   test("reuses a node-local backend session across repeated executions in one workflow run", async () => {
@@ -7029,7 +7092,7 @@ describe("runWorkflow", () => {
       return;
     }
     expect(result.value.session.status).toBe("completed");
-    expect(result.value.session.loopIterationCounts?.["main-loop"]).toBe(2);
+    expect(result.value.session.loopIterationCounts?.["repeat-step-1"]).toBe(2);
     const stepExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "step-1",
     );
@@ -7403,9 +7466,14 @@ describe("runWorkflow", () => {
         ...workflow.nodes,
         {
           id: "step-2",
-          kind: "task",
           nodeFile: "node-step-2.json",
-          completion: { type: "none" },
+        },
+      ],
+      steps: [
+        ...workflow.steps,
+        {
+          id: "step-2",
+          nodeId: "step-2",
         },
       ],
     });
@@ -7693,15 +7761,14 @@ describe("runWorkflow", () => {
       workflowId: workflowName,
       description: "command stdout log fixture",
       defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      entryStepId: "command-worker",
       nodes: [
         {
           id: "command-worker",
-          kind: "task",
           nodeFile: "node-command-worker.json",
-          completion: { type: "none" },
         },
       ],
-      edges: [],
+      steps: [{ id: "command-worker", nodeId: "command-worker" }],
     });
     await writeJson(path.join(workflowDir, "node-command-worker.json"), {
       id: "command-worker",
@@ -7777,15 +7844,14 @@ describe("runWorkflow", () => {
       workflowId: workflowName,
       description: "command timeout log fixture",
       defaults: { maxLoopIterations: 3, nodeTimeoutMs: 50 },
+      entryStepId: "command-worker",
       nodes: [
         {
           id: "command-worker",
-          kind: "task",
           nodeFile: "node-command-worker.json",
-          completion: { type: "none" },
         },
       ],
-      edges: [],
+      steps: [{ id: "command-worker", nodeId: "command-worker" }],
     });
     await writeJson(path.join(workflowDir, "node-command-worker.json"), {
       id: "command-worker",
