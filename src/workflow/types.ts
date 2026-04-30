@@ -471,6 +471,20 @@ export interface ChatReplyDispatchRequest {
   readonly workflowExecutionId: string;
   readonly nodeId: string;
   readonly nodeExecId: string;
+  /**
+   * Optional provider-neutral external-output audit payload persisted in
+   * `event_reply_dispatches.request_json` alongside transport fields.
+   */
+  readonly dispatchAuditMetadata?: Readonly<Record<string, unknown>>;
+}
+
+/** Context for deterministic business-final external mailbox messages. */
+export interface WorkflowExternalOutputContext {
+  readonly workflowId: string;
+  readonly workflowExecutionId: string;
+  readonly sourceNodeId: string;
+  readonly sourceNodeExecId: string;
+  readonly createdAt: string;
 }
 
 export interface ChatReplyDispatchResult {

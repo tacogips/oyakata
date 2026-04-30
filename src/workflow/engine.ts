@@ -27,6 +27,7 @@ import {
 import { DispatchingNodeAdapter } from "./adapters/dispatch";
 import { assembleNodeInput } from "./input-assembly";
 import { normalizeExternalMailboxBusinessPayload } from "./json-boundary";
+import { publishWorkflowBusinessFinalExternalOutput } from "../events/external-output";
 import {
   validateJsonValueAgainstSchema,
   type JsonSchemaValidationError,
@@ -4386,6 +4387,23 @@ async function runWorkflowInternal(
         externalOutputCommunication,
       ],
     };
+    if (options.eventReplyDispatcher !== undefined) {
+      try {
+        await publishWorkflowBusinessFinalExternalOutput({
+          dispatcher: options.eventReplyDispatcher,
+          runtimeOptions: options,
+          workflowId: workflow.workflowId,
+          workflowExecutionId: completed.sessionId,
+          runtimeVariables: completed.runtimeVariables,
+          publishedNodeId: publishedTargetId,
+          publishedNodeExecId: publishedResultExecution.nodeExecId,
+          workflowOutputPayload: outputPayload.value.payload,
+          createdAt: completed.endedAt ?? nowIso(),
+        });
+      } catch {
+        // Best-effort: outbound provider delivery must not fail terminal completion.
+      }
+    }
   }
 
   const persistedCompleted = await persistCompletedSessionState(

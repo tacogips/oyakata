@@ -220,8 +220,9 @@ interface SupervisorMultiTargetPolicy {
       disambiguation (substring / `targetWorkflowName` heuristics)
 - [x] Allow configured fanout when every matching binding sets
       `allowMultiTargetCommands: true`
-- [ ] Optional: richer chat-reply integration for ambiguity text (skipped
-      receipts record the reason today)
+- [x] Optional: richer chat-reply integration for ambiguity text (chat replies
+      now ask for a specific workflow target when destructive commands are
+      ambiguous)
 - [x] Tests for ambiguity and disambiguation paths
 
 ### 6. API, Examples, And Verification
@@ -255,25 +256,25 @@ interface DispatchSupervisorChatInput {
 
 ## Module Status
 
-| Module                          | File Path                                                   | Status      | Tests |
-| ------------------------------- | ----------------------------------------------------------- | ----------- | ----- |
+| Module                          | File Path                                                        | Status      | Tests |
+| ------------------------------- | ---------------------------------------------------------------- | ----------- | ----- |
 | Supervisor naming migration     | CLI/docs/event surfaces; engine auto-improve keeps `superviser*` | Completed   | yes   |
-| Natural-language intent mapping | `src/events/types.ts`, `validate.ts`, `supervisor-intent.ts` | Implemented | yes   |
-| LLM command output contract     | `src/events/supervisor-command-contract.ts`                 | Implemented | yes   |
-| Broadcast / batch routing       | `supervisor-llm-batch.ts`, `trigger-runner.ts`                | Implemented | yes   |
-| Multi-target command safety     | `supervisor-llm-batch.ts`, tests                            | Implemented | yes   |
-| API, examples, verification     | `dispatch-supervisor-chat.ts`, GraphQL, `lib.ts`, tests     | Implemented | yes   |
+| Natural-language intent mapping | `src/events/types.ts`, `validate.ts`, `supervisor-intent.ts`     | Implemented | yes   |
+| LLM command output contract     | `src/events/supervisor-command-contract.ts`                      | Implemented | yes   |
+| Broadcast / batch routing       | `supervisor-llm-batch.ts`, `trigger-runner.ts`                   | Implemented | yes   |
+| Multi-target command safety     | `supervisor-llm-batch.ts`, tests                                 | Implemented | yes   |
+| API, examples, verification     | `dispatch-supervisor-chat.ts`, GraphQL, `lib.ts`, tests          | Implemented | yes   |
 
 ## Dependencies
 
-| Feature                         | Depends On                                      | Status  |
-| ------------------------------- | ----------------------------------------------- | ------- |
-| TASK-001 Naming migration       | current supervisor-control foundation           | DONE    |
-| TASK-002 Intent mapping         | TASK-001 public naming decisions                | DONE    |
-| TASK-003 LLM output contract    | TASK-002                                        | DONE    |
-| TASK-004 Broadcast routing      | TASK-002, TASK-003                              | DONE    |
-| TASK-005 Multi-target safety    | TASK-004                                        | DONE    |
-| TASK-006 API/examples/verify    | TASK-001, TASK-002, TASK-003, TASK-004, TASK-005 | DONE    |
+| Feature                      | Depends On                                       | Status |
+| ---------------------------- | ------------------------------------------------ | ------ |
+| TASK-001 Naming migration    | current supervisor-control foundation            | DONE   |
+| TASK-002 Intent mapping      | TASK-001 public naming decisions                 | DONE   |
+| TASK-003 LLM output contract | TASK-002                                         | DONE   |
+| TASK-004 Broadcast routing   | TASK-002, TASK-003                               | DONE   |
+| TASK-005 Multi-target safety | TASK-004                                         | DONE   |
+| TASK-006 API/examples/verify | TASK-001, TASK-002, TASK-003, TASK-004, TASK-005 | DONE   |
 
 ## Tasks
 
@@ -410,3 +411,13 @@ resolver output is missing, chat-reply wiring for ambiguity messages.
 `impl-plans/README.md`, refreshed this plan's module and task checklists to match
 the tree, minor cleanup in `supervisor-llm-batch.ts` disambiguation.
 **Notes**: `bun run typecheck` and `bun test` verified after TS edit.
+
+### Session: 2026-04-30 (ambiguity reply follow-up)
+
+**Tasks Completed**: Closed the optional richer ambiguity chat-reply item:
+destructive multi-supervisor ambiguity replies now ask for a specific workflow
+target, and their idempotency key is aligned with event `dedupeKey` via the
+event-supervisor hardening follow-up.
+**Tasks In Progress**: None
+**Blockers**: None
+**Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/events/supervisor-control-reply.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/server/graphql.test.ts` (101 pass)

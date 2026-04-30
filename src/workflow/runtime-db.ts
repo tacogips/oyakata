@@ -129,7 +129,8 @@ export type RuntimeEventReplyDispatchStatus =
   | "dispatching"
   | "sent"
   | "queued"
-  | "failed";
+  | "failed"
+  | "no_delivery_target";
 
 export interface RuntimeEventReplyDispatchRecord {
   readonly idempotencyKey: string;

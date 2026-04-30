@@ -41,9 +41,7 @@ import type {
 import type { ChatReplyDispatcher, LoadOptions } from "../workflow/types";
 import type { ValidationIssue } from "../workflow/types";
 import type { CommunicationService } from "../workflow/communication-service";
-import type {
-  EventSupervisedRunRecord,
-} from "../events/types";
+import type { EventSupervisedRunRecord } from "../events/types";
 
 export interface GraphqlRequestContext
   extends LoadOptions,
@@ -327,7 +325,6 @@ export interface SupervisedWorkflowLookupGraphqlInput {
 }
 
 export interface DispatchSupervisorChatGraphqlInput {
-  readonly eventRoot: string;
   readonly sourceId: string;
   readonly text: string;
   readonly conversationId?: string;
@@ -336,8 +333,6 @@ export interface DispatchSupervisorChatGraphqlInput {
   readonly eventType?: string;
   readonly provider?: string;
   readonly idempotencyKey?: string;
-  readonly endpoint?: string;
-  readonly authToken?: string;
 }
 
 export interface DispatchSupervisorChatResultView {

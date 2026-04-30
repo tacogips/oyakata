@@ -1,6 +1,9 @@
 import { isJsonObject } from "../shared/json";
 import { listWorkflowCatalogSources } from "../workflow/catalog";
-import { isEventSourceEnabled, loadEventConfiguration } from "./config";
+import {
+  isEventSourceEnabled,
+  loadEventConfiguration,
+} from "./config";
 import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
 import {
   isValidEventHttpPath,
@@ -546,6 +549,77 @@ function validateSupervisedBinding(
   }
 }
 
+function validateMailboxBridge(
+  binding: EventBinding,
+  issues: EventConfigValidationIssue[],
+): void {
+  const mb = binding.mailboxBridge;
+  if (mb === undefined) {
+    return;
+  }
+  const base = `bindings.${binding.id}.mailboxBridge`;
+  if (!isJsonObject(mb as unknown)) {
+    issues.push(error(base, "mailboxBridge must be an object when set"));
+    return;
+  }
+  const supervised = binding.execution?.mode === "supervised";
+  if (mb.input?.consumer === "supervisor" && !supervised) {
+    issues.push(
+      error(
+        `${base}.input.consumer`,
+        'mailboxBridge.input.consumer "supervisor" requires execution.mode "supervised"',
+      ),
+    );
+  }
+  if (mb.input?.consumer === "direct-workflow" && supervised) {
+    issues.push(
+      error(
+        `${base}.input.consumer`,
+        'mailboxBridge.input.consumer "direct-workflow" cannot be used with execution.mode "supervised"',
+      ),
+    );
+  }
+  const replyMode = mb.output?.reply?.mode;
+  if (
+    replyMode !== undefined &&
+    (typeof replyMode !== "string" ||
+      (replyMode !== "none" && replyMode !== "final"))
+  ) {
+    issues.push(
+      error(
+        `${base}.output.reply.mode`,
+        `invalid reply mode '${String(replyMode)}' (expected none or final)`,
+      ),
+    );
+  }
+  const progressMode = mb.output?.progress?.mode;
+  if (
+    progressMode !== undefined &&
+    (typeof progressMode !== "string" ||
+      (progressMode !== "none" && progressMode !== "status-only"))
+  ) {
+    issues.push(
+      error(
+        `${base}.output.progress.mode`,
+        `invalid progress mode '${String(progressMode)}' (expected none or status-only)`,
+      ),
+    );
+  }
+  const controlMode = mb.output?.control?.mode;
+  if (
+    controlMode !== undefined &&
+    (typeof controlMode !== "string" ||
+      (controlMode !== "none" && controlMode !== "status-only"))
+  ) {
+    issues.push(
+      error(
+        `${base}.output.control.mode`,
+        `invalid control mode '${String(controlMode)}' (expected none or status-only)`,
+      ),
+    );
+  }
+}
+
 function validateBinding(
   binding: EventBinding,
   sourcesById: ReadonlyMap<string, EventSourceConfig>,
@@ -602,6 +676,7 @@ function validateBinding(
     issues.push(warning(`bindings.${binding.id}`, "binding is disabled"));
   }
   validateSupervisedBinding(binding, issues);
+  validateMailboxBridge(binding, issues);
 }
 
 export async function validateEventConfiguration(

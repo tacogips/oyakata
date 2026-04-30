@@ -169,4 +169,62 @@ describe("createWorkflowSupervisorGraphqlClient", () => {
       correlationKey: "corr-1",
     });
   });
+
+  test("submitInput can start a supervised run when no prior run exists", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            errors: [{ message: "no supervised run matches the lookup" }],
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessfulPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const client = createWorkflowSupervisorGraphqlClient({
+      endpoint: "http://example.test/graphql",
+      fetchImpl,
+    });
+
+    await client.submitInput({
+      sourceId: "source-1",
+      bindingId: "binding-1",
+      correlationKey: "corr-1",
+      targetWorkflowName: "demo",
+      bindingSnapshot: buildBinding(),
+      runtimeVariables: { humanInput: { text: "start" } },
+    });
+
+    const secondCall = fetchImpl.mock.calls[1];
+    const rawBody = secondCall?.[1]?.body;
+    if (typeof rawBody !== "string") {
+      throw new Error("expected string request body");
+    }
+    const parsed = JSON.parse(rawBody) as {
+      readonly variables?: {
+        readonly input?: {
+          readonly command?: {
+            readonly action?: string;
+            readonly supervisedRunId?: string;
+          };
+          readonly binding?: EventBinding;
+        };
+      };
+    };
+    expect(parsed.variables?.input?.command?.action).toBe("input");
+    expect(parsed.variables?.input?.command?.supervisedRunId).toBeUndefined();
+    expect(parsed.variables?.input?.binding?.execution?.control).toEqual({
+      intentMapping: { mode: "structured-only" },
+    });
+  });
 });

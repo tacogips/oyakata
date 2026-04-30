@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  buildControlStatusExternalOutputMessage,
   buildSupervisorControlChatReplyRequest,
   formatSupervisorControlReplyText,
   resolveChatReplyTargetFromEnvelope,
@@ -19,7 +20,9 @@ function baseEvent(
     receivedAt: input.receivedAt ?? "2026-04-29T00:00:00.000Z",
     dedupeKey: input.dedupeKey ?? "d",
     input: input.input,
-    ...(input.conversation === undefined ? {} : { conversation: input.conversation }),
+    ...(input.conversation === undefined
+      ? {}
+      : { conversation: input.conversation }),
     ...(input.actor === undefined ? {} : { actor: input.actor }),
   };
 }
@@ -134,7 +137,33 @@ describe("supervisor-control-reply", () => {
       skipReason: "ambiguous",
     });
     expect(req).not.toBeNull();
-    expect(req!.message.text).toBe("Supervisor: ambiguous");
+    expect(req!.message.text).toBe(
+      "Supervisor needs a specific workflow target before running this command: ambiguous",
+    );
     expect(req!.idempotencyKey).toBe("supervisor-control:r1:skip");
+    expect(req!.dispatchAuditMetadata?.["canonicalExternalOutput"]).toMatchObject(
+      {
+        kind: "external-output",
+        outputKind: "control-status",
+      },
+    );
+  });
+
+  test("buildControlStatusExternalOutputMessage is control-status", () => {
+    const event = baseEvent({
+      sourceId: "s",
+      eventId: "e",
+      input: { text: "x" },
+      conversation: { id: "c1" },
+    });
+    const msg = buildControlStatusExternalOutputMessage({
+      event,
+      receiptId: "r2",
+      action: "skip",
+      skipReason: "x",
+      createdAt: "2026-04-30T00:00:00.000Z",
+    });
+    expect(msg?.outputKind).toBe("control-status");
+    expect(msg?.idempotencyKey).toBe("supervisor-control:r2:skip");
   });
 });

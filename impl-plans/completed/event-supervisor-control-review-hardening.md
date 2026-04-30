@@ -135,47 +135,32 @@ specific chat adapters.
 Phase 1 architecture still matches the intended purpose documented in
 `design-event-supervisor-control.md`: the runtime-owned supervisor client is the
 current lifecycle authority, while authored supervisor workflow execution
-remains a later packaging step. The remaining issues are follow-up gaps around
-event-level idempotency and public control-plane ergonomics.
+remains a later packaging step. The 2026-04-30 follow-up pass closed the
+recorded idempotency and public control-plane ergonomics gaps below.
 
-1. [src/events/trigger-runner.ts](/g/gits/tacogips/divedra/src/events/trigger-runner.ts:817)
+1. **Resolved (2026-04-30)**. [src/events/trigger-runner.ts](/g/gits/tacogips/divedra/src/events/trigger-runner.ts:817)
    now emits a single router-level destructive-ambiguity clarification, and
    [src/events/reply-dispatcher.ts](/g/gits/tacogips/divedra/src/events/reply-dispatcher.ts:76)
-   persistently dedupes reply sends by idempotency key. However, the synthetic
-   router reply key is derived from `sourceId + eventId`, while event receipt
-   dedupe is based on `dedupeKey`. Duplicate deliveries that collapse at the
-   receipt layer via the same `dedupeKey` but carry a different `eventId` can
-   still emit the clarification again. This is an architectural mismatch with
-   the design's idempotent event-control intent. **Next step**: align router
-   reply idempotency with the same event-delivery identity used by the receipt
-   layer, or persist a dedicated router-level receipt keyed by
-   `sourceId + dedupeKey` (plus ambiguity kind if needed).
-2. [src/graphql/types.ts](/g/gits/tacogips/divedra/src/graphql/types.ts:329)
+   persistently dedupes reply sends by idempotency key. The synthetic router
+   reply key now uses `sourceId + dedupeKey + ambiguity kind`, aligning the
+   durable reply idempotency key with event-receipt dedupe semantics instead of
+   `eventId`.
+2. **Resolved (2026-04-30)**. [src/graphql/types.ts](/g/gits/tacogips/divedra/src/graphql/types.ts:329)
    and [src/graphql/schema.ts](/g/gits/tacogips/divedra/src/graphql/schema.ts:1512)
-   make `dispatchSupervisorChat` accept caller-supplied `eventRoot`,
+   previously made `dispatchSupervisorChat` accept caller-supplied `eventRoot`,
    `endpoint`, and `authToken`. That leaks server filesystem layout and
-   downstream transport/credential selection into the public GraphQL surface.
-   In practice this lets a remote caller steer server-local event configuration
-   resolution and outbound supervisor transport selection, which turns the API
-   into a filesystem/transport proxy rather than a supervisor-oriented control
-   plane. That does not match the design requirement in
-   [design-event-supervisor-control.md](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:494)
-   that remote web apps should call a supervisor-oriented API without local
-   filesystem access or raw transport mechanics. **Next step**: resolve the
-   effective event configuration root and remote supervisor transport strictly
-   from server context/configuration, then narrow the public mutation input to
-   source identity plus chat/event payload only.
-3. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:1001)
+   `endpoint`, and `authToken`. The public mutation input is now narrowed to
+   source identity plus chat/event payload fields; event configuration root and
+   transport credentials resolve from server context/configuration.
+3. **Resolved (2026-04-30)**. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:1001)
    and [src/workflow/supervisor-graphql-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-graphql-client.ts:447)
-   look up an existing supervised run before `submitInput`, then forcibly set
-   `startOnFirstInput: false`. That means the public convenience clients cannot
-   express the design's correlation-aware first-input behavior from
+   previously looked up an existing supervised run before `submitInput`, then
+   forcibly set `startOnFirstInput: false`. The convenience clients now accept
+   `targetWorkflowName` and `bindingSnapshot` so `submitInput` can create the
+   first supervised run when policy allows, matching the correlation-aware
+   first-input behavior from
    [design-event-supervisor-control.md](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:275),
-   even though the lower-level dispatch path supports it. **Next step**: either
-   extend the local/remote convenience APIs so `submitInput` can carry enough
-   binding context to create the first supervised run when policy allows, or
-   narrow/document the current method as "existing run only" and direct
-   first-message workflows through `start` / `dispatchSupervisorChat`.
+   while existing-run input still disables accidental first-run creation.
 
 ## Modules
 
@@ -281,23 +266,23 @@ interface SupervisorReviewVerification {
 
 ## Module Status
 
-| Module                 | File Path                                                            | Status      | Tests |
-| ---------------------- | -------------------------------------------------------------------- | ----------- | ----- |
-| Durable locking/replay | `src/events/supervised-runs.ts`, `src/workflow/runtime-db.ts`        | COMPLETED   | yes   |
-| GraphQL validation     | `src/graphql/schema.ts`, `src/workflow/supervisor-graphql-client.ts` | COMPLETED   | yes   |
-| Public idempotency     | `src/workflow/supervisor-client.ts`, `src/graphql/types.ts`          | COMPLETED   | yes   |
-| Restart budget         | `src/workflow/supervisor-client.ts`                                  | COMPLETED   | yes   |
-| Verification           | tests/plans                                                          | COMPLETED   | yes   |
+| Module                 | File Path                                                            | Status    | Tests |
+| ---------------------- | -------------------------------------------------------------------- | --------- | ----- |
+| Durable locking/replay | `src/events/supervised-runs.ts`, `src/workflow/runtime-db.ts`        | COMPLETED | yes   |
+| GraphQL validation     | `src/graphql/schema.ts`, `src/workflow/supervisor-graphql-client.ts` | COMPLETED | yes   |
+| Public idempotency     | `src/workflow/supervisor-client.ts`, `src/graphql/types.ts`          | COMPLETED | yes   |
+| Restart budget         | `src/workflow/supervisor-client.ts`                                  | COMPLETED | yes   |
+| Verification           | tests/plans                                                          | COMPLETED | yes   |
 
 ## Dependencies
 
-| Feature                      | Depends On                                     | Status  |
-| ---------------------------- | ---------------------------------------------- | ------- |
-| TASK-001 Durable lock/replay | `event-supervisor-control-foundation:TASK-002` | DONE    |
-| TASK-002 GraphQL validation  | `event-supervisor-control-foundation:TASK-005` | DONE    |
-| TASK-003 Idempotency keys    | TASK-001                                       | DONE    |
-| TASK-004 Restart budget      | `event-supervisor-control-foundation:TASK-004` | DONE    |
-| TASK-005 Verification        | TASK-001, TASK-002, TASK-003, TASK-004         | DONE    |
+| Feature                      | Depends On                                     | Status |
+| ---------------------------- | ---------------------------------------------- | ------ |
+| TASK-001 Durable lock/replay | `event-supervisor-control-foundation:TASK-002` | DONE   |
+| TASK-002 GraphQL validation  | `event-supervisor-control-foundation:TASK-005` | DONE   |
+| TASK-003 Idempotency keys    | TASK-001                                       | DONE   |
+| TASK-004 Restart budget      | `event-supervisor-control-foundation:TASK-004` | DONE   |
+| TASK-005 Verification        | TASK-001, TASK-002, TASK-003, TASK-004         | DONE   |
 
 ## Tasks
 
@@ -457,6 +442,7 @@ chat reply dispatch for supervised outcomes when a reply target exists.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. `dispatchEventToMatchingBindings` now emits a single provider-neutral clarification when
    `planSupervisedLlmBindingsDispatch` returns `kind: "ambiguous"`, using a stable synthetic receipt id
    under `router:<sourceId>:<eventId>:supervised-llm-destructive-ambiguous`. Bindings in `bindingIds` pass
@@ -464,7 +450,7 @@ chat reply dispatch for supervised outcomes when a reply target exists.
 2. Supervised bindings that fail during `inputMapping` / `mapEventToWorkflowInput` before dispatch now send
    the same generic failure reply pattern as supervised command failures when `eventReplyDispatcher` is set.
 3. Regression: `dispatchEventToMatchingBindings sends one chat clarification for destructive llm ambiguity`.
-**Verification**: `bun run typecheck` and full `bun test` pass.
+   **Verification**: `bun run typecheck` and full `bun test` pass.
 
 ### Session: 2026-04-30 (review feedback on reply-path alignment, superseded)
 
@@ -488,6 +474,7 @@ ambiguity fanout and mapping-time failures.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. Added optional `EventSupervisorCommand.supervisedRunId` (GraphQL input field
    `command.supervisedRunId`). `dispatchCommand` uses it to load the authoritative
    row, rejects scope drift and active-run conflicts, and uses it for command-slot
@@ -497,7 +484,7 @@ ambiguity fanout and mapping-time failures.
    library `resolveLookupRecord` also reconciles returned rows.
 3. Documented the command-scoped field in `design-event-supervisor-control.md`.
 4. Regression: `dispatchCommand rejects supervisedRunId when command correlation does not match the run`.
-**Verification**: `bun run typecheck`; `bun test` on supervisor-client, supervisor-graphql-client, graphql schema, trigger-runner.
+   **Verification**: `bun run typecheck`; `bun test` on supervisor-client, supervisor-graphql-client, graphql schema, trigger-runner.
 
 ### Session: 2026-04-30 (current diff review feedback)
 
@@ -508,6 +495,7 @@ Post-Closure Review Feedback above.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. The runtime-owned supervisor client remains aligned with the design's Phase 1
    intent; no architecture reset is needed before the packaged supervisor
    workflow iteration.
@@ -521,7 +509,7 @@ Post-Closure Review Feedback above.
 4. Local and remote convenience `submitInput` APIs still cannot express
    first-message supervised-run creation when `startOnFirstInput` policy is the
    intended entry path.
-**Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/events/dispatch-supervisor-chat.test.ts`
+   **Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/events/dispatch-supervisor-chat.test.ts`
 
 ### Session: 2026-04-30 (review revalidation for supervisor/event-source continuation)
 
@@ -532,6 +520,7 @@ feature with targeted checks.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. Architecture remains aligned with the intended Phase 1 purpose: the
    runtime-owned `WorkflowSupervisorClient` is still the lifecycle authority,
    and the packaged authored supervisor workflow remains a later iteration
@@ -552,7 +541,7 @@ feature with targeted checks.
    expanded intentionally.
 5. No additional behavioral regressions were identified beyond the already
    recorded follow-up items.
-**Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/events/dispatch-supervisor-chat.test.ts` (78 pass)
+   **Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/events/dispatch-supervisor-chat.test.ts` (78 pass)
 
 ### Session: 2026-04-30 (supervisor/event-source review confirmation)
 
@@ -563,6 +552,7 @@ verification.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. Architecture still matches the intended Phase 1 purpose in
    `design-event-supervisor-control.md`: the runtime-owned
    `WorkflowSupervisorClient` remains the lifecycle authority, and packaging the
@@ -578,7 +568,7 @@ verification.
    does not change the existing review conclusions.
 4. No additional behavioral regressions were identified in this review pass
    beyond the already recorded follow-up items.
-**Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/events/dispatch-supervisor-chat.test.ts` (78 pass)
+   **Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/events/dispatch-supervisor-chat.test.ts` (78 pass)
 
 ### Session: 2026-04-30 (focused supervisor chat review pass)
 
@@ -590,6 +580,7 @@ the existing Post-Closure Review Feedback items.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. The current architecture still matches the intended Phase 1 boundary in
    `design-event-supervisor-control.md`: lifecycle ownership remains with the
    runtime `WorkflowSupervisorClient`, and authored supervisor workflow
@@ -605,7 +596,7 @@ the existing Post-Closure Review Feedback items.
 3. The current unstaged `src/events/trigger-runner.ts` change is still
    non-behavioral; it only removes an unnecessary cast when threading `options`
    into the LLM-batch helper and reply dispatch helper.
-**Verification**: `bun test src/events/dispatch-supervisor-chat.test.ts src/events/supervisor-llm-batch.test.ts src/workflow/supervisor-graphql-client.test.ts`; `bun test src/events/trigger-runner.test.ts -t supervised`
+   **Verification**: `bun test src/events/dispatch-supervisor-chat.test.ts src/events/supervisor-llm-batch.test.ts src/workflow/supervisor-graphql-client.test.ts`; `bun test src/events/trigger-runner.test.ts -t supervised`
 
 ### Session: 2026-04-30 (requested supervisor/event-source architecture review)
 
@@ -615,6 +606,7 @@ Phase 1 purpose, and recorded the current review state for continuation.
 **Tasks In Progress**: None
 **Blockers**: None
 **Notes**:
+
 1. The current architecture still matches the intended Phase 1 design:
    lifecycle ownership remains with the runtime
    `WorkflowSupervisorClient`, while authored supervisor workflow packaging is
@@ -634,7 +626,22 @@ Phase 1 purpose, and recorded the current review state for continuation.
    clarification again.
 6. The current unstaged `src/events/trigger-runner.ts` edit is non-behavioral;
    it only removes an unnecessary cast when threading `options`.
-**Verification**: `bun test src/events/dispatch-supervisor-chat.test.ts src/events/supervised-runs.test.ts src/events/supervisor-command-contract.test.ts src/events/supervisor-control-reply.test.ts src/events/supervisor-intent.test.ts src/events/supervisor-llm-batch.test.ts src/events/supervisor-llm-intent.test.ts src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts` (110 pass)
+   **Verification**: `bun test src/events/dispatch-supervisor-chat.test.ts src/events/supervised-runs.test.ts src/events/supervisor-command-contract.test.ts src/events/supervisor-control-reply.test.ts src/events/supervisor-intent.test.ts src/events/supervisor-llm-batch.test.ts src/events/supervisor-llm-intent.test.ts src/events/trigger-runner.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts` (110 pass)
+
+### Session: 2026-04-30 (post-closure follow-up fixes)
+
+**Tasks Completed**: Closed Post-Closure Review Feedback items 1 through 3:
+router-level destructive-ambiguity reply idempotency now uses event
+`dedupeKey`; GraphQL `dispatchSupervisorChat` no longer accepts caller-supplied
+`eventRoot`, `endpoint`, or `authToken`; local and remote `submitInput`
+convenience clients can start the first supervised run when provided
+`targetWorkflowName` and `bindingSnapshot`.
+**Tasks In Progress**: None
+**Blockers**: None
+**Notes**: The runtime-owned supervisor client remains the lifecycle authority.
+The broader internal `superviser` naming migration and deeper nested
+patch/rerun matrices remain separate optional scope.
+**Verification**: `bun run typecheck`; `bun test src/events/trigger-runner.test.ts src/events/supervisor-control-reply.test.ts src/workflow/supervisor-client.test.ts src/workflow/supervisor-graphql-client.test.ts src/graphql/schema.test.ts src/server/graphql.test.ts` (101 pass)
 
 ## Related Plans
 

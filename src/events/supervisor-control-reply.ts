@@ -3,68 +3,18 @@ import type {
   ChatReplyDispatchTarget,
 } from "../workflow/types";
 import type { SupervisedWorkflowView } from "../workflow/supervisor-client";
-import type { ExternalEventEnvelope } from "./types";
+import type {
+  EventSupervisorAction,
+  ExternalEventEnvelope,
+  ExternalOutputMessage,
+} from "./types";
+import {
+  buildChatReplyRequestForExternalOutput,
+  formatExternalOutputTransportText,
+} from "./external-output";
+import { resolveChatReplyTargetFromEnvelope } from "./chat-reply-target";
 
-function readOptionalString(
-  value: Readonly<Record<string, unknown>>,
-  key: string,
-): string | undefined {
-  const raw = value[key];
-  return typeof raw === "string" && raw.length > 0 ? raw : undefined;
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Resolves a chat reply target from an event envelope when the event carries
- * conversation metadata (same contract as runtimeVariables.event for chat-reply-worker).
- */
-export function resolveChatReplyTargetFromEnvelope(
-  event: ExternalEventEnvelope,
-): ChatReplyDispatchTarget | null {
-  const input = event.input as Readonly<Record<string, unknown>>;
-  const replyTarget = input["replyTarget"];
-  if (isRecord(replyTarget)) {
-    const sourceId = readOptionalString(replyTarget, "sourceId");
-    const provider = readOptionalString(replyTarget, "provider");
-    const eventId = readOptionalString(replyTarget, "eventId");
-    const conversationId = readOptionalString(replyTarget, "conversationId");
-    if (
-      sourceId !== undefined &&
-      provider !== undefined &&
-      eventId !== undefined &&
-      conversationId !== undefined
-    ) {
-      const threadId = readOptionalString(replyTarget, "threadId");
-      const actorId = readOptionalString(replyTarget, "actorId");
-      return {
-        sourceId,
-        provider,
-        eventId,
-        conversationId,
-        ...(threadId === undefined ? {} : { threadId }),
-        ...(actorId === undefined ? {} : { actorId }),
-      };
-    }
-  }
-
-  const conversationId = event.conversation?.id;
-  if (conversationId === undefined) {
-    return null;
-  }
-  const threadId = event.conversation?.threadId;
-  const actorId = event.actor?.id;
-  return {
-    sourceId: event.sourceId,
-    provider: event.provider,
-    eventId: event.eventId,
-    conversationId,
-    ...(threadId === undefined ? {} : { threadId }),
-    ...(actorId === undefined ? {} : { actorId }),
-  };
-}
+export { resolveChatReplyTargetFromEnvelope } from "./chat-reply-target";
 
 export function formatSupervisorControlReplyText(
   view: SupervisedWorkflowView,
@@ -73,9 +23,7 @@ export function formatSupervisorControlReplyText(
   const run = view.supervisedRun;
   const target = run.activeTargetExecutionId;
   const targetStatus =
-    view.activeTargetStatus === undefined
-      ? "unknown"
-      : view.activeTargetStatus;
+    view.activeTargetStatus === undefined ? "unknown" : view.activeTargetStatus;
   const lines = [
     `Supervised workflow control (${action})`,
     `supervisedRunId: ${run.supervisedRunId}`,
@@ -87,6 +35,64 @@ export function formatSupervisorControlReplyText(
   return lines.join("\n");
 }
 
+export function buildControlStatusExternalOutputMessage(input: {
+  readonly event: ExternalEventEnvelope;
+  readonly receiptId: string;
+  readonly action: EventSupervisorAction | "skip" | "failed";
+  readonly view?: SupervisedWorkflowView;
+  readonly skipReason?: string;
+  readonly createdAt?: string;
+}): ExternalOutputMessage | null {
+  const target = resolveChatReplyTargetFromEnvelope(input.event);
+  if (target === null) {
+    return null;
+  }
+  const skipReason = input.skipReason;
+  const text =
+    input.view !== undefined
+      ? formatSupervisorControlReplyText(input.view, input.action)
+      : skipReason !== undefined && skipReason.includes("ambiguous")
+        ? `Supervisor needs a specific workflow target before running this command: ${skipReason}`
+        : `Supervisor: ${skipReason ?? "skipped"}`;
+  const run = input.view?.supervisedRun;
+  const workflowExecutionId =
+    run?.activeTargetExecutionId ??
+    run?.supervisedRunId ??
+    `supervisor-receipt:${input.receiptId}`;
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  return {
+    kind: "external-output",
+    outputKind: "control-status",
+    address: {
+      sourceId: input.event.sourceId,
+      workflowName: run?.targetWorkflowName ?? "event-supervisor",
+      workflowExecutionId,
+      ...(run?.supervisedRunId === undefined
+        ? {}
+        : { supervisedRunId: run.supervisedRunId }),
+      ...(input.event.conversation?.id === undefined
+        ? {}
+        : { conversationId: input.event.conversation.id }),
+      ...(input.event.conversation?.threadId === undefined
+        ? {}
+        : { threadId: input.event.conversation.threadId }),
+      eventId: input.event.eventId,
+      providerHint: input.event.provider,
+      ...(input.event.actor?.id === undefined
+        ? {}
+        : { actorId: input.event.actor.id }),
+    },
+    payload: {
+      chatReplyTarget: target,
+      controlStatusText: text,
+      eventId: input.event.eventId,
+      action: input.action,
+    },
+    idempotencyKey: `supervisor-control:${input.receiptId}:${input.action}`,
+    createdAt,
+  };
+}
+
 export function buildSupervisorControlChatReplyRequest(input: {
   readonly event: ExternalEventEnvelope;
   readonly receiptId: string;
@@ -94,28 +100,38 @@ export function buildSupervisorControlChatReplyRequest(input: {
   readonly view?: SupervisedWorkflowView;
   readonly skipReason?: string;
 }): ChatReplyDispatchRequest | null {
-  const target = resolveChatReplyTargetFromEnvelope(input.event);
-  if (target === null) {
+  const message = buildControlStatusExternalOutputMessage({
+    event: input.event,
+    receiptId: input.receiptId,
+    action: input.action as EventSupervisorAction | "skip" | "failed",
+    ...(input.view === undefined ? {} : { view: input.view }),
+    ...(input.skipReason === undefined ? {} : { skipReason: input.skipReason }),
+  });
+  if (message === null) {
     return null;
   }
-  const text =
-    input.view !== undefined
-      ? formatSupervisorControlReplyText(input.view, input.action)
-      : `Supervisor: ${input.skipReason ?? "skipped"}`;
+  const transportText = formatExternalOutputTransportText(message);
+  const embedded = message.payload["chatReplyTarget"];
+  if (
+    typeof embedded !== "object" ||
+    embedded === null ||
+    !("sourceId" in embedded)
+  ) {
+    return null;
+  }
+  const target = embedded as ChatReplyDispatchTarget;
   const run = input.view?.supervisedRun;
   const workflowExecutionId =
     run?.activeTargetExecutionId ??
     run?.supervisedRunId ??
     `supervisor-receipt:${input.receiptId}`;
-  return {
+  return buildChatReplyRequestForExternalOutput({
+    message,
     target,
-    message: { text },
-    visibility: "public",
-    threadPolicy: "same-thread",
-    idempotencyKey: `supervisor-control:${input.receiptId}:${input.action}`,
+    transportText,
     workflowId: run?.targetWorkflowName ?? "event-supervisor",
     workflowExecutionId,
     nodeId: "event-supervisor-control",
     nodeExecId: input.receiptId,
-  };
+  });
 }

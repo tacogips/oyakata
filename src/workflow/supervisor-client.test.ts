@@ -402,7 +402,9 @@ describe("createWorkflowSupervisorClient", () => {
         binding,
         runtimeVariables: {},
       }),
-    ).rejects.toThrow(/targetWorkflowName does not match binding\.workflowName/i);
+    ).rejects.toThrow(
+      /targetWorkflowName does not match binding\.workflowName/i,
+    );
   });
 
   test("library start replays when idempotencyKey matches", async () => {
@@ -524,6 +526,61 @@ describe("createWorkflowSupervisorClient", () => {
             payload: { reply: "started" },
             backendSession: { sessionId: "backend-input-first-1" },
           },
+        },
+      },
+    });
+
+    expect(view.supervisedRun.status).toBe("running");
+    expect(view.supervisedRun.activeTargetExecutionId).toBeDefined();
+  });
+
+  test("library submitInput starts a supervised run on first input when enabled", async () => {
+    const root = await makeTempDir();
+    const workflowName = "sup-lib-input-first-start";
+    await writeManagerOnlyWorkflow({
+      root,
+      workflowName,
+      sticky: false,
+    });
+
+    const loadOpts = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const binding: EventBinding = {
+      id: "b-lib-input-first",
+      sourceId: "s-lib-input-first",
+      workflowName,
+      inputMapping: { mode: "event-input" },
+      execution: {
+        mode: "supervised",
+        control: {
+          intentMapping: { mode: "structured-only" },
+          startOnFirstInput: true,
+        },
+      },
+    };
+
+    const client = createWorkflowSupervisorClient(loadOpts);
+    const view = await client.submitInput({
+      sourceId: binding.sourceId,
+      bindingId: binding.id,
+      correlationKey: "corr-lib-input-first",
+      targetWorkflowName: workflowName,
+      bindingSnapshot: binding,
+      runtimeVariables: {
+        humanInput: {
+          request: "start from library input",
+        },
+      },
+      mockScenario: {
+        "divedra-manager": {
+          payload: { reply: "started" },
+          backendSession: { sessionId: "backend-lib-input-first-1" },
         },
       },
     });

@@ -2363,7 +2363,9 @@ describe("createGraphqlSchema", () => {
         },
         options,
       ),
-    ).rejects.toThrow(/targetWorkflowName does not match binding\.workflowName/i);
+    ).rejects.toThrow(
+      /targetWorkflowName does not match binding\.workflowName/i,
+    );
   });
 
   test("supervisedWorkflowRun rejects empty correlation lookup fields", async () => {
@@ -2437,26 +2439,29 @@ describe("createGraphqlSchema", () => {
     ).rejects.toThrow(/maxRestartsOnFailure/i);
   });
 
-  test("dispatchSupervisorChat rejects blank eventRoot", async () => {
+  test("dispatchSupervisorChat uses server context for eventRoot", async () => {
     const root = await makeTempDir();
+    const eventRoot = path.join(root, ".divedra-events");
+    await mkdir(path.join(eventRoot, "sources"), { recursive: true });
+    await mkdir(path.join(eventRoot, "bindings"), { recursive: true });
     const options = {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       rootDataDir: path.join(root, "data"),
       sessionStoreRoot: path.join(root, "sessions"),
       cwd: root,
+      eventRoot,
     };
     const schema = createGraphqlSchema();
     await expect(
       schema.mutation.dispatchSupervisorChat(
         {
-          eventRoot: "   ",
           sourceId: "src-1",
           text: "hi",
         },
         options,
       ),
-    ).rejects.toThrow(/non-empty eventRoot/i);
+    ).rejects.toThrow(/event source not found or disabled/i);
   });
 
   test("dispatchSupervisorChat rejects blank text", async () => {
@@ -2472,7 +2477,6 @@ describe("createGraphqlSchema", () => {
     await expect(
       schema.mutation.dispatchSupervisorChat(
         {
-          eventRoot: root,
           sourceId: "src-1",
           text: "   ",
         },

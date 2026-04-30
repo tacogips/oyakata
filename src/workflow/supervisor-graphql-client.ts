@@ -447,34 +447,80 @@ export function createWorkflowSupervisorGraphqlClient(
     async submitInput(
       input: SubmitSupervisedWorkflowInput,
     ): Promise<SupervisedWorkflowView> {
-      const prior = await querySupervisedSnapshot(
-        options,
-        lookupForGraphqlQuery(input),
-      );
-      const record = prior.supervisedRun;
+      let record = null as
+        | Awaited<ReturnType<typeof querySupervisedSnapshot>>["supervisedRun"]
+        | null;
+      try {
+        const prior = await querySupervisedSnapshot(
+          options,
+          lookupForGraphqlQuery(input),
+        );
+        record = prior.supervisedRun;
+      } catch (error: unknown) {
+        if (
+          !(error instanceof Error) ||
+          !error.message.includes("no supervised run matches the lookup")
+        ) {
+          throw error;
+        }
+      }
+      const binding =
+        record === null
+          ? input.bindingSnapshot
+          : eventBindingStubFromSupervisedRunRecord(record);
+      if (binding === undefined) {
+        throw new Error(
+          "supervised input start requires bindingSnapshot when no supervised run exists",
+        );
+      }
+      const sourceId = record?.sourceId ?? input.sourceId;
+      const bindingId = record?.bindingId ?? input.bindingId;
+      const correlationKey = record?.correlationKey ?? input.correlationKey;
+      const targetWorkflowName =
+        record?.targetWorkflowName ?? input.targetWorkflowName;
+      if (
+        sourceId === undefined ||
+        sourceId.length === 0 ||
+        bindingId === undefined ||
+        bindingId.length === 0 ||
+        correlationKey === undefined ||
+        correlationKey.length === 0 ||
+        targetWorkflowName === undefined ||
+        targetWorkflowName.length === 0
+      ) {
+        throw new Error(
+          "supervised input start requires sourceId, bindingId, correlationKey, and targetWorkflowName when no supervised run exists",
+        );
+      }
       const cmd: EventSupervisorCommand = {
         commandId: resolveRemoteCommandId({
           idempotencyKey: input.idempotencyKey,
           prefix: "gql-input",
-          scope: record.supervisedRunId,
+          scope: record?.supervisedRunId ?? correlationKey,
         }),
-        sourceId: record.sourceId,
-        bindingId: record.bindingId,
-        correlationKey: record.correlationKey,
+        sourceId,
+        bindingId,
+        correlationKey,
         action: "input",
-        targetWorkflowName: record.targetWorkflowName,
-        supervisedRunId: record.supervisedRunId,
+        targetWorkflowName,
+        ...(record === null ? {} : { supervisedRunId: record.supervisedRunId }),
         receivedEventReceiptId: "graphql",
         ...(input.runtimeVariables === undefined
           ? {}
           : { runtimeVariables: input.runtimeVariables }),
       };
-      const binding = eventBindingStubFromSupervisedRunRecord(record);
       const withControl: EventBinding = {
         ...binding,
         execution: {
           ...binding.execution,
-          control: { startOnFirstInput: false },
+          ...(record === null
+            ? {}
+            : {
+                control: {
+                  ...binding.execution?.control,
+                  startOnFirstInput: false,
+                },
+              }),
         },
       };
       return dispatchRemote({

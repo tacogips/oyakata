@@ -395,6 +395,15 @@ types. Event bindings live outside workflow bundles so adding or changing an
 event source does not mutate `workflow.json`. The current implementation lives
 under `src/events/`.
 
+Target architectural direction: event bindings should be understood as bridges
+between provider transports and the runtime-owned `external-mailbox` boundary,
+not as the only place where workflow execution semantics are defined. External
+input and output mailbox surfaces exist independently of any attached event
+source; adapters normalize inbound provider events into external mailbox input
+and deliver provider-neutral external mailbox output back to the provider. The
+detailed design for that direction is
+`design-docs/specs/design-event-external-mailbox-binding.md`.
+
 Event bindings that need ongoing lifecycle control should use the supervised
 event control path rather than direct target execution. In that path, the event
 listener maps an event to a structured supervisor command and routes it to the

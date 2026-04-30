@@ -25,8 +25,10 @@ import {
   mapEventToWorkflowInput,
   selectMatchingBindings,
 } from "./input-mapping";
-import { buildSupervisorControlChatReplyRequest } from "./supervisor-control-reply";
+import { buildControlStatusExternalOutputMessage } from "./supervisor-control-reply";
 import { beginEventReceipt, updateEventReceipt } from "./ledger";
+import { publishExternalOutputMessage } from "./external-output";
+import { resolveEventMailboxBridgePolicy } from "./mailbox-bridge-policy";
 import {
   buildStableSupervisorCommandId,
   resolveSupervisedCorrelationKey,
@@ -100,6 +102,7 @@ export interface WorkflowTriggerRunner {
 
 async function dispatchSupervisorControlReplyIfConfigured(input: {
   readonly options: WorkflowTriggerRunnerOptions;
+  readonly binding?: EventBinding;
   readonly event: ExternalEventEnvelope;
   readonly receiptId: string;
   readonly action: EventSupervisorAction | "skip" | "failed";
@@ -110,18 +113,36 @@ async function dispatchSupervisorControlReplyIfConfigured(input: {
   if (dispatcher === undefined) {
     return;
   }
-  const request = buildSupervisorControlChatReplyRequest({
+  if (input.binding !== undefined) {
+    const policy = resolveEventMailboxBridgePolicy(input.binding);
+    if (policy.output.control.mode === "none") {
+      return;
+    }
+  }
+  const message = buildControlStatusExternalOutputMessage({
     event: input.event,
     receiptId: input.receiptId,
     action: input.action,
     ...(input.view === undefined ? {} : { view: input.view }),
     ...(input.skipReason === undefined ? {} : { skipReason: input.skipReason }),
   });
-  if (request === null) {
+  if (message === null) {
     return;
   }
+  const workflowId = message.address.workflowName ?? "event-supervisor";
+  const workflowExecutionId =
+    message.address.workflowExecutionId ??
+    `supervisor-receipt:${input.receiptId}`;
   try {
-    await dispatcher.dispatchChatReply(request);
+    await publishExternalOutputMessage({
+      dispatcher,
+      message,
+      workflowId,
+      workflowExecutionId,
+      nodeId: "event-supervisor-control",
+      nodeExecId: input.receiptId,
+      runtimeOptions: input.options,
+    });
   } catch {
     // Best-effort: chat reply failures must not change receipt outcome.
   }
@@ -432,6 +453,7 @@ export function createWorkflowTriggerRunner(
           if (input.suppressSupervisorChatReply !== true) {
             await dispatchSupervisorControlReplyIfConfigured({
               options,
+              binding: input.binding,
               event: input.event,
               receiptId: begin.record.receiptId,
               action: "skip",
@@ -467,6 +489,10 @@ export function createWorkflowTriggerRunner(
             runtimeVariables: {
               workflowInput: {},
               event: buildEventRuntimeMetadata(input.event),
+              eventBindingId: input.binding.id,
+              eventMailboxBridgePolicy: resolveEventMailboxBridgePolicy(
+                input.binding,
+              ),
             },
           };
         }
@@ -489,6 +515,7 @@ export function createWorkflowTriggerRunner(
         ) {
           await dispatchSupervisorControlReplyIfConfigured({
             options,
+            binding: input.binding,
             event: input.event,
             receiptId: begin.record.receiptId,
             action: "failed",
@@ -613,6 +640,7 @@ export function createWorkflowTriggerRunner(
           if (input.suppressSupervisorChatReply !== true) {
             await dispatchSupervisorControlReplyIfConfigured({
               options,
+              binding: input.binding,
               event: input.event,
               receiptId: receipt.receiptId,
               action: intent.action,
@@ -735,6 +763,7 @@ export function createWorkflowTriggerRunner(
         ) {
           await dispatchSupervisorControlReplyIfConfigured({
             options,
+            binding: input.binding,
             event: input.event,
             receiptId: failed.receiptId,
             action: "failed",
@@ -815,9 +844,10 @@ export async function dispatchEventToMatchingBindings(
   });
 
   if (llmBatchPlan.kind === "ambiguous") {
-    const routerReceiptId = `router:${input.event.sourceId}:${input.event.eventId}:supervised-llm-destructive-ambiguous`;
+    const routerReceiptId = `router:${input.event.sourceId}:${input.event.dedupeKey}:supervised-llm-destructive-ambiguous`;
     await dispatchSupervisorControlReplyIfConfigured({
       options,
+      ...(bindings[0] === undefined ? {} : { binding: bindings[0] }),
       event: input.event,
       receiptId: routerReceiptId,
       action: "skip",

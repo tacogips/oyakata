@@ -17,7 +17,7 @@ Implementation plans bridge design documents (what to build) and actual code (ho
 impl-plans/
 ├── README.md
 ├── PROGRESS.json
-├── active/
+├── <feature>.md
 ├── completed/
 └── templates/
 ```
@@ -30,6 +30,7 @@ None.
 
 | Plan                                                     | Completed  | Design Reference                                                                                                                              |
 | -------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `event-external-mailbox-binding-foundation`              | 2026-04-30 | `design-event-external-mailbox-binding`                                                                                                       |
 | `supervisor-natural-language-control`                    | 2026-04-29 | `design-event-supervisor-control`, `design-auto-improve-superviser-mode`                                                                      |
 | `event-supervisor-control-review-hardening`              | 2026-04-29 | `design-event-supervisor-control`, `event-supervisor-control-foundation`                                                                        |
 | `event-supervisor-control-foundation`                    | 2026-04-29 | `design-event-supervisor-control`, `design-event-listener-workflow-trigger`, `design-auto-improve-superviser-mode`                            |

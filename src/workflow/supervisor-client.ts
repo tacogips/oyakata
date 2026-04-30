@@ -87,6 +87,8 @@ export interface SubmitSupervisedWorkflowInput extends LoadOptions {
   readonly sourceId?: string;
   readonly bindingId?: string;
   readonly correlationKey?: string;
+  readonly targetWorkflowName?: string;
+  readonly bindingSnapshot?: EventBinding;
   readonly idempotencyKey?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly mockScenario?: MockNodeScenario;
@@ -383,10 +385,14 @@ function assertSupervisedCommandBindingConsistency(input: {
   readonly binding: EventBinding;
 }): void {
   if (input.binding.execution?.mode !== "supervised") {
-    throw new Error('supervisor command binding requires execution.mode "supervised"');
+    throw new Error(
+      'supervisor command binding requires execution.mode "supervised"',
+    );
   }
   if (input.command.sourceId !== input.binding.sourceId) {
-    throw new Error("supervisor command sourceId does not match binding.sourceId");
+    throw new Error(
+      "supervisor command sourceId does not match binding.sourceId",
+    );
   }
   if (input.command.bindingId !== input.binding.id) {
     throw new Error("supervisor command bindingId does not match binding.id");
@@ -414,7 +420,11 @@ export function createWorkflowSupervisorClient(
       if (byId === null) {
         throw new Error(`unknown supervised run '${input.supervisedRunId}'`);
       }
-      return await reconcileTerminalSupervisedRunRecord(byId, repo, baseOptions);
+      return await reconcileTerminalSupervisedRunRecord(
+        byId,
+        repo,
+        baseOptions,
+      );
     }
     if (
       input.sourceId === undefined ||
@@ -445,7 +455,11 @@ export function createWorkflowSupervisorClient(
     if (latest === null) {
       throw new Error("no supervised run matches the lookup");
     }
-    return await reconcileTerminalSupervisedRunRecord(latest, repo, baseOptions);
+    return await reconcileTerminalSupervisedRunRecord(
+      latest,
+      repo,
+      baseOptions,
+    );
   }
 
   async function persistAndView(
@@ -472,7 +486,11 @@ export function createWorkflowSupervisorClient(
     return repo.withCorrelationLock(correlation, async () => {
       const binding = input.binding;
       const cmd = input.command;
-      await reconcileTerminalSupervisedRunForCorrelation(correlation, repo, baseOptions);
+      await reconcileTerminalSupervisedRunForCorrelation(
+        correlation,
+        repo,
+        baseOptions,
+      );
       const active = await repo.findActiveByCorrelation(correlation);
       const latest = await repo.findLatestByCorrelation(correlation);
 
@@ -501,27 +519,20 @@ export function createWorkflowSupervisorClient(
             "supervised run id does not match supervisor command scope",
           );
         }
-        if (
-          active !== null &&
-          active.supervisedRunId !== scopedId
-        ) {
+        if (active !== null && active.supervisedRunId !== scopedId) {
           throw new Error(
             "supervised run id does not match the active supervised run for this correlation key",
           );
         }
         if (cmd.action === "start") {
-          if (
-            latest !== null &&
-            latest.supervisedRunId !== scopedId
-          ) {
+          if (latest !== null && latest.supervisedRunId !== scopedId) {
             throw new Error(
               "supervised run id is not the latest supervised run for this correlation key",
             );
           }
         }
         effectiveRunId = scopedId;
-        context =
-          cmd.action === "start" ? active ?? latest : scopedRecord;
+        context = cmd.action === "start" ? (active ?? latest) : scopedRecord;
       } else {
         effectiveRunId =
           active?.supervisedRunId ??
@@ -839,10 +850,9 @@ export function createWorkflowSupervisorClient(
               autoImproveEnabled: resolveAutoImproveEnabled(binding),
               createdAt: nowIso(),
               updatedAt: nowIso(),
-            } satisfies Omit<
-              EventSupervisedRunRecord,
-              "status"
-            > & { readonly updatedAt: string });
+            } satisfies Omit<EventSupervisedRunRecord, "status"> & {
+              readonly updatedAt: string;
+            });
           const failed: EventSupervisedRunRecord = {
             ...failedBase,
             status: "failed" as EventSupervisedRunStatus,
@@ -1001,30 +1011,74 @@ export function createWorkflowSupervisorClient(
     async submitInput(
       input: SubmitSupervisedWorkflowInput,
     ): Promise<SupervisedWorkflowView> {
-      const record = await resolveLookupRecord(input);
+      let record: EventSupervisedRunRecord | null;
+      try {
+        record = await resolveLookupRecord(input);
+      } catch (error: unknown) {
+        if (
+          !(error instanceof Error) ||
+          error.message !== "no supervised run matches the lookup"
+        ) {
+          throw error;
+        }
+        record = null;
+      }
+      const binding =
+        record === null
+          ? input.bindingSnapshot
+          : eventBindingStubFromSupervisedRunRecord(record);
+      if (binding === undefined) {
+        throw new Error(
+          "supervised input start requires bindingSnapshot when no supervised run exists",
+        );
+      }
+      const sourceId =
+        record?.sourceId ??
+        requireNonEmptyLookupValue(input.sourceId, "input.sourceId");
+      const bindingId =
+        record?.bindingId ??
+        requireNonEmptyLookupValue(input.bindingId, "input.bindingId");
+      const correlationKey =
+        record?.correlationKey ??
+        requireNonEmptyLookupValue(
+          input.correlationKey,
+          "input.correlationKey",
+        );
+      const targetWorkflowName =
+        record?.targetWorkflowName ??
+        requireNonEmptyLookupValue(
+          input.targetWorkflowName,
+          "input.targetWorkflowName",
+        );
       const cmd: EventSupervisorCommand = {
         commandId: resolvePublicCommandId({
           idempotencyKey: input.idempotencyKey,
           prefix: "lib-input",
-          scope: record.supervisedRunId,
+          scope: record?.supervisedRunId ?? correlationKey,
         }),
-        sourceId: record.sourceId,
-        bindingId: record.bindingId,
-        correlationKey: record.correlationKey,
+        sourceId,
+        bindingId,
+        correlationKey,
         action: "input",
-        targetWorkflowName: record.targetWorkflowName,
-        supervisedRunId: record.supervisedRunId,
+        targetWorkflowName,
+        ...(record === null ? {} : { supervisedRunId: record.supervisedRunId }),
         receivedEventReceiptId: "library",
         ...(input.runtimeVariables === undefined
           ? {}
           : { runtimeVariables: input.runtimeVariables }),
       };
-      const binding = eventBindingStubFromSupervisedRunRecord(record);
       const withControl: EventBinding = {
         ...binding,
         execution: {
           ...binding.execution,
-          control: { startOnFirstInput: false },
+          ...(record === null
+            ? {}
+            : {
+                control: {
+                  ...binding.execution?.control,
+                  startOnFirstInput: false,
+                },
+              }),
         },
       };
       return dispatchCommandImpl({

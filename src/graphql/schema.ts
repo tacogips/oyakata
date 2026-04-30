@@ -1513,10 +1513,10 @@ async function dispatchSupervisorChatMutation(
   input: DispatchSupervisorChatGraphqlInput,
   context: GraphqlRequestContext,
 ): Promise<DispatchSupervisorChatPayload> {
-  if (typeof input.eventRoot !== "string" || input.eventRoot.trim().length === 0) {
-    throw new Error("dispatchSupervisorChat requires non-empty eventRoot");
-  }
-  if (typeof input.sourceId !== "string" || input.sourceId.trim().length === 0) {
+  if (
+    typeof input.sourceId !== "string" ||
+    input.sourceId.trim().length === 0
+  ) {
     throw new Error("dispatchSupervisorChat requires sourceId");
   }
   if (typeof input.text !== "string" || input.text.trim().length === 0) {
@@ -1524,7 +1524,6 @@ async function dispatchSupervisorChatMutation(
   }
   const rows = await dispatchSupervisorChat({
     ...context,
-    eventRoot: input.eventRoot,
     sourceId: input.sourceId,
     text: input.text,
     ...(input.conversationId === undefined
@@ -1537,8 +1536,6 @@ async function dispatchSupervisorChatMutation(
     ...(input.idempotencyKey === undefined
       ? {}
       : { idempotencyKey: input.idempotencyKey }),
-    ...(input.endpoint === undefined ? {} : { endpoint: input.endpoint }),
-    ...(input.authToken === undefined ? {} : { authToken: input.authToken }),
   });
   return {
     results: rows.map((row) => ({

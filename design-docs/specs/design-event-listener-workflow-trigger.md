@@ -13,6 +13,13 @@ idempotency state, and invokes the existing workflow execution boundary.
 The workflow engine remains responsible only for workflow execution. It should
 not learn Slack, Discord, cron, Telegram, Signal, or UI-specific semantics.
 
+This document describes the current direct-trigger architecture and remains the
+implementation baseline. The target architectural direction is refined further
+in `design-docs/specs/design-event-external-mailbox-binding.md`: event sources
+should conceptually bind to the runtime-owned external mailbox boundary, and
+direct workflow starts should be treated as one consumer of external mailbox
+input rather than as the fundamental event abstraction.
+
 Recommended placement:
 
 - `src/events/` owns event source configuration, normalization, dedupe, and
@@ -723,6 +730,13 @@ explicitly opts into synchronous execution for a local-only source.
 ## Reply Semantics
 
 Triggering a workflow and replying to an event are separate concerns.
+
+The target direction in
+`design-docs/specs/design-event-external-mailbox-binding.md` keeps that
+separation, but moves the conceptual boundary outward: provider adapters bridge
+to and from the runtime-owned external mailbox, while runtime or supervisor
+logic decides whether to publish final output, progress, or control/status
+messages.
 
 First iteration:
 

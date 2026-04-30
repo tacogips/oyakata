@@ -8,6 +8,13 @@ start and control supervised workflow executions.
 The existing event listener path starts workflows directly from matched event
 bindings. That remains valid for simple fire-and-forget automation.
 
+The broader architectural direction is documented in
+`design-docs/specs/design-event-external-mailbox-binding.md`: event sources
+should conceptually bind to runtime-owned external mailbox input/output
+surfaces, while the supervisor becomes the preferred consumer of external input
+for interactive sources and the preferred publisher of control/progress output
+for those same sources.
+
 For chat, web app, and other interactive event sources, divedra also needs a
 supervised control path:
 
@@ -24,6 +31,12 @@ In supervised mode, the event listener does not own target workflow lifecycle.
 It normalizes events, records receipts, maps the event into a control command,
 and sends that command to the supervisor. The supervisor is the durable owner of
 the target workflow run and its restart/stop/status policy.
+
+Under the target mailbox-oriented model, that same statement is expressed more
+strictly: provider adapters bridge inbound traffic into external mailbox input,
+and the supervisor owns consumption of that input plus publication of control,
+progress, and optional final business output back through the external output
+mailbox boundary.
 
 Terminology note: supervised **event** bindings use `supervisorWorkflowName` on
 `EventWorkflowExecutionPolicy`. The engine's nested auto-improve path still

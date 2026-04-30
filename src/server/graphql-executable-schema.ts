@@ -586,7 +586,6 @@ const GRAPHQL_SCHEMA_TEXT = `
   }
 
   input DispatchSupervisorChatInput {
-    eventRoot: String!
     sourceId: String!
     text: String!
     conversationId: String
@@ -595,8 +594,6 @@ const GRAPHQL_SCHEMA_TEXT = `
     eventType: String
     provider: String
     idempotencyKey: String
-    endpoint: String
-    authToken: String
   }
 
   input SendManagerMessageInput {

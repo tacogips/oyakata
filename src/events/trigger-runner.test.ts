@@ -907,7 +907,8 @@ describe("workflow trigger runner supervised bindings", () => {
       supervisedRunId: "esv-remote-1",
       sourceId: "chat-webhook",
       bindingId: "supervised-binding-gql",
-      correlationKey: "chat-webhook:supervised-binding-gql:conv-gql-1:thread-gql-1",
+      correlationKey:
+        "chat-webhook:supervised-binding-gql:conv-gql-1:thread-gql-1",
       supervisorWorkflowName: "divedra-default-workflow-supervisor",
       targetWorkflowName: workflowName,
       activeTargetExecutionId: "sess-remote-1",
@@ -1222,8 +1223,12 @@ describe("workflow trigger runner supervised bindings", () => {
 
     expect(result.receipt.status).toBe("failed");
     expect(dispatched).toHaveLength(1);
-    const req = dispatched[0] as { readonly message: { readonly text: string } };
-    expect(req.message.text).toContain("Control command could not be completed");
+    const req = dispatched[0] as {
+      readonly message: { readonly text: string };
+    };
+    expect(req.message.text).toContain(
+      "Control command could not be completed",
+    );
     expect(req.message.text).not.toContain("simulated supervisor");
   });
 
@@ -1288,7 +1293,10 @@ describe("workflow trigger runner supervised bindings", () => {
     const configuration: EventConfiguration = {
       eventRoot: root,
       sources: [{ ...buildSource(), enabled: true }],
-      bindings: [supervisedLlm("b-amb-1", wfAlpha), supervisedLlm("b-amb-2", wfBeta)],
+      bindings: [
+        supervisedLlm("b-amb-1", wfAlpha),
+        supervisedLlm("b-amb-2", wfBeta),
+      ],
     };
 
     const intentSpy = vi
@@ -1326,7 +1334,8 @@ describe("workflow trigger runner supervised bindings", () => {
       readonly idempotencyKey: string;
     };
     expect(req.message.text).toContain("ambiguous");
-    expect(req.idempotencyKey).toContain("router:");
+    expect(req.message.text).toContain("specific workflow target");
+    expect(req.idempotencyKey).toContain("router:chat-webhook:dedupe-amb-1:");
     intentSpy.mockRestore();
   });
 });

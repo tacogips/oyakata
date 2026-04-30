@@ -160,6 +160,49 @@ export interface EventWorkflowExecutionPolicy extends JsonObject {
   readonly allowUnsafeSyncWebhook?: boolean;
 }
 
+export interface EventMailboxBridgeOutboundPolicy extends JsonObject {
+  readonly reply?: { readonly mode: "none" | "final" };
+  readonly progress?: { readonly mode: "none" | "status-only" };
+  readonly control?: { readonly mode: "none" | "status-only" };
+}
+
+export interface EventMailboxBridgePolicy extends JsonObject {
+  readonly input?: {
+    readonly consumer: "direct-workflow" | "supervisor";
+  };
+  readonly output?: EventMailboxBridgeOutboundPolicy;
+}
+
+export interface ExternalMailboxAddress extends JsonObject {
+  readonly sourceId?: string;
+  readonly bindingId?: string;
+  readonly workflowName?: string;
+  readonly workflowExecutionId?: string;
+  readonly supervisedRunId?: string;
+  readonly correlationKey?: string;
+  readonly conversationId?: string;
+  readonly threadId?: string;
+  /** Provider event id when known (routing hint, not workflow identity). */
+  readonly eventId?: string;
+  /** Transport hint for resolving {@link ExternalOutputDispatchTarget}. */
+  readonly providerHint?: string;
+  readonly actorId?: string;
+}
+
+export type ExternalOutputKind =
+  | "business-final"
+  | "progress"
+  | "control-status";
+
+export interface ExternalOutputMessage extends JsonObject {
+  readonly kind: "external-output";
+  readonly outputKind: ExternalOutputKind;
+  readonly address: ExternalMailboxAddress;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly idempotencyKey: string;
+  readonly createdAt: string;
+}
+
 export interface EventBinding extends JsonObject {
   readonly id: string;
   readonly enabled?: boolean;
@@ -168,6 +211,12 @@ export interface EventBinding extends JsonObject {
   readonly workflowName: string;
   readonly inputMapping: EventInputMapping;
   readonly execution?: EventWorkflowExecutionPolicy;
+  /**
+   * Optional explicit bridge policy for external mailbox input/output streams.
+   * When omitted, {@link resolveEventMailboxBridgePolicy} derives defaults from
+   * `execution.mode` and existing binding shape.
+   */
+  readonly mailboxBridge?: EventMailboxBridgePolicy;
 }
 
 export interface EventConfiguration {

@@ -168,7 +168,12 @@ function persistedToDispatchResult(
 function buildReplyDispatchSaveInput(input: {
   readonly request: ChatReplyDispatchRequest;
   readonly provider: string;
-  readonly status: "dispatching" | "sent" | "queued" | "failed";
+  readonly status:
+    | "dispatching"
+    | "sent"
+    | "queued"
+    | "failed"
+    | "no_delivery_target";
   readonly result?: ChatReplyDispatchResult;
   readonly error?: string;
   readonly updatedAt: string;
