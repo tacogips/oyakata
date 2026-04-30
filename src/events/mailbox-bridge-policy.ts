@@ -20,8 +20,10 @@ export interface ResolvedEventMailboxBridgePolicy {
 export function resolveEventMailboxBridgePolicy(
   binding: EventBinding,
 ): ResolvedEventMailboxBridgePolicy {
-  const supervised = binding.execution?.mode === "supervised";
-  const defaultConsumer: "direct-workflow" | "supervisor" = supervised
+  const mode = binding.execution?.mode;
+  const supervisedLike =
+    mode === "supervised" || mode === "supervisor-dispatch";
+  const defaultConsumer: "direct-workflow" | "supervisor" = supervisedLike
     ? "supervisor"
     : "direct-workflow";
   const authored = binding.mailboxBridge;
@@ -35,7 +37,7 @@ export function resolveEventMailboxBridgePolicy(
       control: {
         mode:
           authored?.output?.control?.mode ??
-          (supervised ? "status-only" : "none"),
+          (supervisedLike ? "status-only" : "none"),
       },
     },
   };

@@ -98,7 +98,10 @@ export type EventInputMapping =
       readonly mirrorToHumanInput?: boolean;
     };
 
-export type EventExecutionMode = "direct" | "supervised";
+export type EventExecutionMode =
+  | "direct"
+  | "supervised"
+  | "supervisor-dispatch";
 
 export type EventSupervisorAction =
   | "start"
@@ -149,6 +152,11 @@ export interface EventSupervisorControlPolicy extends JsonObject {
 
 export interface EventWorkflowExecutionPolicy extends JsonObject {
   readonly mode?: EventExecutionMode;
+  /**
+   * Required when `mode` is `supervisor-dispatch`. References a file under
+   * `<eventRoot>/supervisors/*.json`.
+   */
+  readonly supervisorProfileId?: string;
   readonly supervisorWorkflowName?: string;
   readonly maxRestartsOnFailure?: number;
   readonly autoImprove?: boolean | AutoImprovePolicy;
@@ -208,7 +216,11 @@ export interface EventBinding extends JsonObject {
   readonly enabled?: boolean;
   readonly sourceId: string;
   readonly match?: EventMatchRule;
-  readonly workflowName: string;
+  /**
+   * Target workflow for `direct` / `supervised` bindings. Optional for
+   * `supervisor-dispatch` (targets come from the supervisor profile).
+   */
+  readonly workflowName?: string;
   readonly inputMapping: EventInputMapping;
   readonly execution?: EventWorkflowExecutionPolicy;
   /**

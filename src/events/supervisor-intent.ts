@@ -319,7 +319,15 @@ export async function resolveSupervisorIntentAsync(input: {
     };
   }
 
-  const managedWorkflowName = input.binding.workflowName.trim();
+  const managedWorkflowBinding = input.binding.workflowName?.trim();
+  if (managedWorkflowBinding === undefined || managedWorkflowBinding.length === 0) {
+    return {
+      outcome: "skip",
+      reason: "binding.workflowName is required for supervised intent resolution",
+    };
+  }
+
+  const managedWorkflowName = managedWorkflowBinding;
   if (decision.managedWorkflowName !== managedWorkflowName) {
     return {
       outcome: "skip",

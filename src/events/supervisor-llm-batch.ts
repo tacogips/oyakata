@@ -99,9 +99,9 @@ export async function planSupervisedLlmBindingsDispatch(input: {
           ? input.event.input["targetWorkflowName"].trim()
           : undefined;
 
-      const candidateNames = destructiveMatches.map(
-        (r) => r.binding.workflowName,
-      );
+      const candidateNames = destructiveMatches
+        .map((r) => r.binding.workflowName?.trim())
+        .filter((name): name is string => name !== undefined && name.length > 0);
 
       let uniqueMatch: string | undefined;
 

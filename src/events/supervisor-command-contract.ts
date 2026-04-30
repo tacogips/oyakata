@@ -35,6 +35,9 @@ function isSupervisorChatDecisionAction(
 /**
  * Strict structural parse of a supervisor chat command decision from an unknown JSON value.
  * Returns ok with the validated decision, or ok=false with an error message.
+ *
+ * Multi-workflow dispatcher proposals use {@link parseSupervisorDispatchProposal} in
+ * `supervisor-dispatch-contract.ts`.
  */
 export function parseSupervisorChatCommandDecision(
   value: unknown,

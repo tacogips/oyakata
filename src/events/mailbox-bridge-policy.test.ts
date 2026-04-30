@@ -3,12 +3,15 @@ import { resolveEventMailboxBridgePolicy } from "./mailbox-bridge-policy";
 import type { EventBinding } from "./types";
 
 function binding(
-  overrides: Partial<EventBinding> & Pick<EventBinding, "id" | "sourceId" | "workflowName">,
+  overrides: Partial<EventBinding> & Pick<EventBinding, "id" | "sourceId">,
 ): EventBinding {
   return {
     id: overrides.id,
     sourceId: overrides.sourceId,
-    workflowName: overrides.workflowName,
+    ...(overrides.workflowName === undefined ||
+    overrides.workflowName.trim().length === 0
+      ? {}
+      : { workflowName: overrides.workflowName.trim() }),
     inputMapping: overrides.inputMapping ?? { mode: "event-input" },
     ...(overrides.execution === undefined ? {} : { execution: overrides.execution }),
     ...(overrides.mailboxBridge === undefined
@@ -39,6 +42,18 @@ describe("resolveEventMailboxBridgePolicy", () => {
         sourceId: "s",
         workflowName: "wf",
         execution: { mode: "supervised" },
+      }),
+    );
+    expect(policy.input.consumer).toBe("supervisor");
+    expect(policy.output.control.mode).toBe("status-only");
+  });
+
+  test("defaults supervisor-dispatch binding like supervised for mailbox streams", () => {
+    const policy = resolveEventMailboxBridgePolicy(
+      binding({
+        id: "b-dispatch",
+        sourceId: "s",
+        execution: { mode: "supervisor-dispatch" },
       }),
     );
     expect(policy.input.consumer).toBe("supervisor");

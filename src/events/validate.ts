@@ -9,6 +9,10 @@ import {
   isValidEventHttpPath,
   resolveEventSourceHttpPath,
 } from "./http-routes";
+import {
+  loadSupervisorProfilesFromEventRoot,
+  type WorkflowSupervisorProfile,
+} from "./supervisor-profiles";
 import type {
   EventBinding,
   EventConfigLoadOptions,
@@ -549,6 +553,81 @@ function validateSupervisedBinding(
   }
 }
 
+function validateSupervisorDispatchBinding(
+  binding: EventBinding,
+  profilesById: ReadonlyMap<string, WorkflowSupervisorProfile>,
+  workflowNames: ReadonlySet<string>,
+  issues: EventConfigValidationIssue[],
+): void {
+  const execution = binding.execution;
+  if (execution?.mode !== "supervisor-dispatch") {
+    return;
+  }
+  const pathPrefix = `bindings.${binding.id}.execution`;
+  const profileIdRaw = execution.supervisorProfileId;
+  if (
+    typeof profileIdRaw !== "string" ||
+    profileIdRaw.trim().length === 0
+  ) {
+    issues.push(
+      error(
+        `${pathPrefix}.supervisorProfileId`,
+        "supervisorProfileId is required when execution.mode is supervisor-dispatch",
+      ),
+    );
+    return;
+  }
+  const profileId = profileIdRaw.trim();
+  const profile = profilesById.get(profileId);
+  if (profile === undefined) {
+    issues.push(
+      error(
+        `${pathPrefix}.supervisorProfileId`,
+        `unknown supervisor profile '${profileId}' (expected JSON under supervisors/)`,
+      ),
+    );
+    return;
+  }
+
+  const overrideSw = execution.supervisorWorkflowName;
+  if (overrideSw !== undefined && overrideSw !== null) {
+    if (typeof overrideSw !== "string" || overrideSw.length === 0) {
+      issues.push(
+        error(
+          `${pathPrefix}.supervisorWorkflowName`,
+          "supervisorWorkflowName must be a non-empty string when set",
+        ),
+      );
+    } else if (overrideSw.trim() !== profile.supervisorWorkflowName) {
+      issues.push(
+        error(
+          `${pathPrefix}.supervisorWorkflowName`,
+          `must match profile supervisorWorkflowName '${profile.supervisorWorkflowName}'`,
+        ),
+      );
+    }
+  }
+
+  const bwn = binding.workflowName;
+  if (bwn !== undefined && bwn.trim().length > 0) {
+    if (bwn.trim() !== profile.supervisorWorkflowName) {
+      issues.push(
+        error(
+          `bindings.${binding.id}.workflowName`,
+          `for supervisor-dispatch, workflowName must be omitted or equal the profile supervisorWorkflowName '${profile.supervisorWorkflowName}'`,
+        ),
+      );
+    } else if (!workflowNames.has(bwn.trim())) {
+      issues.push(
+        error(
+          `bindings.${binding.id}.workflowName`,
+          `unknown workflow '${bwn.trim()}'`,
+        ),
+      );
+    }
+  }
+}
+
 function validateMailboxBridge(
   binding: EventBinding,
   issues: EventConfigValidationIssue[],
@@ -562,20 +641,21 @@ function validateMailboxBridge(
     issues.push(error(base, "mailboxBridge must be an object when set"));
     return;
   }
-  const supervised = binding.execution?.mode === "supervised";
-  if (mb.input?.consumer === "supervisor" && !supervised) {
+  const mode = binding.execution?.mode;
+  const supervisedLike = mode === "supervised" || mode === "supervisor-dispatch";
+  if (mb.input?.consumer === "supervisor" && !supervisedLike) {
     issues.push(
       error(
         `${base}.input.consumer`,
-        'mailboxBridge.input.consumer "supervisor" requires execution.mode "supervised"',
+        'mailboxBridge.input.consumer "supervisor" requires execution.mode "supervised" or "supervisor-dispatch"',
       ),
     );
   }
-  if (mb.input?.consumer === "direct-workflow" && supervised) {
+  if (mb.input?.consumer === "direct-workflow" && supervisedLike) {
     issues.push(
       error(
         `${base}.input.consumer`,
-        'mailboxBridge.input.consumer "direct-workflow" cannot be used with execution.mode "supervised"',
+        'mailboxBridge.input.consumer "direct-workflow" cannot be used with execution.mode "supervised" or "supervisor-dispatch"',
       ),
     );
   }
@@ -624,6 +704,7 @@ function validateBinding(
   binding: EventBinding,
   sourcesById: ReadonlyMap<string, EventSourceConfig>,
   workflowNames: ReadonlySet<string>,
+  profilesById: ReadonlyMap<string, WorkflowSupervisorProfile>,
   issues: EventConfigValidationIssue[],
 ): void {
   const source = sourcesById.get(binding.sourceId);
@@ -635,11 +716,22 @@ function validateBinding(
       ),
     );
   }
-  if (!workflowNames.has(binding.workflowName)) {
+  const isDispatch = binding.execution?.mode === "supervisor-dispatch";
+  const workflowName = binding.workflowName?.trim();
+  if (workflowName !== undefined && workflowName.length > 0) {
+    if (!workflowNames.has(workflowName)) {
+      issues.push(
+        error(
+          `bindings.${binding.id}.workflowName`,
+          `unknown workflow '${workflowName}'`,
+        ),
+      );
+    }
+  } else if (!isDispatch) {
     issues.push(
       error(
         `bindings.${binding.id}.workflowName`,
-        `unknown workflow '${binding.workflowName}'`,
+        "workflowName is required for non-dispatcher bindings",
       ),
     );
   }
@@ -676,6 +768,12 @@ function validateBinding(
     issues.push(warning(`bindings.${binding.id}`, "binding is disabled"));
   }
   validateSupervisedBinding(binding, issues);
+  validateSupervisorDispatchBinding(
+    binding,
+    profilesById,
+    workflowNames,
+    issues,
+  );
   validateMailboxBridge(binding, issues);
 }
 
@@ -702,8 +800,22 @@ export async function validateEventConfiguration(
     configuration.sources.map((source) => [source.id, source] as const),
   );
   const workflowNames = await listWorkflowNames(options, issues);
+  const supervisorProfileLoad = await loadSupervisorProfilesFromEventRoot(
+    configuration.eventRoot,
+    workflowNames,
+  );
+  for (const issue of supervisorProfileLoad.issues) {
+    issues.push(error(issue.path, issue.message));
+  }
+  const profilesById = supervisorProfileLoad.profilesById;
   for (const binding of configuration.bindings) {
-    validateBinding(binding, sourcesById, workflowNames, issues);
+    validateBinding(
+      binding,
+      sourcesById,
+      workflowNames,
+      profilesById,
+      issues,
+    );
   }
 
   return {

@@ -107,9 +107,20 @@ export async function runSupervisorLlmResolver(
       ? input.allowedActions
       : ALL_SUPERVISOR_CHAT_ACTIONS;
 
+  const managedWorkflowBindingName = input.binding.workflowName?.trim();
+  if (
+    managedWorkflowBindingName === undefined ||
+    managedWorkflowBindingName.length === 0
+  ) {
+    return {
+      ok: false,
+      error: "binding.workflowName is required for supervised llm resolver",
+    };
+  }
+
   const resolverVariables: Readonly<Record<string, unknown>> = {
     ...(text !== undefined ? { text } : {}),
-    managedWorkflowName: input.binding.workflowName,
+    managedWorkflowName: managedWorkflowBindingName,
     supervisorWorkflowName,
     allowedActions: [...allowedActionsForResolver],
     ...(input.activeSupervisedRunId !== undefined
@@ -172,7 +183,7 @@ export async function runSupervisorLlmResolver(
     parsed = JSON.parse(rawJson) as unknown;
   } catch {
     const fb = input.defaultAction;
-    const managedWorkflowName = input.binding.workflowName.trim();
+    const managedWorkflowName = managedWorkflowBindingName;
     if (fb === "ignore") {
       return {
         ok: true,
@@ -218,7 +229,7 @@ export async function runSupervisorLlmResolver(
   const decision = parseSupervisorChatCommandDecision(decisionValue);
   if (!decision.ok) {
     const fallback = input.defaultAction;
-    const managedWorkflowName = input.binding.workflowName.trim();
+    const managedWorkflowName = managedWorkflowBindingName;
     if (fallback === "ignore") {
       return {
         ok: true,
@@ -249,3 +260,9 @@ export async function runSupervisorLlmResolver(
 
   return { ok: true, decision: decision.value };
 }
+
+export {
+  parseSupervisorDispatchProposal,
+  validateSupervisorDispatchProposalAgainstContext,
+  type WorkflowSupervisorDispatchContext,
+} from "./supervisor-dispatch-contract";

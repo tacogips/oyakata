@@ -27,6 +27,8 @@ impl-plans/
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
 | `workflow-supervisor-dispatcher` | Ready | `design-workflow-supervisor-dispatcher` |
+| `workflow-supervisor-dispatcher-foundation` | Ready | `design-workflow-supervisor-dispatcher` |
+| `workflow-supervisor-dispatcher-runtime` | Ready | `design-workflow-supervisor-dispatcher` |
 
 ## Completed Plans
 

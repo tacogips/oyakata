@@ -207,6 +207,15 @@ function isStickyPersistableStatus(status: string): boolean {
   return status === "running" || status === "paused" || status === "completed";
 }
 
+function workflowNameResultField(
+  workflowName: string | undefined,
+): { readonly workflowName: string } | Record<string, never> {
+  const trimmed = workflowName?.trim();
+  return trimmed !== undefined && trimmed.length > 0
+    ? { workflowName: trimmed }
+    : {};
+}
+
 async function resolveStickyRootManagerContext(input: {
   readonly binding: EventBinding;
   readonly event: ExternalEventEnvelope;
@@ -220,8 +229,13 @@ async function resolveStickyRootManagerContext(input: {
     return null;
   }
 
+  const catalogWorkflowName = input.binding.workflowName?.trim();
+  if (catalogWorkflowName === undefined || catalogWorkflowName.length === 0) {
+    return null;
+  }
+
   const loaded = await loadWorkflowFromCatalog(
-    input.binding.workflowName,
+    catalogWorkflowName,
     input.options,
   );
   if (!loaded.ok) {
@@ -245,7 +259,7 @@ async function resolveStickyRootManagerContext(input: {
       : withResolvedWorkflowSourceOptions(loaded.value.source, input.options);
   return {
     workflowId: loaded.value.bundle.workflow.workflowId,
-    workflowName: input.binding.workflowName,
+    workflowName: catalogWorkflowName,
     managerStepId,
     sourceId: input.event.sourceId,
     bindingId: input.binding.id,
@@ -417,7 +431,7 @@ export function createWorkflowTriggerRunner(
         return {
           receipt: begin.record,
           duplicate: true,
-          workflowName: input.binding.workflowName,
+          ...workflowNameResultField(input.binding.workflowName),
         };
       }
 
@@ -463,7 +477,7 @@ export function createWorkflowTriggerRunner(
           return {
             receipt: skipped,
             duplicate: false,
-            workflowName: input.binding.workflowName,
+            ...workflowNameResultField(input.binding.workflowName),
           };
         }
       }
@@ -526,7 +540,7 @@ export function createWorkflowTriggerRunner(
         return {
           receipt: failed,
           duplicate: false,
-          workflowName: input.binding.workflowName,
+          ...workflowNameResultField(input.binding.workflowName),
         };
       }
 
@@ -552,7 +566,7 @@ export function createWorkflowTriggerRunner(
         return {
           receipt: skipped,
           duplicate: false,
-          workflowName: input.binding.workflowName,
+          ...workflowNameResultField(input.binding.workflowName),
         };
       }
 
@@ -593,6 +607,13 @@ export function createWorkflowTriggerRunner(
             event: input.event,
             ...(input.source === undefined ? {} : { source: input.source }),
           });
+          const bindingTargetWorkflow = input.binding.workflowName?.trim();
+          if (
+            bindingTargetWorkflow === undefined ||
+            bindingTargetWorkflow.length === 0
+          ) {
+            throw new Error("internal: supervised binding missing workflowName");
+          }
           const command = {
             commandId: buildStableSupervisorCommandId({
               receiptId: receipt.receiptId,
@@ -602,7 +623,7 @@ export function createWorkflowTriggerRunner(
             bindingId: input.binding.id,
             correlationKey,
             action: intent.action,
-            targetWorkflowName: input.binding.workflowName,
+            targetWorkflowName: bindingTargetWorkflow,
             receivedEventReceiptId: receipt.receiptId,
             ...(intent.runtimeVariables === undefined
               ? {}
@@ -667,6 +688,41 @@ export function createWorkflowTriggerRunner(
           };
         }
 
+        if (input.binding.execution?.mode === "supervisor-dispatch") {
+          const failed = await updateEventReceipt(
+            {
+              record: receipt,
+              artifactDir: begin.artifactDir,
+              status: "failed",
+              error:
+                "supervisor-dispatch is not yet implemented in the event trigger runner",
+            },
+            options,
+          );
+          return {
+            receipt: failed,
+            duplicate: false,
+          };
+        }
+
+        const directWorkflowName = input.binding.workflowName?.trim();
+        if (directWorkflowName === undefined || directWorkflowName.length === 0) {
+          const failed = await updateEventReceipt(
+            {
+              record: receipt,
+              artifactDir: begin.artifactDir,
+              status: "failed",
+              error:
+                "cannot dispatch direct workflow: binding.workflowName is missing",
+            },
+            options,
+          );
+          return {
+            receipt: failed,
+            duplicate: false,
+          };
+        }
+
         const stickyContext = await resolveStickyRootManagerContext({
           binding: input.binding,
           event: input.event,
@@ -690,7 +746,7 @@ export function createWorkflowTriggerRunner(
           return {
             receipt: skipped,
             duplicate: false,
-            workflowName: input.binding.workflowName,
+            ...workflowNameResultField(directWorkflowName),
           };
         }
         const stickyPlan =
@@ -699,7 +755,7 @@ export function createWorkflowTriggerRunner(
           stickyPlan === null
             ? await createWorkflowExecutionClient(
                 buildWorkflowExecutionClientOptions(
-                  input.binding.workflowName,
+                  directWorkflowName,
                   options,
                 ),
               ).execute({
@@ -708,7 +764,7 @@ export function createWorkflowTriggerRunner(
                 async: input.binding.execution?.async ?? true,
               })
             : await (async () => {
-                const resumed = await runWorkflow(input.binding.workflowName, {
+                const resumed = await runWorkflow(directWorkflowName, {
                   ...stickyPlan.options,
                   resumeSessionId: stickyPlan.sessionId,
                   ...workflowTriggerLocalEngineOverrides(options),
@@ -717,7 +773,7 @@ export function createWorkflowTriggerRunner(
                   throw new Error(resumed.error.message);
                 }
                 return {
-                  workflowName: input.binding.workflowName,
+                  workflowName: directWorkflowName,
                   workflowExecutionId: resumed.value.session.sessionId,
                   sessionId: resumed.value.session.sessionId,
                   status: resumed.value.session.status,
@@ -742,7 +798,7 @@ export function createWorkflowTriggerRunner(
         return {
           receipt,
           duplicate: false,
-          workflowName: result.workflowName,
+          ...workflowNameResultField(result.workflowName),
           workflowExecutionId: result.workflowExecutionId,
         };
       } catch (error: unknown) {
@@ -774,7 +830,7 @@ export function createWorkflowTriggerRunner(
         return {
           receipt: failed,
           duplicate: false,
-          workflowName: input.binding.workflowName,
+          ...workflowNameResultField(input.binding.workflowName),
         };
       }
     },
