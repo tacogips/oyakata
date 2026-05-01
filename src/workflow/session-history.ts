@@ -6,9 +6,13 @@ import {
   resolveWorkflowScopedPath,
 } from "./paths";
 import { deleteRuntimeSession, loadRuntimeSessionSummary } from "./runtime-db";
-import type { SessionStatus } from "./session";
+import {
+  sessionReferencesWorkflowExecutionAsContinuationSource,
+  type SessionStatus,
+} from "./session";
 import {
   deleteSession,
+  listSessions,
   loadSession,
   type SessionStoreOptions,
 } from "./session-store";
@@ -21,6 +25,35 @@ export interface DeleteWorkflowSessionHistoryInput {
 
 function isNonTerminalSessionStatus(status: SessionStatus): boolean {
   return status === "paused" || status === "running";
+}
+
+async function listContinuationDependentsOfWorkflowExecution(
+  targetWorkflowExecutionId: string,
+  options: SessionStoreOptions,
+): Promise<readonly string[]> {
+  const listed = await listSessions(options);
+  if (!listed.ok) {
+    throw new Error(listed.error.message);
+  }
+  const dependents: string[] = [];
+  for (const sessionId of listed.value) {
+    if (sessionId === targetWorkflowExecutionId) {
+      continue;
+    }
+    const loaded = await loadSession(sessionId, options);
+    if (!loaded.ok) {
+      continue;
+    }
+    if (
+      sessionReferencesWorkflowExecutionAsContinuationSource(
+        loaded.value,
+        targetWorkflowExecutionId,
+      )
+    ) {
+      dependents.push(sessionId);
+    }
+  }
+  return dependents.sort((left, right) => left.localeCompare(right));
 }
 
 function assertMatchingWorkflowIdentity(input: {
@@ -89,6 +122,16 @@ export async function deleteWorkflowSessionHistory(
   options: SessionStoreOptions = {},
 ): Promise<void> {
   const workflowId = await resolveDeletionWorkflowId(input, options);
+
+  const dependents = await listContinuationDependentsOfWorkflowExecution(
+    input.sessionId,
+    options,
+  );
+  if (dependents.length > 0) {
+    throw new Error(
+      `cannot delete workflow run '${input.sessionId}' while other executions still reference its history: ${dependents.join(", ")}`,
+    );
+  }
 
   const deletedSession = await deleteSession(input.sessionId, options);
   if (!deletedSession.ok && deletedSession.error.code !== "NOT_FOUND") {

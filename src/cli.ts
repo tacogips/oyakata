@@ -9,7 +9,11 @@ import { buildHookConfigurationSnippet } from "./hook/config";
 import { parseHookVendorOption } from "./hook/detect-vendor";
 import { createReadHookStdin, runHookCommand } from "./hook/index";
 import { SUPPORTED_HOOK_VENDORS } from "./hook/types";
-import { startServe, type StartedServe } from "./server/serve";
+import {
+  startServe,
+  type ServeStartOptions,
+  type StartedServe,
+} from "./server/serve";
 import {
   createEventListenerService,
   loadAndValidateEventConfiguration,
@@ -18,18 +22,21 @@ import { emitEventFile } from "./events/manual-emit";
 import { listEventReceipts, replayEventReceipt } from "./events/receipt-ops";
 import type { EventListenerHandle } from "./events/listener-service";
 import type { MockNodeScenario } from "./workflow/adapter";
+import type { WorkflowExecutionCompactSummary } from "./shared/ui-contract";
 import { normalizeAutoImprovePolicy } from "./workflow/auto-improve-policy";
 import { createWorkflowTemplate } from "./workflow/create";
 import { callStep, type CallStepInput } from "./workflow/call-step";
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
 import {
+  resolveWorkflowSource,
   withResolvedWorkflowSourceOptions,
 } from "./workflow/catalog";
 import { inferRootDataDirFromExplicitStorageRoots } from "./workflow/paths";
 import {
   resolveCurrentStepId,
   resolveCurrentStepIdFromWorkflow,
+  type NodeExecutionRecord,
   type WorkflowSessionState,
 } from "./workflow/session";
 import { buildInspectionSummary } from "./workflow/inspect";
@@ -44,10 +51,23 @@ import {
   type RuntimeEventReplyDispatchStatus,
 } from "./workflow/runtime-db";
 import { normalizeWorkflowWorkingDirectoryOverride } from "./workflow/working-directory";
+import {
+  continueWorkflowFromHistory,
+  listMergedWorkflowExecutionStepRuns,
+} from "./lib";
+import {
+  buildWorkflowCatalogOverview,
+  buildWorkflowStatusOverview,
+  parseWorkflowOverviewAggregateStatusFilter,
+  type WorkflowOverviewRow,
+  type WorkflowStatusOverview,
+} from "./workflow/overview";
 import type {
   AutoImprovePolicy,
+  LoadOptions,
   ResolvedWorkflowSource,
   WorkflowScopeSelector,
+  WorkflowSourceScope,
 } from "./workflow/types";
 
 type AutoImproveCliInputs = {
@@ -78,17 +98,7 @@ export interface CliIo {
 }
 
 export interface CliDependencies {
-  readonly startServe: (options: {
-    host?: string;
-    port?: number;
-    workflowRoot?: string;
-    addonRoot?: string;
-    artifactRoot?: string;
-    sessionStoreRoot?: string;
-    readOnly?: boolean;
-    noExec?: boolean;
-    fixedWorkflowName?: string;
-  }) => Promise<StartedServe>;
+  readonly startServe: (options: ServeStartOptions) => Promise<StartedServe>;
   readonly isInteractiveTerminal: () => boolean;
   readonly waitForServeShutdown?: (started: StartedServe) => Promise<void>;
   readonly waitForEventListenerShutdown?: (
@@ -128,7 +138,7 @@ interface ParsedOptions {
   readonly sessionStoreRoot?: string;
   readonly workingDirectory?: string;
   readonly workerOnly: boolean;
-  readonly output: "text" | "json";
+  readonly output: "text" | "json" | "table";
   readonly format?: "text" | "json" | "jsonl";
   readonly variablesPath?: string;
   readonly mockScenarioPath?: string;
@@ -160,6 +170,10 @@ interface ParsedOptions {
   readonly autoImprove?: AutoImprovePolicy;
   /** Phase-2: run superviser bundle as nested workflow; requires --auto-improve */
   readonly nestedSuperviser?: boolean;
+  readonly continuationStartStepId?: string;
+  readonly continuationAfterStepRunId?: string;
+  /** When set, restricts `session step-runs` to rows whose resolved step id matches. */
+  readonly stepRunsFilterStepId?: string;
 }
 
 interface ParsedArgs {
@@ -189,12 +203,23 @@ interface RemoteWorkflowRunSummary {
   readonly transitions: number;
 }
 
+interface WorkflowExecutionContinuationMetadata {
+  readonly continuedFromWorkflowExecutionId?: string;
+  readonly continuedAfterStepRunId?: string;
+  readonly continuedAfterExecutionOrdinal?: number;
+  readonly continuedStartStepId?: string;
+  readonly continuationMode?: WorkflowSessionState["continuationMode"];
+  readonly historyImports?: WorkflowSessionState["historyImports"];
+}
+
 interface WorkflowExecutionExport {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
   readonly workflowName: string;
   readonly status: WorkflowSessionState["status"];
   readonly exportedAt: string;
+  /** Explicit lineage for history-linked runs (reproducible continuation metadata). */
+  readonly continuationMetadata?: WorkflowExecutionContinuationMetadata;
   readonly session: WorkflowSessionState;
   readonly nodeExecutions: Awaited<
     ReturnType<typeof listRuntimeNodeExecutions>
@@ -400,7 +425,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let sessionStoreRoot: string | undefined;
   let workingDirectory: string | undefined;
   let workerOnly = false;
-  let output: "text" | "json" = "text";
+  let output: "text" | "json" | "table" = "text";
   let format: "text" | "json" | "jsonl" | undefined;
   let variablesPath: string | undefined;
   let dryRun = false;
@@ -440,6 +465,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let noAllowTargetedRerun = false;
   let firstAutoImprovePolicyFlag: string | undefined;
   let nestedSuperviser = false;
+  let continuationStartStepId: string | undefined;
+  let continuationAfterStepRunId: string | undefined;
+  let stepRunsFilterStepId: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -559,8 +587,8 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         const parsedOutput = parseEnumOption(
           token,
           readNext(),
-          ["json", "text"],
-          "json or text",
+          ["json", "text", "table"],
+          "json, text, or table",
         );
         if (parsedOutput.error !== undefined) {
           parseError = parsedOutput.error;
@@ -893,6 +921,33 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         markAutoImprovePolicyFlag();
         nestedSuperviser = true;
         break;
+      case "--start-step": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        continuationStartStepId = parsedString.value;
+        break;
+      }
+      case "--after-step-run": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        continuationAfterStepRunId = parsedString.value;
+        break;
+      }
+      case "--step": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        stepRunsFilterStepId = parsedString.value;
+        break;
+      }
       default:
         break;
     }
@@ -971,6 +1026,15 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         ? {}
         : { autoImprove: autoImprovePolicy.policy }),
       ...(nestedSuperviser ? { nestedSuperviser: true } : {}),
+      ...(continuationStartStepId === undefined
+        ? {}
+        : { continuationStartStepId }),
+      ...(continuationAfterStepRunId === undefined
+        ? {}
+        : { continuationAfterStepRunId }),
+      ...(stepRunsFilterStepId === undefined
+        ? {}
+        : { stepRunsFilterStepId }),
     },
     ...(parseError === undefined ? {} : { error: parseError }),
   };
@@ -979,12 +1043,20 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
 function printHelp(io: CliIo): void {
   io.stdout("Usage:");
   io.stdout(
-    "  divedra cli workflow <create|validate|inspect|run> <name> [options]",
+    "  divedra cli workflow <create|validate|inspect|list|status|run> <name?> [options]",
   );
   io.stdout(
-    "  divedra session <status|progress|resume|export|logs> <session-id> [options]",
+    "  divedra session <status|progress|resume|continue|rerun|export|logs|step-runs> <workflow-execution-id> [positional-args] [options]",
   );
-  io.stdout("  divedra session rerun <session-id> <step-id> [options]");
+  io.stdout(
+    "  divedra session rerun <workflow-execution-id> <step-id> [options]",
+  );
+  io.stdout(
+    "  divedra session continue <workflow-execution-id> --start-step <step-id> --after-step-run <step-run-id> [options]",
+  );
+  io.stdout(
+    "  divedra session step-runs <workflow-execution-id> [--step <step-id>] [--status <status>] [options]",
+  );
   io.stdout(
     "  divedra serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]",
   );
@@ -1012,7 +1084,27 @@ function printHelp(io: CliIo): void {
   io.stdout("  --project-root <path>   Override the project scope root");
   io.stdout("  --addon-root <path>     Use a direct add-on root override");
   io.stdout("");
+  io.stdout("Workflow overview (list / status):");
+  io.stdout(
+    "  --status <aggregate>    Filter workflow list by aggregate status",
+  );
+  io.stdout(
+    "  --limit <n>             Cap list rows or recent executions on workflow status",
+  );
+  io.stdout(
+    "Default --output text matches the compact table for list/status (--output table is equivalent;",
+  );
+  io.stdout(
+    "  use --output json here for payloads). Elsewhere --output stays text vs json.",
+  );
+  io.stdout("");
   io.stdout("Session options:");
+  io.stdout(
+    "  continue vs rerun        continue references a concrete prior step-run (after-step-run); rerun restarts using variables only without importing prior step artifacts",
+  );
+  io.stdout(
+    "  step-runs --step/--status Narrow merged timeline rows (status is a node execution terminal: succeeded | failed | timed_out | cancelled | skipped)",
+  );
   io.stdout(
     "  export --file <path>     Write workflow run export JSON to a file",
   );
@@ -1154,6 +1246,48 @@ function isNonNull<T>(value: T | null): value is T {
   return value !== null;
 }
 
+function buildWorkflowExecutionContinuationMetadata(
+  session: WorkflowSessionState,
+): WorkflowExecutionContinuationMetadata | undefined {
+  if (
+    session.continuedFromWorkflowExecutionId === undefined &&
+    session.continuedAfterStepRunId === undefined &&
+    session.continuedAfterExecutionOrdinal === undefined &&
+    session.continuedStartStepId === undefined &&
+    session.continuationMode === undefined &&
+    (session.historyImports === undefined ||
+      session.historyImports.length === 0)
+  ) {
+    return undefined;
+  }
+  return {
+    ...(session.continuedFromWorkflowExecutionId === undefined
+      ? {}
+      : {
+          continuedFromWorkflowExecutionId:
+            session.continuedFromWorkflowExecutionId,
+        }),
+    ...(session.continuedAfterStepRunId === undefined
+      ? {}
+      : { continuedAfterStepRunId: session.continuedAfterStepRunId }),
+    ...(session.continuedAfterExecutionOrdinal === undefined
+      ? {}
+      : {
+          continuedAfterExecutionOrdinal:
+            session.continuedAfterExecutionOrdinal,
+        }),
+    ...(session.continuedStartStepId === undefined
+      ? {}
+      : { continuedStartStepId: session.continuedStartStepId }),
+    ...(session.continuationMode === undefined
+      ? {}
+      : { continuationMode: session.continuationMode }),
+    ...(session.historyImports === undefined
+      ? {}
+      : { historyImports: session.historyImports }),
+  };
+}
+
 async function buildWorkflowExecutionExport(
   workflowExecutionId: string,
   options: CliStorageOptions,
@@ -1163,6 +1297,9 @@ async function buildWorkflowExecutionExport(
     throw new Error(loaded.error.message);
   }
   const workflowId = loaded.value.workflowId;
+  const continuationMetadata = buildWorkflowExecutionContinuationMetadata(
+    loaded.value,
+  );
 
   const [nodeExecutions, nodeLogs, hookEvents] = await Promise.all([
     listRuntimeNodeExecutions(workflowExecutionId, options),
@@ -1194,6 +1331,9 @@ async function buildWorkflowExecutionExport(
     workflowName: loaded.value.workflowName,
     status: loaded.value.status,
     exportedAt: new Date().toISOString(),
+    ...(continuationMetadata === undefined
+      ? {}
+      : { continuationMetadata }),
     session: loaded.value,
     nodeExecutions,
     nodeLogs,
@@ -1448,6 +1588,32 @@ function rejectUnsupportedRemoteMockScenario(
   return true;
 }
 
+function parseStepRunExecutionStatusFilter(raw: string | undefined):
+  | { ok: true; value: NodeExecutionRecord["status"] | undefined }
+  | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, value: undefined };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { ok: true, value: undefined };
+  }
+  const allowed: ReadonlySet<string> = new Set([
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "skipped",
+  ]);
+  if (!allowed.has(trimmed)) {
+    return {
+      ok: false,
+      error: `invalid --status '${raw}' for session step-runs (expected succeeded, failed, timed_out, cancelled, or skipped)`,
+    };
+  }
+  return { ok: true, value: trimmed as NodeExecutionRecord["status"] };
+}
+
 function buildLocalWorkflowRunOverrides(
   parsedOptions: ParsedOptions,
 ): Pick<
@@ -1565,6 +1731,292 @@ function formatAddonSource(source: {
   readonly manifestPath: string;
 }): string {
   return `${source.nodeId}: ${source.name}@${source.version} ${source.scope} ${source.manifestPath}`;
+}
+
+function assertWorkflowOverviewSourceScope(value: string): WorkflowSourceScope {
+  if (value === "direct" || value === "project" || value === "user") {
+    return value;
+  }
+  throw new Error(`invalid workflow overview sourceScope '${value}'`);
+}
+
+function workflowExecutionCompactSummaryFromGraphql(
+  value: unknown,
+  label: string,
+): WorkflowExecutionCompactSummary {
+  const o = requireObjectField(value, label);
+  const currentStepIdRaw = o["currentStepId"];
+  return {
+    workflowExecutionId: requireStringField(
+      o["workflowExecutionId"],
+      `${label}.workflowExecutionId`,
+    ),
+    sessionId: requireStringField(o["sessionId"], `${label}.sessionId`),
+    workflowName: requireStringField(
+      o["workflowName"],
+      `${label}.workflowName`,
+    ),
+    status: requireStringField(o["status"], `${label}.status`) as WorkflowExecutionCompactSummary["status"],
+    currentNodeId:
+      o["currentNodeId"] === null || o["currentNodeId"] === undefined
+        ? null
+        : requireStringField(o["currentNodeId"], `${label}.currentNodeId`),
+    ...(currentStepIdRaw === null || currentStepIdRaw === undefined
+      ? {}
+      : {
+          currentStepId: requireStringField(
+            currentStepIdRaw,
+            `${label}.currentStepId`,
+          ),
+        }),
+    nodeExecutionCounter: requireNumberField(
+      o["nodeExecutionCounter"],
+      `${label}.nodeExecutionCounter`,
+    ),
+    startedAt: requireStringField(o["startedAt"], `${label}.startedAt`),
+    endedAt:
+      o["endedAt"] === null || o["endedAt"] === undefined
+        ? null
+        : requireStringField(o["endedAt"], `${label}.endedAt`),
+  };
+}
+
+function workflowOverviewRowFromGraphqlJson(
+  value: unknown,
+  label: string,
+): WorkflowOverviewRow {
+  const row = requireObjectField(value, label);
+  const latestRaw = row["latestExecution"];
+  return {
+    workflowName: requireStringField(
+      row["workflowName"],
+      `${label}.workflowName`,
+    ),
+    sourceScope: assertWorkflowOverviewSourceScope(
+      requireStringField(row["sourceScope"], `${label}.sourceScope`),
+    ),
+    workflowDirectory: requireStringField(
+      row["workflowDirectory"],
+      `${label}.workflowDirectory`,
+    ),
+    description: requireStringField(row["description"], `${label}.description`),
+    aggregateStatus: requireStringField(
+      row["aggregateStatus"],
+      `${label}.aggregateStatus`,
+    ) as WorkflowOverviewRow["aggregateStatus"],
+    activeExecutionCount: requireNumberField(
+      row["activeExecutionCount"],
+      `${label}.activeExecutionCount`,
+    ),
+    latestExecution:
+      latestRaw === null || latestRaw === undefined
+        ? null
+        : workflowExecutionCompactSummaryFromGraphql(
+            latestRaw,
+            `${label}.latestExecution`,
+          ),
+  };
+}
+
+function workflowStatusOverviewFromGraphqlJson(
+  value: unknown,
+  label: string,
+): WorkflowStatusOverview {
+  const base = workflowOverviewRowFromGraphqlJson(value, label);
+  const row = requireObjectField(value, label);
+  const recentRaw = requireArrayField(
+    row["recentExecutions"],
+    `${label}.recentExecutions`,
+  );
+  const recentExecutions = recentRaw.map((entry, index) =>
+    workflowExecutionCompactSummaryFromGraphql(
+      entry,
+      `${label}.recentExecutions[${String(index)}]`,
+    ),
+  );
+  const newestRaw = row["newestActiveExecution"];
+  const newestActiveExecution =
+    newestRaw === null || newestRaw === undefined
+      ? null
+      : workflowExecutionCompactSummaryFromGraphql(
+          newestRaw,
+          `${label}.newestActiveExecution`,
+        );
+  return {
+    ...base,
+    recentExecutions,
+    newestActiveExecution,
+  };
+}
+
+const WORKFLOW_CATALOG_OVERVIEW_GQL = `
+  query WorkflowCatalogOverviewCli($workflowScope: String, $status: String, $limit: Int) {
+    workflowCatalogOverview(workflowScope: $workflowScope, status: $status, limit: $limit) {
+      workflows {
+        workflowName
+        sourceScope
+        workflowDirectory
+        description
+        aggregateStatus
+        activeExecutionCount
+        latestExecution {
+          workflowExecutionId
+          sessionId
+          workflowName
+          status
+          currentNodeId
+          currentStepId
+          nodeExecutionCounter
+          startedAt
+          endedAt
+        }
+      }
+    }
+  }
+`;
+
+const WORKFLOW_STATUS_OVERVIEW_GQL = `
+  query WorkflowStatusOverviewCli($workflowName: String!, $workflowScope: String, $limit: Int) {
+    workflowStatusOverview(workflowName: $workflowName, workflowScope: $workflowScope, limit: $limit) {
+      workflowName
+      sourceScope
+      workflowDirectory
+      description
+      aggregateStatus
+      activeExecutionCount
+      latestExecution {
+        workflowExecutionId
+        sessionId
+        workflowName
+        status
+        currentNodeId
+        currentStepId
+        nodeExecutionCounter
+        startedAt
+        endedAt
+      }
+      recentExecutions {
+        workflowExecutionId
+        sessionId
+        workflowName
+        status
+        currentNodeId
+        currentStepId
+        nodeExecutionCounter
+        startedAt
+        endedAt
+      }
+      newestActiveExecution {
+        workflowExecutionId
+        sessionId
+        workflowName
+        status
+        currentNodeId
+        currentStepId
+        nodeExecutionCounter
+        startedAt
+        endedAt
+      }
+    }
+  }
+`;
+
+function renderWorkflowOverviewTableLines(
+  rows: readonly WorkflowOverviewRow[],
+): string[] {
+  const lines: string[] = [
+    [
+      "name",
+      "scope",
+      "workflowDirectory",
+      "aggregateStatus",
+      "active",
+      "latestExecutionId",
+      "latestStatus",
+      "latestStartedAt",
+    ].join("\t"),
+  ];
+  for (const row of rows) {
+    const latest = row.latestExecution;
+    lines.push(
+      [
+        row.workflowName,
+        row.sourceScope,
+        row.workflowDirectory,
+        row.aggregateStatus,
+        String(row.activeExecutionCount),
+        latest?.workflowExecutionId ?? "-",
+        latest?.status ?? "-",
+        latest?.startedAt ?? "-",
+      ].join("\t"),
+    );
+  }
+  return lines;
+}
+
+function renderWorkflowStatusOverviewLines(
+  overview: WorkflowStatusOverview,
+): string[] {
+  const lines: string[] = [
+    `workflowName: ${overview.workflowName}`,
+    `sourceScope: ${overview.sourceScope}`,
+    `workflowDirectory: ${overview.workflowDirectory}`,
+    `description: ${overview.description}`,
+    `aggregateStatus: ${overview.aggregateStatus}`,
+    `activeExecutionCount: ${String(overview.activeExecutionCount)}`,
+  ];
+  const latest = overview.latestExecution;
+  if (latest === null) {
+    lines.push("latestExecution: -");
+  } else {
+    lines.push(
+      `latestExecution: ${latest.workflowExecutionId} ${latest.status} startedAt=${latest.startedAt} endedAt=${latest.endedAt ?? "-"}`,
+    );
+  }
+  const active = overview.newestActiveExecution;
+  if (active === null) {
+    lines.push("newestActiveExecution: -");
+  } else {
+    const stepLabel =
+      active.currentStepId !== undefined && active.currentStepId !== null
+        ? active.currentStepId
+        : active.currentNodeId ?? "-";
+    lines.push(
+      `newestActiveExecution: ${active.workflowExecutionId} ${active.status} currentStepOrNode=${stepLabel}`,
+    );
+  }
+  lines.push("recentExecutions:");
+  if (overview.recentExecutions.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const e of overview.recentExecutions) {
+      const step =
+        e.currentStepId !== undefined && e.currentStepId !== null
+          ? ` step=${e.currentStepId}`
+          : "";
+      lines.push(
+        `  - ${e.workflowExecutionId} ${e.status} ${e.startedAt}${step}`,
+      );
+    }
+  }
+  return lines;
+}
+
+function workflowOverviewGraphqlVariables(
+  parsed: ParsedOptions,
+  statusFilter: string | undefined,
+): Readonly<Record<string, unknown>> {
+  const variables: Record<string, unknown> = {};
+  if (parsed.workflowScope !== undefined) {
+    variables["workflowScope"] = parsed.workflowScope;
+  }
+  if (statusFilter !== undefined) {
+    variables["status"] = statusFilter;
+  }
+  if (parsed.limit !== undefined) {
+    variables["limit"] = parsed.limit;
+  }
+  return variables;
 }
 
 export async function runCli(
@@ -2077,17 +2529,33 @@ export async function runCli(
   if (scope === "serve") {
     const serveWorkflowName = command;
     try {
+      let serveContext: LoadOptions & {
+        readonly fixedWorkflowName?: string;
+        readonly fixedResolvedWorkflowSource?: ResolvedWorkflowSource;
+      } = sharedOptions;
+      if (serveWorkflowName !== undefined) {
+        const resolved = await resolveWorkflowSource(
+          serveWorkflowName,
+          sharedOptions,
+        );
+        if (!resolved.ok) {
+          io.stderr(`serve failed: ${resolved.error.message}`);
+          return 7;
+        }
+        serveContext = {
+          ...sharedOptions,
+          fixedWorkflowName: serveWorkflowName,
+          fixedResolvedWorkflowSource: resolved.value,
+        };
+      }
       const started = await deps.startServe({
-        ...sharedOptions,
+        ...serveContext,
         ...(parsed.options.host === undefined
           ? {}
           : { host: parsed.options.host }),
         ...(parsed.options.port === undefined
           ? {}
           : { port: parsed.options.port }),
-        ...(serveWorkflowName === undefined
-          ? {}
-          : { fixedWorkflowName: serveWorkflowName }),
         ...(parsed.options.readOnly ? { readOnly: true } : {}),
         ...(parsed.options.noExec ? { noExec: true } : {}),
       });
@@ -2208,15 +2676,206 @@ export async function runCli(
     return result.value.exitCode;
   }
 
-  if (scope === undefined || command === undefined || target === undefined) {
+  if (scope === undefined || command === undefined) {
+    io.stderr("scope and command are required");
+    printHelp(io);
+    return 2;
+  }
+  if (
+    target === undefined &&
+    !(scope === "workflow" && command === "list")
+  ) {
     io.stderr("scope, command, and target are required");
     printHelp(io);
     return 2;
   }
 
+  if (
+    parsed.options.output === "table" &&
+    !(scope === "workflow" && (command === "list" || command === "status"))
+  ) {
+    io.stderr(
+      "`--output table` is only supported for workflow list and workflow status",
+    );
+    return 2;
+  }
+
   if (scope === "workflow") {
+    if (command === "list") {
+      const statusParsed = parseWorkflowOverviewAggregateStatusFilter(
+        parsed.options.status,
+      );
+      if (!statusParsed.ok) {
+        io.stderr(statusParsed.error);
+        return 2;
+      }
+      const statusFilter = statusParsed.value;
+      if (graphqlCliTransport !== null) {
+        try {
+          const data = await executeCliGraphqlOperation({
+            transport: graphqlCliTransport,
+            document: WORKFLOW_CATALOG_OVERVIEW_GQL,
+            variables: workflowOverviewGraphqlVariables(
+              parsed.options,
+              statusFilter,
+            ),
+          });
+          const catalog = requireObjectField(
+            data["workflowCatalogOverview"],
+            "workflowCatalogOverview",
+          );
+          if (parsed.options.output === "json") {
+            emitJson(io, catalog);
+          } else {
+            const rowsRaw = requireArrayField(
+              catalog["workflows"],
+              "workflows",
+            );
+            const rows: WorkflowOverviewRow[] = rowsRaw.map(
+              (entry, index) =>
+                workflowOverviewRowFromGraphqlJson(
+                  entry,
+                  `workflows[${String(index)}]`,
+                ),
+            );
+            for (const line of renderWorkflowOverviewTableLines(rows)) {
+              io.stdout(line);
+            }
+          }
+          return 0;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : "unknown error";
+          io.stderr(`remote workflow list failed: ${message}`);
+          return 1;
+        }
+      }
+      const built = await buildWorkflowCatalogOverview(
+        {
+          ...(parsed.options.workflowScope === undefined
+            ? {}
+            : { workflowScope: parsed.options.workflowScope }),
+          ...(statusFilter === undefined ? {} : { status: statusFilter }),
+          ...(parsed.options.limit === undefined
+            ? {}
+            : { limit: parsed.options.limit }),
+        },
+        sharedOptions,
+      );
+      if (!built.ok) {
+        io.stderr(built.error.message);
+        return 1;
+      }
+      if (parsed.options.output === "json") {
+        emitJson(io, built.value);
+      } else {
+        for (const line of renderWorkflowOverviewTableLines(
+          built.value.workflows,
+        )) {
+          io.stdout(line);
+        }
+      }
+      return 0;
+    }
+
+    if (command === "status") {
+      if (target === undefined) {
+        io.stderr("workflow name is required for workflow status");
+        printHelp(io);
+        return 2;
+      }
+      const statusParsed = parseWorkflowOverviewAggregateStatusFilter(
+        parsed.options.status,
+      );
+      if (!statusParsed.ok) {
+        io.stderr(statusParsed.error);
+        return 2;
+      }
+      if (statusParsed.value !== undefined) {
+        io.stderr(
+          "workflow status does not support filtering catalog rows by --status; omit --status",
+        );
+        return 2;
+      }
+      if (graphqlCliTransport !== null) {
+        try {
+          const variables: Record<string, unknown> = {
+            workflowName: target,
+            ...(parsed.options.workflowScope === undefined
+              ? {}
+              : { workflowScope: parsed.options.workflowScope }),
+            ...(parsed.options.limit === undefined
+              ? {}
+              : { limit: parsed.options.limit }),
+          };
+          const data = await executeCliGraphqlOperation({
+            transport: graphqlCliTransport,
+            document: WORKFLOW_STATUS_OVERVIEW_GQL,
+            variables,
+          });
+          const payload = data["workflowStatusOverview"];
+          if (payload === null || payload === undefined) {
+            io.stderr(
+              `workflow '${target}' was not found for workflow status overview`,
+            );
+            return 2;
+          }
+          const overview = workflowStatusOverviewFromGraphqlJson(
+            payload,
+            "workflowStatusOverview",
+          );
+          if (parsed.options.output === "json") {
+            emitJson(io, overview);
+          } else {
+            for (const line of renderWorkflowStatusOverviewLines(overview)) {
+              io.stdout(line);
+            }
+          }
+          return 0;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : "unknown error";
+          io.stderr(`remote workflow status failed: ${message}`);
+          return 1;
+        }
+      }
+      const built = await buildWorkflowStatusOverview(
+        {
+          workflowName: target,
+          ...(parsed.options.workflowScope === undefined
+            ? {}
+            : { workflowScope: parsed.options.workflowScope }),
+          ...(parsed.options.limit === undefined
+            ? {}
+            : { limit: parsed.options.limit }),
+        },
+        sharedOptions,
+      );
+      if (!built.ok) {
+        const code = built.error.code;
+        if (
+          code === "NOT_FOUND" ||
+          code === "INVALID_WORKFLOW_NAME" ||
+          code === "INVALID_SCOPE"
+        ) {
+          io.stderr(built.error.message);
+          return 2;
+        }
+        io.stderr(built.error.message);
+        return 1;
+      }
+      if (parsed.options.output === "json") {
+        emitJson(io, built.value);
+      } else {
+        for (const line of renderWorkflowStatusOverviewLines(built.value)) {
+          io.stdout(line);
+        }
+      }
+      return 0;
+    }
+
     if (command === "create") {
-      const created = await createWorkflowTemplate(target, {
+      const created = await createWorkflowTemplate(target!, {
         ...sharedOptions,
         ...(parsed.options.workerOnly
           ? { templateMode: "worker-only" as const }
@@ -2241,7 +2900,7 @@ export async function runCli(
     }
 
     if (command === "validate") {
-      const loaded = await loadWorkflowFromCatalog(target, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(target!, sharedOptions);
       if (!loaded.ok) {
         if (parsed.options.output === "json") {
           emitJson(io, loaded.error);
@@ -2290,7 +2949,7 @@ export async function runCli(
     }
 
     if (command === "inspect") {
-      const loaded = await loadWorkflowFromCatalog(target, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(target!, sharedOptions);
       if (!loaded.ok) {
         io.stderr(`inspect failed: ${loaded.error.message}`);
         if (loaded.error.issues) {
@@ -2388,7 +3047,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowName: target,
+                workflowName: target!,
                 runtimeVariables,
                 ...buildRemoteExecutionInput(parsed.options),
               },
@@ -2452,7 +3111,7 @@ export async function runCli(
       }
 
       const loadedWorkflow = await loadWorkflowFromCatalog(
-        target,
+        target!,
         sharedOptions,
       );
       if (!loadedWorkflow.ok) {
@@ -2475,7 +3134,7 @@ export async function runCli(
         sharedOptions,
       );
 
-      const result = await runWorkflow(target, {
+      const result = await runWorkflow(target!, {
         ...workflowRunOptions,
         runtimeVariables,
         ...mockScenarioOptions,
@@ -2530,7 +3189,7 @@ export async function runCli(
 
   if (scope === "session") {
     if (command === "progress") {
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -2592,7 +3251,7 @@ export async function runCli(
     }
 
     if (command === "status") {
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -2640,7 +3299,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowExecutionId: target,
+                workflowExecutionId: target!,
                 ...buildRemoteExecutionInput(parsed.options),
               },
             },
@@ -2680,7 +3339,7 @@ export async function runCli(
           return 1;
         }
       }
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -2724,6 +3383,97 @@ export async function runCli(
       return result.value.exitCode;
     }
 
+    if (command === "continue") {
+      const startStepRaw = parsed.options.continuationStartStepId;
+      const afterRunRaw = parsed.options.continuationAfterStepRunId;
+      const startStep = startStepRaw?.trim() ?? "";
+      const afterRun = afterRunRaw?.trim() ?? "";
+      let missingUsage = false;
+      if (startStep.length === 0) {
+        io.stderr("--start-step is required for session continue");
+        missingUsage = true;
+      }
+      if (afterRun.length === 0) {
+        io.stderr("--after-step-run is required for session continue");
+        missingUsage = true;
+      }
+      if (missingUsage) {
+        io.stderr(
+          "usage: divedra session continue <workflow-execution-id> --start-step <step-id> --after-step-run <step-run-id> [options]",
+        );
+        return 2;
+      }
+      if (parsed.options.nestedSuperviser) {
+        io.stderr(
+          "--nested-supervisor / --nested-superviser is not supported for session continue",
+        );
+        return 2;
+      }
+      if (parsed.options.autoImprove !== undefined) {
+        io.stderr("--auto-improve cannot be combined with session continue");
+        return 2;
+      }
+      if (graphqlCliTransport !== null) {
+        io.stderr(
+          "session continue currently supports local execution only; omit --endpoint",
+        );
+        return 2;
+      }
+
+      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> =
+        {};
+      try {
+        mockScenarioOptions = await readMockScenarioOption(
+          parsed.options.mockScenarioPath,
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        return 1;
+      }
+
+      try {
+        const {
+          autoImprove: _omitA,
+          nestedSuperviserDriver: _omitN,
+          ...budgetOverrides
+        } = buildLocalWorkflowRunOverrides(parsed.options);
+
+        const result = await continueWorkflowFromHistory({
+          ...sharedOptions,
+          ...budgetOverrides,
+          sourceWorkflowExecutionId: target!,
+          afterStepRunId: afterRun,
+          startStepId: startStep,
+          ...mockScenarioOptions,
+        });
+
+        if (parsed.options.output === "json") {
+          emitJson(io, {
+            sourceWorkflowExecutionId: target!,
+            sessionId: result.sessionId,
+            status: result.status,
+            continuedAfterStepRunId: result.continuedAfterStepRunId,
+            continuedStartStepId: result.continuedStartStepId,
+            exitCode: result.exitCode,
+          });
+        } else {
+          io.stdout(`sourceWorkflowExecutionId: ${target!}`);
+          io.stdout(`continued session: ${result.sessionId}`);
+          io.stdout(`continuedAfterStepRunId: ${result.continuedAfterStepRunId}`);
+          io.stdout(`continuedStartStepId: ${result.continuedStartStepId}`);
+          io.stdout(`status: ${result.status}`);
+        }
+        return result.exitCode;
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`session continue failed: ${message}`);
+        return 1;
+      }
+    }
+
     if (command === "rerun") {
       const fromStepId = positionals[3];
       if (fromStepId === undefined) {
@@ -2758,7 +3508,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowExecutionId: target,
+                workflowExecutionId: target!,
                 stepId: fromStepId,
                 ...buildRemoteExecutionInput(parsed.options),
               },
@@ -2783,14 +3533,14 @@ export async function runCli(
 
           if (parsed.options.output === "json") {
             emitJson(io, {
-              sourceSessionId: target,
+              sourceSessionId: target!,
               sessionId,
               status,
               rerunFromStepId: fromStepId,
               exitCode,
             });
           } else {
-            io.stdout(`sourceSessionId: ${target}`);
+            io.stdout(`sourceSessionId: ${target!}`);
             io.stdout(`rerun session: ${sessionId}`);
             io.stdout(`rerunFromStepId: ${fromStepId}`);
             io.stdout(`status: ${status}`);
@@ -2804,7 +3554,7 @@ export async function runCli(
         }
       }
 
-      const source = await loadSession(target, sharedOptions);
+      const source = await loadSession(target!, sharedOptions);
       if (!source.ok) {
         io.stderr(source.error.message);
         return 1;
@@ -2853,6 +3603,63 @@ export async function runCli(
       return result.value.exitCode;
     }
 
+    if (command === "step-runs") {
+      if (graphqlCliTransport !== null) {
+        io.stderr(
+          "session step-runs currently supports local execution only; omit --endpoint",
+        );
+        return 2;
+      }
+
+      const statusParsed = parseStepRunExecutionStatusFilter(
+        parsed.options.status,
+      );
+      if (!statusParsed.ok) {
+        io.stderr(statusParsed.error);
+        return 2;
+      }
+
+      const filterStepCandidate = parsed.options.stepRunsFilterStepId?.trim();
+      const filterStepId =
+        filterStepCandidate !== undefined && filterStepCandidate.length > 0
+          ? filterStepCandidate
+          : undefined;
+
+      try {
+        const overview = await listMergedWorkflowExecutionStepRuns({
+          ...sharedOptions,
+          workflowExecutionId: target!,
+          ...(filterStepId === undefined ? {} : { filterStepId }),
+          ...(statusParsed.value === undefined
+            ? {}
+            : { filterStatus: statusParsed.value }),
+        });
+
+        if (parsed.options.output === "json") {
+          emitJson(io, overview);
+        } else {
+          io.stdout(`workflowExecutionId: ${overview.workflowExecutionId}`);
+          io.stdout(`workflow: ${overview.workflowName}`);
+          if (overview.stepRuns.length === 0) {
+            io.stdout("stepRuns: (none matching filters)");
+          } else {
+            io.stdout("stepRuns:");
+            for (const row of overview.stepRuns) {
+              io.stdout(
+                `  timeline=${String(row.timelineOrdinal)} ord=${String(row.executionOrdinal)} stepRunId=${row.stepRunId} stepId=${row.stepId ?? "-"} owner=${row.persistedWorkflowExecutionId} status=${row.status} imported=${row.imported ? "yes" : "no"} started=${row.startedAt} ended=${row.endedAt}`,
+              );
+            }
+          }
+        }
+        return 0;
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`session step-runs failed: ${message}`);
+        return 1;
+      }
+    }
+
     if (command === "export") {
       if (graphqlCliTransport !== null) {
         io.stderr(
@@ -2863,7 +3670,7 @@ export async function runCli(
 
       let payload: WorkflowExecutionExport;
       try {
-        payload = await buildWorkflowExecutionExport(target, sharedOptions);
+        payload = await buildWorkflowExecutionExport(target!, sharedOptions);
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "unknown error";
@@ -2908,14 +3715,16 @@ export async function runCli(
         );
         return 2;
       }
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
       }
 
-      const logs = await listRuntimeNodeLogs(target, sharedOptions);
-      const format = parsed.options.format ?? parsed.options.output;
+      const logs = await listRuntimeNodeLogs(target!, sharedOptions);
+      const formatBase = parsed.options.format ?? parsed.options.output;
+      const format =
+        formatBase === "table" ? "text" : formatBase;
       const serialized = serializeRuntimeNodeLogs(logs, format);
 
       if (parsed.options.filePath !== undefined) {
@@ -2927,7 +3736,7 @@ export async function runCli(
           if (parsed.options.output === "json") {
             emitJson(io, {
               filePath: savedPath,
-              sessionId: target,
+              sessionId: target!,
               workflowId: session.value.workflowId,
               workflowName: session.value.workflowName,
               logCount: logs.length,

@@ -77,14 +77,30 @@ describe("handleApiRequest", () => {
 
   test("returns 404 for removed REST routes", async () => {
     const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
     const context = {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
     };
 
+    const overviewResponse = await handleApiRequest(
+      new Request("http://localhost/overview"),
+      context,
+    );
+    expect(overviewResponse.status).toBe(200);
+    await expect(overviewResponse.json()).resolves.toMatchObject({
+      workflows: expect.any(Array),
+      selectedWorkflow: expect.anything(),
+    });
+
+    const rootPage = await handleApiRequest(new Request("http://localhost/"), context);
+    expect(rootPage.status).toBe(200);
+    expect(rootPage.headers.get("content-type")).toContain("text/html");
+    await expect(rootPage.text()).resolves.toContain("workflow overview");
+
     for (const url of [
-      "http://localhost/",
       "http://localhost/web",
       "http://localhost/web/",
       "http://localhost/ui",

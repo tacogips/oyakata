@@ -8,11 +8,12 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { runCli } from "./cli";
-import type { CliDependencies } from "./cli";
+import { runCli, type CliDependencies } from "./cli";
+import { createWorkflowTemplate } from "./workflow/create";
 import * as workflowCallStep from "./workflow/call-step";
 import * as workflowEngine from "./workflow/engine";
 import { ok } from "./workflow/result";
+import type { ResolvedWorkflowSource } from "./workflow/types";
 import { saveEventReplyDispatchToRuntimeDb } from "./workflow/runtime-db";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
@@ -724,6 +725,55 @@ describe("runCli", () => {
     expect(runPayload.source?.workflowDirectory).toBe(workflowDirectory);
   });
 
+  test("workflow list and status use overview data for direct workflow root", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+    const listCapture = createIoCapture();
+    const listCode = await runCli(
+      ["workflow", "list", "--workflow-root", root],
+      listCapture.io,
+    );
+    expect(listCode).toBe(0);
+    const listText = listCapture.stdout.join("\n");
+    expect(listText).toContain("demo");
+    expect(listText).toContain("direct");
+
+    const listJsonCapture = createIoCapture();
+    const listJsonCode = await runCli(
+      ["workflow", "list", "--workflow-root", root, "--output", "json"],
+      listJsonCapture.io,
+    );
+    expect(listJsonCode).toBe(0);
+    const listPayload = JSON.parse(listJsonCapture.stdout.join("\n")) as {
+      workflows: ReadonlyArray<{ workflowName: string; sourceScope: string }>;
+    };
+    expect(listPayload.workflows.length).toBeGreaterThanOrEqual(1);
+    expect(listPayload.workflows.some((w) => w.workflowName === "demo")).toBe(
+      true,
+    );
+
+    const statusCapture = createIoCapture();
+    const statusCode = await runCli(
+      ["workflow", "status", "demo", "--workflow-root", root],
+      statusCapture.io,
+    );
+    expect(statusCode).toBe(0);
+    expect(statusCapture.stdout.join("\n")).toContain("aggregateStatus:");
+
+    const missingCapture = createIoCapture();
+    const missingCode = await runCli(
+      ["workflow", "status", "missing-wf", "--workflow-root", root],
+      missingCapture.io,
+    );
+    expect(missingCode).toBe(2);
+  });
+
   test("workflow validate and inspect report scoped local add-on sources", async () => {
     await withLegacyWorkflowAuthorshipForCli(async () => {
       const root = await makeTempDir();
@@ -1401,7 +1451,7 @@ describe("runCli", () => {
     {
       name: "workflow inspect rejects --output without a value",
       argv: ["workflow", "inspect", "supervised-mock-retry", "--output"],
-      message: "--output requires a value: json or text",
+      message: "--output requires a value: json, text, or table",
     },
     {
       name: "session logs rejects --format without a value",
@@ -1414,6 +1464,26 @@ describe("runCli", () => {
 
     expect(code).toBe(2);
     expect(capture.stderr.join("\n")).toContain(message);
+  });
+
+  test("workflow inspect rejects --output table (table is only for workflow list and status)", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "inspect",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--output",
+        "table",
+      ],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "`--output table` is only supported for workflow list and workflow status",
+    );
   });
 
   test.each([
@@ -1441,7 +1511,7 @@ describe("runCli", () => {
         "--output",
         "yaml",
       ],
-      message: "invalid --output value 'yaml'; expected json or text",
+      message: "invalid --output value 'yaml'; expected json, text, or table",
     },
     {
       name: "session logs rejects invalid --format values",
@@ -1962,6 +2032,77 @@ describe("runCli", () => {
     expect(savedPayload.nodeExecutions.length).toBeGreaterThan(0);
     expect(savedPayload.nodeLogs.length).toBeGreaterThan(0);
     expect(savedPayload.communications.length).toBeGreaterThan(0);
+  });
+
+  test("session export includes continuationMetadata for history-linked sessions", async () => {
+    const root = await makeTempDir();
+    const sessionsRoot = path.join(root, "sessions");
+    const artifactRoot = path.join(root, "artifacts");
+    await mkdir(artifactRoot, { recursive: true });
+
+    const continued = {
+      ...createSessionState({
+        sessionId: "sess-export-continued",
+        workflowName: "demo",
+        workflowId: "demo-wf",
+        initialNodeId: "step-2",
+        runtimeVariables: {},
+      }),
+      continuedFromWorkflowExecutionId: "sess-export-src",
+      continuedAfterStepRunId: "ne-1",
+      continuedAfterExecutionOrdinal: 1,
+      continuedStartStepId: "step-2",
+      continuationMode: "rerun-from-history" as const,
+      historyImports: [
+        {
+          sourceWorkflowExecutionId: "sess-export-src",
+          throughStepRunId: "ne-1",
+          throughExecutionOrdinal: 1,
+        },
+      ],
+    };
+    const saved = await saveSession(continued, {
+      sessionStoreRoot: sessionsRoot,
+    });
+    expect(saved.ok).toBe(true);
+
+    const exportCapture = createIoCapture();
+    const exportCode = await runCli(
+      [
+        "session",
+        "export",
+        "sess-export-continued",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactRoot,
+        "--session-store",
+        sessionsRoot,
+      ],
+      exportCapture.io,
+    );
+
+    expect(exportCode).toBe(0);
+    const exportPayload = JSON.parse(exportCapture.stdout.join("\n")) as {
+      continuationMetadata?: {
+        continuedFromWorkflowExecutionId?: string;
+        historyImports?: readonly {
+          sourceWorkflowExecutionId: string;
+          throughStepRunId: string;
+          throughExecutionOrdinal: number;
+        }[];
+      };
+    };
+    expect(exportPayload.continuationMetadata?.continuedFromWorkflowExecutionId).toBe(
+      "sess-export-src",
+    );
+    expect(exportPayload.continuationMetadata?.historyImports).toEqual([
+      {
+        sourceWorkflowExecutionId: "sess-export-src",
+        throughStepRunId: "ne-1",
+        throughExecutionOrdinal: 1,
+      },
+    ]);
   });
 
   test("top-level export is not a supported command", async () => {
@@ -2832,6 +2973,322 @@ describe("runCli", () => {
     });
   });
 
+  test("session continue requires --start-step and --after-step-run", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["session", "continue", "sess-any"],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain("--start-step is required");
+    expect(capture.stderr.join("\n")).toContain("--after-step-run is required");
+  });
+
+  test("session continue rejects graphql transport", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "continue",
+        "sess-remote-001",
+        "--start-step",
+        "step-2",
+        "--after-step-run",
+        "exec-1",
+        "--endpoint",
+        "http://example.test/graphql",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async () => new Response("{}"),
+      },
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "session continue currently supports local execution only",
+    );
+  });
+
+  test("session continue rejects auto-improve", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "continue",
+        "sess-x",
+        "--start-step",
+        "step-2",
+        "--after-step-run",
+        "exec-1",
+        "--auto-improve",
+      ],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "cannot be combined with session continue",
+    );
+  });
+
+  test("local session continue forwards continuation engine options", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-local-continue-src",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "main-worker",
+      runtimeVariables: {},
+    });
+    await saveSession(session, { sessionStoreRoot });
+
+    const continuedSessionState = createSessionState({
+      sessionId: "sess-local-continue-new",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "step-2",
+      runtimeVariables: {},
+    });
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue(
+        ok({
+          session: {
+            ...continuedSessionState,
+            status: "running",
+          },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult),
+      );
+
+    const code = await runCli(
+      [
+        "session",
+        "continue",
+        "sess-local-continue-src",
+        "--session-store",
+        sessionStoreRoot,
+        "--start-step",
+        "step-2",
+        "--after-step-run",
+        "exec-anchor",
+        "--working-dir",
+        " apps/reviewer ",
+        "--dry-run",
+        "--max-steps",
+        "9",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        sessionStoreRoot,
+        continueFromWorkflowExecutionId: "sess-local-continue-src",
+        continueAfterStepRunId: "exec-anchor",
+        continueStartStepId: "step-2",
+        workflowWorkingDirectory: "apps/reviewer",
+        dryRun: true,
+        maxSteps: 9,
+      }),
+    );
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sourceWorkflowExecutionId: "sess-local-continue-src",
+      sessionId: "sess-local-continue-new",
+      status: "running",
+      continuedAfterStepRunId: "exec-anchor",
+      continuedStartStepId: "step-2",
+      exitCode: 0,
+    });
+  });
+
+  test("session step-runs rejects graphql transport", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "step-runs",
+        "sess-remote-001",
+        "--endpoint",
+        "http://example.test/graphql",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async () => new Response("{}"),
+      },
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "session step-runs currently supports local execution only",
+    );
+  });
+
+  test("session step-runs rejects invalid node execution status filter", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["session", "step-runs", "sess-z", "--status", "paused"],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain("invalid --status");
+  });
+
+  test("local session step-runs lists merged timeline with import markers", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    const artifactBase = path.join(root, "artifacts");
+    await mkdir(artifactBase, { recursive: true });
+
+    const source = {
+      ...createSessionState({
+        sessionId: "sess-steprun-src",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-1",
+        runtimeVariables: {},
+      }),
+      nodeExecutions: [
+        {
+          nodeId: "step-1",
+          nodeExecId: "ne-src-1",
+          executionOrdinal: 1,
+          stepId: "step-1",
+          status: "succeeded" as const,
+          artifactDir: path.join(artifactBase, "s1"),
+          startedAt: "2026-05-02T10:00:00.000Z",
+          endedAt: "2026-05-02T10:00:01.000Z",
+        },
+      ],
+    };
+    await saveSession(source, { sessionStoreRoot });
+
+    const continued = {
+      ...createSessionState({
+        sessionId: "sess-steprun-cont",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-2",
+        runtimeVariables: {},
+      }),
+      historyImports: [
+        {
+          sourceWorkflowExecutionId: "sess-steprun-src",
+          throughStepRunId: "ne-src-1",
+          throughExecutionOrdinal: 1,
+        },
+      ],
+      nodeExecutions: [
+        {
+          nodeId: "step-2",
+          nodeExecId: "ne-local-1",
+          executionOrdinal: 1,
+          stepId: "step-2",
+          status: "succeeded" as const,
+          artifactDir: path.join(artifactBase, "s2"),
+          startedAt: "2026-05-02T11:00:00.000Z",
+          endedAt: "2026-05-02T11:00:02.000Z",
+        },
+      ],
+    };
+    await saveSession(continued, { sessionStoreRoot });
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "step-runs",
+        "sess-steprun-cont",
+        "--session-store",
+        sessionStoreRoot,
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    const payload = JSON.parse(capture.stdout.join("\n")) as {
+      workflowExecutionId: string;
+      stepRuns: readonly { imported: boolean; stepRunId: string }[];
+    };
+    expect(payload.workflowExecutionId).toBe("sess-steprun-cont");
+    expect(payload.stepRuns).toHaveLength(2);
+    expect(payload.stepRuns[0]).toMatchObject({
+      stepRunId: "ne-src-1",
+      imported: true,
+    });
+    expect(payload.stepRuns[1]).toMatchObject({
+      stepRunId: "ne-local-1",
+      imported: false,
+    });
+
+    const filterCapture = createIoCapture();
+    const filterCode = await runCli(
+      [
+        "session",
+        "step-runs",
+        "sess-steprun-cont",
+        "--session-store",
+        sessionStoreRoot,
+        "--step",
+        "step-2",
+        "--status",
+        "succeeded",
+        "--output",
+        "json",
+      ],
+      filterCapture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+    expect(filterCode).toBe(0);
+    const filtered = JSON.parse(
+      filterCapture.stdout.join("\n"),
+    ) as { stepRuns: readonly { stepId: string }[] };
+    expect(filtered.stepRuns).toHaveLength(1);
+    expect(filtered.stepRuns[0]?.stepId).toBe("step-2");
+  });
+
   test("local call-step forwards normalized working directory and continuation overrides", async () => {
     const capture = createIoCapture();
     const session = createSessionState({
@@ -3135,12 +3592,21 @@ describe("runCli", () => {
   });
 
   test("serve command uses injected starter", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", { workflowRoot: root });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
     const capture = createIoCapture();
     const started: Array<{
       host?: string;
       port?: number;
       addonRoot?: string;
+      workflowRoot?: string;
       fixedWorkflowName?: string;
+      fixedResolvedWorkflowSource?: ResolvedWorkflowSource;
       readOnly?: boolean;
       noExec?: boolean;
     }> = [];
@@ -3149,6 +3615,8 @@ describe("runCli", () => {
       [
         "serve",
         "demo",
+        "--workflow-root",
+        root,
         "--host",
         "127.0.0.1",
         "--port",
@@ -3179,6 +3647,11 @@ describe("runCli", () => {
     expect(started).toHaveLength(1);
     expect(started[0]?.addonRoot).toBe("/tmp/direct-addons");
     expect(started[0]?.fixedWorkflowName).toBe("demo");
+    expect(started[0]?.workflowRoot).toBe(root);
+    expect(started[0]?.fixedResolvedWorkflowSource?.scope).toBe("direct");
+    expect(started[0]?.fixedResolvedWorkflowSource?.workflowName).toBe(
+      "demo",
+    );
     expect(started[0]?.readOnly).toBe(true);
     expect(started[0]?.noExec).toBe(true);
     const payload = JSON.parse(capture.stdout.join("\n")) as { port: number };
@@ -3186,12 +3659,21 @@ describe("runCli", () => {
   });
 
   test("serve reports the actual bound port returned by the server", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", { workflowRoot: root });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
     const capture = createIoCapture();
 
     const code = await runCli(
       [
         "serve",
         "demo",
+        "--workflow-root",
+        root,
         "--host",
         "127.0.0.1",
         "--port",

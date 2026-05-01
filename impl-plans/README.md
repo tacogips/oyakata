@@ -24,12 +24,17 @@ impl-plans/
 
 ## Active Plans
 
-None.
+| Plan | Status | Design Reference |
+| ---- | ------ | ---------------- |
+| _(none)_ | — | — |
 
 ## Recently Completed
 
 | Plan | Completed | Design Reference |
 | ---- | --------- | ---------------- |
+| `step-run-history-rerun-runtime` | 2026-05-02 | `design-step-run-history-rerun` |
+| `step-run-history-rerun-foundation` | 2026-05-02 | `design-step-run-history-rerun` |
+| `workflow-overview-status-surface` | 2026-05-02 | `design-workflow-overview-status-surface`, `architecture`, `command` |
 | `workflow-supervisor-dispatcher` | 2026-05-02 | `design-workflow-supervisor-dispatcher` |
 | `workflow-supervisor-dispatcher-foundation` | 2026-05-01 | `design-workflow-supervisor-dispatcher` |
 | `workflow-supervisor-dispatcher-runtime` | 2026-05-02 | `design-workflow-supervisor-dispatcher` |
@@ -307,6 +312,9 @@ None.
 | 131   | COMPLETED | Phase 130                                    |
 | 132   | COMPLETED | Phase 130                                    |
 | 133   | COMPLETED | Phases 129, 132                              |
+| 153   | COMPLETED | Phase 152                                    |
+| 154   | COMPLETED | Phase 153                                    |
+| 155   | COMPLETED | Phase 154                                    |
 
 ### Phase to Plans Mapping
 
@@ -446,5 +454,8 @@ PHASE_TO_PLANS = {
   132: ["impl-plans/completed/auto-improve-superviser-workflow-phase-2.md"],
   133: ["impl-plans/workflow-legacy-compatibility-removal.md", "impl-plans/completed/workflow-legacy-compatibility-removal-tail-cleanup.md"],
   134: ["impl-plans/graphql-supervision-execution-parity.md"],
+  153: ["impl-plans/completed/workflow-overview-status-surface.md"],
+  154: ["impl-plans/completed/step-run-history-rerun-foundation.md"],
+  155: ["impl-plans/completed/step-run-history-rerun-runtime.md"],
 }
 ```

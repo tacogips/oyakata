@@ -78,6 +78,11 @@ import {
   mintManagerAuthToken,
 } from "./manager-session-store";
 import {
+  buildMergedContinuationTimeline,
+  loadContinuationRelatedSnapshots,
+  resolveContinuationAnchorPlacement,
+} from "./history-continuation";
+import {
   evaluateBranch,
   evaluateCompletion,
   resolveLoopTransition,
@@ -173,6 +178,16 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
    * Required with {@link rerunFromSessionId} for rerun entry.
    */
   readonly rerunFromStepId?: string;
+  /**
+   * History-linked continuation: source workflow execution id (immediate parent timeline).
+   * Requires {@link continueAfterStepRunId} and {@link continueStartStepId}.
+   * Mutually exclusive with {@link rerunFromSessionId} and {@link resumeSessionId}.
+   */
+  readonly continueFromWorkflowExecutionId?: string;
+  /** Last imported step run (`nodeExecId`) inclusive boundary on the source timeline. */
+  readonly continueAfterStepRunId?: string;
+  /** Entry step id for the new workflow execution (`queue` seed). */
+  readonly continueStartStepId?: string;
   readonly restartOnStuck?: boolean;
   readonly maxStuckRestarts?: number;
   readonly stuckRestartBackoffMs?: number;
@@ -1209,13 +1224,112 @@ function buildUpstreamOutputRefs(
     .filter((entry): entry is UpstreamOutputRef => entry !== undefined);
 }
 
+function buildMergedUpstreamOutputRefs(
+  session: WorkflowSessionState,
+  nodeId: string,
+  continuationSnapshots: ReadonlyMap<string, WorkflowSessionState> | undefined,
+): Result<readonly UpstreamOutputRef[], string> {
+  const localRefs = buildUpstreamOutputRefs(session, nodeId);
+  if (
+    continuationSnapshots === undefined ||
+    session.historyImports === undefined ||
+    session.historyImports.length === 0
+  ) {
+    return ok(localRefs);
+  }
+
+  const timelineResult = buildMergedContinuationTimeline(
+    continuationSnapshots,
+    session.sessionId,
+  );
+  if (!timelineResult.ok) {
+    return err(
+      `merged continuation timeline resolution failed: ${timelineResult.error.message}`,
+    );
+  }
+  const timeline = timelineResult.value;
+  const importedExecKeys = new Set(
+    timeline
+      .filter(
+        (entry) => entry.persistedWorkflowExecutionId !== session.sessionId,
+      )
+      .map(
+        (entry) =>
+          `${entry.persistedWorkflowExecutionId}:${entry.stepRunId}`,
+      ),
+  );
+  const positionByOwnerExec = new Map<string, number>();
+  timeline.forEach((entry, index) => {
+    positionByOwnerExec.set(
+      `${entry.persistedWorkflowExecutionId}:${entry.stepRunId}`,
+      index,
+    );
+  });
+
+  const importedRefs: UpstreamOutputRef[] = [];
+  for (const snapshot of continuationSnapshots.values()) {
+    if (snapshot.sessionId === session.sessionId) {
+      continue;
+    }
+    for (const communication of snapshot.communications) {
+      if (
+        communication.status !== "delivered" ||
+        communication.toNodeId !== nodeId ||
+        !importedExecKeys.has(
+          `${snapshot.sessionId}:${communication.sourceNodeExecId}`,
+        )
+      ) {
+        continue;
+      }
+      const payloadRef = communication.payloadRef;
+      if (payloadRef.kind === "manager-message") {
+        continue;
+      }
+      const execution = snapshot.nodeExecutions.find(
+        (candidate) => candidate.nodeExecId === communication.sourceNodeExecId,
+      );
+      importedRefs.push({
+        fromNodeId: communication.fromNodeId,
+        transitionWhen: communication.transitionWhen,
+        status: execution?.status ?? communication.status,
+        communicationId: communication.communicationId,
+        ...payloadRef,
+      });
+    }
+  }
+
+  importedRefs.sort((left, right) => {
+    const leftPos =
+      positionByOwnerExec.get(`${left.workflowExecutionId}:${left.nodeExecId}`) ??
+      -1;
+    const rightPos =
+      positionByOwnerExec.get(`${right.workflowExecutionId}:${right.nodeExecId}`) ??
+      -1;
+    if (leftPos !== rightPos) {
+      return leftPos - rightPos;
+    }
+    return left.communicationId.localeCompare(right.communicationId);
+  });
+
+  return ok([...importedRefs, ...localRefs]);
+}
+
 async function buildUpstreamInputs(
   workflow: WorkflowJson,
   session: WorkflowSessionState,
   nodeId: string,
+  continuationSnapshots: ReadonlyMap<string, WorkflowSessionState> | undefined,
 ): Promise<Result<readonly UpstreamInput[], string>> {
   const upstreamTargetNoun = workflow.steps !== undefined ? "step" : "node";
-  const refs = buildUpstreamOutputRefs(session, nodeId);
+  const refsResult = buildMergedUpstreamOutputRefs(
+    session,
+    nodeId,
+    continuationSnapshots,
+  );
+  if (!refsResult.ok) {
+    return err(refsResult.error);
+  }
+  const refs = refsResult.value;
   if (refs.length === 0) {
     return ok([]);
   }
@@ -1747,10 +1861,23 @@ async function runWorkflowInternal(
           : "workingDirectory must be a non-empty path when provided",
     });
   }
-  /** True when this run is not continuing from an existing session (resume or rerun). */
-  const isNotResumingOrRerunning =
-    options.resumeSessionId === undefined &&
-    options.rerunFromSessionId === undefined;
+  const resumeRequested = options.resumeSessionId !== undefined;
+  const rerunRequested = options.rerunFromSessionId !== undefined;
+  const continuationRequested =
+    options.continueFromWorkflowExecutionId !== undefined;
+  if (
+    [resumeRequested, rerunRequested, continuationRequested].filter(Boolean)
+      .length > 1
+  ) {
+    return err({
+      exitCode: 2,
+      message:
+        "resumeSessionId, rerunFromSessionId, and continueFromWorkflowExecutionId are mutually exclusive",
+    });
+  }
+  /** True when seeding auto-improve supervision / mutable workspace like a brand-new execution. */
+  const isFreshAutoImproveSeed =
+    !resumeRequested && !rerunRequested && !continuationRequested;
   let preloadedForBundlePath: WorkflowSessionState | undefined;
   if (options.resumeSessionId !== undefined) {
     const pre = await loadSession(options.resumeSessionId, options);
@@ -1773,6 +1900,19 @@ async function runWorkflowInternal(
       return err({
         exitCode: 1,
         message: "source session workflow does not match command workflow",
+      });
+    }
+    preloadedForBundlePath = pre.value;
+  } else if (options.continueFromWorkflowExecutionId !== undefined) {
+    const pre = await loadSession(options.continueFromWorkflowExecutionId, options);
+    if (!pre.ok) {
+      return err({ exitCode: 1, message: pre.error.message });
+    }
+    if (pre.value.workflowName !== workflowName) {
+      return err({
+        exitCode: 1,
+        message:
+          "source workflow execution workflow does not match command workflow",
       });
     }
     preloadedForBundlePath = pre.value;
@@ -1799,7 +1939,7 @@ async function runWorkflowInternal(
   }
 
   let precomputedSupervision: SupervisionRunState | undefined;
-  if (isNotResumingOrRerunning && options.autoImprove !== undefined) {
+  if (isFreshAutoImproveSeed && options.autoImprove !== undefined) {
     const policy = options.autoImprove;
     const initial = createInitialSupervisionRunState({
       policy,
@@ -1937,6 +2077,87 @@ async function runWorkflowInternal(
         nodeExecutionCounts: { ...source.nodeExecutionCounts },
       };
     }
+  } else if (options.continueFromWorkflowExecutionId !== undefined) {
+    if (preloadedForBundlePath === undefined) {
+      return err({
+        exitCode: 1,
+        message: "internal: continuation source workflow execution missing",
+      });
+    }
+    const sourceSession = preloadedForBundlePath;
+    const continueAfterStepRunId = options.continueAfterStepRunId;
+    const continueStartStepId = options.continueStartStepId;
+    if (
+      continueAfterStepRunId === undefined ||
+      continueAfterStepRunId.trim().length === 0 ||
+      continueStartStepId === undefined ||
+      continueStartStepId.trim().length === 0
+    ) {
+      return err({
+        exitCode: 2,
+        message:
+          "continueAfterStepRunId and continueStartStepId are required when continueFromWorkflowExecutionId is set",
+      });
+    }
+
+    const continueTargetLabel = workflow.steps === undefined ? "node" : "step";
+    const trimmedStart = continueStartStepId.trim();
+    const stepIdSetContinue =
+      workflow.steps === undefined
+        ? undefined
+        : new Set(workflow.steps.map((st) => st.id));
+    const continuationStartKnown =
+      stepIdSetContinue === undefined
+        ? workflowNodes.has(trimmedStart)
+        : stepIdSetContinue.has(trimmedStart);
+    if (!continuationStartKnown) {
+      return err({
+        exitCode: 1,
+        message: `unknown continuation ${continueTargetLabel} '${trimmedStart}'`,
+      });
+    }
+
+    const snapshotsResult = await loadContinuationRelatedSnapshots(
+      [sourceSession],
+      options,
+    );
+    if (!snapshotsResult.ok) {
+      return err({ exitCode: 1, message: snapshotsResult.error });
+    }
+    const snapshotsForAnchor = snapshotsResult.value;
+
+    const anchorResult = resolveContinuationAnchorPlacement({
+      snapshots: snapshotsForAnchor,
+      sourceWorkflowExecutionId: sourceSession.sessionId,
+      anchorStepRunId: continueAfterStepRunId.trim(),
+      expectedWorkflowId: workflow.workflowId,
+    });
+    if (!anchorResult.ok) {
+      return err({
+        exitCode: 1,
+        message: anchorResult.error.message,
+      });
+    }
+
+    session = createSessionState({
+      sessionId: createSessionId({ workflowId: workflow.workflowId }),
+      workflowName,
+      workflowId: workflow.workflowId,
+      initialNodeId: trimmedStart,
+      runtimeVariables: {
+        ...sourceSession.runtimeVariables,
+        ...runtimeVariables,
+      },
+    });
+    session = {
+      ...session,
+      continuedFromWorkflowExecutionId: sourceSession.sessionId,
+      continuedAfterStepRunId: anchorResult.value.anchor.stepRunId,
+      continuedAfterExecutionOrdinal: anchorResult.value.anchor.executionOrdinal,
+      continuedStartStepId: trimmedStart,
+      continuationMode: "rerun-from-history",
+      historyImports: anchorResult.value.flattenedHistoryImports,
+    };
   } else if (options.resumeSessionId !== undefined) {
     if (preloadedForBundlePath === undefined) {
       return err({ exitCode: 1, message: "internal: resume session missing" });
@@ -1988,6 +2209,17 @@ async function runWorkflowInternal(
       workflowId: workflow.workflowId,
       initialNodeId: resolveWorkflowManagerStepId(workflow),
       runtimeVariables,
+    });
+  }
+
+  if (
+    options.autoImprove !== undefined &&
+    options.continueFromWorkflowExecutionId !== undefined
+  ) {
+    return err({
+      exitCode: 2,
+      message:
+        "autoImprove cannot be combined with history-linked continuation (continueFromWorkflowExecutionId); omit autoImprove for this entry mode",
     });
   }
 
@@ -2067,6 +2299,15 @@ async function runWorkflowInternal(
         ),
       );
     }
+    if (options.continueFromWorkflowExecutionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver is not valid when continuing from imported workflow history",
+          session,
+        ),
+      );
+    }
     if (options.resumeSessionId !== undefined) {
       if (session.supervision?.nestedSuperviserSessionId === undefined) {
         return err(
@@ -2118,6 +2359,26 @@ async function runWorkflowInternal(
     session.status === "paused"
   ) {
     return ok({ session, exitCode: 4 });
+  }
+
+  let continuationSnapshotsForMergedReads:
+    | ReadonlyMap<string, WorkflowSessionState>
+    | undefined;
+  if (
+    session.historyImports !== undefined &&
+    session.historyImports.length > 0
+  ) {
+    const snapLoad = await loadContinuationRelatedSnapshots([session], options);
+    if (!snapLoad.ok) {
+      return err(
+        workflowRunFailure(
+          1,
+          `history-linked continuation snapshot load failed: ${snapLoad.error}`,
+          session,
+        ),
+      );
+    }
+    continuationSnapshotsForMergedReads = snapLoad.value;
   }
 
   while (session.queue.length > 0) {
@@ -2327,11 +2588,11 @@ async function runWorkflowInternal(
         executionNodePayload.variables,
         session.runtimeVariables,
       );
-      const upstreamOutputRefs = buildUpstreamOutputRefs(session, nodeId);
       const upstreamInputsResult = await buildUpstreamInputs(
         workflow,
         session,
         nodeId,
+        continuationSnapshotsForMergedReads,
       );
       if (!upstreamInputsResult.ok) {
         const failed: WorkflowSessionState = {
@@ -2352,6 +2613,9 @@ async function runWorkflowInternal(
         );
       }
       const upstreamInputs = upstreamInputsResult.value;
+      const upstreamOutputRefs = upstreamInputs.map(
+        ({ output, outputRaw, ...ref }) => ref,
+      );
       const upstreamBindingInputs = upstreamInputs.map((entry) => ({
         fromNodeId: entry.fromNodeId,
         transitionWhen: entry.transitionWhen,
@@ -2616,6 +2880,7 @@ async function runWorkflowInternal(
           nodeId,
           ...stepIdentityFields,
           nodeExecId,
+          executionOrdinal: nextExecutionCounter,
           mailboxInstanceId,
           status: "skipped",
           artifactDir,
@@ -2674,6 +2939,7 @@ async function runWorkflowInternal(
               nodeId,
               ...stepIdentityFields,
               nodeExecId,
+              executionOrdinal: nextExecutionCounter,
               mailboxInstanceId,
               status: "skipped",
               artifactDir,
@@ -3429,6 +3695,7 @@ async function runWorkflowInternal(
         nodeId,
         ...stepIdentityFields,
         nodeExecId,
+        executionOrdinal: nextExecutionCounter,
         mailboxInstanceId,
         status,
         artifactDir,
@@ -3916,6 +4183,7 @@ async function runWorkflowInternal(
             nodeId,
             ...stepIdentityFields,
             nodeExecId,
+            executionOrdinal: nextExecutionCounter,
             mailboxInstanceId,
             status: nodeStatus,
             artifactDir,
@@ -4739,6 +5007,14 @@ export async function runWorkflow(
         workflowRunFailure(
           2,
           "nestedSuperviserDriver cannot be combined with rerunFromSessionId",
+        ),
+      );
+    }
+    if (normalizedOptions.continueFromWorkflowExecutionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver cannot be combined with continueFromWorkflowExecutionId",
         ),
       );
     }

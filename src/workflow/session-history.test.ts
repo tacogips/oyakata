@@ -336,4 +336,113 @@ describe("session-history", () => {
       Bun.file(path.join(attachmentDir, "attachment.txt")).exists(),
     ).resolves.toBe(true);
   });
+
+  test("refuses deleting a workflow execution still referenced as a continuation source", async () => {
+    const root = await makeTempDir();
+    const options = {
+      cwd: root,
+      rootDataDir: path.join(root, "runtime-data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+    const source = {
+      ...createSessionState({
+        sessionId: "sess-history-deps-src-001",
+        workflowName: "demo",
+        workflowId: "demo-id",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      status: "completed" as const,
+    };
+    const dependent = {
+      ...createSessionState({
+        sessionId: "sess-history-deps-dep-001",
+        workflowName: "demo",
+        workflowId: "demo-id",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      continuedFromWorkflowExecutionId: source.sessionId,
+      status: "completed" as const,
+    };
+    await saveSession(source, options);
+    await saveSession(dependent, options);
+
+    await expect(
+      deleteWorkflowSessionHistory(
+        {
+          sessionId: source.sessionId,
+          workflowId: "demo-id",
+          workflowName: "demo",
+        },
+        options,
+      ),
+    ).rejects.toThrow(/still reference/);
+
+    await deleteWorkflowSessionHistory(
+      {
+        sessionId: dependent.sessionId,
+        workflowId: "demo-id",
+        workflowName: "demo",
+      },
+      options,
+    );
+    await deleteWorkflowSessionHistory(
+      {
+        sessionId: source.sessionId,
+        workflowId: "demo-id",
+        workflowName: "demo",
+      },
+      options,
+    );
+  });
+
+  test("refuses deleting a workflow execution referenced by historyImports", async () => {
+    const root = await makeTempDir();
+    const options = {
+      cwd: root,
+      rootDataDir: path.join(root, "runtime-data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+    const source = {
+      ...createSessionState({
+        sessionId: "sess-history-deps-import-src-001",
+        workflowName: "demo",
+        workflowId: "demo-id",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      status: "completed" as const,
+    };
+    const dependent = {
+      ...createSessionState({
+        sessionId: "sess-history-deps-import-dep-001",
+        workflowName: "demo",
+        workflowId: "demo-id",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      status: "completed" as const,
+      historyImports: [
+        {
+          sourceWorkflowExecutionId: source.sessionId,
+          throughStepRunId: "exec-placeholder",
+          throughExecutionOrdinal: 1,
+        },
+      ],
+    };
+    await saveSession(source, options);
+    await saveSession(dependent, options);
+
+    await expect(
+      deleteWorkflowSessionHistory(
+        {
+          sessionId: source.sessionId,
+          workflowId: "demo-id",
+          workflowName: "demo",
+        },
+        options,
+      ),
+    ).rejects.toThrow(/still reference/);
+  });
 });

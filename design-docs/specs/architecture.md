@@ -135,6 +135,32 @@ selected runtime tree instead of drifting to an ambient default. An explicit
 `DIVEDRA_ARTIFACT_DIR` remains the canonical root data directory override and is
 not replaced by scoped defaults.
 
+### Human Workflow Overview Boundary
+
+Non-TUI human workflow inspection should use an overview-only surface layered on
+top of the scoped workflow catalog and execution-summary data.
+
+Rules:
+
+- humans see workflow list and selected-workflow status only
+- browser mode under `serve` defaults to the same overview model
+- AI and advanced tooling use GraphQL detail queries for node, communication,
+  hook-event, and log inspection
+- duplicate workflow names from different scopes remain distinct in human list
+  surfaces
+- the operator-facing status view is workflow-level aggregate state, not a dump
+  of raw runtime artifacts
+- direct workflow-root mode is labeled as source scope `direct`; scoped catalog
+  mode uses `project` and `user`
+- aggregate workflow status reuses runtime statuses and adds only `never-run`
+  for workflows without executions
+- active execution count is derived from non-terminal `running` and `paused`
+  executions
+
+Supporting design:
+
+- `design-docs/specs/design-workflow-overview-status-surface.md`
+
 ### Execution Boundary
 
 The main runtime entrypoint is `runWorkflow()` in `src/workflow/engine.ts`.

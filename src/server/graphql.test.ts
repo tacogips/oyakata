@@ -560,6 +560,100 @@ describe("GraphQL HTTP transport", () => {
       },
     });
 
+    const overviewResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query WorkflowCatalogOverview {
+              workflowCatalogOverview {
+                workflows {
+                  workflowName
+                  sourceScope
+                  aggregateStatus
+                  activeExecutionCount
+                  latestExecution {
+                    workflowExecutionId
+                  }
+                }
+              }
+            }
+          `,
+        }),
+      }),
+      options,
+    );
+
+    expect(overviewResponse.status).toBe(200);
+    await expect(overviewResponse.json()).resolves.toMatchObject({
+      data: {
+        workflowCatalogOverview: {
+          workflows: [
+            expect.objectContaining({
+              workflowName: "demo",
+              aggregateStatus: "completed",
+              activeExecutionCount: 0,
+              latestExecution: expect.objectContaining({
+                workflowExecutionId: session.sessionId,
+              }),
+            }),
+          ],
+        },
+      },
+    });
+
+    const statusOverviewResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query WorkflowStatusOverview($workflowName: String!) {
+              workflowStatusOverview(workflowName: $workflowName) {
+                workflowName
+                sourceScope
+                workflowDirectory
+                aggregateStatus
+                recentExecutions {
+                  workflowExecutionId
+                  sessionId
+                  status
+                  startedAt
+                }
+              }
+            }
+          `,
+          variables: {
+            workflowName: "demo",
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(statusOverviewResponse.status).toBe(200);
+    await expect(statusOverviewResponse.json()).resolves.toMatchObject({
+      data: {
+        workflowStatusOverview: {
+          workflowName: "demo",
+          sourceScope: "direct",
+          aggregateStatus: "completed",
+          recentExecutions: [
+            expect.objectContaining({
+              workflowExecutionId: session.sessionId,
+              sessionId: session.sessionId,
+              status: "completed",
+            }),
+          ],
+        },
+      },
+    });
+
     const executeResponse = await handleGraphqlRequest(
       new Request("http://localhost/graphql", {
         method: "POST",

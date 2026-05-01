@@ -20,10 +20,12 @@ import type {
   NodeAddonDefinition,
   NodeAddonPayloadResolver,
   NormalizedWorkflowBundle,
+  ResolvedWorkflowSource,
 } from "../workflow/types";
 import * as dispatchResolver from "../events/supervisor-llm-resolver";
 import type { EventBinding } from "../events/types";
 import { atomicWriteJsonFile as writeJson } from "../shared/fs";
+import { withResolvedWorkflowSourceOptions } from "../workflow/catalog";
 import { createGraphqlSchema } from "./schema";
 import type { GraphqlRequestContext } from "./types";
 
@@ -554,6 +556,195 @@ describe("createGraphqlSchema", () => {
     );
   });
 
+  test("exposes workflowCatalogOverview with never-run aggregate and scoped rows", async () => {
+    const root = await makeTempDir();
+    const schema = createGraphqlSchema();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const created = await createWorkflowTemplate("demo", options);
+    expect(created.ok).toBe(true);
+    const createdOther = await createWorkflowTemplate("solo", {
+      ...options,
+      templateMode: "worker-only",
+    });
+    expect(createdOther.ok).toBe(true);
+
+    const catalog = await schema.query.workflowCatalogOverview({}, options);
+    expect(catalog.workflows.length).toBe(2);
+    const demoRow = catalog.workflows.find((w) => w.workflowName === "demo");
+    expect(demoRow).toMatchObject({
+      workflowName: "demo",
+      sourceScope: "direct",
+      aggregateStatus: "never-run",
+      activeExecutionCount: 0,
+      latestExecution: null,
+    });
+
+    const filtered = await schema.query.workflowCatalogOverview(
+      { status: "never-run" },
+      options,
+    );
+    expect(filtered.workflows.map((w) => w.workflowName).sort()).toEqual([
+      "demo",
+      "solo",
+    ]);
+
+    const fixed = await schema.query.workflowCatalogOverview(
+      {},
+      { ...options, fixedWorkflowName: "demo" },
+    );
+    expect(fixed.workflows.map((w) => w.workflowName)).toEqual(["demo"]);
+
+    const statusOverview = await schema.query.workflowStatusOverview(
+      { workflowName: "demo" },
+      options,
+    );
+    expect(statusOverview).toMatchObject({
+      workflowName: "demo",
+      sourceScope: "direct",
+      aggregateStatus: "never-run",
+      recentExecutions: [],
+      newestActiveExecution: null,
+    });
+
+    const missing = await schema.query.workflowStatusOverview(
+      { workflowName: "nope" },
+      options,
+    );
+    expect(missing).toBeNull();
+  });
+
+  test("fixed resolved workflow source pins scoped duplicate overview rows", async () => {
+    const base = await makeTempDir();
+    const workspace = path.join(base, "projtree");
+    const projectScopeRoot = path.join(workspace, ".divedra");
+    const projectWorkflowRoot = path.join(projectScopeRoot, "workflows");
+    const userScopeRoot = path.join(base, "userhome", ".divedra");
+    const userWorkflowRoot = path.join(userScopeRoot, "workflows");
+
+    async function overviewBundle(
+      workflowDirectory: string,
+      workflowId: string,
+      description: string,
+    ): Promise<void> {
+      await mkdir(workflowDirectory, { recursive: true });
+      await writeJson(path.join(workflowDirectory, "workflow.json"), {
+        workflowId,
+        description,
+      });
+    }
+
+    await overviewBundle(
+      path.join(projectWorkflowRoot, "dup"),
+      "project-dup",
+      "from project",
+    );
+    await overviewBundle(
+      path.join(userWorkflowRoot, "dup"),
+      "user-dup",
+      "from user",
+    );
+
+    const baseOpts: GraphqlRequestContext = {
+      cwd: workspace,
+      projectRoot: projectScopeRoot,
+      userRoot: userScopeRoot,
+    };
+
+    const projectSource: ResolvedWorkflowSource = {
+      scope: "project",
+      workflowRoot: projectWorkflowRoot,
+      workflowName: "dup",
+      workflowDirectory: path.join(projectWorkflowRoot, "dup"),
+      scopeRoot: projectScopeRoot,
+    };
+    const userSource: ResolvedWorkflowSource = {
+      scope: "user",
+      workflowRoot: userWorkflowRoot,
+      workflowName: "dup",
+      workflowDirectory: path.join(userWorkflowRoot, "dup"),
+      scopeRoot: userScopeRoot,
+    };
+
+    await saveSession(
+      {
+        ...createSessionState({
+          sessionId: "sess-proj",
+          workflowName: "dup",
+          workflowId: "project-dup",
+          initialNodeId: "step",
+          runtimeVariables: {},
+        }),
+        startedAt: "2026-05-02T09:00:00.000Z",
+        status: "completed",
+        endedAt: "2026-05-02T09:05:00.000Z",
+      },
+      withResolvedWorkflowSourceOptions(projectSource, baseOpts),
+    );
+    await saveSession(
+      {
+        ...createSessionState({
+          sessionId: "sess-user",
+          workflowName: "dup",
+          workflowId: "user-dup",
+          initialNodeId: "step",
+          runtimeVariables: {},
+        }),
+        startedAt: "2026-05-02T08:00:00.000Z",
+        status: "running",
+      },
+      withResolvedWorkflowSourceOptions(userSource, baseOpts),
+    );
+
+    const schema = createGraphqlSchema();
+    const nameOnlyDup = await schema.query.workflowCatalogOverview(
+      { workflowScope: "auto" },
+      { ...baseOpts, fixedWorkflowName: "dup" },
+    );
+    expect(nameOnlyDup.workflows).toHaveLength(2);
+
+    const pinnedDup = await schema.query.workflowCatalogOverview(
+      { workflowScope: "auto" },
+      {
+        ...baseOpts,
+        fixedWorkflowName: "dup",
+        fixedResolvedWorkflowSource: projectSource,
+      },
+    );
+    expect(pinnedDup.workflows).toHaveLength(1);
+    expect(pinnedDup.workflows[0]?.sourceScope).toBe("project");
+
+    const statusPinned = await schema.query.workflowStatusOverview(
+      {
+        workflowName: "dup",
+        workflowScope: "user",
+        limit: 5,
+      },
+      {
+        ...baseOpts,
+        fixedWorkflowName: "dup",
+        fixedResolvedWorkflowSource: projectSource,
+      },
+    );
+    expect(statusPinned).toMatchObject({
+      sourceScope: "project",
+      aggregateStatus: "completed",
+      description: "from project",
+      newestActiveExecution: null,
+      recentExecutions: [
+        expect.objectContaining({
+          workflowExecutionId: "sess-proj",
+          sessionId: "sess-proj",
+        }),
+      ],
+    });
+  });
+
   test("derives currentStepId in workflow execution summaries from step-addressed session records", async () => {
     const root = await makeTempDir();
     const options = {
@@ -812,6 +1003,157 @@ describe("createGraphqlSchema", () => {
       rerunFromStepId: "main-worker",
       exitCode: 0,
     });
+  });
+
+  test("continueWorkflowExecution forwards continuation anchor into runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const sessionId = "sess-schema-continue-hist";
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-1",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    expect(saved.ok).toBe(true);
+
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow").mockResolvedValue({
+      ok: true,
+      value: {
+        session: {
+          ...createSessionState({
+            sessionId: "sess-schema-continue-hist-2",
+            workflowName: "demo",
+            workflowId: "demo",
+            initialNodeId: "step-2",
+            runtimeVariables: {},
+          }),
+          status: "completed" as const,
+        },
+        exitCode: 0,
+      },
+    });
+
+    const schema = createGraphqlSchema();
+    const payload = await schema.mutation.continueWorkflowExecution(
+      {
+        sourceWorkflowExecutionId: sessionId,
+        startStepId: "step-2",
+        afterStepRunId: "ne-anchor",
+        dryRun: true,
+        maxSteps: 5,
+      },
+      options,
+    );
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        continueFromWorkflowExecutionId: sessionId,
+        continueStartStepId: "step-2",
+        continueAfterStepRunId: "ne-anchor",
+        dryRun: true,
+        maxSteps: 5,
+      }),
+    );
+    expect(payload).toMatchObject({
+      workflowExecutionId: "sess-schema-continue-hist-2",
+      sessionId: "sess-schema-continue-hist-2",
+      status: "completed",
+      continuedAfterStepRunId: "ne-anchor",
+      continuedStartStepId: "step-2",
+      exitCode: 0,
+    });
+  });
+
+  test("workflowExecutionStepRuns exposes merged timeline for continued sessions", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const artifactBase = path.join(root, "artifact-sub");
+    await mkdir(artifactBase, { recursive: true });
+
+    const source = {
+      ...createSessionState({
+        sessionId: "sess-gql-steprun-src",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-1",
+        runtimeVariables: {},
+      }),
+      nodeExecutions: [
+        {
+          nodeId: "step-1",
+          nodeExecId: "ne-src-1",
+          executionOrdinal: 1,
+          stepId: "step-1",
+          status: "succeeded" as const,
+          artifactDir: path.join(artifactBase, "s1"),
+          startedAt: "2026-05-02T10:00:00.000Z",
+          endedAt: "2026-05-02T10:00:01.000Z",
+        },
+      ],
+    };
+    await saveSession(source, options);
+
+    const continued = {
+      ...createSessionState({
+        sessionId: "sess-gql-steprun-cont",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-2",
+        runtimeVariables: {},
+      }),
+      historyImports: [
+        {
+          sourceWorkflowExecutionId: "sess-gql-steprun-src",
+          throughStepRunId: "ne-src-1",
+          throughExecutionOrdinal: 1,
+        },
+      ],
+      nodeExecutions: [
+        {
+          nodeId: "step-2",
+          nodeExecId: "ne-local-1",
+          executionOrdinal: 1,
+          stepId: "step-2",
+          status: "succeeded" as const,
+          artifactDir: path.join(artifactBase, "s2"),
+          startedAt: "2026-05-02T11:00:00.000Z",
+          endedAt: "2026-05-02T11:00:02.000Z",
+        },
+      ],
+    };
+    await saveSession(continued, options);
+
+    const schema = createGraphqlSchema();
+    const payload = await schema.query.workflowExecutionStepRuns(
+      { workflowExecutionId: "sess-gql-steprun-cont" },
+      options,
+    );
+
+    expect(payload.workflowExecutionId).toBe("sess-gql-steprun-cont");
+    expect(payload.stepRuns.map((row) => row.stepRunId)).toEqual([
+      "ne-src-1",
+      "ne-local-1",
+    ]);
+    expect(payload.stepRuns[0]?.imported).toBe(true);
+    expect(payload.stepRuns[1]?.imported).toBe(false);
   });
 
   test("reruns reusable-node workflows by explicit stepId", async () => {

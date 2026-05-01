@@ -47,6 +47,7 @@ import {
   resolveCurrentStepId,
   resolveCurrentStepIdFromWorkflow,
   type CommunicationRecord,
+  type NodeExecutionRecord,
   type WorkflowSessionState,
 } from "../workflow/session";
 import {
@@ -87,6 +88,13 @@ import { deriveWorkflowVisualization } from "../workflow/visualization";
 import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import { parseWorkflowBundleInput } from "../workflow/workflow-bundle-input";
 import type { WorkflowJson } from "../workflow/types";
+import { continueWorkflowFromHistory, listMergedWorkflowExecutionStepRuns } from "../lib";
+import {
+  buildWorkflowCatalogOverview,
+  buildWorkflowStatusOverview,
+  type WorkflowCatalogOverview,
+  type WorkflowStatusOverview,
+} from "../workflow/overview";
 import type {
   CreateWorkflowDefinitionInput,
   CommunicationConnection,
@@ -110,6 +118,8 @@ import type {
   WorkflowExecutionConnection,
   WorkflowExecutionOverviewLookupInput,
   WorkflowExecutionOverviewView,
+  WorkflowExecutionStepRunsPayload,
+  WorkflowExecutionStepRunsQueryInput,
   ReplayCommunicationInput,
   ReplayCommunicationPayload,
   RetryCommunicationDeliveryInput,
@@ -123,12 +133,16 @@ import type {
   WorkflowExecutionLookupInput,
   WorkflowExecutionsQueryInput,
   WorkflowExecutionView,
+  WorkflowCatalogOverviewGraphqlInput,
   WorkflowLookupInput,
   WorkflowSessionView,
+  WorkflowStatusOverviewGraphqlInput,
   WorkflowView,
   CommunicationsQueryInput,
   CancelWorkflowExecutionInput,
   CancelWorkflowExecutionPayload,
+  ContinueWorkflowExecutionInput,
+  ContinueWorkflowExecutionPayload,
   DispatchSupervisedWorkflowCommandInput,
   DispatchSupervisorChatGraphqlInput,
   DispatchSupervisorChatPayload,
@@ -205,6 +219,31 @@ function buildGraphqlWorkflowRunOverrides(
       ? {}
       : { defaultTimeoutMs: input.defaultTimeoutMs }),
   });
+}
+
+function parseWorkflowExecutionStepRunsStatusFilter(
+  raw: string | undefined | null,
+): NodeExecutionRecord["status"] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  const allowed: ReadonlySet<string> = new Set([
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "skipped",
+  ]);
+  if (!allowed.has(trimmed)) {
+    throw new Error(
+      `invalid workflowExecutionStepRuns status '${raw}' (expected succeeded, failed, timed_out, cancelled, or skipped)`,
+    );
+  }
+  return trimmed as NodeExecutionRecord["status"];
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {
@@ -308,6 +347,83 @@ function assertWorkflowDefinitionAccess(
   ) {
     throw new Error("workflow name not allowed in fixed workflow mode");
   }
+}
+
+function isOverviewWorkflowCatalogNotFound(error: {
+  readonly code: string;
+  readonly message: string;
+}): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "NOT_FOUND" &&
+    typeof error.message === "string" &&
+    !error.message.startsWith("session not found:")
+  );
+}
+
+async function workflowCatalogOverviewQuery(
+  input: WorkflowCatalogOverviewGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowCatalogOverview> {
+  const catalogInput = {
+    ...(input.workflowScope === undefined
+      ? {}
+      : { workflowScope: input.workflowScope }),
+    ...(input.status === undefined ? {} : { status: input.status }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  };
+  const built = await buildWorkflowCatalogOverview(catalogInput, context);
+  if (!built.ok) {
+    throw new Error(built.error.message);
+  }
+  let workflows = built.value.workflows;
+  if (
+    context.fixedWorkflowName !== undefined &&
+    context.fixedResolvedWorkflowSource === undefined
+  ) {
+    workflows = workflows.filter(
+      (row) => row.workflowName === context.fixedWorkflowName,
+    );
+  }
+  return { workflows };
+}
+
+function workflowStatusOverviewInputForFixedMode(
+  input: WorkflowStatusOverviewGraphqlInput,
+  context: GraphqlRequestContext,
+): WorkflowStatusOverviewGraphqlInput {
+  const fixedSource = context.fixedResolvedWorkflowSource;
+  if (fixedSource === undefined) {
+    return input;
+  }
+  return {
+    workflowName: fixedSource.workflowName,
+    ...(fixedSource.scope === "direct"
+      ? {}
+      : { workflowScope: fixedSource.scope }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  };
+}
+
+async function workflowStatusOverviewQuery(
+  input: WorkflowStatusOverviewGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowStatusOverview | null> {
+  assertWorkflowDefinitionAccess(input.workflowName, context);
+  const effectiveInput = workflowStatusOverviewInputForFixedMode(
+    input,
+    context,
+  );
+  const built = await buildWorkflowStatusOverview(effectiveInput, context);
+  if (!built.ok) {
+    if (isOverviewWorkflowCatalogNotFound(built.error)) {
+      return null;
+    }
+    throw new Error(built.error.message);
+  }
+  return built.value;
 }
 
 function assertWorkflowDefinitionWritable(
@@ -1227,6 +1343,104 @@ async function rerunWorkflowExecutionMutation(
   };
 }
 
+async function workflowExecutionStepRunsQuery(
+  input: WorkflowExecutionStepRunsQueryInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowExecutionStepRunsPayload> {
+  const workflowExecutionId = input.workflowExecutionId.trim();
+  if (workflowExecutionId.length === 0) {
+    throw new Error("workflowExecutionId is required");
+  }
+  const stepTrimmed = input.stepId?.trim();
+  const filterStepId =
+    stepTrimmed === undefined || stepTrimmed.length === 0
+      ? undefined
+      : stepTrimmed;
+  const filterStatus = parseWorkflowExecutionStepRunsStatusFilter(
+    input.status,
+  );
+  const listed = await listMergedWorkflowExecutionStepRuns({
+    workflowExecutionId,
+    ...(filterStepId === undefined ? {} : { filterStepId }),
+    ...(filterStatus === undefined ? {} : { filterStatus }),
+    ...context,
+  });
+  return {
+    workflowExecutionId: listed.workflowExecutionId,
+    workflowId: listed.workflowId,
+    workflowName: listed.workflowName,
+    stepRuns: listed.stepRuns.map((row) => ({
+      workflowExecutionId: listed.workflowExecutionId,
+      timelineOrdinal: row.timelineOrdinal,
+      executionOrdinal: row.executionOrdinal,
+      stepRunId: row.stepRunId,
+      ...(row.stepId === undefined ? {} : { stepId: row.stepId }),
+      ...(row.nodeRegistryId === undefined
+        ? {}
+        : { nodeRegistryId: row.nodeRegistryId }),
+      status: row.status,
+      imported: row.imported,
+      sourceWorkflowExecutionId: row.persistedWorkflowExecutionId,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+    })),
+  };
+}
+
+async function continueWorkflowExecutionMutation(
+  input: ContinueWorkflowExecutionInput,
+  context: GraphqlRequestContext,
+): Promise<ContinueWorkflowExecutionPayload> {
+  if (context.readOnly === true) {
+    throw new Error("read-only mode enabled");
+  }
+  const sourceWorkflowExecutionId = input.sourceWorkflowExecutionId.trim();
+  const startStepId = input.startStepId.trim();
+  const afterStepRunId = input.afterStepRunId.trim();
+  if (sourceWorkflowExecutionId.length === 0) {
+    throw new Error("sourceWorkflowExecutionId is required");
+  }
+  if (startStepId.length === 0) {
+    throw new Error("startStepId is required");
+  }
+  if (afterStepRunId.length === 0) {
+    throw new Error("afterStepRunId is required");
+  }
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
+  const existing = await loadSession(sourceWorkflowExecutionId, context);
+  if (!existing.ok) {
+    throw new Error(existing.error.message);
+  }
+  const workflowContext = await resolveWorkflowContextForGraphql(
+    existing.value.workflowName,
+    context,
+  );
+  const result = await continueWorkflowFromHistory({
+    ...workflowContext,
+    ...workflowRunOverrides.value,
+    sourceWorkflowExecutionId,
+    startStepId,
+    afterStepRunId,
+    ...(input.runtimeVariables === undefined
+      ? {}
+      : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
+  });
+  return {
+    workflowExecutionId: result.sessionId,
+    sessionId: result.sessionId,
+    status: result.status,
+    exitCode: result.exitCode,
+    continuedAfterStepRunId: result.continuedAfterStepRunId,
+    continuedStartStepId: result.continuedStartStepId,
+  };
+}
+
 const SUPERVISOR_ACTION_SET_FOR_GRAPHQL = new Set<EventSupervisorAction>([
   "start",
   "stop",
@@ -1837,6 +2051,20 @@ export function createGraphqlSchema(
         return buildWorkflowExecutionConnection(input, context);
       },
 
+      async workflowCatalogOverview(
+        input: WorkflowCatalogOverviewGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowCatalogOverview> {
+        return workflowCatalogOverviewQuery(input, context);
+      },
+
+      async workflowStatusOverview(
+        input: WorkflowStatusOverviewGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowStatusOverview | null> {
+        return workflowStatusOverviewQuery(input, context);
+      },
+
       async communications(
         input: CommunicationsQueryInput,
         context: GraphqlRequestContext = {},
@@ -1889,6 +2117,13 @@ export function createGraphqlSchema(
       ): Promise<SupervisorDispatchConversationGraphqlPayload> {
         return supervisorDispatchConversationQuery(input, context);
       },
+
+      async workflowExecutionStepRuns(
+        input: WorkflowExecutionStepRunsQueryInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowExecutionStepRunsPayload> {
+        return workflowExecutionStepRunsQuery(input, context);
+      },
     },
 
     mutation: {
@@ -1932,6 +2167,13 @@ export function createGraphqlSchema(
         context: GraphqlRequestContext = {},
       ): Promise<RerunWorkflowExecutionPayload> {
         return rerunWorkflowExecutionMutation(input, context);
+      },
+
+      async continueWorkflowExecution(
+        input: ContinueWorkflowExecutionInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<ContinueWorkflowExecutionPayload> {
+        return continueWorkflowExecutionMutation(input, context);
       },
 
       async sendManagerMessage(

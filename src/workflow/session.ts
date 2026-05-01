@@ -31,9 +31,34 @@ export interface SessionTransition {
   readonly when: string;
 }
 
+/**
+ * Persisted lineage mode for executions created by history-linked continuation.
+ * See `design-docs/specs/design-step-run-history-rerun.md` (`continuationMode`).
+ */
+export type WorkflowContinuationMode =
+  | "fresh-run"
+  | "resume"
+  | "rerun-from-history";
+
+/**
+ * One contiguous imported-history segment (oldest segments appear first overall).
+ */
+export interface HistoryImportSegment {
+  readonly sourceWorkflowExecutionId: string;
+  readonly throughStepRunId: string;
+  readonly throughExecutionOrdinal: number;
+}
+
 export interface NodeExecutionRecord extends StepIdentityFields {
   readonly nodeId: string;
   readonly nodeExecId: string;
+  /**
+   * Monotonic ordinal within this workflow execution (`sessionId`).
+   * Emitted together with increments to `nodeExecutionCounter`.
+   *
+   * Public inspection surfaces expose the same persisted id via `stepRunId` === `nodeExecId`.
+   */
+  readonly executionOrdinal?: number;
   readonly mailboxInstanceId?: string;
   readonly status:
     | "succeeded"
@@ -56,6 +81,9 @@ export interface NodeExecutionRecord extends StepIdentityFields {
   readonly backendSessionMode?: "new" | "reuse";
   readonly restartedFromNodeExecId?: string;
 }
+
+/** Operator-facing concrete step-run id aliases persisted {@link NodeExecutionRecord.nodeExecId}. */
+export type StepRunId = NodeExecutionRecord["nodeExecId"];
 
 export interface NodeRestartEvent {
   readonly nodeId: string;
@@ -221,6 +249,13 @@ export interface WorkflowSessionState {
   readonly lastError?: string;
   /** Present when the session is part of an auto-improve / superviser cycle. */
   readonly supervision?: SupervisionRunState;
+
+  readonly continuedFromWorkflowExecutionId?: string;
+  readonly continuedAfterStepRunId?: string;
+  readonly continuedAfterExecutionOrdinal?: number;
+  readonly continuedStartStepId?: string;
+  readonly continuationMode?: WorkflowContinuationMode;
+  readonly historyImports?: readonly HistoryImportSegment[];
 }
 
 function toOutputRefIdentityFields(
@@ -294,6 +329,114 @@ export function createSessionState(
   };
 }
 
+function isWorkflowContinuationMode(
+  value: unknown,
+): value is WorkflowContinuationMode {
+  return (
+    value === "fresh-run" ||
+    value === "resume" ||
+    value === "rerun-from-history"
+  );
+}
+
+function coerceHistoryImports(
+  raw: unknown,
+): readonly HistoryImportSegment[] | undefined {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const segments: HistoryImportSegment[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const objectEntry = entry as Record<string, unknown>;
+    const sourceWorkflowExecutionId =
+      objectEntry["sourceWorkflowExecutionId"];
+    const throughStepRunId = objectEntry["throughStepRunId"];
+    const throughExecutionOrdinal = objectEntry["throughExecutionOrdinal"];
+    if (
+      typeof sourceWorkflowExecutionId !== "string" ||
+      sourceWorkflowExecutionId.length === 0 ||
+      typeof throughStepRunId !== "string" ||
+      throughStepRunId.length === 0 ||
+      typeof throughExecutionOrdinal !== "number" ||
+      !Number.isInteger(throughExecutionOrdinal) ||
+      throughExecutionOrdinal < 1
+    ) {
+      continue;
+    }
+    segments.push({
+      sourceWorkflowExecutionId,
+      throughStepRunId,
+      throughExecutionOrdinal,
+    });
+  }
+  return segments.length === 0 ? undefined : segments;
+}
+
+function assignStableExecutionOrdinals(
+  executions: readonly NodeExecutionRecord[],
+): readonly NodeExecutionRecord[] {
+  if (executions.length === 0) {
+    return executions;
+  }
+  const allDefined = executions.every(
+    (execution) =>
+      typeof execution.executionOrdinal === "number" &&
+      Number.isInteger(execution.executionOrdinal) &&
+      execution.executionOrdinal >= 1,
+  );
+  if (allDefined) {
+    return [...executions].sort((left, right) => {
+      const ordinalDiff =
+        left.executionOrdinal! - right.executionOrdinal!;
+      if (ordinalDiff !== 0) {
+        return ordinalDiff;
+      }
+      return left.nodeExecId.localeCompare(right.nodeExecId);
+    });
+  }
+  return executions.map((execution, ordinalIdx) => ({
+    ...execution,
+    executionOrdinal: ordinalIdx + 1,
+  }));
+}
+
+/**
+ * Workflow executions whose history may be loaded by reference when this session runs
+ * (immediate parent plus every `historyImports` segment source).
+ */
+export function listContinuationReferencedWorkflowExecutionIds(
+  session: WorkflowSessionState,
+): readonly string[] {
+  const ids = new Set<string>();
+  if (session.continuedFromWorkflowExecutionId !== undefined) {
+    ids.add(session.continuedFromWorkflowExecutionId);
+  }
+  if (session.historyImports !== undefined) {
+    for (const segment of session.historyImports) {
+      ids.add(segment.sourceWorkflowExecutionId);
+    }
+  }
+  return [...ids];
+}
+
+export function sessionReferencesWorkflowExecutionAsContinuationSource(
+  session: WorkflowSessionState,
+  targetWorkflowExecutionId: string,
+): boolean {
+  if (session.continuedFromWorkflowExecutionId === targetWorkflowExecutionId) {
+    return true;
+  }
+  return (
+    session.historyImports?.some(
+      (segment) =>
+        segment.sourceWorkflowExecutionId === targetWorkflowExecutionId,
+    ) ?? false
+  );
+}
+
 export function normalizeSessionState(
   session: WorkflowSessionState,
 ): WorkflowSessionState {
@@ -306,7 +449,17 @@ export function normalizeSessionState(
       ? session.communicationCounter
       : communications.length;
 
-  return {
+  const historyImports = coerceHistoryImports(
+    (session as { historyImports?: unknown }).historyImports,
+  );
+  const continuationMode =
+    session.continuationMode === undefined
+      ? undefined
+      : isWorkflowContinuationMode(session.continuationMode)
+        ? session.continuationMode
+        : undefined;
+
+  let next: WorkflowSessionState = {
     ...session,
     loopIterationCounts: { ...(session.loopIterationCounts ?? {}) },
     restartCounts: { ...(session.restartCounts ?? {}) },
@@ -326,6 +479,9 @@ export function normalizeSessionState(
       session.pendingOptionalNodeDecisions ?? []
     ).map((decision) => ({ ...decision })),
     activeUserActions: [...(session.activeUserActions ?? [])],
+    nodeExecutions: assignStableExecutionOrdinals(
+      Array.isArray(session.nodeExecutions) ? session.nodeExecutions : [],
+    ),
     ...(session.supervision === undefined
       ? {}
       : {
@@ -338,6 +494,38 @@ export function normalizeSessionState(
           },
         }),
   };
+
+  next =
+    historyImports === undefined
+      ? (() => {
+          const {
+            historyImports: removedHistoryImports,
+            ...remainder
+          } = next;
+          void removedHistoryImports;
+          return remainder as WorkflowSessionState;
+        })()
+      : {
+          ...next,
+          historyImports,
+        };
+
+  next =
+    continuationMode === undefined
+      ? (() => {
+          const {
+            continuationMode: removedContinuationMode,
+            ...remainder
+          } = next;
+          void removedContinuationMode;
+          return remainder as WorkflowSessionState;
+        })()
+      : {
+          ...next,
+          continuationMode,
+        };
+
+  return next;
 }
 
 /**

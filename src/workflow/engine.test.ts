@@ -5196,6 +5196,94 @@ describe("runWorkflow", () => {
     });
   });
 
+  test("history-linked continuation merges imported upstream outputs for the next step", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "hist-continue-chain");
+
+    await writeJson(
+      path.join(root, "hist-continue-chain", "node-step-2.json"),
+      {
+        id: "step-2",
+        executionBackend: "claude-code-agent",
+        model: "claude-opus-4-1",
+        promptTemplate: "consume upstream",
+        variables: {},
+        argumentsTemplate: { upstreamNode: "" },
+        argumentBindings: [
+          {
+            targetPath: "upstreamNode",
+            source: "node-output",
+            sourceRef: "step-1",
+            sourcePath: "output.payload.nodeId",
+            required: true,
+          },
+        ],
+      },
+    );
+
+    const opts = {
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      runtimeVariables: { topic: "B" },
+    };
+
+    const sourceRun = await runWorkflow(
+      "hist-continue-chain",
+      { ...opts, maxSteps: 1 },
+      deterministicAdapter,
+    );
+    expect(sourceRun.ok).toBe(true);
+    if (!sourceRun.ok) {
+      return;
+    }
+    expect(sourceRun.value.session.status).toBe("paused");
+    const step1Exec = sourceRun.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(step1Exec).toBeDefined();
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const continued = await runWorkflow(
+      "hist-continue-chain",
+      {
+        ...opts,
+        continueFromWorkflowExecutionId: sourceRun.value.session.sessionId,
+        continueAfterStepRunId: step1Exec.nodeExecId,
+        continueStartStepId: "step-2",
+      },
+      deterministicAdapter,
+    );
+    expect(continued.ok).toBe(true);
+    if (!continued.ok) {
+      return;
+    }
+    expect(continued.value.session.historyImports?.length).toBeGreaterThan(0);
+    expect(continued.value.session.nodeExecutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nodeId: "step-2", status: "succeeded" }),
+      ]),
+    );
+    const step2Exec = continued.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-2",
+    );
+    expect(step2Exec).toBeDefined();
+    if (step2Exec === undefined) {
+      return;
+    }
+    const inputRaw = await readFile(
+      path.join(step2Exec.artifactDir, "input.json"),
+      "utf8",
+    );
+    const inputJson = JSON.parse(inputRaw) as {
+      arguments: { upstreamNode: string } | null;
+    };
+    expect(inputJson.arguments).toEqual({ upstreamNode: "step-1" });
+  });
+
   test("retries invalid node payloads until output schema validation succeeds", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-retry", false);
@@ -7874,50 +7962,54 @@ describe("runWorkflow", () => {
     );
   });
 
-  test("supports mock-scenario execution for command and container nodes", async () => {
-    const root = await makeTempDir();
-    const exampleWorkflowRoot = path.join(process.cwd(), "examples");
-    const scenarioRaw = await readFile(
-      path.join(
-        exampleWorkflowRoot,
-        "first-four-arithmetic-pipeline",
-        "mock-scenario.json",
-      ),
-      "utf8",
-    );
-    const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
+  test(
+    "supports mock-scenario execution for command and container nodes",
+    async () => {
+      const root = await makeTempDir();
+      const exampleWorkflowRoot = path.join(process.cwd(), "examples");
+      const scenarioRaw = await readFile(
+        path.join(
+          exampleWorkflowRoot,
+          "first-four-arithmetic-pipeline",
+          "mock-scenario.json",
+        ),
+        "utf8",
+      );
+      const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
 
-    const result = await runWorkflow("first-four-arithmetic-pipeline", {
-      workflowRoot: exampleWorkflowRoot,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      mockScenario: scenario,
-    });
+      const result = await runWorkflow("first-four-arithmetic-pipeline", {
+        workflowRoot: exampleWorkflowRoot,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        mockScenario: scenario,
+      });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.value.session.status).toBe("completed");
-    const outputExec = result.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "divide-output",
-    );
-    expect(outputExec).toBeDefined();
-    if (outputExec === undefined) {
-      return;
-    }
-    const outputRaw = await readFile(
-      path.join(outputExec.artifactDir, "output.json"),
-      "utf8",
-    );
-    const outputJson = JSON.parse(outputRaw) as {
-      payload: { finalResult: number; summary: string };
-      provider: string;
-    };
-    expect(outputJson.provider).toBe("scenario-mock");
-    expect(outputJson.payload.finalResult).toBe(45);
-    expect(outputJson.payload.summary).toContain("45");
-  });
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.value.session.status).toBe("completed");
+      const outputExec = result.value.session.nodeExecutions.find(
+        (entry) => entry.nodeId === "divide-output",
+      );
+      expect(outputExec).toBeDefined();
+      if (outputExec === undefined) {
+        return;
+      }
+      const outputRaw = await readFile(
+        path.join(outputExec.artifactDir, "output.json"),
+        "utf8",
+      );
+      const outputJson = JSON.parse(outputRaw) as {
+        payload: { finalResult: number; summary: string };
+        provider: string;
+      };
+      expect(outputJson.provider).toBe("scenario-mock");
+      expect(outputJson.payload.finalResult).toBe(45);
+      expect(outputJson.payload.summary).toContain("45");
+    },
+    120_000,
+  );
 
   test("persists native command stdout in runtime node logs", async () => {
     const root = await makeTempDir();

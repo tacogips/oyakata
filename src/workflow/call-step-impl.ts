@@ -691,6 +691,9 @@ class MailboxPublisher {
           nodeId: input.nodeExecution.nodeId,
           ...nodeExecutionIdentityFields,
           nodeExecId: input.nodeExecution.nodeExecId,
+          executionOrdinal:
+            input.nodeExecution.executionOrdinal ??
+            input.session.nodeExecutionCounter,
           ...(input.nodeExecution.mailboxInstanceId === undefined
             ? {}
             : { mailboxInstanceId: input.nodeExecution.mailboxInstanceId }),
@@ -1502,6 +1505,7 @@ class ExecutionDispatcher {
       nodeId: input.stepId,
       ...stepIdentityFields,
       nodeExecId,
+      executionOrdinal: nextExecutionCounter,
       mailboxInstanceId,
       status: nodeStatus,
       artifactDir,

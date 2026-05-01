@@ -32,8 +32,14 @@ import {
   type SessionStoreOptions,
 } from "./workflow/session-store";
 import {
+  buildMergedContinuationTimeline,
+  loadContinuationRelatedSnapshots,
+} from "./workflow/history-continuation";
+import {
+  normalizeSessionState,
   resolveCurrentStepId,
   resolveCurrentStepIdFromWorkflow,
+  type NodeExecutionRecord,
   type WorkflowSessionState,
 } from "./workflow/session";
 import type { MockNodeScenario } from "./workflow/adapter";
@@ -98,6 +104,37 @@ export interface RerunWorkflowInput extends DivedraOptions {
   readonly defaultTimeoutMs?: number;
   readonly dryRun?: boolean;
   readonly autoImprove?: AutoImprovePolicy;
+}
+
+export interface ContinueWorkflowFromHistoryInput extends DivedraOptions {
+  readonly sourceWorkflowExecutionId: string;
+  /** Inclusive imported-history boundary (`nodeExecId` / step-run id). */
+  readonly afterStepRunId: string;
+  /** Entry step id for the new workflow execution. */
+  readonly startStepId: string;
+  readonly workflowWorkingDirectory?: string;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly mockScenario?: MockNodeScenario;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+  readonly dryRun?: boolean;
+  readonly autoImprove?: AutoImprovePolicy;
+  readonly nestedSuperviserDriver?: boolean;
+}
+
+/** Merged timeline view for CLI / GraphQL step-run listings (TASK-003 / TASK-004). */
+export interface MergedWorkflowExecutionStepRunRow {
+  readonly timelineOrdinal: number;
+  readonly executionOrdinal: number;
+  readonly persistedWorkflowExecutionId: string;
+  readonly stepRunId: string;
+  readonly stepId: string | undefined;
+  readonly nodeRegistryId: string | undefined;
+  readonly status: NodeExecutionRecord["status"];
+  readonly imported: boolean;
+  readonly startedAt: string;
+  readonly endedAt: string;
 }
 
 export interface RuntimeSessionView {
@@ -697,6 +734,179 @@ export async function rerunWorkflow(input: RerunWorkflowInput): Promise<{
     status: result.value.session.status,
     rerunFromStepId: input.fromStepId,
     exitCode: result.value.exitCode,
+  };
+}
+
+export async function continueWorkflowFromHistory(
+  input: ContinueWorkflowFromHistoryInput,
+): Promise<{
+  readonly sessionId: string;
+  readonly status: WorkflowSessionState["status"];
+  readonly exitCode: number;
+  readonly continuedAfterStepRunId: string;
+  readonly continuedStartStepId: string;
+}> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workflowWorkingDirectory,
+  );
+  const source = await loadSession(input.sourceWorkflowExecutionId, input);
+  if (!source.ok) {
+    throw new Error(source.error.message);
+  }
+  const result = await runWorkflow(source.value.workflowName, {
+    ...(input.workflowRoot === undefined
+      ? {}
+      : { workflowRoot: input.workflowRoot }),
+    ...(input.artifactRoot === undefined
+      ? {}
+      : { artifactRoot: input.artifactRoot }),
+    ...(input.rootDataDir === undefined
+      ? {}
+      : { rootDataDir: input.rootDataDir }),
+    ...(input.sessionStoreRoot === undefined
+      ? {}
+      : { sessionStoreRoot: input.sessionStoreRoot }),
+    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+    ...(input.nodeAddons === undefined ? {} : { nodeAddons: input.nodeAddons }),
+    ...(input.asyncNodeAddonResolvers === undefined
+      ? {}
+      : { asyncNodeAddonResolvers: input.asyncNodeAddonResolvers }),
+    ...(input.nodeAddonResolvers === undefined
+      ? {}
+      : { nodeAddonResolvers: input.nodeAddonResolvers }),
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
+    ...(input.runtimeVariables === undefined
+      ? {}
+      : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
+    continueFromWorkflowExecutionId: source.value.sessionId,
+    continueAfterStepRunId: input.afterStepRunId,
+    continueStartStepId: input.startStepId,
+    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+    ...(input.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    ...(input.autoImprove === undefined ? {} : { autoImprove: input.autoImprove }),
+    ...(input.nestedSuperviserDriver === true
+      ? { nestedSuperviserDriver: true as const }
+      : {}),
+  });
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+  return {
+    sessionId: result.value.session.sessionId,
+    status: result.value.session.status,
+    exitCode: result.value.exitCode,
+    continuedAfterStepRunId: input.afterStepRunId.trim(),
+    continuedStartStepId: input.startStepId.trim(),
+  };
+}
+
+function findOwningNodeExecutionRecord(
+  snapshot: WorkflowSessionState,
+  stepRunId: string,
+): NodeExecutionRecord | undefined {
+  return snapshot.nodeExecutions.find((row) => row.nodeExecId === stepRunId);
+}
+
+/**
+ * Builds the operator-visible merged timeline for a workflow execution, including imported
+ * prefix rows referenced via `historyImports` / continuation lineage.
+ */
+export async function listMergedWorkflowExecutionStepRuns(
+  input: {
+    readonly workflowExecutionId: string;
+    readonly filterStepId?: string;
+    readonly filterStatus?: NodeExecutionRecord["status"];
+  } & DivedraOptions,
+): Promise<{
+  readonly workflowExecutionId: string;
+  readonly workflowId: string;
+  readonly workflowName: string;
+  readonly stepRuns: readonly MergedWorkflowExecutionStepRunRow[];
+}> {
+  const loaded = await loadSession(input.workflowExecutionId, input);
+  if (!loaded.ok) {
+    throw new Error(loaded.error.message);
+  }
+  const root = normalizeSessionState(loaded.value);
+  const snapshotsResult = await loadContinuationRelatedSnapshots(
+    [root],
+    input,
+  );
+  if (!snapshotsResult.ok) {
+    throw new Error(snapshotsResult.error);
+  }
+  const snapshots = snapshotsResult.value;
+  const mergedTimeline = buildMergedContinuationTimeline(
+    snapshots,
+    root.sessionId,
+  );
+  if (!mergedTimeline.ok) {
+    throw new Error(mergedTimeline.error.message);
+  }
+
+  const filterStepTrimmed = input.filterStepId?.trim();
+  const trimmedFilterStep =
+    filterStepTrimmed === undefined || filterStepTrimmed.length === 0
+      ? undefined
+      : filterStepTrimmed;
+
+  const rows: MergedWorkflowExecutionStepRunRow[] = [];
+  let timelineOrdinal = 0;
+  for (const entry of mergedTimeline.value) {
+    const owner = snapshots.get(entry.persistedWorkflowExecutionId);
+    if (owner === undefined) {
+      throw new Error(
+        `internal: missing owning snapshot '${entry.persistedWorkflowExecutionId}' for merged timeline row`,
+      );
+    }
+    const record = findOwningNodeExecutionRecord(owner, entry.stepRunId);
+    if (record === undefined) {
+      throw new Error(
+        `internal: node execution '${entry.stepRunId}' missing from owning session '${owner.sessionId}'`,
+      );
+    }
+    const stepId = record.stepId ?? record.nodeId ?? entry.stepId;
+    if (trimmedFilterStep !== undefined && stepId !== trimmedFilterStep) {
+      continue;
+    }
+    if (
+      input.filterStatus !== undefined &&
+      record.status !== input.filterStatus
+    ) {
+      continue;
+    }
+    timelineOrdinal += 1;
+    rows.push({
+      timelineOrdinal,
+      executionOrdinal: record.executionOrdinal ?? entry.executionOrdinal,
+      persistedWorkflowExecutionId: entry.persistedWorkflowExecutionId,
+      stepRunId: entry.stepRunId,
+      stepId: stepId ?? undefined,
+      nodeRegistryId: record.nodeRegistryId ?? entry.nodeRegistryId,
+      status: record.status,
+      imported: entry.persistedWorkflowExecutionId !== root.sessionId,
+      startedAt: record.startedAt,
+      endedAt: record.endedAt,
+    });
+  }
+
+  return {
+    workflowExecutionId: root.sessionId,
+    workflowId: root.workflowId,
+    workflowName: root.workflowName,
+    stepRuns: rows,
   };
 }
 

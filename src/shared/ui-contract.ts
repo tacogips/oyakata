@@ -33,6 +33,12 @@ export interface WorkflowExecutionSummary {
   readonly endedAt: string | null;
 }
 
+/**
+ * Execution row shape for workflow overview list/status surfaces (aligned with
+ * {@link WorkflowExecutionSummary}; keeps a dedicated alias for overview typing).
+ */
+export type WorkflowExecutionCompactSummary = WorkflowExecutionSummary;
+
 export interface SessionsResponse {
   readonly sessions: readonly WorkflowExecutionSummary[];
 }

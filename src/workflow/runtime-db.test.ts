@@ -8,6 +8,7 @@ import { runWorkflow } from "./engine";
 import {
   deleteRuntimeSession,
   listRuntimeSessions,
+  listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
   loadRuntimeSessionSummary,
   resolveRuntimeDbPath,
@@ -574,6 +575,7 @@ describe("runtime-db", () => {
         nodeId: "w1",
         stepId: "w1",
         nodeExecId: "exec-000001",
+        executionOrdinal: 1,
         status: "succeeded",
         artifactDir: path.join(root, "a", "b"),
         startedAt: "2026-04-20T00:00:00.000Z",
@@ -585,6 +587,11 @@ describe("runtime-db", () => {
       },
       options,
     );
+    const execs = await listRuntimeNodeExecutions(
+      "sess-sqlite-finish-step",
+      options,
+    );
+    expect(execs[0]?.executionOrdinal).toBe(1);
     const logs = await listRuntimeNodeLogs("sess-sqlite-finish-step", options);
     const finish = logs.find((e) => e.message.includes("finished with status"));
     expect(finish).toBeDefined();
@@ -600,6 +607,7 @@ describe("runtime-db", () => {
         nodeId: "materialized-exec",
         stepId: "author-step",
         nodeExecId: "exec-000001",
+        executionOrdinal: 1,
         status: "succeeded",
         artifactDir: path.join(root, "a", "b"),
         startedAt: "2026-04-20T00:00:00.000Z",
@@ -611,6 +619,11 @@ describe("runtime-db", () => {
       },
       options,
     );
+    const execsKey = await listRuntimeNodeExecutions(
+      "sess-sqlite-finish-step-key",
+      options,
+    );
+    expect(execsKey[0]?.executionOrdinal).toBe(1);
     const logs = await listRuntimeNodeLogs("sess-sqlite-finish-step-key", options);
     const finish = logs.find((e) => e.message.includes("finished with status"));
     expect(finish?.message).toBe(

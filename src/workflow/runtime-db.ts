@@ -34,6 +34,7 @@ interface RuntimeNodeExecutionRow {
   readonly backendSessionMode?: NodeExecutionRecord["backendSessionMode"];
   readonly backendSessionId?: NodeExecutionRecord["backendSessionId"];
   readonly restartedFromNodeExecId?: string;
+  readonly executionOrdinal: number;
   readonly inputJson: string;
   readonly outputJson: string;
   readonly inputHash: string;
@@ -75,6 +76,7 @@ export interface RuntimeNodeExecutionSummary {
   readonly backendSessionMode: NodeExecutionRecord["backendSessionMode"] | null;
   readonly backendSessionId: NodeExecutionRecord["backendSessionId"] | null;
   readonly restartedFromNodeExecId: string | null;
+  readonly executionOrdinal: number | null;
   readonly inputHash: string;
   readonly outputHash: string;
   readonly inputJson: string;
@@ -287,6 +289,38 @@ interface RuntimeSessionRow {
   readonly updated_at: string;
 }
 
+function backfillMissingNodeExecutionOrdinals(db: Database): void {
+  const targets = db
+    .query(
+      `SELECT DISTINCT session_id AS sessionId
+       FROM node_executions
+       WHERE execution_ordinal IS NULL`,
+    )
+    .all() as readonly { sessionId: string }[];
+  if (targets.length === 0) {
+    return;
+  }
+  const selectRows = db.prepare(
+    `SELECT node_exec_id AS nodeExecId
+     FROM node_executions
+     WHERE session_id = ?
+     ORDER BY created_at ASC, node_exec_id ASC`,
+  );
+  const updateOrdinal = db.prepare(
+    `UPDATE node_executions SET execution_ordinal = ?
+     WHERE session_id = ? AND node_exec_id = ?`,
+  );
+  for (const row of targets) {
+    const execRows = selectRows.all(row.sessionId) as readonly {
+      readonly nodeExecId: string;
+    }[];
+    let ordinal = 1;
+    for (const execution of execRows) {
+      updateOrdinal.run(ordinal++, row.sessionId, execution.nodeExecId);
+    }
+  }
+}
+
 function toRuntimeSessionSummary(
   row: RuntimeSessionRow,
 ): RuntimeSessionSummary {
@@ -343,6 +377,7 @@ function ensureSchema(db: Database): void {
       backend_session_mode TEXT,
       backend_session_id TEXT,
       restarted_from_node_exec_id TEXT,
+      execution_ordinal INTEGER,
       input_hash TEXT NOT NULL,
       output_hash TEXT NOT NULL,
       input_json TEXT NOT NULL,
@@ -568,12 +603,57 @@ function ensureSchema(db: Database): void {
   if (!existingNodeExecutionColumns.has("timeout_ms")) {
     db.exec("ALTER TABLE node_executions ADD COLUMN timeout_ms INTEGER");
   }
+  if (!existingNodeExecutionColumns.has("execution_ordinal")) {
+    db.exec(
+      "ALTER TABLE node_executions ADD COLUMN execution_ordinal INTEGER",
+    );
+  }
   const sessionColumnsFinal = db
     .query("PRAGMA table_info(sessions)")
     .all() as Array<{ name: string }>;
   const sessionColumnSet = new Set(sessionColumnsFinal.map((row) => row.name));
   if (!sessionColumnSet.has("supervision_json")) {
     db.exec("ALTER TABLE sessions ADD COLUMN supervision_json TEXT");
+  }
+  const sessionContinuationColumns = db
+    .query("PRAGMA table_info(sessions)")
+    .all() as Array<{ name: string }>;
+  const sessionContinuationColumnSet = new Set(
+    sessionContinuationColumns.map((column) => column.name),
+  );
+  if (!sessionContinuationColumnSet.has("continuation_mode")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT");
+  }
+  if (
+    !sessionContinuationColumnSet.has(
+      "continued_from_workflow_execution_id",
+    )
+  ) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_from_workflow_execution_id TEXT",
+    );
+  }
+  if (!sessionContinuationColumnSet.has("continued_after_step_run_id")) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_after_step_run_id TEXT",
+    );
+  }
+  if (
+    !sessionContinuationColumnSet.has("continued_after_execution_ordinal")
+  ) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_after_execution_ordinal INTEGER",
+    );
+  }
+  if (!sessionContinuationColumnSet.has("continued_start_step_id")) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_start_step_id TEXT",
+    );
+  }
+  if (!sessionContinuationColumnSet.has("history_imports_json")) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN history_imports_json TEXT",
+    );
   }
   const receiptColumns = db
     .query("PRAGMA table_info(event_receipts)")
@@ -593,6 +673,8 @@ function ensureSchema(db: Database): void {
   if (!receiptColumnSet.has("supervisor_decision_id")) {
     db.exec("ALTER TABLE event_receipts ADD COLUMN supervisor_decision_id TEXT");
   }
+
+  backfillMissingNodeExecutionOrdinals(db);
 }
 
 function toRuntimeEventReceiptIndexRecord(row: {
@@ -1104,8 +1186,12 @@ export async function saveSessionSnapshotToRuntimeDb(
       INSERT INTO sessions (
         session_id, workflow_name, workflow_id, status, started_at, ended_at,
         current_node_id, current_step_id, node_execution_counter, queue_json, last_error,
-        supervision_json, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        supervision_json,
+        continuation_mode, continued_from_workflow_execution_id,
+        continued_after_step_run_id, continued_after_execution_ordinal,
+        continued_start_step_id, history_imports_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         workflow_name=excluded.workflow_name,
         workflow_id=excluded.workflow_id,
@@ -1118,6 +1204,12 @@ export async function saveSessionSnapshotToRuntimeDb(
         queue_json=excluded.queue_json,
         last_error=excluded.last_error,
         supervision_json=excluded.supervision_json,
+        continuation_mode=excluded.continuation_mode,
+        continued_from_workflow_execution_id=excluded.continued_from_workflow_execution_id,
+        continued_after_step_run_id=excluded.continued_after_step_run_id,
+        continued_after_execution_ordinal=excluded.continued_after_execution_ordinal,
+        continued_start_step_id=excluded.continued_start_step_id,
+        history_imports_json=excluded.history_imports_json,
         updated_at=excluded.updated_at
     `);
     const updatedAt = new Date().toISOString();
@@ -1137,6 +1229,14 @@ export async function saveSessionSnapshotToRuntimeDb(
       session.supervision === undefined
         ? null
         : JSON.stringify(session.supervision),
+      session.continuationMode ?? null,
+      session.continuedFromWorkflowExecutionId ?? null,
+      session.continuedAfterStepRunId ?? null,
+      session.continuedAfterExecutionOrdinal ?? null,
+      session.continuedStartStepId ?? null,
+      session.historyImports === undefined
+        ? null
+        : JSON.stringify(session.historyImports),
       updatedAt,
     );
   });
@@ -1152,9 +1252,9 @@ export async function saveNodeExecutionToRuntimeDb(
       INSERT OR REPLACE INTO node_executions (
         session_id, node_exec_id, node_id, step_id, node_registry_id, mailbox_instance_id, status, artifact_dir, started_at, ended_at,
         attempt, output_attempt_count, output_validation_errors_json, prompt_variant, timeout_ms, backend_session_mode, backend_session_id,
-        restarted_from_node_exec_id,
+        restarted_from_node_exec_id, execution_ordinal,
         input_hash, output_hash, input_json, output_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     nodeStmt.run(
       row.sessionId,
@@ -1177,6 +1277,7 @@ export async function saveNodeExecutionToRuntimeDb(
       row.backendSessionMode ?? null,
       row.backendSessionId ?? null,
       row.restartedFromNodeExecId ?? null,
+      row.executionOrdinal,
       row.inputHash,
       row.outputHash,
       row.inputJson,
@@ -1389,31 +1490,32 @@ export async function listRuntimeNodeExecutions(
   return withDatabase(options, (db) => {
     const rows = db
       .query(
-        `SELECT
-          session_id,
-          node_exec_id,
-          node_id,
-          step_id,
-          node_registry_id,
-          mailbox_instance_id,
-          status,
-          artifact_dir,
-          started_at,
-          ended_at,
-          attempt,
-          output_attempt_count,
-          output_validation_errors_json,
-          prompt_variant,
-          timeout_ms,
-          backend_session_mode,
-          backend_session_id,
-          restarted_from_node_exec_id,
-          input_hash,
-          output_hash,
-          input_json,
-          output_json,
-          created_at
-         FROM node_executions
+        `         SELECT
+           session_id,
+           node_exec_id,
+           node_id,
+           step_id,
+           node_registry_id,
+           mailbox_instance_id,
+           status,
+           artifact_dir,
+           started_at,
+           ended_at,
+           attempt,
+           output_attempt_count,
+           output_validation_errors_json,
+           prompt_variant,
+           timeout_ms,
+           backend_session_mode,
+           backend_session_id,
+           restarted_from_node_exec_id,
+           execution_ordinal,
+           input_hash,
+           output_hash,
+           input_json,
+           output_json,
+           created_at
+          FROM node_executions
          WHERE session_id = ?
          ORDER BY created_at ASC`,
       )
@@ -1436,6 +1538,7 @@ export async function listRuntimeNodeExecutions(
       backend_session_mode: NodeExecutionRecord["backendSessionMode"] | null;
       backend_session_id: NodeExecutionRecord["backendSessionId"] | null;
       restarted_from_node_exec_id: string | null;
+      execution_ordinal: number | null;
       input_hash: string;
       output_hash: string;
       input_json: string;
@@ -1467,6 +1570,7 @@ export async function listRuntimeNodeExecutions(
       backendSessionMode: row.backend_session_mode,
       backendSessionId: row.backend_session_id,
       restartedFromNodeExecId: row.restarted_from_node_exec_id,
+      executionOrdinal: row.execution_ordinal,
       inputHash: row.input_hash,
       outputHash: row.output_hash,
       inputJson: row.input_json,
