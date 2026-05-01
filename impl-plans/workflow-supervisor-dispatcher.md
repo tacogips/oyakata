@@ -7,9 +7,9 @@
 
 ## Related Plans
 
-- **Current Plan**: `impl-plans/workflow-supervisor-dispatcher.md`
-- **Next**: `impl-plans/workflow-supervisor-dispatcher-foundation.md`
-- **Next**: `impl-plans/workflow-supervisor-dispatcher-runtime.md`
+- **Completed Plan**: `impl-plans/workflow-supervisor-dispatcher.md`
+- **Completed Split Plan**: `impl-plans/workflow-supervisor-dispatcher-foundation.md`
+- **Completed Split Plan**: `impl-plans/workflow-supervisor-dispatcher-runtime.md`
 - **Previous**: `impl-plans/completed/event-supervisor-control-foundation.md`
 - **Previous**: `impl-plans/completed/supervisor-natural-language-control.md`
 - **Related**: `impl-plans/completed/event-external-mailbox-binding-foundation.md`
@@ -55,8 +55,8 @@ The original unresolved TODOs are now split into execution-ready plans:
 
 | Plan | Depends On | Status |
 |------|------------|--------|
-| `workflow-supervisor-dispatcher-foundation` | completed supervisor/event foundation plans | READY |
-| `workflow-supervisor-dispatcher-runtime` | `workflow-supervisor-dispatcher-foundation` | READY (runtime TASK-004+) |
+| `workflow-supervisor-dispatcher-foundation` | completed supervisor/event foundation plans | COMPLETED |
+| `workflow-supervisor-dispatcher-runtime` | `workflow-supervisor-dispatcher-foundation` | COMPLETED |
 
 ## Completion Criteria
 
@@ -450,3 +450,18 @@ tree and added concrete follow-up items that were still implicit
   dispatcher-specific GraphQL replay/stale transport test and no dispatcher
   auth-boundary test, so either narrow that checklist line or add the missing
   transport coverage before using it as evidence for closure.
+
+### Session: 2026-05-02 (unresolved TODO closure)
+**Tasks Completed**: Closed the stale unresolved-TODO trail from recent
+dispatcher commits. The split plans and `impl-plans/PROGRESS.json` already mark
+foundation `TASK-001` through `TASK-003` and runtime `TASK-004` through
+`TASK-007` completed. Current tests include dispatcher GraphQL replay coverage
+for same-`sourceMessageId` decisions and GraphQL rejection of non-dispatch
+bindings, so the older review note above is historical rather than an active
+implementation gap.
+**Tasks In Progress**: None.
+**Blockers**: None.
+**Notes**: `workflow-supervisor-dispatcher-runtime.md` TASK-006 wording now
+names the concrete GraphQL coverage instead of overstating unspecified
+stale/auth-boundary tests. No dispatcher implementation TODO remains open in
+this umbrella scope.

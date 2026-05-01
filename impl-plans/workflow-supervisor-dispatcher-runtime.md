@@ -212,7 +212,7 @@ export interface DispatchSupervisorConversationPayload {
 
 - [x] GraphQL exposes dispatcher mutation and conversation read surfaces
 - [x] Local and remote clients share the same dispatcher semantics (`dispatchSupervisorConversation` / `supervisorDispatchConversation` + `postDispatchSupervisorConversationThroughGraphql`)
-- [x] Auth boundaries and stale/replay semantics are preserved through transport tests (follows existing `executeGraphqlRequest` patterns; dispatch idempotency remains in runtime client)
+- [x] Auth boundary and replay semantics are covered through GraphQL transport tests (`dispatchSupervisorConversation` rejects non-dispatch bindings; same `sourceMessageId` replays the stored dispatch decision without invoking the resolver again). Dispatch idempotency remains enforced in the runtime client and persistence layer.
 - [x] Terminal-input normalization is observable through GraphQL payloads (mutation returns full `DispatchSupervisorConversationPayload` including `proposal` / `applied`)
 
 ### TASK-007: Examples And Focused Test Coverage
@@ -301,3 +301,14 @@ export interface DispatchSupervisorConversationPayload {
 **Tasks In Progress**: None.
 **Blockers**: None.
 **Notes**: Complements the applied-decision replay test; clarifies that “stale” supervisor replay includes rejected outcomes stored by `finalizeDispatchDecisionFromProposed(..., rejected)`.
+
+### Session: 2026-05-02 (TASK-006 verification wording closure)
+
+**Tasks Completed**: Closed the stale TASK-006 verification wording TODO by tying
+the checklist to the current GraphQL coverage: non-dispatch binding rejection in
+`src/graphql/schema.test.ts` and same-`sourceMessageId` dispatcher replay in the
+`dispatchSupervisorConversation GraphQL integration` test.
+**Tasks In Progress**: None.
+**Blockers**: None.
+**Notes**: No runtime behavior change; this only resolves the lingering plan
+wording mismatch recorded in the umbrella review log.
