@@ -48,6 +48,7 @@
           text = ''
             set -euo pipefail
 
+            invocation_cwd="$PWD"
             source_dir="${self}"
             cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/divedra/nix"
             runtime_root="$cache_root/$(basename "$source_dir")"
@@ -57,6 +58,9 @@
             mkdir -p "$cache_root"
 
             if [ ! -f "$ready_file" ]; then
+              if [ -d "$runtime_root" ]; then
+                chmod -R u+w "$runtime_root" 2>/dev/null || true
+              fi
               rm -rf "$runtime_root"
               mkdir -p "$runtime_src"
               cp -R "$source_dir"/. "$runtime_src"
@@ -68,8 +72,8 @@
               touch "$ready_file"
             fi
 
-            cd "$runtime_src"
-            exec bun run src/main.ts "$@"
+            cd "$invocation_cwd"
+            exec bun run "$runtime_src/src/main.ts" "$@"
           '';
           meta = {
             description = "TypeScript/Bun workflow runtime for cooperative multi-agent execution";
