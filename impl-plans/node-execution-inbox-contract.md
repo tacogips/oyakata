@@ -99,7 +99,7 @@ export interface NodeExecutionMailbox {
 
 #### `src/workflow/engine.ts`
 
-#### `src/workflow/call-node.ts`
+#### `src/workflow/call-step-impl.ts`
 
 **Status**: COMPLETED
 
@@ -115,7 +115,7 @@ export interface NodeExecutionMailbox {
 
 #### `src/workflow/engine.test.ts`
 
-#### `src/workflow/call-node.test.ts`
+#### `src/workflow/call-step-impl.test.ts`
 
 #### `src/workflow/adapters/codex.test.ts`
 
@@ -127,7 +127,7 @@ export interface NodeExecutionMailbox {
 
 - [x] Verify prompt composition still exposes manager/worker execution guidance
 - [x] Verify execution mailbox artifacts are persisted for workflow runs
-- [x] Verify direct `call-node` executions persist the same mailbox artifacts
+- [x] Verify direct `call-step` executions persist the same mailbox artifacts
 - [x] Verify remote adapter requests include the compiled execution-mailbox contract
 
 ## Module Status
@@ -136,7 +136,7 @@ export interface NodeExecutionMailbox {
 |--------|-----------|--------|-------|
 | Execution mailbox builders | `src/workflow/node-execution-mailbox.ts` | COMPLETED | `prompt-composition.test.ts` |
 | Prompt integration | `src/workflow/prompt-composition.ts` | COMPLETED | `prompt-composition.test.ts` |
-| Runtime persistence | `src/workflow/engine.ts`, `src/workflow/call-node.ts` | COMPLETED | `engine.test.ts`, `call-node.test.ts` |
+| Runtime persistence | `src/workflow/engine.ts`, `src/workflow/call-step-impl.ts` | COMPLETED | `engine.test.ts`, `call-step-impl.test.ts` |
 | Adapter transport | `src/workflow/adapter.ts`, `src/workflow/adapters/shared.ts` | COMPLETED | `codex.test.ts`, `claude.test.ts` |
 
 ## Dependencies

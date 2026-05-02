@@ -7,12 +7,17 @@ import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
 import {
   deleteRuntimeSession,
+  listRuntimeSessions,
+  listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
+  loadRuntimeSessionSummary,
   resolveRuntimeDbPath,
   saveCommunicationEventToRuntimeDb,
+  saveNodeExecutionToRuntimeDb,
   saveProcessLogsToRuntimeDb,
+  saveSessionSnapshotToRuntimeDb,
 } from "./runtime-db";
-import type { CommunicationRecord } from "./session";
+import { createSessionState, type CommunicationRecord } from "./session";
 
 const tempDirs: string[] = [];
 
@@ -58,24 +63,27 @@ async function createWorkflowFixture(
     workflowId: workflowName,
     description: "fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        kind: "task",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "step-1", when: "always" }],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1" }],
+      },
+      { id: "step-1", nodeId: "step-1" },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -105,41 +113,49 @@ async function createNodeSessionReuseFixture(
     workflowId: workflowName,
     description: "node session reuse fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-a",
-        kind: "task",
         nodeFile: "node-step-a.json",
-        completion: { type: "none" },
       },
       {
         id: "step-b",
-        kind: "task",
         nodeFile: "node-step-b.json",
-        completion: { type: "none" },
       },
       {
         id: "step-c",
-        kind: "task",
         nodeFile: "node-step-c.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "step-a", when: "always" },
-      { from: "step-a", to: "step-b", when: "always" },
-      { from: "step-b", to: "step-c", when: "go_c" },
-      { from: "step-c", to: "step-b", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-a" }],
+      },
+      {
+        id: "step-a",
+        nodeId: "step-a",
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "step-b",
+        transitions: [{ toStepId: "step-c", label: "go_c" }],
+      },
+      {
+        id: "step-c",
+        nodeId: "step-c",
+        transitions: [{ toStepId: "step-b" }],
+      },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -416,6 +432,94 @@ describe("runtime-db", () => {
     }
   });
 
+  test("persists current step ids in runtime session summaries", async () => {
+    const root = await makeTempDir();
+    const options = makeRuntimeDbOptions(root, "sess-step-summary");
+    const session = {
+      ...createSessionState({
+        sessionId: "sess-step-summary",
+        workflowName: "step-summary",
+        workflowId: "step-summary",
+        initialNodeId: "writer-step",
+        runtimeVariables: {},
+      }),
+      currentNodeId: "writer-step",
+      nodeExecutionCounter: 1,
+      nodeExecutionCounts: {
+        "writer-step": 1,
+      },
+      nodeExecutions: [
+        {
+          nodeId: "writer-step",
+          stepId: "writer-step",
+          nodeRegistryId: "writer-node",
+          nodeExecId: "exec-000001",
+          mailboxInstanceId: "exec-000001",
+          status: "succeeded" as const,
+          artifactDir: path.join(root, "artifacts", "writer-step"),
+          startedAt: "2026-04-24T00:00:00.000Z",
+          endedAt: "2026-04-24T00:00:01.000Z",
+          timeoutMs: 975,
+        },
+      ],
+    };
+
+    await saveSessionSnapshotToRuntimeDb(session, options);
+
+    await expect(listRuntimeSessions(options)).resolves.toEqual([
+      expect.objectContaining({
+        sessionId: "sess-step-summary",
+        currentNodeId: "writer-step",
+        currentStepId: "writer-step",
+      }),
+    ]);
+    await expect(
+      loadRuntimeSessionSummary("sess-step-summary", options),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        sessionId: "sess-step-summary",
+        currentNodeId: "writer-step",
+        currentStepId: "writer-step",
+      }),
+    );
+  });
+
+  test("persists supervision_json on session snapshots", async () => {
+    const root = await makeTempDir();
+    const options = makeRuntimeDbOptions(root, "sess-supervision-db");
+    const session = {
+      ...createSessionState({
+        sessionId: "sess-supervision-db",
+        workflowName: "wf",
+        workflowId: "wf",
+        initialNodeId: "m",
+        runtimeVariables: {},
+      }),
+      supervision: {
+        supervisionRunId: "sr-1",
+        targetWorkflowId: "wf",
+        superviserWorkflowId: "sup",
+        status: "running" as const,
+        attemptCount: 1,
+        workflowPatchCount: 0,
+        incidents: [],
+      },
+    };
+
+    await saveSessionSnapshotToRuntimeDb(session, options);
+
+    const db = new Database(resolveRuntimeDbPath(options));
+    try {
+      const row = db
+        .query("SELECT supervision_json FROM sessions WHERE session_id = ?")
+        .get("sess-supervision-db") as { supervision_json: string | null };
+      expect(row.supervision_json).toContain("sr-1");
+      expect(row.supervision_json).toContain('"status":"running"');
+    } finally {
+      db.close();
+    }
+  });
+
   test("stores concise process log messages with full text in payload JSON", async () => {
     const root = await makeTempDir();
     const options = makeRuntimeDbOptions(root, "sess-sqlite-process-logs");
@@ -443,6 +547,90 @@ describe("runtime-db", () => {
     expect(payload.text).toBe(longText);
   });
 
+  test("process log lines use step label when executionLogTarget is step", async () => {
+    const root = await makeTempDir();
+    const options = makeRuntimeDbOptions(root, "sess-sqlite-process-logs-step");
+    await saveProcessLogsToRuntimeDb(
+      {
+        sessionId: "sess-sqlite-process-logs-step",
+        nodeId: "entry-worker",
+        nodeExecId: "exec-000001",
+        processLogs: [{ stream: "stdout", text: "ok\n" }],
+        at: "2026-04-20T00:00:00.000Z",
+        executionLogTarget: "step",
+      },
+      options,
+    );
+    const logs = await listRuntimeNodeLogs("sess-sqlite-process-logs-step", options);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]?.message.startsWith("step entry-worker ")).toBe(true);
+  });
+
+  test("node execution finish log uses step label when stepId is set", async () => {
+    const root = await makeTempDir();
+    const options = makeRuntimeDbOptions(root, "sess-sqlite-finish-step");
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId: "sess-sqlite-finish-step",
+        nodeId: "w1",
+        stepId: "w1",
+        nodeExecId: "exec-000001",
+        executionOrdinal: 1,
+        status: "succeeded",
+        artifactDir: path.join(root, "a", "b"),
+        startedAt: "2026-04-20T00:00:00.000Z",
+        endedAt: "2026-04-20T00:00:01.000Z",
+        inputJson: "{}",
+        outputJson: "{}",
+        inputHash: "h1",
+        outputHash: "h2",
+      },
+      options,
+    );
+    const execs = await listRuntimeNodeExecutions(
+      "sess-sqlite-finish-step",
+      options,
+    );
+    expect(execs[0]?.executionOrdinal).toBe(1);
+    const logs = await listRuntimeNodeLogs("sess-sqlite-finish-step", options);
+    const finish = logs.find((e) => e.message.includes("finished with status"));
+    expect(finish).toBeDefined();
+    expect(finish?.message).toBe("step w1 finished with status succeeded");
+  });
+
+  test("node execution finish log uses stepId as message key when it differs from nodeId", async () => {
+    const root = await makeTempDir();
+    const options = makeRuntimeDbOptions(root, "sess-sqlite-finish-step-key");
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId: "sess-sqlite-finish-step-key",
+        nodeId: "materialized-exec",
+        stepId: "author-step",
+        nodeExecId: "exec-000001",
+        executionOrdinal: 1,
+        status: "succeeded",
+        artifactDir: path.join(root, "a", "b"),
+        startedAt: "2026-04-20T00:00:00.000Z",
+        endedAt: "2026-04-20T00:00:01.000Z",
+        inputJson: "{}",
+        outputJson: "{}",
+        inputHash: "h1",
+        outputHash: "h2",
+      },
+      options,
+    );
+    const execsKey = await listRuntimeNodeExecutions(
+      "sess-sqlite-finish-step-key",
+      options,
+    );
+    expect(execsKey[0]?.executionOrdinal).toBe(1);
+    const logs = await listRuntimeNodeLogs("sess-sqlite-finish-step-key", options);
+    const finish = logs.find((e) => e.message.includes("finished with status"));
+    expect(finish?.message).toBe(
+      "step author-step finished with status succeeded",
+    );
+  });
+
   test("logs communication event status without implying failed delivery succeeded", async () => {
     const root = await makeTempDir();
     const options = makeRuntimeDbOptions(root, "sess-sqlite-communication-log");
@@ -452,7 +640,7 @@ describe("runtime-db", () => {
       communicationId: "comm-000001",
       fromNodeId: "manager",
       toNodeId: "worker",
-      routingScope: "intra-sub-workflow",
+      routingScope: "intra-workflow",
       sourceNodeExecId: "exec-000001",
       payloadRef: {
         kind: "node-output",
@@ -506,7 +694,7 @@ describe("runtime-db", () => {
       communicationId: "comm-000001",
       fromNodeId: "manager",
       toNodeId: "worker",
-      routingScope: "intra-sub-workflow",
+      routingScope: "intra-workflow",
       sourceNodeExecId: "exec-000001",
       payloadRef: {
         kind: "node-output",

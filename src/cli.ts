@@ -1,6 +1,4 @@
-import { readFile, stat, writeFile } from "node:fs/promises";
-import readline from "node:readline/promises";
-import os from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_GRAPHQL_ENDPOINT,
@@ -11,7 +9,11 @@ import { buildHookConfigurationSnippet } from "./hook/config";
 import { parseHookVendorOption } from "./hook/detect-vendor";
 import { createReadHookStdin, runHookCommand } from "./hook/index";
 import { SUPPORTED_HOOK_VENDORS } from "./hook/types";
-import { startServe, type StartedServe } from "./server/serve";
+import {
+  startServe,
+  type ServeStartOptions,
+  type StartedServe,
+} from "./server/serve";
 import {
   createEventListenerService,
   loadAndValidateEventConfiguration,
@@ -20,43 +22,75 @@ import { emitEventFile } from "./events/manual-emit";
 import { listEventReceipts, replayEventReceipt } from "./events/receipt-ops";
 import type { EventListenerHandle } from "./events/listener-service";
 import type { MockNodeScenario } from "./workflow/adapter";
+import type { WorkflowExecutionCompactSummary } from "./shared/ui-contract";
+import { normalizeAutoImprovePolicy } from "./workflow/auto-improve-policy";
 import { createWorkflowTemplate } from "./workflow/create";
-import { callNode, type CallNodeInput } from "./workflow/call-node";
+import { callStep, type CallStepInput } from "./workflow/call-step";
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
 import {
-  listWorkflowCatalogSources,
+  resolveWorkflowSource,
   withResolvedWorkflowSourceOptions,
 } from "./workflow/catalog";
 import { inferRootDataDirFromExplicitStorageRoots } from "./workflow/paths";
-import { createSessionId, type WorkflowSessionState } from "./workflow/session";
+import {
+  resolveCurrentStepId,
+  resolveCurrentStepIdFromWorkflow,
+  type NodeExecutionRecord,
+  type WorkflowSessionState,
+} from "./workflow/session";
 import { buildInspectionSummary } from "./workflow/inspect";
 import { collectWorkflowAddonSourceSummaries } from "./workflow/addon-source-summary";
 import { loadSession } from "./workflow/session-store";
 import { createCommunicationService } from "./workflow/communication-service";
-import { selectTuiRuntimeMode } from "./tui/runtime";
-import type {
-  OpenTuiWorkflowActionResult,
-  OpenTuiWorkflowAppOptions,
-  OpenTuiWorkflowExecutionHandle,
-} from "./tui/opentui-screen";
-import { loadAgentSessionTranscript } from "./tui/agent-session-history";
 import {
   listEventReplyDispatchesFromRuntimeDb,
   listRuntimeHookEvents,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
-  listRuntimeSessions,
   type RuntimeEventReplyDispatchStatus,
 } from "./workflow/runtime-db";
-import { createManagerSessionStore } from "./workflow/manager-session-store";
-import { deleteWorkflowSessionHistory } from "./workflow/session-history";
-import { deleteWorkflowHistory as deleteWorkflowHistoryForWorkflow } from "./workflow/history";
 import { normalizeWorkflowWorkingDirectoryOverride } from "./workflow/working-directory";
+import {
+  continueWorkflowFromHistory,
+  listMergedWorkflowExecutionStepRuns,
+} from "./lib";
+import {
+  buildWorkflowCatalogOverview,
+  buildWorkflowStatusOverview,
+  parseWorkflowOverviewAggregateStatusFilter,
+  type WorkflowOverviewRow,
+  type WorkflowStatusOverview,
+} from "./workflow/overview";
 import type {
+  AutoImprovePolicy,
+  LoadOptions,
   ResolvedWorkflowSource,
   WorkflowScopeSelector,
+  WorkflowSourceScope,
 } from "./workflow/types";
+
+type AutoImproveCliInputs = {
+  readonly enabled: boolean;
+  readonly superviserWorkflowId?: string;
+  readonly monitorIntervalMs?: number;
+  readonly stallTimeoutMs?: number;
+  readonly maxSupervisedAttempts?: number;
+  readonly maxWorkflowPatches?: number;
+  readonly workflowMutationMode?: "execution-copy" | "in-place";
+  readonly allowTargetedRerun?: boolean;
+};
+
+function parseAutoImprovePolicyFromCliFlags(input: AutoImproveCliInputs): {
+  readonly policy?: AutoImprovePolicy;
+  readonly error?: string;
+} {
+  const normalized = normalizeAutoImprovePolicy(input);
+  if (!normalized.ok) {
+    return { error: normalized.error };
+  }
+  return normalized.value === undefined ? {} : { policy: normalized.value };
+}
 
 export interface CliIo {
   readonly stdout: (line: string) => void;
@@ -64,17 +98,7 @@ export interface CliIo {
 }
 
 export interface CliDependencies {
-  readonly startServe: (options: {
-    host?: string;
-    port?: number;
-    workflowRoot?: string;
-    addonRoot?: string;
-    artifactRoot?: string;
-    sessionStoreRoot?: string;
-    readOnly?: boolean;
-    noExec?: boolean;
-    fixedWorkflowName?: string;
-  }) => Promise<StartedServe>;
+  readonly startServe: (options: ServeStartOptions) => Promise<StartedServe>;
   readonly isInteractiveTerminal: () => boolean;
   readonly waitForServeShutdown?: (started: StartedServe) => Promise<void>;
   readonly waitForEventListenerShutdown?: (
@@ -83,9 +107,6 @@ export interface CliDependencies {
   readonly fetchImpl?: typeof fetch;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly readStdin?: () => Promise<string>;
-  readonly runOpenTuiWorkflowApp?: (
-    options: OpenTuiWorkflowAppOptions,
-  ) => Promise<number>;
 }
 
 interface CliStorageOptions {
@@ -105,7 +126,6 @@ interface WorkflowSourceOutput {
   readonly workflowRoot: string;
   readonly workflowDirectory: string;
   readonly scopeRoot?: string;
-  readonly legacyProjectRoot?: boolean;
 }
 
 interface ParsedOptions {
@@ -118,7 +138,7 @@ interface ParsedOptions {
   readonly sessionStoreRoot?: string;
   readonly workingDirectory?: string;
   readonly workerOnly: boolean;
-  readonly output: "text" | "json";
+  readonly output: "text" | "json" | "table";
   readonly format?: "text" | "json" | "jsonl";
   readonly variablesPath?: string;
   readonly mockScenarioPath?: string;
@@ -126,6 +146,7 @@ interface ParsedOptions {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly timeoutMs?: number;
   readonly host?: string;
   readonly port?: number;
   readonly endpoint?: string;
@@ -134,10 +155,11 @@ interface ParsedOptions {
   readonly filePath?: string;
   readonly readOnly: boolean;
   readonly noExec: boolean;
-  readonly resumeSessionId?: string;
-  readonly workflowName?: string;
   readonly messageJson?: string;
   readonly messageFile?: string;
+  readonly promptVariant?: string;
+  readonly continueSession: boolean;
+  readonly resumeStepExecId?: string;
   readonly vendor?: string;
   readonly eventRoot?: string;
   readonly eventFile?: string;
@@ -145,6 +167,13 @@ interface ParsedOptions {
   readonly status?: string;
   readonly limit?: number;
   readonly reason?: string;
+  readonly autoImprove?: AutoImprovePolicy;
+  /** Phase-2: run superviser bundle as nested workflow; requires --auto-improve */
+  readonly nestedSuperviser?: boolean;
+  readonly continuationStartStepId?: string;
+  readonly continuationAfterStepRunId?: string;
+  /** When set, restricts `session step-runs` to rows whose resolved step id matches. */
+  readonly stepRunsFilterStepId?: string;
 }
 
 interface ParsedArgs {
@@ -174,12 +203,23 @@ interface RemoteWorkflowRunSummary {
   readonly transitions: number;
 }
 
+interface WorkflowExecutionContinuationMetadata {
+  readonly continuedFromWorkflowExecutionId?: string;
+  readonly continuedAfterStepRunId?: string;
+  readonly continuedAfterExecutionOrdinal?: number;
+  readonly continuedStartStepId?: string;
+  readonly continuationMode?: WorkflowSessionState["continuationMode"];
+  readonly historyImports?: WorkflowSessionState["historyImports"];
+}
+
 interface WorkflowExecutionExport {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
   readonly workflowName: string;
   readonly status: WorkflowSessionState["status"];
   readonly exportedAt: string;
+  /** Explicit lineage for history-linked runs (reproducible continuation metadata). */
+  readonly continuationMetadata?: WorkflowExecutionContinuationMetadata;
   readonly session: WorkflowSessionState;
   readonly nodeExecutions: Awaited<
     ReturnType<typeof listRuntimeNodeExecutions>
@@ -239,15 +279,58 @@ const DEFAULT_DEPS: CliDependencies = {
     waitForProcessShutdownSignal(),
 };
 
-function parseNumericOption(value: string | undefined): number | undefined {
+function parseNumericOption(
+  flagName: string,
+  value: string | undefined,
+): { readonly value?: number; readonly error?: string } {
   if (value === undefined) {
-    return undefined;
+    return { error: `${flagName} requires a numeric value` };
   }
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    return undefined;
+    return {
+      error: `invalid ${flagName} value '${value}'; expected a number`,
+    };
   }
-  return parsed;
+  return { value: parsed };
+}
+
+function parseRequiredStringOption(
+  flagName: string,
+  value: string | undefined,
+  expectation?: string,
+): { readonly value?: string; readonly error?: string } {
+  if (value !== undefined) {
+    return { value };
+  }
+  return {
+    error:
+      expectation === undefined
+        ? `${flagName} requires a value`
+        : `${flagName} requires a value: ${expectation}`,
+  };
+}
+
+function parseEnumOption<const T extends string>(
+  flagName: string,
+  value: string | undefined,
+  allowedValues: readonly T[],
+  expectation: string,
+): { readonly value?: T; readonly error?: string } {
+  const parsedString = parseRequiredStringOption(flagName, value, expectation);
+  if (parsedString.error !== undefined) {
+    return { error: parsedString.error };
+  }
+  const parsedValue = parsedString.value;
+  if (
+    parsedValue !== undefined &&
+    allowedValues.some((allowed) => allowed === parsedValue)
+  ) {
+    return { value: parsedValue as T };
+  }
+  return {
+    error: `invalid ${flagName} value '${parsedValue}'; expected ${expectation}`,
+  };
 }
 
 function parseEnvBooleanFlag(value: string | undefined): boolean {
@@ -280,6 +363,57 @@ function parseReplyDispatchStatus(
   return undefined;
 }
 
+function buildStepProgressSummaries(session: WorkflowSessionState): readonly {
+  readonly stepId: string;
+  readonly executions: number;
+  readonly restarts: number;
+}[] {
+  const executionCounts = new Map<string, number>();
+  for (const execution of session.nodeExecutions) {
+    if (execution.stepId === undefined) {
+      continue;
+    }
+    executionCounts.set(
+      execution.stepId,
+      (executionCounts.get(execution.stepId) ?? 0) + 1,
+    );
+  }
+
+  return [...executionCounts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([stepId, executions]) => ({
+      stepId,
+      executions,
+      restarts: session.restartCounts?.[stepId] ?? 0,
+    }));
+}
+
+async function resolveSessionCurrentStepId(
+  session: WorkflowSessionState,
+  options: CliStorageOptions,
+): Promise<string | null> {
+  const currentStepId = resolveCurrentStepId(session);
+  if (currentStepId !== null) {
+    return currentStepId;
+  }
+
+  const loadedWorkflow = await loadWorkflowFromCatalog(
+    session.workflowName,
+    options,
+  );
+  if (!loadedWorkflow.ok) {
+    return null;
+  }
+  if (loadedWorkflow.value.bundle.workflow.workflowId !== session.workflowId) {
+    return null;
+  }
+
+  return resolveCurrentStepIdFromWorkflow(
+    session,
+    loadedWorkflow.value.bundle.workflow,
+  );
+}
+
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const positionals: string[] = [];
   let workflowRoot: string | undefined;
@@ -291,7 +425,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let sessionStoreRoot: string | undefined;
   let workingDirectory: string | undefined;
   let workerOnly = false;
-  let output: "text" | "json" = "text";
+  let output: "text" | "json" | "table" = "text";
   let format: "text" | "json" | "jsonl" | undefined;
   let variablesPath: string | undefined;
   let dryRun = false;
@@ -299,6 +433,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let maxSteps: number | undefined;
   let maxLoopIterations: number | undefined;
   let defaultTimeoutMs: number | undefined;
+  let timeoutMs: number | undefined;
   let host: string | undefined;
   let port: number | undefined;
   let endpoint: string | undefined;
@@ -307,10 +442,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let filePath: string | undefined;
   let readOnly = false;
   let noExec = false;
-  let resumeSessionId: string | undefined;
-  let workflowName: string | undefined;
   let messageJson: string | undefined;
   let messageFile: string | undefined;
+  let promptVariant: string | undefined;
+  let continueSession = false;
+  let resumeStepExecId: string | undefined;
   let vendor: string | undefined;
   let eventRoot: string | undefined;
   let eventFile: string | undefined;
@@ -319,6 +455,19 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let limit: number | undefined;
   let reason: string | undefined;
   let parseError: string | undefined;
+  let autoImprove = false;
+  let superviserWorkflowId: string | undefined;
+  let monitorIntervalMs: number | undefined;
+  let stallTimeoutMs: number | undefined;
+  let maxSupervisedAttempts: number | undefined;
+  let maxWorkflowPatches: number | undefined;
+  let workflowMutationMode: "execution-copy" | "in-place" | undefined;
+  let noAllowTargetedRerun = false;
+  let firstAutoImprovePolicyFlag: string | undefined;
+  let nestedSuperviser = false;
+  let continuationStartStepId: string | undefined;
+  let continuationAfterStepRunId: string | undefined;
+  let stepRunsFilterStepId: string | undefined;
 
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -339,11 +488,20 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       return undefined;
     };
+    const markAutoImprovePolicyFlag = (): void => {
+      firstAutoImprovePolicyFlag ??= token;
+    };
 
     switch (token) {
-      case "--workflow-root":
-        workflowRoot = readNext();
+      case "--workflow-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        workflowRoot = parsedString.value;
         break;
+      }
       case "--scope":
         {
           const rawScope = readNext();
@@ -358,124 +516,469 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
           }
         }
         break;
-      case "--user-root":
-        userRoot = readNext();
+      case "--user-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        userRoot = parsedString.value;
         break;
-      case "--project-root":
-        projectRoot = readNext();
+      }
+      case "--project-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        projectRoot = parsedString.value;
         break;
-      case "--addon-root":
-        addonRoot = readNext();
+      }
+      case "--addon-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        addonRoot = parsedString.value;
         break;
-      case "--artifact-root":
-        artifactRoot = readNext();
+      }
+      case "--artifact-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        artifactRoot = parsedString.value;
         break;
-      case "--session-store":
-        sessionStoreRoot = readNext();
+      }
+      case "--session-store": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        sessionStoreRoot = parsedString.value;
         break;
+      }
       case "--working-dir":
-      case "--working-directory":
-        workingDirectory = readNext();
+      case "--working-directory": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        workingDirectory = parsedString.value;
         break;
+      }
       case "--worker-only":
         workerOnly = true;
         break;
-      case "--variables":
-        variablesPath = readNext();
+      case "--variables": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        variablesPath = parsedString.value;
         break;
+      }
       case "--output": {
-        const maybeOutput = readNext();
-        if (maybeOutput === "json" || maybeOutput === "text") {
-          output = maybeOutput;
+        const parsedOutput = parseEnumOption(
+          token,
+          readNext(),
+          ["json", "text", "table"],
+          "json, text, or table",
+        );
+        if (parsedOutput.error !== undefined) {
+          parseError = parsedOutput.error;
+          break;
+        }
+        if (parsedOutput.value !== undefined) {
+          output = parsedOutput.value;
         }
         break;
       }
       case "--format": {
-        const maybeFormat = readNext();
-        if (
-          maybeFormat === "json" ||
-          maybeFormat === "jsonl" ||
-          maybeFormat === "text"
-        ) {
-          format = maybeFormat;
+        const parsedFormat = parseEnumOption(
+          token,
+          readNext(),
+          ["json", "jsonl", "text"],
+          "json, jsonl, or text",
+        );
+        if (parsedFormat.error !== undefined) {
+          parseError = parsedFormat.error;
+          break;
+        }
+        if (parsedFormat.value !== undefined) {
+          format = parsedFormat.value;
         }
         break;
       }
       case "--dry-run":
         dryRun = true;
         break;
-      case "--mock-scenario":
-        mockScenarioPath = readNext();
+      case "--mock-scenario": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        mockScenarioPath = parsedString.value;
         break;
+      }
       case "--max-steps":
-        maxSteps = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxSteps = parsedNumber.value;
+        }
         break;
       case "--max-loop-iterations":
-        maxLoopIterations = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxLoopIterations = parsedNumber.value;
+        }
         break;
       case "--default-timeout-ms":
-        defaultTimeoutMs = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          defaultTimeoutMs = parsedNumber.value;
+        }
         break;
-      case "--host":
-        host = readNext();
+      case "--timeout-ms":
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          timeoutMs = parsedNumber.value;
+        }
         break;
+      case "--host": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        host = parsedString.value;
+        break;
+      }
       case "--port":
-        port = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          port = parsedNumber.value;
+        }
         break;
-      case "--endpoint":
-        endpoint = readNext();
+      case "--endpoint": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        endpoint = parsedString.value;
         break;
-      case "--auth-token":
-        authToken = readNext();
+      }
+      case "--auth-token": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        authToken = parsedString.value;
         break;
-      case "--auth-token-env":
-        authTokenEnv = readNext();
+      }
+      case "--auth-token-env": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        authTokenEnv = parsedString.value;
         break;
-      case "--file":
-        filePath = readNext();
+      }
+      case "--file": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        filePath = parsedString.value;
         break;
+      }
       case "--read-only":
         readOnly = true;
         break;
       case "--no-exec":
         noExec = true;
         break;
-      case "--resume-session":
-        resumeSessionId = readNext();
+      case "--message-json": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        messageJson = parsedString.value;
         break;
-      case "--workflow":
-        workflowName = readNext();
+      }
+      case "--message-file": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        messageFile = parsedString.value;
         break;
-      case "--message-json":
-        messageJson = readNext();
+      }
+      case "--prompt-variant": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        promptVariant = parsedString.value;
         break;
-      case "--message-file":
-        messageFile = readNext();
+      }
+      case "--continue-session":
+        continueSession = true;
         break;
-      case "--vendor":
-        vendor = readNext();
+      case "--resume-node-exec":
+        readNext();
+        parseError ??=
+          "--resume-node-exec has been removed; use --resume-step-exec";
         break;
-      case "--event-root":
-        eventRoot = readNext();
+      case "--resume-step-exec": {
+        const nextResumeExec = readNext();
+        if (nextResumeExec === undefined) {
+          parseError = `${token} requires an execution record id`;
+          break;
+        }
+        resumeStepExecId = nextResumeExec;
         break;
-      case "--event-file":
-        eventFile = readNext();
+      }
+      case "--vendor": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        vendor = parsedString.value;
         break;
-      case "--source":
-        sourceId = readNext();
+      }
+      case "--event-root": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        eventRoot = parsedString.value;
         break;
-      case "--status":
-        status = readNext();
+      }
+      case "--event-file": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        eventFile = parsedString.value;
         break;
+      }
+      case "--source": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        sourceId = parsedString.value;
+        break;
+      }
+      case "--status": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        status = parsedString.value;
+        break;
+      }
       case "--limit":
-        limit = parseNumericOption(readNext());
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          limit = parsedNumber.value;
+        }
         break;
-      case "--reason":
-        reason = readNext();
+      case "--reason": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        reason = parsedString.value;
         break;
+      }
+      case "--auto-improve":
+        autoImprove = true;
+        break;
+      case "--superviser-workflow":
+      case "--supervisor-workflow": {
+        markAutoImprovePolicyFlag();
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        superviserWorkflowId = parsedString.value;
+        break;
+      }
+      case "--monitor-interval-ms":
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          monitorIntervalMs = parsedNumber.value;
+        }
+        break;
+      case "--stall-timeout-ms":
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          stallTimeoutMs = parsedNumber.value;
+        }
+        break;
+      case "--max-supervised-attempts":
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxSupervisedAttempts = parsedNumber.value;
+        }
+        break;
+      case "--max-workflow-patches":
+        {
+          markAutoImprovePolicyFlag();
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          maxWorkflowPatches = parsedNumber.value;
+        }
+        break;
+      case "--workflow-mutation-mode": {
+        markAutoImprovePolicyFlag();
+        const parsedMode = parseEnumOption(
+          token,
+          readNext(),
+          ["execution-copy", "in-place"],
+          "execution-copy or in-place",
+        );
+        if (parsedMode.error !== undefined) {
+          parseError = parsedMode.error;
+          break;
+        }
+        if (parsedMode.value !== undefined) {
+          workflowMutationMode = parsedMode.value;
+        }
+        break;
+      }
+      case "--no-allow-targeted-rerun":
+      case "--disable-targeted-rerun":
+        markAutoImprovePolicyFlag();
+        noAllowTargetedRerun = true;
+        break;
+      case "--nested-superviser":
+      case "--nested-supervisor":
+        markAutoImprovePolicyFlag();
+        nestedSuperviser = true;
+        break;
+      case "--start-step": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        continuationStartStepId = parsedString.value;
+        break;
+      }
+      case "--after-step-run": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        continuationAfterStepRunId = parsedString.value;
+        break;
+      }
+      case "--step": {
+        const parsedString = parseRequiredStringOption(token, readNext());
+        if (parsedString.error !== undefined) {
+          parseError = parsedString.error;
+          break;
+        }
+        stepRunsFilterStepId = parsedString.value;
+        break;
+      }
       default:
         break;
     }
+
+    if (parseError !== undefined) {
+      break;
+    }
+  }
+
+  const autoImproveInputs = {
+    enabled: autoImprove,
+    ...(superviserWorkflowId === undefined ? {} : { superviserWorkflowId }),
+    ...(monitorIntervalMs === undefined ? {} : { monitorIntervalMs }),
+    ...(stallTimeoutMs === undefined ? {} : { stallTimeoutMs }),
+    ...(maxSupervisedAttempts === undefined ? {} : { maxSupervisedAttempts }),
+    ...(maxWorkflowPatches === undefined ? {} : { maxWorkflowPatches }),
+    ...(workflowMutationMode === undefined ? {} : { workflowMutationMode }),
+    ...(noAllowTargetedRerun ? { allowTargetedRerun: false } : {}),
+  } as const;
+  const autoImprovePolicy =
+    parseAutoImprovePolicyFromCliFlags(autoImproveInputs);
+  if (parseError === undefined) {
+    if (nestedSuperviser && !autoImprove) {
+      parseError =
+        "--nested-superviser / --nested-supervisor require --auto-improve";
+    } else if (!autoImprove && firstAutoImprovePolicyFlag !== undefined) {
+      parseError = `${firstAutoImprovePolicyFlag} requires --auto-improve`;
+    }
+  }
+  if (parseError === undefined && autoImprovePolicy.error !== undefined) {
+    parseError = `invalid --auto-improve policy: ${autoImprovePolicy.error}`;
   }
 
   return {
@@ -498,6 +1001,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
       ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(host === undefined ? {} : { host }),
       ...(port === undefined ? {} : { port }),
       ...(endpoint === undefined ? {} : { endpoint }),
@@ -506,10 +1010,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(filePath === undefined ? {} : { filePath }),
       readOnly,
       noExec,
-      ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
-      ...(workflowName === undefined ? {} : { workflowName }),
       ...(messageJson === undefined ? {} : { messageJson }),
       ...(messageFile === undefined ? {} : { messageFile }),
+      ...(promptVariant === undefined ? {} : { promptVariant }),
+      continueSession,
+      ...(resumeStepExecId === undefined ? {} : { resumeStepExecId }),
       ...(vendor === undefined ? {} : { vendor }),
       ...(eventRoot === undefined ? {} : { eventRoot }),
       ...(eventFile === undefined ? {} : { eventFile }),
@@ -517,6 +1022,19 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(status === undefined ? {} : { status }),
       ...(limit === undefined ? {} : { limit }),
       ...(reason === undefined ? {} : { reason }),
+      ...(autoImprovePolicy.policy === undefined
+        ? {}
+        : { autoImprove: autoImprovePolicy.policy }),
+      ...(nestedSuperviser ? { nestedSuperviser: true } : {}),
+      ...(continuationStartStepId === undefined
+        ? {}
+        : { continuationStartStepId }),
+      ...(continuationAfterStepRunId === undefined
+        ? {}
+        : { continuationAfterStepRunId }),
+      ...(stepRunsFilterStepId === undefined
+        ? {}
+        : { stepRunsFilterStepId }),
     },
     ...(parseError === undefined ? {} : { error: parseError }),
   };
@@ -525,20 +1043,22 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
 function printHelp(io: CliIo): void {
   io.stdout("Usage:");
   io.stdout(
-    "  divedra cli workflow <create|validate|inspect|run> <name> [options]",
+    "  divedra cli workflow <create|validate|inspect|list|status|run> <name?> [options]",
   );
   io.stdout(
-    "  divedra session <status|progress|resume|export|logs> <session-id> [options]",
+    "  divedra session <status|progress|resume|continue|rerun|export|logs|step-runs> <workflow-execution-id> [positional-args] [options]",
   );
-  io.stdout("  divedra session rerun <session-id> <node-id> [options]");
   io.stdout(
-    "  divedra tui [workflow-name] [--workflow <name>] [--resume-session <id>] [--variables <path>] [--mock-scenario <path>] [--max-steps <n>]",
+    "  divedra session rerun <workflow-execution-id> <step-id> [options]",
+  );
+  io.stdout(
+    "  divedra session continue <workflow-execution-id> --start-step <step-id> --after-step-run <step-run-id> [options]",
+  );
+  io.stdout(
+    "  divedra session step-runs <workflow-execution-id> [--step <step-id>] [--status <status>] [options]",
   );
   io.stdout(
     "  divedra serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]",
-  );
-  io.stdout(
-    "  divedra web serve [workflow-name] [--host <host>] [--port <port>] [--read-only] [--no-exec]",
   );
   io.stdout(
     "  divedra gql <graphql-document> [--variables <json|@file>] [--endpoint <url>] [--auth-token <token>]",
@@ -547,7 +1067,7 @@ function printHelp(io: CliIo): void {
     "  divedra events <validate|serve|emit|list|replay|replies> [source-id|receipt-id|workflow-execution-id] [--event-root <path>] [--event-file <path>]",
   );
   io.stdout(
-    "  divedra call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>] [options]",
+    "  divedra call-step <workflow-id> <workflow-run-id> <step-id> [--message-json <json> | --message-file <path>] [--prompt-variant <name>] [--continue-session] [--timeout-ms <ms>] [--resume-step-exec <id>] [options]",
   );
   io.stdout(`  divedra hook [--vendor ${HOOK_VENDOR_USAGE}]`);
   io.stdout(`  divedra hook snippet --vendor ${HOOK_VENDOR_USAGE}`);
@@ -564,12 +1084,72 @@ function printHelp(io: CliIo): void {
   io.stdout("  --project-root <path>   Override the project scope root");
   io.stdout("  --addon-root <path>     Use a direct add-on root override");
   io.stdout("");
+  io.stdout("Workflow overview (list / status):");
+  io.stdout(
+    "  --status <aggregate>    Filter workflow list by aggregate status",
+  );
+  io.stdout(
+    "  --limit <n>             Cap list rows or recent executions on workflow status",
+  );
+  io.stdout(
+    "Default --output text matches the compact table for list/status (--output table is equivalent;",
+  );
+  io.stdout(
+    "  use --output json here for payloads). Elsewhere --output stays text vs json.",
+  );
+  io.stdout("");
   io.stdout("Session options:");
+  io.stdout(
+    "  continue vs rerun        continue references a concrete prior step-run (after-step-run); rerun restarts using variables only without importing prior step artifacts",
+  );
+  io.stdout(
+    "  step-runs --step/--status Narrow merged timeline rows (status is a node execution terminal: succeeded | failed | timed_out | cancelled | skipped)",
+  );
   io.stdout(
     "  export --file <path>     Write workflow run export JSON to a file",
   );
   io.stdout(
     "  logs --format <format>   Print node logs as text, json, or jsonl",
+  );
+  io.stdout("  --default-timeout-ms <ms>  Override workflow default timeout");
+  io.stdout("  --timeout-ms <ms>          call-step only");
+  io.stdout("  --prompt-variant <name>    call-step only");
+  io.stdout("  --continue-session         call-step only");
+  io.stdout(
+    "  --resume-step-exec <id>    call-step only (execution record id; same as nodeExecId in session state)",
+  );
+  io.stdout("");
+  io.stdout(
+    "Auto-improve (supervision policy; engine retries on terminal failure until success or budgets;",
+  );
+  io.stdout(
+    "  persisted stall watch is active; use --nested-supervisor (alias: --nested-superviser) to run the superviser bundle as a workflow):",
+  );
+  io.stdout(
+    "  --auto-improve               Enable supervised runs with durable supervision state",
+  );
+  io.stdout(
+    "  --supervisor-workflow <id> Superviser bundle id (alias: --superviser-workflow; persisted; divedra/* control + optional nested driver)",
+  );
+  io.stdout(
+    "  --nested-supervisor         Run the superviser workflow as a nested session (alias: --nested-superviser; requires --auto-improve)",
+  );
+  io.stdout(
+    "  --monitor-interval-ms <n>    Observation cadence (default 5000)",
+  );
+  io.stdout(
+    "  --stall-timeout-ms <n>       Stall threshold (default 60000; must be >= monitor interval)",
+  );
+  io.stdout("  --max-supervised-attempts <n> Attempt budget (default 5)");
+  io.stdout("  --max-workflow-patches <n>   Patch budget (default 3)");
+  io.stdout(
+    "  --workflow-mutation-mode execution-copy|in-place  (default execution-copy)",
+  );
+  io.stdout(
+    "  --no-allow-targeted-rerun    Disable targeted step reruns (by default they are allowed).",
+  );
+  io.stdout(
+    "                               Deprecated alias: --disable-targeted-rerun",
   );
 }
 
@@ -618,7 +1198,7 @@ async function readJsonValueFromFile(filePath: string): Promise<unknown> {
   return JSON.parse(content) as unknown;
 }
 
-async function readCallNodeMessage(
+async function readDirectCallMessage(
   parsedOptions: ParsedOptions,
 ): Promise<unknown | undefined> {
   if (
@@ -641,7 +1221,7 @@ async function readMockScenario(pathToJson: string): Promise<MockNodeScenario> {
   const parsed = JSON.parse(content) as unknown;
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new Error(
-      "mock scenario file must contain a JSON object keyed by node id",
+      "mock scenario file must contain a JSON object keyed by step id",
     );
   }
   return parsed as MockNodeScenario;
@@ -658,60 +1238,54 @@ async function readMockScenarioOption(
   };
 }
 
-export function shouldFallbackFromOpenTuiError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return /cannot find (?:package|module) ['"](?:@opentui\/(?:core|solid)(?:-[^'"]+)?|solid-js(?:\/[^'"]+)?)['"]/i.test(
-    error.message,
-  );
-}
-
-export function resolveTuiStartupSelection(input: {
-  readonly requestedWorkflowName?: string;
-  readonly resumeSession?: Pick<
-    WorkflowSessionState,
-    "sessionId" | "workflowName"
-  >;
-}):
-  | {
-      readonly ok: true;
-      readonly initialSessionId?: string;
-      readonly initialWorkflowName?: string;
-    }
-  | { readonly ok: false; readonly message: string } {
-  if (input.resumeSession === undefined) {
-    return {
-      ok: true,
-      ...(input.requestedWorkflowName === undefined
-        ? {}
-        : { initialWorkflowName: input.requestedWorkflowName }),
-    };
-  }
-  if (
-    input.requestedWorkflowName !== undefined &&
-    input.requestedWorkflowName !== input.resumeSession.workflowName
-  ) {
-    return {
-      ok: false,
-      message:
-        `resume session '${input.resumeSession.sessionId}' belongs to workflow ` +
-        `'${input.resumeSession.workflowName}', not '${input.requestedWorkflowName}'`,
-    };
-  }
-  return {
-    ok: true,
-    initialSessionId: input.resumeSession.sessionId,
-    initialWorkflowName: input.resumeSession.workflowName,
-  };
-}
-
 function emitJson(io: CliIo, payload: unknown): void {
   io.stdout(JSON.stringify(payload, null, 2));
 }
 
 function isNonNull<T>(value: T | null): value is T {
   return value !== null;
+}
+
+function buildWorkflowExecutionContinuationMetadata(
+  session: WorkflowSessionState,
+): WorkflowExecutionContinuationMetadata | undefined {
+  if (
+    session.continuedFromWorkflowExecutionId === undefined &&
+    session.continuedAfterStepRunId === undefined &&
+    session.continuedAfterExecutionOrdinal === undefined &&
+    session.continuedStartStepId === undefined &&
+    session.continuationMode === undefined &&
+    (session.historyImports === undefined ||
+      session.historyImports.length === 0)
+  ) {
+    return undefined;
+  }
+  return {
+    ...(session.continuedFromWorkflowExecutionId === undefined
+      ? {}
+      : {
+          continuedFromWorkflowExecutionId:
+            session.continuedFromWorkflowExecutionId,
+        }),
+    ...(session.continuedAfterStepRunId === undefined
+      ? {}
+      : { continuedAfterStepRunId: session.continuedAfterStepRunId }),
+    ...(session.continuedAfterExecutionOrdinal === undefined
+      ? {}
+      : {
+          continuedAfterExecutionOrdinal:
+            session.continuedAfterExecutionOrdinal,
+        }),
+    ...(session.continuedStartStepId === undefined
+      ? {}
+      : { continuedStartStepId: session.continuedStartStepId }),
+    ...(session.continuationMode === undefined
+      ? {}
+      : { continuationMode: session.continuationMode }),
+    ...(session.historyImports === undefined
+      ? {}
+      : { historyImports: session.historyImports }),
+  };
 }
 
 async function buildWorkflowExecutionExport(
@@ -723,6 +1297,9 @@ async function buildWorkflowExecutionExport(
     throw new Error(loaded.error.message);
   }
   const workflowId = loaded.value.workflowId;
+  const continuationMetadata = buildWorkflowExecutionContinuationMetadata(
+    loaded.value,
+  );
 
   const [nodeExecutions, nodeLogs, hookEvents] = await Promise.all([
     listRuntimeNodeExecutions(workflowExecutionId, options),
@@ -754,6 +1331,9 @@ async function buildWorkflowExecutionExport(
     workflowName: loaded.value.workflowName,
     status: loaded.value.status,
     exportedAt: new Date().toISOString(),
+    ...(continuationMetadata === undefined
+      ? {}
+      : { continuationMetadata }),
     session: loaded.value,
     nodeExecutions,
     nodeLogs,
@@ -922,6 +1502,10 @@ function buildRemoteExecutionInput(
     parsedOptions.workingDirectory,
   );
   return {
+    ...(parsedOptions.autoImprove === undefined
+      ? {}
+      : { autoImprove: parsedOptions.autoImprove }),
+    ...(parsedOptions.nestedSuperviser ? { nestedSuperviser: true } : {}),
     ...(workingDirectory === undefined ? {} : { workingDirectory }),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
     ...(parsedOptions.maxSteps === undefined
@@ -1004,16 +1588,38 @@ function rejectUnsupportedRemoteMockScenario(
   return true;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+function parseStepRunExecutionStatusFilter(raw: string | undefined):
+  | { ok: true; value: NodeExecutionRecord["status"] | undefined }
+  | { ok: false; error: string } {
+  if (raw === undefined) {
+    return { ok: true, value: undefined };
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { ok: true, value: undefined };
+  }
+  const allowed: ReadonlySet<string> = new Set([
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "skipped",
+  ]);
+  if (!allowed.has(trimmed)) {
+    return {
+      ok: false,
+      error: `invalid --status '${raw}' for session step-runs (expected succeeded, failed, timed_out, cancelled, or skipped)`,
+    };
+  }
+  return { ok: true, value: trimmed as NodeExecutionRecord["status"] };
 }
 
 function buildLocalWorkflowRunOverrides(
   parsedOptions: ParsedOptions,
 ): Pick<
   WorkflowRunOptions,
+  | "autoImprove"
+  | "nestedSuperviserDriver"
   | "defaultTimeoutMs"
   | "dryRun"
   | "maxLoopIterations"
@@ -1037,18 +1643,42 @@ function buildLocalWorkflowRunOverrides(
       ? {}
       : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
+    ...(parsedOptions.autoImprove === undefined
+      ? {}
+      : { autoImprove: parsedOptions.autoImprove }),
+    ...(parsedOptions.nestedSuperviser ? { nestedSuperviserDriver: true } : {}),
   };
 }
 
-function buildLocalCallNodeOverrides(
+function buildLocalCallStepOverrides(
   parsedOptions: ParsedOptions,
 ): Pick<
-  CallNodeInput,
-  "defaultTimeoutMs" | "dryRun" | "workflowWorkingDirectory"
+  CallStepInput,
+  "defaultTimeoutMs" | "dryRun" | "workflowWorkingDirectory" | "overrides"
 > {
   const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
     parsedOptions.workingDirectory,
   );
+  const overrides =
+    parsedOptions.timeoutMs === undefined &&
+    parsedOptions.promptVariant === undefined &&
+    !parsedOptions.continueSession &&
+    parsedOptions.resumeStepExecId === undefined
+      ? undefined
+      : {
+          ...(parsedOptions.timeoutMs === undefined
+            ? {}
+            : { timeoutMs: parsedOptions.timeoutMs }),
+          ...(parsedOptions.promptVariant === undefined
+            ? {}
+            : { promptVariant: parsedOptions.promptVariant }),
+          ...(parsedOptions.continueSession
+            ? { sessionMode: "reuse" as const }
+            : {}),
+          ...(parsedOptions.resumeStepExecId === undefined
+            ? {}
+            : { resumeStepExecId: parsedOptions.resumeStepExecId }),
+        };
   return {
     ...(workflowWorkingDirectory === undefined
       ? {}
@@ -1057,26 +1687,8 @@ function buildLocalCallNodeOverrides(
       ? {}
       : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
+    ...(overrides === undefined ? {} : { overrides }),
   };
-}
-
-async function listWorkflowNames(options: {
-  workflowRoot?: string;
-  workflowScope?: WorkflowScopeSelector;
-  userRoot?: string;
-  projectRoot?: string;
-  addonRoot?: string;
-  artifactRoot?: string;
-  sessionStoreRoot?: string;
-  env?: Readonly<Record<string, string | undefined>>;
-}): Promise<readonly string[]> {
-  const catalogSources = await listWorkflowCatalogSources(options);
-  if (!catalogSources.ok) {
-    return [];
-  }
-  return [
-    ...new Set(catalogSources.value.map((source) => source.workflowName)),
-  ].sort((a, b) => a.localeCompare(b));
 }
 
 function optionsForLoadedWorkflow<T extends CliStorageOptions>(
@@ -1094,8 +1706,7 @@ function formatWorkflowSource(
   if (source === undefined) {
     return undefined;
   }
-  const legacySuffix = source.legacyProjectRoot === true ? " legacy-root" : "";
-  return `${source.scope}${legacySuffix} ${source.workflowDirectory}`;
+  return `${source.scope} ${source.workflowDirectory}`;
 }
 
 function workflowSourceJson(
@@ -1109,9 +1720,6 @@ function workflowSourceJson(
     workflowRoot: source.workflowRoot,
     workflowDirectory: source.workflowDirectory,
     ...(source.scopeRoot === undefined ? {} : { scopeRoot: source.scopeRoot }),
-    ...(source.legacyProjectRoot === undefined
-      ? {}
-      : { legacyProjectRoot: source.legacyProjectRoot }),
   };
 }
 
@@ -1125,639 +1733,290 @@ function formatAddonSource(source: {
   return `${source.nodeId}: ${source.name}@${source.version} ${source.scope} ${source.manifestPath}`;
 }
 
-export async function loadOpenTuiScreenImplementations(
-  deps: CliDependencies,
-): Promise<{
-  readonly runOpenTuiWorkflowApp: NonNullable<
-    CliDependencies["runOpenTuiWorkflowApp"]
-  >;
-}> {
-  if (deps.runOpenTuiWorkflowApp !== undefined) {
-    return {
-      runOpenTuiWorkflowApp: deps.runOpenTuiWorkflowApp,
-    };
+function assertWorkflowOverviewSourceScope(value: string): WorkflowSourceScope {
+  if (value === "direct" || value === "project" || value === "user") {
+    return value;
   }
-  const module = await import("./tui/opentui-screen");
+  throw new Error(`invalid workflow overview sourceScope '${value}'`);
+}
+
+function workflowExecutionCompactSummaryFromGraphql(
+  value: unknown,
+  label: string,
+): WorkflowExecutionCompactSummary {
+  const o = requireObjectField(value, label);
+  const currentStepIdRaw = o["currentStepId"];
   return {
-    runOpenTuiWorkflowApp: module.runOpenTuiWorkflowApp,
-  };
-}
-
-interface LocalTuiWorkflowActionInput {
-  readonly workflowName: string;
-  readonly runtimeVariables: Readonly<Record<string, unknown>>;
-  readonly rerunFromNodeId?: string;
-  readonly rerunFromSessionId?: string;
-  readonly resumeSessionId?: string;
-  readonly sessionId?: string;
-}
-
-interface CreateOpenTuiWorkflowAppOptionsInput {
-  readonly deps: Pick<CliDependencies, "env">;
-  readonly initialSessionId?: string;
-  readonly initialWorkflowName?: string;
-  readonly io: CliIo;
-  readonly optionRuntimeVariables: Readonly<Record<string, unknown>>;
-  readonly runLocalTuiWorkflow: (
-    input: LocalTuiWorkflowActionInput,
-  ) => Promise<OpenTuiWorkflowActionResult>;
-  readonly sharedOptions: CliStorageOptions;
-  readonly startLocalTuiWorkflow: (input: {
-    readonly workflowName: string;
-    readonly runtimeVariables: Readonly<Record<string, unknown>>;
-    readonly sessionId: string;
-  }) => Promise<OpenTuiWorkflowExecutionHandle>;
-  readonly workflowNames: readonly string[];
-}
-
-export function resolveCliHomeDir(
-  env?: Readonly<Record<string, string | undefined>>,
-): string | undefined {
-  const candidates = [
-    env?.["HOME"],
-    env?.["USERPROFILE"],
-    process.env["HOME"],
-    process.env["USERPROFILE"],
-  ];
-  const explicitHome = candidates.find(
-    (candidate): candidate is string =>
-      candidate !== undefined && candidate.length > 0,
-  );
-  if (explicitHome !== undefined) {
-    return explicitHome;
-  }
-  try {
-    const resolvedHome = os.homedir();
-    return resolvedHome.length > 0 ? resolvedHome : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function createOpenTuiWorkflowAppOptions(
-  input: CreateOpenTuiWorkflowAppOptionsInput,
-): OpenTuiWorkflowAppOptions {
-  const loadWorkflowDefinitionOrThrow = async (
-    workflowName: string,
-  ): Promise<LoadedWorkflow> => {
-    const loaded = await loadWorkflowFromCatalog(
-      workflowName,
-      input.sharedOptions,
-    );
-    if (!loaded.ok) {
-      throw new Error(loaded.error.message);
-    }
-    return loaded.value;
-  };
-
-  const loadSessionOrThrow = async (
-    sessionId: string,
-  ): Promise<WorkflowSessionState> => {
-    const loaded = await loadSession(sessionId, input.sharedOptions);
-    if (!loaded.ok) {
-      throw new Error(loaded.error.message);
-    }
-    return loaded.value;
-  };
-
-  return {
-    ...(input.initialWorkflowName === undefined
+    workflowExecutionId: requireStringField(
+      o["workflowExecutionId"],
+      `${label}.workflowExecutionId`,
+    ),
+    sessionId: requireStringField(o["sessionId"], `${label}.sessionId`),
+    workflowName: requireStringField(
+      o["workflowName"],
+      `${label}.workflowName`,
+    ),
+    status: requireStringField(o["status"], `${label}.status`) as WorkflowExecutionCompactSummary["status"],
+    currentNodeId:
+      o["currentNodeId"] === null || o["currentNodeId"] === undefined
+        ? null
+        : requireStringField(o["currentNodeId"], `${label}.currentNodeId`),
+    ...(currentStepIdRaw === null || currentStepIdRaw === undefined
       ? {}
-      : { initialWorkflowName: input.initialWorkflowName }),
-    ...(input.initialSessionId === undefined
-      ? {}
-      : { initialSessionId: input.initialSessionId }),
-    io: input.io,
-    workflowNames: input.workflowNames,
-    refreshWorkflowNames: async () => listWorkflowNames(input.sharedOptions),
-    loadWorkflowDefinition: loadWorkflowDefinitionOrThrow,
-    listWorkflowSessions: async (workflowName) =>
-      (await listRuntimeSessions(input.sharedOptions)).filter(
-        (session) => session.workflowName === workflowName,
-      ),
-    loadRuntimeSessionView: async (sessionId) => {
-      const session = await loadSessionOrThrow(sessionId);
-      const [nodeExecutions, nodeLogs] = await Promise.all([
-        listRuntimeNodeExecutions(sessionId, input.sharedOptions),
-        listRuntimeNodeLogs(sessionId, input.sharedOptions),
-      ]);
-      return {
-        session,
-        nodeExecutions,
-        nodeLogs,
-      };
-    },
-    deleteWorkflowSession: async ({ sessionId, workflowId, workflowName }) =>
-      deleteWorkflowSessionHistory(
-        {
-          sessionId,
-          workflowId,
-          workflowName,
-        },
-        input.sharedOptions,
-      ),
-    deleteWorkflowHistory: async ({ workflowId, workflowName }) =>
-      deleteWorkflowHistoryForWorkflow({
-        workflowId,
-        workflowName,
-        ...input.sharedOptions,
-      }),
-    loadManagerSessionMessages: async (managerSessionId) =>
-      createManagerSessionStore(input.sharedOptions).listMessages(
-        managerSessionId,
-      ),
-    loadAgentSessionTranscript: async ({ backend, sessionId }) => {
-      const homeDir = resolveCliHomeDir(input.deps.env);
-      if (homeDir === undefined) {
-        throw new Error(
-          "cannot load local AI agent session history because HOME is not set",
-        );
-      }
-      return loadAgentSessionTranscript({
-        backend,
-        homeDir,
-        sessionId,
-      });
-    },
-    executeWorkflow: async ({ workflowName, runtimeVariables }) => {
-      const loadedWorkflow = await loadWorkflowDefinitionOrThrow(workflowName);
-      return input.startLocalTuiWorkflow({
-        workflowName,
-        sessionId: createSessionId({
-          workflowId: loadedWorkflow.bundle.workflow.workflowId,
+      : {
+          currentStepId: requireStringField(
+            currentStepIdRaw,
+            `${label}.currentStepId`,
+          ),
         }),
-        runtimeVariables: {
-          ...input.optionRuntimeVariables,
-          ...runtimeVariables,
-        },
-      });
-    },
-    rerunWorkflow: async ({
-      sourceSessionId,
-      fromNodeId,
-      runtimeVariables,
-    }) => {
-      const source = await loadSessionOrThrow(sourceSessionId);
-      return input.runLocalTuiWorkflow({
-        workflowName: source.workflowName,
-        rerunFromSessionId: source.sessionId,
-        rerunFromNodeId: fromNodeId,
-        runtimeVariables: {
-          ...input.optionRuntimeVariables,
-          ...runtimeVariables,
-        },
-      });
-    },
-    resumeWorkflow: async (sessionId) => {
-      const session = await loadSessionOrThrow(sessionId);
-      return input.runLocalTuiWorkflow({
-        workflowName: session.workflowName,
-        resumeSessionId: session.sessionId,
-        runtimeVariables: input.optionRuntimeVariables,
-      });
-    },
+    nodeExecutionCounter: requireNumberField(
+      o["nodeExecutionCounter"],
+      `${label}.nodeExecutionCounter`,
+    ),
+    startedAt: requireStringField(o["startedAt"], `${label}.startedAt`),
+    endedAt:
+      o["endedAt"] === null || o["endedAt"] === undefined
+        ? null
+        : requireStringField(o["endedAt"], `${label}.endedAt`),
   };
 }
 
-async function runTui(
-  workflowNameOrUndefined: string | undefined,
-  parsedOptions: ParsedOptions,
-  sharedOptions: CliStorageOptions,
-  io: CliIo,
-  deps: CliDependencies,
-): Promise<number> {
-  let optionRuntimeVariables: Readonly<Record<string, unknown>> = {};
-  if (parsedOptions.variablesPath !== undefined) {
-    try {
-      optionRuntimeVariables = await readRuntimeVariables(
-        parsedOptions.variablesPath,
-      );
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      io.stderr(`failed to read --variables file: ${message}`);
-      return 1;
+function workflowOverviewRowFromGraphqlJson(
+  value: unknown,
+  label: string,
+): WorkflowOverviewRow {
+  const row = requireObjectField(value, label);
+  const latestRaw = row["latestExecution"];
+  return {
+    workflowName: requireStringField(
+      row["workflowName"],
+      `${label}.workflowName`,
+    ),
+    sourceScope: assertWorkflowOverviewSourceScope(
+      requireStringField(row["sourceScope"], `${label}.sourceScope`),
+    ),
+    workflowDirectory: requireStringField(
+      row["workflowDirectory"],
+      `${label}.workflowDirectory`,
+    ),
+    description: requireStringField(row["description"], `${label}.description`),
+    aggregateStatus: requireStringField(
+      row["aggregateStatus"],
+      `${label}.aggregateStatus`,
+    ) as WorkflowOverviewRow["aggregateStatus"],
+    activeExecutionCount: requireNumberField(
+      row["activeExecutionCount"],
+      `${label}.activeExecutionCount`,
+    ),
+    latestExecution:
+      latestRaw === null || latestRaw === undefined
+        ? null
+        : workflowExecutionCompactSummaryFromGraphql(
+            latestRaw,
+            `${label}.latestExecution`,
+          ),
+  };
+}
+
+function workflowStatusOverviewFromGraphqlJson(
+  value: unknown,
+  label: string,
+): WorkflowStatusOverview {
+  const base = workflowOverviewRowFromGraphqlJson(value, label);
+  const row = requireObjectField(value, label);
+  const recentRaw = requireArrayField(
+    row["recentExecutions"],
+    `${label}.recentExecutions`,
+  );
+  const recentExecutions = recentRaw.map((entry, index) =>
+    workflowExecutionCompactSummaryFromGraphql(
+      entry,
+      `${label}.recentExecutions[${String(index)}]`,
+    ),
+  );
+  const newestRaw = row["newestActiveExecution"];
+  const newestActiveExecution =
+    newestRaw === null || newestRaw === undefined
+      ? null
+      : workflowExecutionCompactSummaryFromGraphql(
+          newestRaw,
+          `${label}.newestActiveExecution`,
+        );
+  return {
+    ...base,
+    recentExecutions,
+    newestActiveExecution,
+  };
+}
+
+const WORKFLOW_CATALOG_OVERVIEW_GQL = `
+  query WorkflowCatalogOverviewCli($workflowScope: String, $status: String, $limit: Int) {
+    workflowCatalogOverview(workflowScope: $workflowScope, status: $status, limit: $limit) {
+      workflows {
+        workflowName
+        sourceScope
+        workflowDirectory
+        description
+        aggregateStatus
+        activeExecutionCount
+        latestExecution {
+          workflowExecutionId
+          sessionId
+          workflowName
+          status
+          currentNodeId
+          currentStepId
+          nodeExecutionCounter
+          startedAt
+          endedAt
+        }
+      }
     }
   }
+`;
 
-  const runAndReportProgress = async (
-    workflowName: string,
-    runtimeVariables: Readonly<Record<string, unknown>>,
-    mockScenario: MockNodeScenario | undefined,
-    resumeSessionId: string | undefined,
-  ): Promise<number> => {
-    let sessionId = resumeSessionId;
-    let workflowOptions = sharedOptions;
-    const loadedWorkflow = await loadWorkflowFromCatalog(
-      workflowName,
-      sharedOptions,
-    );
-    if (!loadedWorkflow.ok) {
-      if (resumeSessionId === undefined) {
-        io.stderr(loadedWorkflow.error.message);
-        return 1;
+const WORKFLOW_STATUS_OVERVIEW_GQL = `
+  query WorkflowStatusOverviewCli($workflowName: String!, $workflowScope: String, $limit: Int) {
+    workflowStatusOverview(workflowName: $workflowName, workflowScope: $workflowScope, limit: $limit) {
+      workflowName
+      sourceScope
+      workflowDirectory
+      description
+      aggregateStatus
+      activeExecutionCount
+      latestExecution {
+        workflowExecutionId
+        sessionId
+        workflowName
+        status
+        currentNodeId
+        currentStepId
+        nodeExecutionCounter
+        startedAt
+        endedAt
       }
-    } else {
-      workflowOptions = optionsForLoadedWorkflow(
-        loadedWorkflow.value,
-        sharedOptions,
-      );
-    }
-    if (sessionId === undefined && loadedWorkflow.ok) {
-      sessionId = createSessionId({
-        workflowId: loadedWorkflow.value.bundle.workflow.workflowId,
-      });
-    }
-    if (sessionId === undefined) {
-      io.stderr("cannot start workflow without a session id");
-      return 1;
-    }
-    io.stdout(
-      `${resumeSessionId === undefined ? "Starting" : "Resuming"} session ${sessionId}`,
-    );
-    const runPromise = runWorkflow(workflowName, {
-      ...workflowOptions,
-      sessionId,
-      runtimeVariables,
-      ...(mockScenario === undefined ? {} : { mockScenario }),
-      ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
-      ...buildLocalWorkflowRunOverrides(parsedOptions),
-    });
-
-    let terminal = false;
-    while (!terminal) {
-      await sleep(500);
-      const loaded = await loadSession(sessionId, sharedOptions);
-      if (!loaded.ok) {
-        continue;
+      recentExecutions {
+        workflowExecutionId
+        sessionId
+        workflowName
+        status
+        currentNodeId
+        currentStepId
+        nodeExecutionCounter
+        startedAt
+        endedAt
       }
-      const session = loaded.value;
-      const counts = Object.keys(session.nodeExecutionCounts)
-        .sort((a, b) => a.localeCompare(b))
-        .map(
-          (nodeId) =>
-            `${nodeId}:${String(session.nodeExecutionCounts[nodeId] ?? 0)}`,
-        )
-        .join(", ");
-      io.stdout(
-        `[progress] status=${session.status} current=${session.currentNodeId ?? "-"} totalExec=${String(
-          session.nodeExecutionCounter,
-        )} queue=${session.queue.join(",") || "-"} nodes=${counts || "-"}`,
-      );
-      terminal =
-        session.status === "completed" ||
-        session.status === "failed" ||
-        session.status === "cancelled" ||
-        session.status === "paused";
-    }
-
-    const result = await runPromise;
-    if (!result.ok) {
-      io.stderr(`run failed: ${result.error.message}`);
-      return result.error.exitCode;
-    }
-    io.stdout(`sessionId: ${result.value.session.sessionId}`);
-    io.stdout(`status: ${result.value.session.status}`);
-    return result.value.exitCode;
-  };
-
-  const resolveTuiMockScenario = async (
-    workflowName: string,
-  ): Promise<MockNodeScenario | undefined> => {
-    if (parsedOptions.mockScenarioPath !== undefined) {
-      return readMockScenario(parsedOptions.mockScenarioPath);
-    }
-    const loaded = await loadWorkflowFromCatalog(workflowName, sharedOptions);
-    if (!loaded.ok) {
-      throw new Error(loaded.error.message);
-    }
-    const defaultScenarioPath = path.join(
-      loaded.value.workflowDirectory,
-      "mock-scenario.json",
-    );
-    try {
-      await stat(defaultScenarioPath);
-      return readMockScenario(defaultScenarioPath);
-    } catch {
-      return undefined;
-    }
-  };
-  const runLocalTuiWorkflow = async (input: {
-    readonly workflowName: string;
-    readonly runtimeVariables: Readonly<Record<string, unknown>>;
-    readonly rerunFromNodeId?: string;
-    readonly rerunFromSessionId?: string;
-    readonly resumeSessionId?: string;
-    readonly sessionId?: string;
-  }): Promise<OpenTuiWorkflowActionResult> => {
-    const mockScenario = await resolveTuiMockScenario(input.workflowName);
-    const result = await runWorkflow(input.workflowName, {
-      ...sharedOptions,
-      ...buildLocalWorkflowRunOverrides(parsedOptions),
-      ...(mockScenario === undefined ? {} : { mockScenario }),
-      ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-      ...(input.resumeSessionId === undefined
-        ? {}
-        : { resumeSessionId: input.resumeSessionId }),
-      ...(input.rerunFromSessionId === undefined
-        ? {}
-        : { rerunFromSessionId: input.rerunFromSessionId }),
-      ...(input.rerunFromNodeId === undefined
-        ? {}
-        : { rerunFromNodeId: input.rerunFromNodeId }),
-      runtimeVariables: input.runtimeVariables,
-    });
-    if (!result.ok) {
-      throw new Error(result.error.message);
-    }
-    return {
-      sessionId: result.value.session.sessionId,
-      status: result.value.session.status,
-      exitCode: result.value.exitCode,
-    };
-  };
-  const startLocalTuiWorkflow = async (input: {
-    readonly workflowName: string;
-    readonly runtimeVariables: Readonly<Record<string, unknown>>;
-    readonly sessionId: string;
-  }): Promise<OpenTuiWorkflowExecutionHandle> => {
-    return {
-      sessionId: input.sessionId,
-      completion: runLocalTuiWorkflow(input),
-    };
-  };
-
-  try {
-    const runtimeSelection = selectTuiRuntimeMode({
-      isInteractiveTerminal: deps.isInteractiveTerminal(),
-      ...(parsedOptions.resumeSessionId === undefined
-        ? {}
-        : {
-            resumeSessionId: parsedOptions.resumeSessionId,
-          }),
-    });
-
-    let resumeSession: WorkflowSessionState | undefined;
-    if (parsedOptions.resumeSessionId !== undefined) {
-      const loadedResumeSession = await loadSession(
-        parsedOptions.resumeSessionId,
-        sharedOptions,
-      );
-      if (!loadedResumeSession.ok) {
-        io.stderr(
-          `failed to load resume session: ${loadedResumeSession.error.message}`,
-        );
-        return 1;
-      }
-      resumeSession = loadedResumeSession.value;
-    }
-
-    const startupSelection = resolveTuiStartupSelection({
-      ...(workflowNameOrUndefined === undefined
-        ? {}
-        : { requestedWorkflowName: workflowNameOrUndefined }),
-      ...(resumeSession === undefined ? {} : { resumeSession }),
-    });
-    if (!startupSelection.ok) {
-      io.stderr(startupSelection.message);
-      return 2;
-    }
-
-    const runResumeSessionFallback = async (): Promise<number> => {
-      if (resumeSession === undefined) {
-        throw new Error("resume session fallback requested without a session");
-      }
-      try {
-        return runAndReportProgress(
-          resumeSession.workflowName,
-          {
-            ...resumeSession.runtimeVariables,
-            ...optionRuntimeVariables,
-            resumedFromSessionId: resumeSession.sessionId,
-          },
-          await resolveTuiMockScenario(resumeSession.workflowName),
-          resumeSession.sessionId,
-        );
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error ? error.message : "unknown error";
-        io.stderr(`failed to resolve mock scenario: ${message}`);
-        return 1;
-      }
-    };
-
-    if (resumeSession !== undefined && runtimeSelection.mode === "fallback") {
-      return runResumeSessionFallback();
-    }
-
-    const workflowNames = await listWorkflowNames(sharedOptions);
-    if (
-      resumeSession !== undefined &&
-      !workflowNames.includes(resumeSession.workflowName)
-    ) {
-      io.stderr(
-        `workflow '${resumeSession.workflowName}' for resume session is unavailable in workflow root; falling back to direct resume flow`,
-      );
-      return runResumeSessionFallback();
-    }
-    if (workflowNames.length === 0) {
-      io.stderr("no workflows found");
-      return 1;
-    }
-
-    if (runtimeSelection.mode === "fallback") {
-      if (
-        workflowNameOrUndefined === undefined &&
-        runtimeSelection.requiresWorkflowArgument
-      ) {
-        io.stderr("workflow name is required in non-interactive terminal");
-        return 2;
-      }
-      if (workflowNameOrUndefined === undefined) {
-        io.stderr("workflow name is required");
-        return 2;
-      }
-      if (!workflowNames.includes(workflowNameOrUndefined)) {
-        io.stderr(`workflow not found: ${workflowNameOrUndefined}`);
-        return 1;
-      }
-      let mockScenario: MockNodeScenario | undefined;
-      try {
-        mockScenario = await resolveTuiMockScenario(workflowNameOrUndefined);
-      } catch (error: unknown) {
-        const message =
-          error instanceof Error ? error.message : "unknown error";
-        io.stderr(`failed to resolve mock scenario: ${message}`);
-        return 1;
-      }
-      io.stdout("using promptless fallback mode");
-      return runAndReportProgress(
-        workflowNameOrUndefined,
-        optionRuntimeVariables,
-        mockScenario,
-        undefined,
-      );
-    }
-
-    let openTuiImplementations:
-      | Awaited<ReturnType<typeof loadOpenTuiScreenImplementations>>
-      | undefined;
-    try {
-      openTuiImplementations = await loadOpenTuiScreenImplementations(deps);
-    } catch (error: unknown) {
-      if (!shouldFallbackFromOpenTuiError(error)) {
-        throw error;
-      }
-      const message = error instanceof Error ? error.message : "unknown error";
-      io.stderr(
-        `OpenTUI unavailable (${message}); falling back to readline workflow selection`,
-      );
-      if (resumeSession !== undefined) {
-        io.stderr(
-          `resume session '${resumeSession.sessionId}' will use direct resume fallback`,
-        );
-        return runResumeSessionFallback();
+      newestActiveExecution {
+        workflowExecutionId
+        sessionId
+        workflowName
+        status
+        currentNodeId
+        currentStepId
+        nodeExecutionCounter
+        startedAt
+        endedAt
       }
     }
-
-    if (openTuiImplementations !== undefined) {
-      try {
-        return await openTuiImplementations.runOpenTuiWorkflowApp(
-          createOpenTuiWorkflowAppOptions({
-            deps,
-            ...(startupSelection.initialWorkflowName === undefined
-              ? {}
-              : { initialWorkflowName: startupSelection.initialWorkflowName }),
-            ...(startupSelection.initialSessionId === undefined
-              ? {}
-              : { initialSessionId: startupSelection.initialSessionId }),
-            io,
-            optionRuntimeVariables,
-            runLocalTuiWorkflow,
-            sharedOptions,
-            startLocalTuiWorkflow,
-            workflowNames,
-          }),
-        );
-      } catch (error: unknown) {
-        if (!shouldFallbackFromOpenTuiError(error)) {
-          throw error;
-        }
-        const message =
-          error instanceof Error ? error.message : "unknown error";
-        io.stderr(
-          `OpenTUI unavailable (${message}); falling back to readline workflow selection`,
-        );
-        if (resumeSession !== undefined) {
-          io.stderr(
-            `resume session '${resumeSession.sessionId}' will use direct resume fallback`,
-          );
-          return runResumeSessionFallback();
-        }
-      }
-    }
-
-    let workflowName = startupSelection.initialWorkflowName;
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    try {
-      if (workflowName === undefined) {
-        io.stdout("Select workflow:");
-        workflowNames.forEach((name, index) => {
-          io.stdout(`  ${String(index + 1)}. ${name}`);
-        });
-        const selectedRaw = await rl.question("Workflow number: ");
-        const selectedIndex = Number(selectedRaw);
-        if (
-          !Number.isFinite(selectedIndex) ||
-          selectedIndex < 1 ||
-          selectedIndex > workflowNames.length
-        ) {
-          io.stderr("invalid workflow selection");
-          return 2;
-        }
-        workflowName = workflowNames[selectedIndex - 1];
-      }
-
-      if (workflowName === undefined || !workflowNames.includes(workflowName)) {
-        io.stderr(`workflow not found: ${workflowName ?? "(empty)"}`);
-        return 1;
-      }
-
-      const userPrompt = await rl.question("Prompt: ");
-      const customVariablesRaw = await rl.question(
-        "Additional runtime variables JSON (optional): ",
-      );
-      let runtimeVariables: Readonly<Record<string, unknown>> = {
-        ...optionRuntimeVariables,
-        humanInput: userPrompt,
-        userPrompt,
-        prompt: userPrompt,
-      };
-      if (customVariablesRaw.trim().length > 0) {
-        const parsed = JSON.parse(customVariablesRaw) as unknown;
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          Array.isArray(parsed)
-        ) {
-          io.stderr("additional runtime variables must be a JSON object");
-          return 2;
-        }
-        runtimeVariables = {
-          ...runtimeVariables,
-          ...(parsed as Record<string, unknown>),
-        };
-      }
-
-      let mockScenario: MockNodeScenario | undefined;
-      if (parsedOptions.mockScenarioPath !== undefined) {
-        mockScenario = await readMockScenario(parsedOptions.mockScenarioPath);
-      } else {
-        const loaded = await loadWorkflowFromCatalog(
-          workflowName,
-          sharedOptions,
-        );
-        if (!loaded.ok) {
-          io.stderr(loaded.error.message);
-          return loaded.error.code === "VALIDATION" ||
-            loaded.error.code === "INVALID_WORKFLOW_NAME" ||
-            loaded.error.code === "INVALID_SCOPE"
-            ? 2
-            : 1;
-        }
-        const defaultScenarioPath = path.join(
-          loaded.value.workflowDirectory,
-          "mock-scenario.json",
-        );
-        try {
-          await stat(defaultScenarioPath);
-          const useScenarioAnswer = await rl.question(
-            `Use mock scenario file at ${defaultScenarioPath}? [Y/n]: `,
-          );
-          if (useScenarioAnswer.trim().toLowerCase() !== "n") {
-            mockScenario = await readMockScenario(defaultScenarioPath);
-          }
-        } catch {
-          // default scenario does not exist
-        }
-      }
-
-      return runAndReportProgress(
-        workflowName,
-        runtimeVariables,
-        mockScenario,
-        undefined,
-      );
-    } finally {
-      rl.close();
-    }
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    io.stderr(`tui failed: ${message}`);
-    return 1;
   }
+`;
+
+function renderWorkflowOverviewTableLines(
+  rows: readonly WorkflowOverviewRow[],
+): string[] {
+  const lines: string[] = [
+    [
+      "name",
+      "scope",
+      "workflowDirectory",
+      "aggregateStatus",
+      "active",
+      "latestExecutionId",
+      "latestStatus",
+      "latestStartedAt",
+    ].join("\t"),
+  ];
+  for (const row of rows) {
+    const latest = row.latestExecution;
+    lines.push(
+      [
+        row.workflowName,
+        row.sourceScope,
+        row.workflowDirectory,
+        row.aggregateStatus,
+        String(row.activeExecutionCount),
+        latest?.workflowExecutionId ?? "-",
+        latest?.status ?? "-",
+        latest?.startedAt ?? "-",
+      ].join("\t"),
+    );
+  }
+  return lines;
+}
+
+function renderWorkflowStatusOverviewLines(
+  overview: WorkflowStatusOverview,
+): string[] {
+  const lines: string[] = [
+    `workflowName: ${overview.workflowName}`,
+    `sourceScope: ${overview.sourceScope}`,
+    `workflowDirectory: ${overview.workflowDirectory}`,
+    `description: ${overview.description}`,
+    `aggregateStatus: ${overview.aggregateStatus}`,
+    `activeExecutionCount: ${String(overview.activeExecutionCount)}`,
+  ];
+  const latest = overview.latestExecution;
+  if (latest === null) {
+    lines.push("latestExecution: -");
+  } else {
+    lines.push(
+      `latestExecution: ${latest.workflowExecutionId} ${latest.status} startedAt=${latest.startedAt} endedAt=${latest.endedAt ?? "-"}`,
+    );
+  }
+  const active = overview.newestActiveExecution;
+  if (active === null) {
+    lines.push("newestActiveExecution: -");
+  } else {
+    const stepLabel =
+      active.currentStepId !== undefined && active.currentStepId !== null
+        ? active.currentStepId
+        : active.currentNodeId ?? "-";
+    lines.push(
+      `newestActiveExecution: ${active.workflowExecutionId} ${active.status} currentStepOrNode=${stepLabel}`,
+    );
+  }
+  lines.push("recentExecutions:");
+  if (overview.recentExecutions.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const e of overview.recentExecutions) {
+      const step =
+        e.currentStepId !== undefined && e.currentStepId !== null
+          ? ` step=${e.currentStepId}`
+          : "";
+      lines.push(
+        `  - ${e.workflowExecutionId} ${e.status} ${e.startedAt}${step}`,
+      );
+    }
+  }
+  return lines;
+}
+
+function workflowOverviewGraphqlVariables(
+  parsed: ParsedOptions,
+  statusFilter: string | undefined,
+): Readonly<Record<string, unknown>> {
+  const variables: Record<string, unknown> = {};
+  if (parsed.workflowScope !== undefined) {
+    variables["workflowScope"] = parsed.workflowScope;
+  }
+  if (statusFilter !== undefined) {
+    variables["status"] = statusFilter;
+  }
+  if (parsed.limit !== undefined) {
+    variables["limit"] = parsed.limit;
+  }
+  return variables;
 }
 
 export async function runCli(
@@ -2267,20 +2526,36 @@ export async function runCli(
     return 2;
   }
 
-  if (scope === "serve" || (scope === "web" && command === "serve")) {
-    const serveWorkflowName = scope === "web" ? target : command;
+  if (scope === "serve") {
+    const serveWorkflowName = command;
     try {
+      let serveContext: LoadOptions & {
+        readonly fixedWorkflowName?: string;
+        readonly fixedResolvedWorkflowSource?: ResolvedWorkflowSource;
+      } = sharedOptions;
+      if (serveWorkflowName !== undefined) {
+        const resolved = await resolveWorkflowSource(
+          serveWorkflowName,
+          sharedOptions,
+        );
+        if (!resolved.ok) {
+          io.stderr(`serve failed: ${resolved.error.message}`);
+          return 7;
+        }
+        serveContext = {
+          ...sharedOptions,
+          fixedWorkflowName: serveWorkflowName,
+          fixedResolvedWorkflowSource: resolved.value,
+        };
+      }
       const started = await deps.startServe({
-        ...sharedOptions,
+        ...serveContext,
         ...(parsed.options.host === undefined
           ? {}
           : { host: parsed.options.host }),
         ...(parsed.options.port === undefined
           ? {}
           : { port: parsed.options.port }),
-        ...(serveWorkflowName === undefined
-          ? {}
-          : { fixedWorkflowName: serveWorkflowName }),
         ...(parsed.options.readOnly ? { readOnly: true } : {}),
         ...(parsed.options.noExec ? { noExec: true } : {}),
       });
@@ -2315,57 +2590,35 @@ export async function runCli(
     }
   }
 
-  if (scope === "tui") {
-    const resolvedWorkflowName = parsed.options.workflowName;
-    if (
-      command !== undefined &&
-      resolvedWorkflowName !== undefined &&
-      command.length > 0 &&
-      command !== resolvedWorkflowName
-    ) {
-      io.stderr(
-        `conflicting workflow names: positional='${command}' and --workflow='${resolvedWorkflowName}'`,
-      );
-      return 2;
-    }
-    return runTui(
-      resolvedWorkflowName ?? command,
-      parsed.options,
-      sharedOptions,
-      io,
-      deps,
-    );
-  }
-
-  if (scope === "call-node") {
+  if (scope === "call-step") {
     const workflowId = command;
     const workflowRunId = target;
-    const nodeId = positionals[3];
+    const stepId = positionals[3];
     if (
       workflowId === undefined ||
       workflowRunId === undefined ||
-      nodeId === undefined
+      stepId === undefined
     ) {
-      io.stderr("workflow id, workflow run id, and node id are required");
+      io.stderr("workflow id, workflow run id, and step id are required");
       io.stderr(
-        "usage: divedra call-node <workflow-id> <workflow-run-id> <node-id> [--message-json <json> | --message-file <path>] [options]",
+        "usage: divedra call-step <workflow-id> <workflow-run-id> <step-id> [--message-json <json> | --message-file <path>] [--prompt-variant <name>] [--continue-session] [--timeout-ms <ms>] [--resume-step-exec <id>] [options]",
       );
       return 2;
     }
     if (graphqlCliTransport !== null) {
       io.stderr(
-        "call-node currently supports local execution only; omit --endpoint",
+        "call-step currently supports local execution only; omit --endpoint",
       );
       return 2;
     }
 
     let message: unknown;
     try {
-      message = await readCallNodeMessage(parsed.options);
+      message = await readDirectCallMessage(parsed.options);
     } catch (error: unknown) {
       const messageText =
         error instanceof Error ? error.message : "unknown error";
-      io.stderr(`failed to read call-node message: ${messageText}`);
+      io.stderr(`failed to read call-step message: ${messageText}`);
       return 1;
     }
 
@@ -2381,12 +2634,12 @@ export async function runCli(
       return 1;
     }
 
-    const result = await callNode({
+    const result = await callStep({
       ...sharedOptions,
       workflowId,
       workflowRunId,
-      nodeId,
-      ...buildLocalCallNodeOverrides(parsed.options),
+      stepId,
+      ...buildLocalCallStepOverrides(parsed.options),
       ...mockScenarioOptions,
       ...(message === undefined ? {} : { message }),
     });
@@ -2395,7 +2648,7 @@ export async function runCli(
       if (parsed.options.output === "json") {
         emitJson(io, result.error);
       } else {
-        io.stderr(`call-node failed: ${result.error.message}`);
+        io.stderr(`call-step failed: ${result.error.message}`);
         if (result.error.nodeExecution !== undefined) {
           io.stderr(`nodeExecId: ${result.error.nodeExecution.nodeExecId}`);
           io.stderr(`status: ${result.error.nodeExecution.status}`);
@@ -2407,7 +2660,7 @@ export async function runCli(
     if (parsed.options.output === "json") {
       emitJson(io, {
         sessionId: result.value.session.sessionId,
-        nodeId,
+        stepId,
         nodeExecId: result.value.nodeExecution.nodeExecId,
         status: result.value.nodeExecution.status,
         output: result.value.output,
@@ -2416,22 +2669,213 @@ export async function runCli(
       });
     } else {
       io.stdout(`sessionId: ${result.value.session.sessionId}`);
-      io.stdout(`nodeId: ${nodeId}`);
+      io.stdout(`stepId: ${stepId}`);
       io.stdout(`nodeExecId: ${result.value.nodeExecution.nodeExecId}`);
       io.stdout(`status: ${result.value.nodeExecution.status}`);
     }
     return result.value.exitCode;
   }
 
-  if (scope === undefined || command === undefined || target === undefined) {
+  if (scope === undefined || command === undefined) {
+    io.stderr("scope and command are required");
+    printHelp(io);
+    return 2;
+  }
+  if (
+    target === undefined &&
+    !(scope === "workflow" && command === "list")
+  ) {
     io.stderr("scope, command, and target are required");
     printHelp(io);
     return 2;
   }
 
+  if (
+    parsed.options.output === "table" &&
+    !(scope === "workflow" && (command === "list" || command === "status"))
+  ) {
+    io.stderr(
+      "`--output table` is only supported for workflow list and workflow status",
+    );
+    return 2;
+  }
+
   if (scope === "workflow") {
+    if (command === "list") {
+      const statusParsed = parseWorkflowOverviewAggregateStatusFilter(
+        parsed.options.status,
+      );
+      if (!statusParsed.ok) {
+        io.stderr(statusParsed.error);
+        return 2;
+      }
+      const statusFilter = statusParsed.value;
+      if (graphqlCliTransport !== null) {
+        try {
+          const data = await executeCliGraphqlOperation({
+            transport: graphqlCliTransport,
+            document: WORKFLOW_CATALOG_OVERVIEW_GQL,
+            variables: workflowOverviewGraphqlVariables(
+              parsed.options,
+              statusFilter,
+            ),
+          });
+          const catalog = requireObjectField(
+            data["workflowCatalogOverview"],
+            "workflowCatalogOverview",
+          );
+          if (parsed.options.output === "json") {
+            emitJson(io, catalog);
+          } else {
+            const rowsRaw = requireArrayField(
+              catalog["workflows"],
+              "workflows",
+            );
+            const rows: WorkflowOverviewRow[] = rowsRaw.map(
+              (entry, index) =>
+                workflowOverviewRowFromGraphqlJson(
+                  entry,
+                  `workflows[${String(index)}]`,
+                ),
+            );
+            for (const line of renderWorkflowOverviewTableLines(rows)) {
+              io.stdout(line);
+            }
+          }
+          return 0;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : "unknown error";
+          io.stderr(`remote workflow list failed: ${message}`);
+          return 1;
+        }
+      }
+      const built = await buildWorkflowCatalogOverview(
+        {
+          ...(parsed.options.workflowScope === undefined
+            ? {}
+            : { workflowScope: parsed.options.workflowScope }),
+          ...(statusFilter === undefined ? {} : { status: statusFilter }),
+          ...(parsed.options.limit === undefined
+            ? {}
+            : { limit: parsed.options.limit }),
+        },
+        sharedOptions,
+      );
+      if (!built.ok) {
+        io.stderr(built.error.message);
+        return 1;
+      }
+      if (parsed.options.output === "json") {
+        emitJson(io, built.value);
+      } else {
+        for (const line of renderWorkflowOverviewTableLines(
+          built.value.workflows,
+        )) {
+          io.stdout(line);
+        }
+      }
+      return 0;
+    }
+
+    if (command === "status") {
+      if (target === undefined) {
+        io.stderr("workflow name is required for workflow status");
+        printHelp(io);
+        return 2;
+      }
+      const statusParsed = parseWorkflowOverviewAggregateStatusFilter(
+        parsed.options.status,
+      );
+      if (!statusParsed.ok) {
+        io.stderr(statusParsed.error);
+        return 2;
+      }
+      if (statusParsed.value !== undefined) {
+        io.stderr(
+          "workflow status does not support filtering catalog rows by --status; omit --status",
+        );
+        return 2;
+      }
+      if (graphqlCliTransport !== null) {
+        try {
+          const variables: Record<string, unknown> = {
+            workflowName: target,
+            ...(parsed.options.workflowScope === undefined
+              ? {}
+              : { workflowScope: parsed.options.workflowScope }),
+            ...(parsed.options.limit === undefined
+              ? {}
+              : { limit: parsed.options.limit }),
+          };
+          const data = await executeCliGraphqlOperation({
+            transport: graphqlCliTransport,
+            document: WORKFLOW_STATUS_OVERVIEW_GQL,
+            variables,
+          });
+          const payload = data["workflowStatusOverview"];
+          if (payload === null || payload === undefined) {
+            io.stderr(
+              `workflow '${target}' was not found for workflow status overview`,
+            );
+            return 2;
+          }
+          const overview = workflowStatusOverviewFromGraphqlJson(
+            payload,
+            "workflowStatusOverview",
+          );
+          if (parsed.options.output === "json") {
+            emitJson(io, overview);
+          } else {
+            for (const line of renderWorkflowStatusOverviewLines(overview)) {
+              io.stdout(line);
+            }
+          }
+          return 0;
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : "unknown error";
+          io.stderr(`remote workflow status failed: ${message}`);
+          return 1;
+        }
+      }
+      const built = await buildWorkflowStatusOverview(
+        {
+          workflowName: target,
+          ...(parsed.options.workflowScope === undefined
+            ? {}
+            : { workflowScope: parsed.options.workflowScope }),
+          ...(parsed.options.limit === undefined
+            ? {}
+            : { limit: parsed.options.limit }),
+        },
+        sharedOptions,
+      );
+      if (!built.ok) {
+        const code = built.error.code;
+        if (
+          code === "NOT_FOUND" ||
+          code === "INVALID_WORKFLOW_NAME" ||
+          code === "INVALID_SCOPE"
+        ) {
+          io.stderr(built.error.message);
+          return 2;
+        }
+        io.stderr(built.error.message);
+        return 1;
+      }
+      if (parsed.options.output === "json") {
+        emitJson(io, built.value);
+      } else {
+        for (const line of renderWorkflowStatusOverviewLines(built.value)) {
+          io.stdout(line);
+        }
+      }
+      return 0;
+    }
+
     if (command === "create") {
-      const created = await createWorkflowTemplate(target, {
+      const created = await createWorkflowTemplate(target!, {
         ...sharedOptions,
         ...(parsed.options.workerOnly
           ? { templateMode: "worker-only" as const }
@@ -2456,7 +2900,7 @@ export async function runCli(
     }
 
     if (command === "validate") {
-      const loaded = await loadWorkflowFromCatalog(target, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(target!, sharedOptions);
       if (!loaded.ok) {
         if (parsed.options.output === "json") {
           emitJson(io, loaded.error);
@@ -2505,7 +2949,7 @@ export async function runCli(
     }
 
     if (command === "inspect") {
-      const loaded = await loadWorkflowFromCatalog(target, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(target!, sharedOptions);
       if (!loaded.ok) {
         io.stderr(`inspect failed: ${loaded.error.message}`);
         if (loaded.error.issues) {
@@ -2532,10 +2976,6 @@ export async function runCli(
           source: workflowSourceJson(loaded.value.source),
         });
       } else {
-        const legacySubWorkflowCountSegment =
-          summary.counts.legacySubWorkflows === 0
-            ? ""
-            : `, legacySubWorkflows: ${summary.counts.legacySubWorkflows}`;
         io.stdout(`workflow: ${summary.workflowName}`);
         const sourceLine = formatWorkflowSource(loaded.value.source);
         if (sourceLine !== undefined) {
@@ -2546,20 +2986,20 @@ export async function runCli(
         }
         io.stdout(`workflowId: ${summary.workflowId}`);
         io.stdout(
-          `managerNodeId: ${summary.managerNodeId ?? "(none; worker-only workflow)"}`,
+          `managerStepId: ${summary.managerStepId ?? "(implicit or worker-only)"}`,
         );
-        io.stdout(`entryNodeId: ${summary.entryNodeId}`);
         io.stdout(
-          `nodes: ${summary.counts.nodes}, edges: ${summary.counts.edges}, loops: ${summary.counts.loops}, workflowCalls: ${summary.counts.workflowCalls}${legacySubWorkflowCountSegment}`,
+          `entryStepId: ${summary.entryStepId ?? "(not set; check workflow authorship)"}`,
         );
-        if (summary.workflowCallIds.length > 0) {
-          io.stdout(`workflowCallIds: ${summary.workflowCallIds.join(", ")}`);
-        }
-        if (summary.compatibility.notes.length > 0) {
-          io.stdout("compatibility:");
-          for (const note of summary.compatibility.notes) {
-            io.stdout(`- ${note}`);
-          }
+        io.stdout(`stepIds: ${summary.stepIds.join(", ")}`);
+        io.stdout(`nodeRegistryIds: ${summary.nodeRegistryIds.join(", ")}`);
+        io.stdout(
+          `steps: ${summary.counts.steps}, nodeRegistry: ${summary.counts.nodeRegistry}, crossWorkflowDispatches: ${summary.counts.crossWorkflowDispatches}`,
+        );
+        if (summary.crossWorkflowDispatchIds.length > 0) {
+          io.stdout(
+            `crossWorkflowDispatchIds: ${summary.crossWorkflowDispatchIds.join(", ")}`,
+          );
         }
         io.stdout(
           `defaults: maxLoopIterations=${summary.defaults.maxLoopIterations}, nodeTimeoutMs=${summary.defaults.nodeTimeoutMs}`,
@@ -2607,7 +3047,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowName: target,
+                workflowName: target!,
                 runtimeVariables,
                 ...buildRemoteExecutionInput(parsed.options),
               },
@@ -2671,7 +3111,7 @@ export async function runCli(
       }
 
       const loadedWorkflow = await loadWorkflowFromCatalog(
-        target,
+        target!,
         sharedOptions,
       );
       if (!loadedWorkflow.ok) {
@@ -2694,20 +3134,14 @@ export async function runCli(
         sharedOptions,
       );
 
-      const result = await runWorkflow(target, {
+      const result = await runWorkflow(target!, {
         ...workflowRunOptions,
         runtimeVariables,
         ...mockScenarioOptions,
-        dryRun: parsed.options.dryRun,
+        ...buildLocalWorkflowRunOverrides(parsed.options),
         ...(parsed.options.maxSteps === undefined
           ? {}
           : { maxSteps: parsed.options.maxSteps }),
-        ...(parsed.options.maxLoopIterations === undefined
-          ? {}
-          : { maxLoopIterations: parsed.options.maxLoopIterations }),
-        ...(parsed.options.defaultTimeoutMs === undefined
-          ? {}
-          : { defaultTimeoutMs: parsed.options.defaultTimeoutMs }),
       });
 
       if (!result.ok) {
@@ -2729,6 +3163,9 @@ export async function runCli(
           nodeExecutions: result.value.session.nodeExecutions.length,
           transitions: result.value.session.transitions.length,
           exitCode: result.value.exitCode,
+          ...(result.value.session.supervision === undefined
+            ? {}
+            : { supervision: result.value.session.supervision }),
         });
       } else {
         const sourceLine = formatWorkflowSource(loadedWorkflow.value.source);
@@ -2752,13 +3189,18 @@ export async function runCli(
 
   if (scope === "session") {
     if (command === "progress") {
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
       }
 
       const countsByNode = session.value.nodeExecutionCounts;
+      const currentStepId = await resolveSessionCurrentStepId(
+        session.value,
+        sharedOptions,
+      );
+      const stepSummaries = buildStepProgressSummaries(session.value);
       const nodeSummaries = Object.keys(countsByNode)
         .sort((a, b) => a.localeCompare(b))
         .map((nodeId) => ({
@@ -2774,8 +3216,10 @@ export async function runCli(
           status: session.value.status,
           queue: session.value.queue,
           currentNodeId: session.value.currentNodeId ?? null,
+          currentStepId,
           totalExecutions: session.value.nodeExecutionCounter,
           nodeSummaries,
+          stepSummaries,
           lastError: session.value.lastError ?? null,
         });
       } else {
@@ -2783,6 +3227,9 @@ export async function runCli(
         io.stdout(`workflow: ${session.value.workflowName}`);
         io.stdout(`status: ${session.value.status}`);
         io.stdout(`currentNodeId: ${session.value.currentNodeId ?? "-"}`);
+        if (currentStepId !== null) {
+          io.stdout(`currentStepId: ${currentStepId}`);
+        }
         io.stdout(`queue: ${session.value.queue.join(",") || "-"}`);
         io.stdout(`totalExecutions: ${session.value.nodeExecutionCounter}`);
         io.stdout("nodeProgress:");
@@ -2791,24 +3238,42 @@ export async function runCli(
             `  - ${summary.nodeId}: executions=${summary.executions}, restarts=${summary.restarts}`,
           );
         });
+        if (stepSummaries.length > 0) {
+          io.stdout("stepProgress:");
+          stepSummaries.forEach((summary) => {
+            io.stdout(
+              `  - ${summary.stepId}: executions=${summary.executions}, restarts=${summary.restarts}`,
+            );
+          });
+        }
       }
       return 0;
     }
 
     if (command === "status") {
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
       }
 
+      const currentStepId = await resolveSessionCurrentStepId(
+        session.value,
+        sharedOptions,
+      );
       if (parsed.options.output === "json") {
-        emitJson(io, session.value);
+        emitJson(io, {
+          ...session.value,
+          currentStepId,
+        });
       } else {
         io.stdout(`sessionId: ${session.value.sessionId}`);
         io.stdout(`workflow: ${session.value.workflowName}`);
         io.stdout(`status: ${session.value.status}`);
         io.stdout(`currentNodeId: ${session.value.currentNodeId ?? "-"}`);
+        if (currentStepId !== null) {
+          io.stdout(`currentStepId: ${currentStepId}`);
+        }
         io.stdout(`queueLength: ${session.value.queue.length}`);
       }
       return 0;
@@ -2834,7 +3299,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowExecutionId: target,
+                workflowExecutionId: target!,
                 ...buildRemoteExecutionInput(parsed.options),
               },
             },
@@ -2874,7 +3339,7 @@ export async function runCli(
           return 1;
         }
       }
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -2918,12 +3383,109 @@ export async function runCli(
       return result.value.exitCode;
     }
 
-    if (command === "rerun") {
-      const fromNodeId = positionals[3];
-      if (fromNodeId === undefined) {
-        io.stderr("node id is required for session rerun");
+    if (command === "continue") {
+      const startStepRaw = parsed.options.continuationStartStepId;
+      const afterRunRaw = parsed.options.continuationAfterStepRunId;
+      const startStep = startStepRaw?.trim() ?? "";
+      const afterRun = afterRunRaw?.trim() ?? "";
+      let missingUsage = false;
+      if (startStep.length === 0) {
+        io.stderr("--start-step is required for session continue");
+        missingUsage = true;
+      }
+      if (afterRun.length === 0) {
+        io.stderr("--after-step-run is required for session continue");
+        missingUsage = true;
+      }
+      if (missingUsage) {
         io.stderr(
-          "usage: divedra session rerun <session-id> <node-id> [options]",
+          "usage: divedra session continue <workflow-execution-id> --start-step <step-id> --after-step-run <step-run-id> [options]",
+        );
+        return 2;
+      }
+      if (parsed.options.nestedSuperviser) {
+        io.stderr(
+          "--nested-supervisor / --nested-superviser is not supported for session continue",
+        );
+        return 2;
+      }
+      if (parsed.options.autoImprove !== undefined) {
+        io.stderr("--auto-improve cannot be combined with session continue");
+        return 2;
+      }
+      if (graphqlCliTransport !== null) {
+        io.stderr(
+          "session continue currently supports local execution only; omit --endpoint",
+        );
+        return 2;
+      }
+
+      let mockScenarioOptions: Readonly<{ mockScenario?: MockNodeScenario }> =
+        {};
+      try {
+        mockScenarioOptions = await readMockScenarioOption(
+          parsed.options.mockScenarioPath,
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to read --mock-scenario file: ${message}`);
+        return 1;
+      }
+
+      try {
+        const {
+          autoImprove: _omitA,
+          nestedSuperviserDriver: _omitN,
+          ...budgetOverrides
+        } = buildLocalWorkflowRunOverrides(parsed.options);
+
+        const result = await continueWorkflowFromHistory({
+          ...sharedOptions,
+          ...budgetOverrides,
+          sourceWorkflowExecutionId: target!,
+          afterStepRunId: afterRun,
+          startStepId: startStep,
+          ...mockScenarioOptions,
+        });
+
+        if (parsed.options.output === "json") {
+          emitJson(io, {
+            sourceWorkflowExecutionId: target!,
+            sessionId: result.sessionId,
+            status: result.status,
+            continuedAfterStepRunId: result.continuedAfterStepRunId,
+            continuedStartStepId: result.continuedStartStepId,
+            exitCode: result.exitCode,
+          });
+        } else {
+          io.stdout(`sourceWorkflowExecutionId: ${target!}`);
+          io.stdout(`continued session: ${result.sessionId}`);
+          io.stdout(`continuedAfterStepRunId: ${result.continuedAfterStepRunId}`);
+          io.stdout(`continuedStartStepId: ${result.continuedStartStepId}`);
+          io.stdout(`status: ${result.status}`);
+        }
+        return result.exitCode;
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`session continue failed: ${message}`);
+        return 1;
+      }
+    }
+
+    if (command === "rerun") {
+      const fromStepId = positionals[3];
+      if (fromStepId === undefined) {
+        io.stderr("step id is required for session rerun");
+        io.stderr(
+          "usage: divedra session rerun <session-id> <step-id> [options]",
+        );
+        return 2;
+      }
+      if (parsed.options.nestedSuperviser) {
+        io.stderr(
+          "--nested-supervisor / --nested-superviser is not supported for session rerun; use workflow run or session resume with --auto-improve instead",
         );
         return 2;
       }
@@ -2946,8 +3508,8 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowExecutionId: target,
-                nodeId: fromNodeId,
+                workflowExecutionId: target!,
+                stepId: fromStepId,
                 ...buildRemoteExecutionInput(parsed.options),
               },
             },
@@ -2971,16 +3533,16 @@ export async function runCli(
 
           if (parsed.options.output === "json") {
             emitJson(io, {
-              sourceSessionId: target,
+              sourceSessionId: target!,
               sessionId,
               status,
-              rerunFromNodeId: fromNodeId,
+              rerunFromStepId: fromStepId,
               exitCode,
             });
           } else {
-            io.stdout(`sourceSessionId: ${target}`);
+            io.stdout(`sourceSessionId: ${target!}`);
             io.stdout(`rerun session: ${sessionId}`);
-            io.stdout(`rerunFromNodeId: ${fromNodeId}`);
+            io.stdout(`rerunFromStepId: ${fromStepId}`);
             io.stdout(`status: ${status}`);
           }
           return exitCode;
@@ -2992,7 +3554,7 @@ export async function runCli(
         }
       }
 
-      const source = await loadSession(target, sharedOptions);
+      const source = await loadSession(target!, sharedOptions);
       if (!source.ok) {
         io.stderr(source.error.message);
         return 1;
@@ -3015,7 +3577,7 @@ export async function runCli(
         ...sharedOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
         rerunFromSessionId: source.value.sessionId,
-        rerunFromNodeId: fromNodeId,
+        rerunFromStepId: fromStepId,
         ...mockScenarioOptions,
       });
 
@@ -3029,16 +3591,73 @@ export async function runCli(
           sourceSessionId: source.value.sessionId,
           sessionId: result.value.session.sessionId,
           status: result.value.session.status,
-          rerunFromNodeId: fromNodeId,
+          rerunFromStepId: fromStepId,
           exitCode: result.value.exitCode,
         });
       } else {
         io.stdout(`sourceSessionId: ${source.value.sessionId}`);
         io.stdout(`rerun session: ${result.value.session.sessionId}`);
-        io.stdout(`rerunFromNodeId: ${fromNodeId}`);
+        io.stdout(`rerunFromStepId: ${fromStepId}`);
         io.stdout(`status: ${result.value.session.status}`);
       }
       return result.value.exitCode;
+    }
+
+    if (command === "step-runs") {
+      if (graphqlCliTransport !== null) {
+        io.stderr(
+          "session step-runs currently supports local execution only; omit --endpoint",
+        );
+        return 2;
+      }
+
+      const statusParsed = parseStepRunExecutionStatusFilter(
+        parsed.options.status,
+      );
+      if (!statusParsed.ok) {
+        io.stderr(statusParsed.error);
+        return 2;
+      }
+
+      const filterStepCandidate = parsed.options.stepRunsFilterStepId?.trim();
+      const filterStepId =
+        filterStepCandidate !== undefined && filterStepCandidate.length > 0
+          ? filterStepCandidate
+          : undefined;
+
+      try {
+        const overview = await listMergedWorkflowExecutionStepRuns({
+          ...sharedOptions,
+          workflowExecutionId: target!,
+          ...(filterStepId === undefined ? {} : { filterStepId }),
+          ...(statusParsed.value === undefined
+            ? {}
+            : { filterStatus: statusParsed.value }),
+        });
+
+        if (parsed.options.output === "json") {
+          emitJson(io, overview);
+        } else {
+          io.stdout(`workflowExecutionId: ${overview.workflowExecutionId}`);
+          io.stdout(`workflow: ${overview.workflowName}`);
+          if (overview.stepRuns.length === 0) {
+            io.stdout("stepRuns: (none matching filters)");
+          } else {
+            io.stdout("stepRuns:");
+            for (const row of overview.stepRuns) {
+              io.stdout(
+                `  timeline=${String(row.timelineOrdinal)} ord=${String(row.executionOrdinal)} stepRunId=${row.stepRunId} stepId=${row.stepId ?? "-"} owner=${row.persistedWorkflowExecutionId} status=${row.status} imported=${row.imported ? "yes" : "no"} started=${row.startedAt} ended=${row.endedAt}`,
+              );
+            }
+          }
+        }
+        return 0;
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`session step-runs failed: ${message}`);
+        return 1;
+      }
     }
 
     if (command === "export") {
@@ -3051,7 +3670,7 @@ export async function runCli(
 
       let payload: WorkflowExecutionExport;
       try {
-        payload = await buildWorkflowExecutionExport(target, sharedOptions);
+        payload = await buildWorkflowExecutionExport(target!, sharedOptions);
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "unknown error";
@@ -3096,14 +3715,16 @@ export async function runCli(
         );
         return 2;
       }
-      const session = await loadSession(target, sharedOptions);
+      const session = await loadSession(target!, sharedOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
       }
 
-      const logs = await listRuntimeNodeLogs(target, sharedOptions);
-      const format = parsed.options.format ?? parsed.options.output;
+      const logs = await listRuntimeNodeLogs(target!, sharedOptions);
+      const formatBase = parsed.options.format ?? parsed.options.output;
+      const format =
+        formatBase === "table" ? "text" : formatBase;
       const serialized = serializeRuntimeNodeLogs(logs, format);
 
       if (parsed.options.filePath !== undefined) {
@@ -3115,7 +3736,7 @@ export async function runCli(
           if (parsed.options.output === "json") {
             emitJson(io, {
               filePath: savedPath,
-              sessionId: target,
+              sessionId: target!,
               workflowId: session.value.workflowId,
               workflowName: session.value.workflowName,
               logCount: logs.length,

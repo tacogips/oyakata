@@ -1,7 +1,7 @@
 # Workflow VCS Handoff Checkpoints Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-vcs-handoff-checkpoints.md
+**Design Reference**: design-docs/specs/architecture.md#output-ownership, design-docs/specs/notes.md
 **Created**: 2026-02-23
 **Last Updated**: 2026-02-23
 
@@ -9,7 +9,7 @@
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-vcs-handoff-checkpoints.md`
+**Source**: consolidated into `design-docs/specs/architecture.md` and `design-docs/specs/notes.md`
 
 ### Summary
 Add deterministic handoff metadata and commit-template artifacts to each node execution so output-to-next-input linkage is explicit and auditable with Git/JJ checkpoints.
@@ -77,7 +77,7 @@ type InputJson = {
 
 ### 3. Design and Architecture Documentation
 
-#### `design-docs/specs/design-vcs-handoff-checkpoints.md`
+#### `design-docs/specs/architecture.md`, `design-docs/specs/notes.md`
 #### `design-docs/specs/architecture.md`
 
 **Status**: COMPLETED
@@ -94,7 +94,7 @@ type InputJson = {
 |--------|-----------|--------|-------|
 | Engine handoff artifacts | `src/workflow/engine.ts` | COMPLETED | Covered by `engine.test.ts` |
 | Engine tests | `src/workflow/engine.test.ts` | COMPLETED | Passing |
-| Design spec | `design-docs/specs/design-vcs-handoff-checkpoints.md` | COMPLETED | N/A |
+| Design spec | `design-docs/specs/architecture.md`, `design-docs/specs/notes.md` | COMPLETED | N/A |
 | Architecture integration | `design-docs/specs/architecture.md` | COMPLETED | N/A |
 
 ## Dependencies

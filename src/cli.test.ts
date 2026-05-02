@@ -2,25 +2,18 @@ import {
   mkdtemp,
   mkdir,
   readFile,
-  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import {
-  createOpenTuiWorkflowAppOptions,
-  loadOpenTuiScreenImplementations,
-  resolveCliHomeDir,
-  resolveTuiStartupSelection,
-  runCli,
-  shouldFallbackFromOpenTuiError,
-} from "./cli";
-import type { CliDependencies } from "./cli";
-import * as workflowCallNode from "./workflow/call-node";
+import { runCli, type CliDependencies } from "./cli";
+import { createWorkflowTemplate } from "./workflow/create";
+import * as workflowCallStep from "./workflow/call-step";
 import * as workflowEngine from "./workflow/engine";
 import { ok } from "./workflow/result";
+import type { ResolvedWorkflowSource } from "./workflow/types";
 import { saveEventReplyDispatchToRuntimeDb } from "./workflow/runtime-db";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
@@ -31,6 +24,23 @@ async function makeTempDir(): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "divedra-cli-test-"));
   tempDirs.push(directory);
   return directory;
+}
+
+/** `runCli` loads workflows like the production CLI; legacy disk fixtures opt in via the same env knob as `isStrictWorkflowAuthorshipValidation`. */
+async function withLegacyWorkflowAuthorshipForCli<T>(
+  fn: () => Promise<T>,
+): Promise<T> {
+  const prev = process.env["DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT"];
+  process.env["DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT"] = "true";
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) {
+      delete process.env["DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT"];
+    } else {
+      process.env["DIVEDRA_VALIDATION_LEGACY_AUTH_DEFAULT"] = prev;
+    }
+  }
 }
 
 afterEach(async () => {
@@ -148,45 +158,48 @@ async function writeLocalAddonManifest(input: {
   });
 }
 
-async function createCallNodeFixture(
+async function createCallStepFixture(
   workflowRoot: string,
   workflowName: string,
 ): Promise<void> {
   const workflowDirectory = path.join(workflowRoot, workflowName);
-  await mkdir(workflowDirectory, { recursive: true });
+  await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
 
   await writeJson(path.join(workflowDirectory, "workflow.json"), {
     workflowId: workflowName,
-    description: "call node cli fixture",
+    description: "call step cli fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
+    managerStepId: "manager-step",
+    entryStepId: "manager-step",
     nodes: [
       {
-        id: "divedra-manager",
-        kind: "root-manager",
-        nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
+        id: "manager-node",
+        nodeFile: "nodes/node-manager.json",
       },
       {
-        id: "writer",
-        kind: "task",
-        nodeFile: "node-writer.json",
-        completion: { type: "none" },
+        id: "writer-node",
+        nodeFile: "nodes/node-writer.json",
       },
     ],
-    edges: [],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "manager-step",
+        nodeId: "manager-node",
+        role: "manager",
+        transitions: [{ toStepId: "writer-step" }],
+      },
+      {
+        id: "writer-step",
+        nodeId: "writer-node",
+      },
+    ],
   });
-  await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
-    id: "divedra-manager",
-    executionBackend: "claude-code-agent",
-    model: "claude-opus-4-1",
-    promptTemplate: "manager",
+  await writeJson(path.join(workflowDirectory, "nodes", "node-manager.json"), {
+    id: "manager-node",
     variables: {},
   });
-  await writeJson(path.join(workflowDirectory, "node-writer.json"), {
-    id: "writer",
+  await writeJson(path.join(workflowDirectory, "nodes", "node-writer.json"), {
+    id: "writer-node",
     executionBackend: "codex-agent",
     model: "gpt-5",
     promptTemplate: "writer",
@@ -214,26 +227,27 @@ async function createManagerlessWorkflowFixture(
 
   await writeJson(path.join(workflowDirectory, "workflow.json"), {
     workflowId: workflowName,
-    description: "worker-only cli fixture",
+    description: "worker-only cli fixture (step-addressed linear)",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    entryNodeId: "worker-1",
+    entryStepId: "step-1",
     nodes: [
       {
         id: "worker-1",
-        role: "worker",
         nodeFile: "node-worker-1.json",
-        completion: { type: "none" },
       },
       {
         id: "worker-2",
-        role: "worker",
         nodeFile: "node-worker-2.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "worker-1", to: "worker-2", when: "always" }],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "step-1",
+        nodeId: "worker-1",
+        transitions: [{ toStepId: "step-2" }],
+      },
+      { id: "step-2", nodeId: "worker-2" },
+    ],
   });
   await writeJson(path.join(workflowDirectory, "node-worker-1.json"), {
     id: "worker-1",
@@ -260,26 +274,47 @@ async function createWorkflowCallInspectFixture(
 
   await writeJson(path.join(workflowDirectory, "workflow.json"), {
     workflowId: workflowName,
-    description: "workflow-call cli fixture",
+    description: "workflow-call cli fixture (step-addressed cross-workflow)",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    workflowCalls: [
-      {
-        id: "review-call",
-        workflowId: "review",
-        callerNodeId: "main-worker",
-      },
-    ],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "nodes/node-divedra-manager.json",
       },
       {
         id: "main-worker",
-        role: "worker",
         nodeFile: "nodes/node-main-worker.json",
+      },
+      {
+        id: "post-review",
+        nodeFile: "nodes/node-post-review.json",
+      },
+    ],
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "main-worker" }],
+      },
+      {
+        id: "main-worker",
+        nodeId: "main-worker",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review",
+            toStepId: "reviewer",
+            resumeStepId: "post-review",
+          },
+        ],
+      },
+      {
+        id: "post-review",
+        nodeId: "post-review",
+        role: "worker",
       },
     ],
   });
@@ -303,6 +338,16 @@ async function createWorkflowCallInspectFixture(
       variables: {},
     },
   );
+  await writeJson(
+    path.join(workflowDirectory, "nodes", "node-post-review.json"),
+    {
+      id: "post-review",
+      executionBackend: "codex-agent",
+      model: "gpt-5",
+      promptTemplate: "after review",
+      variables: {},
+    },
+  );
 
   const reviewDirectory = path.join(workflowRoot, "review");
   await mkdir(path.join(reviewDirectory, "nodes"), { recursive: true });
@@ -310,14 +355,14 @@ async function createWorkflowCallInspectFixture(
     workflowId: "review",
     description: "workflow-call cli callee fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    entryNodeId: "reviewer",
+    entryStepId: "reviewer",
     nodes: [
       {
         id: "reviewer",
-        role: "worker",
         nodeFile: "nodes/node-reviewer.json",
       },
     ],
+    steps: [{ id: "reviewer", nodeId: "reviewer", role: "worker" }],
   });
   await writeJson(path.join(reviewDirectory, "nodes", "node-reviewer.json"), {
     id: "reviewer",
@@ -395,246 +440,37 @@ async function createCompletedCliWorkflowRun(root: string): Promise<{
 }
 
 describe("runCli", () => {
-  test("resolveTuiStartupSelection aligns interactive resume with the session workflow", () => {
-    expect(
-      resolveTuiStartupSelection({
-        requestedWorkflowName: "demo",
-        resumeSession: {
-          sessionId: "session-123",
-          workflowName: "demo",
-        },
-      }),
-    ).toEqual({
-      ok: true,
-      initialSessionId: "session-123",
-      initialWorkflowName: "demo",
-    });
-  });
-
-  test("resolveTuiStartupSelection rejects conflicting workflow and resume-session inputs", () => {
-    expect(
-      resolveTuiStartupSelection({
-        requestedWorkflowName: "other",
-        resumeSession: {
-          sessionId: "session-123",
-          workflowName: "demo",
-        },
-      }),
-    ).toEqual({
-      ok: false,
-      message:
-        "resume session 'session-123' belongs to workflow 'demo', not 'other'",
-    });
-  });
-
-  test("shouldFallbackFromOpenTuiError only matches OpenTUI package availability failures", () => {
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error("Cannot find package '@opentui/core' imported from src/tui"),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error("Cannot find package '@opentui/solid' imported from src/tui"),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error("Cannot find package 'solid-js' imported from src/tui"),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error(
-          "Cannot find module 'solid-js/jsx-runtime' imported from src/tui/opentui-solid-app.tsx",
-        ),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error('cannot find module "@opentui/core"'),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error("Cannot find module '@opentui/core'"),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error("Cannot find package '@opentui/core-linux-x64'"),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error('Cannot find module "@opentui/core-darwin-arm64"'),
-      ),
-    ).toBe(true);
-    expect(
-      shouldFallbackFromOpenTuiError(new Error("workflow load failed")),
-    ).toBe(false);
-    expect(
-      shouldFallbackFromOpenTuiError(new Error("OpenTUI screen render failed")),
-    ).toBe(false);
-    expect(
-      shouldFallbackFromOpenTuiError(
-        new Error("Cannot find package '@types/node' imported from src/tui"),
-      ),
-    ).toBe(false);
-    expect(shouldFallbackFromOpenTuiError("@opentui/core")).toBe(false);
-  });
-
-  test("loadOpenTuiScreenImplementations prefers an injected OpenTUI app", async () => {
-    const runOpenTuiWorkflowApp = vi.fn<
-      NonNullable<CliDependencies["runOpenTuiWorkflowApp"]>
-    >(async () => 0);
-
-    const loaded = await loadOpenTuiScreenImplementations({
-      isInteractiveTerminal: () => true,
-      runOpenTuiWorkflowApp,
-      startServe: async () => ({
-        host: "127.0.0.1",
-        port: 7777,
-        stop: () => {},
-      }),
-    });
-
-    expect(loaded.runOpenTuiWorkflowApp).toBe(runOpenTuiWorkflowApp);
-  });
-
-  test("resolveCliHomeDir prefers HOME over USERPROFILE in injected env", () => {
-    expect(
-      resolveCliHomeDir({
-        HOME: "/tmp/home",
-        USERPROFILE: "/tmp/profile",
-      }),
-    ).toBe("/tmp/home");
-    expect(
-      resolveCliHomeDir({
-        HOME: "",
-        USERPROFILE: "/tmp/profile",
-      }),
-    ).toBe("/tmp/profile");
-  });
-
-  test("resolveCliHomeDir falls back to os.homedir when env vars are unavailable", () => {
-    const previousHome = process.env["HOME"];
-    const previousUserProfile = process.env["USERPROFILE"];
-    process.env["HOME"] = "";
-    process.env["USERPROFILE"] = "";
-    const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue("/tmp/os-home");
-    try {
-      expect(
-        resolveCliHomeDir({
-          HOME: "",
-          USERPROFILE: "",
-        }),
-      ).toBe("/tmp/os-home");
-    } finally {
-      homedirSpy.mockRestore();
-      if (previousHome === undefined) {
-        delete process.env["HOME"];
-      } else {
-        process.env["HOME"] = previousHome;
-      }
-      if (previousUserProfile === undefined) {
-        delete process.env["USERPROFILE"];
-      } else {
-        process.env["USERPROFILE"] = previousUserProfile;
-      }
-    }
-  });
-
-  test("createOpenTuiWorkflowAppOptions merges CLI runtime variables into executeWorkflow", async () => {
-    const root = await makeTempDir();
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const startedInputs: Array<{
-      readonly workflowName: string;
-      readonly runtimeVariables: Readonly<Record<string, unknown>>;
-      readonly sessionId: string;
-    }> = [];
-    const appOptions = createOpenTuiWorkflowAppOptions({
-      deps: {
-        env: {},
-      },
-      io: createIoCapture().io,
-      optionRuntimeVariables: {
-        cliOnlyFlag: true,
-      },
-      runLocalTuiWorkflow: async () => ({
-        exitCode: 0,
-        sessionId: "unused",
-        status: "completed",
-      }),
-      sharedOptions: {
-        workflowRoot: root,
-      },
-      startLocalTuiWorkflow: async (input) => {
-        startedInputs.push(input);
-        return {
-          sessionId: input.sessionId,
-          completion: Promise.resolve({
-            exitCode: 0,
-            sessionId: input.sessionId,
-            status: "completed",
-          }),
-        };
-      },
-      workflowNames: ["demo"],
-    });
-
-    const handle = await appOptions.executeWorkflow({
-      workflowName: "demo",
-      runtimeVariables: {
-        humanInput: {
-          request: "ship it",
-        },
-      },
-    });
-
-    expect(startedInputs).toHaveLength(1);
-    expect(startedInputs[0]).toMatchObject({
-      workflowName: "demo",
-      runtimeVariables: {
-        cliOnlyFlag: true,
-        humanInput: {
-          request: "ship it",
-        },
-      },
-    });
-    expect(startedInputs[0]?.sessionId).toMatch(/^div-demo-/);
-    expect(handle.sessionId).toBe(startedInputs[0]?.sessionId);
-  });
-
   test("returns help for unknown scope", async () => {
     const capture = createIoCapture();
     const code = await runCli(["unknown", "cmd", "target"], capture.io);
     expect(code).toBe(1);
-    expect(capture.stdout.join("\n")).toContain("Usage:");
+    const help = capture.stdout.join("\n");
+    expect(help).toContain("Usage:");
+    expect(help).toContain("call-step <workflow-id> <workflow-run-id> <step-id>");
+    expect(help).toContain("--superviser-workflow");
+    expect(help).toContain("--supervisor-workflow");
+    expect(help).toContain("--nested-superviser");
+    expect(help).toContain("--nested-supervisor");
+    expect(help).toContain("--no-allow-targeted-rerun");
+    expect(help).toContain("--disable-targeted-rerun");
   });
 
-  test("call-node executes locally with structured manager message input", async () => {
+  test("call-step executes locally with structured manager message input", async () => {
     const root = await makeTempDir();
-    const workflowName = "call-node-cli";
-    const sessionId = "sess-call-node-cli";
+    const workflowName = "call-step-cli";
+    const sessionId = "sess-call-step-cli";
     const artifactsRoot = path.join(root, "artifacts");
     const sessionStoreRoot = path.join(root, "sessions");
     const scenarioPath = path.join(root, "scenario.json");
     const messagePath = path.join(root, "message.json");
 
-    await createCallNodeFixture(root, workflowName);
+    await createCallStepFixture(root, workflowName);
     const saved = await saveSession(
       createSessionState({
         sessionId,
         workflowName,
         workflowId: workflowName,
-        initialNodeId: "divedra-manager",
+        initialNodeId: "manager-step",
         runtimeVariables: {},
       }),
       { sessionStoreRoot },
@@ -645,7 +481,7 @@ describe("runCli", () => {
       scenarioPath,
       JSON.stringify(
         {
-          writer: [
+          "writer-step": [
             {
               provider: "scenario-mock",
               when: { always: true },
@@ -654,7 +490,7 @@ describe("runCli", () => {
             {
               provider: "scenario-mock",
               when: { always: true },
-              payload: { summary: "cli ok" },
+              payload: { summary: "cli step ok" },
             },
           ],
         },
@@ -665,17 +501,17 @@ describe("runCli", () => {
     );
     await writeFile(
       messagePath,
-      JSON.stringify({ instruction: "review this change" }, null, 2),
+      JSON.stringify({ instruction: "review this step" }, null, 2),
       "utf8",
     );
 
     const capture = createIoCapture();
     const code = await runCli(
       [
-        "call-node",
+        "call-step",
         workflowName,
         sessionId,
-        "writer",
+        "writer-step",
         "--workflow-root",
         root,
         "--artifact-root",
@@ -694,10 +530,12 @@ describe("runCli", () => {
 
     expect(code).toBe(0);
     const payload = JSON.parse(capture.stdout.join("\n")) as {
+      stepId: string;
       output: { payload: { summary: string } };
       outputRef: { artifactDir: string };
     };
-    expect(payload.output.payload.summary).toBe("cli ok");
+    expect(payload.stepId).toBe("writer-step");
+    expect(payload.output.payload.summary).toBe("cli step ok");
 
     const inputJson = JSON.parse(
       await readFile(
@@ -705,7 +543,7 @@ describe("runCli", () => {
         "utf8",
       ),
     ) as { managerMessage?: { instruction?: string } };
-    expect(inputJson.managerMessage?.instruction).toBe("review this change");
+    expect(inputJson.managerMessage?.instruction).toBe("review this step");
   });
 
   test("create -> validate -> inspect roundtrip", async () => {
@@ -744,16 +582,54 @@ describe("runCli", () => {
     const outputJson = inspectCapture.stdout.join("\n");
     const parsed = JSON.parse(outputJson) as {
       workflowName: string;
-      entryNodeId: string;
-      managerNodeId?: string;
-      counts: { nodes: number };
-      runtime: { ready: boolean };
+      entryNodeId?: string;
+      entryStepId?: string;
+      managerStepId?: string;
+      stepIds: readonly string[];
+      nodeRegistryIds: readonly string[];
+      counts: {
+        nodeRegistry: number;
+        steps: number;
+        crossWorkflowDispatches: number;
+      };
+      runtime: { ready: boolean; blockers: readonly string[] };
     };
     expect(parsed.workflowName).toBe("demo");
-    expect(parsed.entryNodeId).toBe("divedra-manager");
-    expect(parsed.managerNodeId).toBe("divedra-manager");
-    expect(parsed.counts.nodes).toBe(2);
-    expect(parsed.runtime.ready).toBe(true);
+    expect(parsed.entryNodeId).toBeUndefined();
+    expect("managerRuntimeId" in parsed).toBe(false);
+    expect(parsed.entryStepId).toBe("divedra-manager");
+    expect(parsed.managerStepId).toBe("divedra-manager");
+    expect(parsed.stepIds).toEqual(["divedra-manager", "main-worker"]);
+    expect(parsed.nodeRegistryIds).toEqual(["divedra-manager", "main-worker"]);
+    expect(parsed.counts.nodeRegistry).toBe(2);
+    expect(parsed.counts.steps).toBe(2);
+    expect(parsed.counts.crossWorkflowDispatches).toBe(0);
+    expect(parsed.runtime.ready).toBe(false);
+    expect(parsed.runtime.blockers).toEqual(
+      expect.arrayContaining([expect.stringContaining("code-manager runtime")]),
+    );
+
+    const inspectTextCapture = createIoCapture();
+    const inspectTextCode = await runCli(
+      ["workflow", "inspect", "demo", "--workflow-root", root],
+      inspectTextCapture.io,
+    );
+    expect(inspectTextCode).toBe(0);
+    expect(inspectTextCapture.stdout.join("\n")).toContain(
+      "managerStepId: divedra-manager",
+    );
+    expect(inspectTextCapture.stdout.join("\n")).toContain(
+      "entryStepId: divedra-manager",
+    );
+    expect(inspectTextCapture.stdout.join("\n")).toContain(
+      "stepIds: divedra-manager, main-worker",
+    );
+    expect(inspectTextCapture.stdout.join("\n")).toContain(
+      "nodeRegistryIds: divedra-manager, main-worker",
+    );
+    expect(inspectTextCapture.stdout.join("\n")).toMatch(
+      /steps: 2, nodeRegistry: 2, crossWorkflowDispatches: 0/,
+    );
   });
 
   test("workflow commands resolve explicit user scope", async () => {
@@ -849,97 +725,144 @@ describe("runCli", () => {
     expect(runPayload.source?.workflowDirectory).toBe(workflowDirectory);
   });
 
-  test("workflow validate and inspect report scoped local add-on sources", async () => {
+  test("workflow list and status use overview data for direct workflow root", async () => {
     const root = await makeTempDir();
-    const userRoot = path.join(root, "user");
-    const workflowName = "local-addon-cli";
-    const addonName = "acme/local-echo-worker";
-    const workflowDirectory = path.join(userRoot, "workflows", workflowName);
-    await mkdir(workflowDirectory, { recursive: true });
-    await writeJson(path.join(workflowDirectory, "workflow.json"), {
-      workflowId: workflowName,
-      description: "local add-on cli fixture",
-      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-      entryNodeId: "addon-worker",
-      nodes: [
-        {
-          id: "addon-worker",
-          role: "worker",
-          addon: {
-            name: addonName,
-            version: "1",
-            inputs: { message: "from cli" },
-          },
-          completion: { type: "none" },
-        },
-      ],
-      edges: [],
-      loops: [],
-      branching: { mode: "fan-out" },
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
     });
-    await writeLocalAddonManifest({
-      addonRoot: path.join(userRoot, "addons"),
-      name: addonName,
-      version: "1",
-    });
-
-    const validateCapture = createIoCapture();
-    const validateCode = await runCli(
-      [
-        "workflow",
-        "validate",
-        workflowName,
-        "--scope",
-        "user",
-        "--user-root",
-        userRoot,
-        "--output",
-        "json",
-      ],
-      validateCapture.io,
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+    const listCapture = createIoCapture();
+    const listCode = await runCli(
+      ["workflow", "list", "--workflow-root", root],
+      listCapture.io,
     );
-    expect(validateCode).toBe(0);
-    const validation = JSON.parse(validateCapture.stdout.join("\n")) as {
-      addonSources?: ReadonlyArray<{
-        readonly nodeId: string;
-        readonly name: string;
-        readonly scope: string;
-        readonly manifestPath: string;
-      }>;
+    expect(listCode).toBe(0);
+    const listText = listCapture.stdout.join("\n");
+    expect(listText).toContain("demo");
+    expect(listText).toContain("direct");
+
+    const listJsonCapture = createIoCapture();
+    const listJsonCode = await runCli(
+      ["workflow", "list", "--workflow-root", root, "--output", "json"],
+      listJsonCapture.io,
+    );
+    expect(listJsonCode).toBe(0);
+    const listPayload = JSON.parse(listJsonCapture.stdout.join("\n")) as {
+      workflows: ReadonlyArray<{ workflowName: string; sourceScope: string }>;
     };
-    expect(validation.addonSources).toEqual([
-      expect.objectContaining({
-        nodeId: "addon-worker",
-        name: addonName,
-        scope: "user",
-        manifestPath: path.join(
-          userRoot,
-          "addons",
-          "acme",
-          "local-echo-worker",
-          "1",
-          "addon.json",
-        ),
-      }),
-    ]);
+    expect(listPayload.workflows.length).toBeGreaterThanOrEqual(1);
+    expect(listPayload.workflows.some((w) => w.workflowName === "demo")).toBe(
+      true,
+    );
 
-    const inspectCapture = createIoCapture();
-    const inspectCode = await runCli(
-      [
-        "workflow",
-        "inspect",
-        workflowName,
-        "--scope",
-        "user",
-        "--user-root",
-        userRoot,
-      ],
-      inspectCapture.io,
+    const statusCapture = createIoCapture();
+    const statusCode = await runCli(
+      ["workflow", "status", "demo", "--workflow-root", root],
+      statusCapture.io,
     );
-    expect(inspectCode).toBe(0);
-    expect(inspectCapture.stdout.join("\n")).toContain(
-      `addonSource: addon-worker: ${addonName}@1 user`,
+    expect(statusCode).toBe(0);
+    expect(statusCapture.stdout.join("\n")).toContain("aggregateStatus:");
+
+    const missingCapture = createIoCapture();
+    const missingCode = await runCli(
+      ["workflow", "status", "missing-wf", "--workflow-root", root],
+      missingCapture.io,
     );
+    expect(missingCode).toBe(2);
+  });
+
+  test("workflow validate and inspect report scoped local add-on sources", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      const userRoot = path.join(root, "user");
+      const workflowName = "local-addon-cli";
+      const addonName = "acme/local-echo-worker";
+      const workflowDirectory = path.join(userRoot, "workflows", workflowName);
+      await mkdir(workflowDirectory, { recursive: true });
+      await writeJson(path.join(workflowDirectory, "workflow.json"), {
+        workflowId: workflowName,
+        description: "local add-on cli fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        entryStepId: "addon-worker",
+        nodes: [
+          {
+            id: "addon-worker",
+            addon: {
+              name: addonName,
+              version: "1",
+              inputs: { message: "from cli" },
+            },
+          },
+        ],
+        steps: [{ id: "addon-worker", nodeId: "addon-worker" }],
+      });
+      await writeLocalAddonManifest({
+        addonRoot: path.join(userRoot, "addons"),
+        name: addonName,
+        version: "1",
+      });
+
+      const validateCapture = createIoCapture();
+      const validateCode = await runCli(
+        [
+          "workflow",
+          "validate",
+          workflowName,
+          "--scope",
+          "user",
+          "--user-root",
+          userRoot,
+          "--output",
+          "json",
+        ],
+        validateCapture.io,
+      );
+      expect(validateCode).toBe(0);
+      const validation = JSON.parse(validateCapture.stdout.join("\n")) as {
+        addonSources?: ReadonlyArray<{
+          readonly nodeId: string;
+          readonly name: string;
+          readonly scope: string;
+          readonly manifestPath: string;
+        }>;
+      };
+      expect(validation.addonSources).toEqual([
+        expect.objectContaining({
+          nodeId: "addon-worker",
+          name: addonName,
+          scope: "user",
+          manifestPath: path.join(
+            userRoot,
+            "addons",
+            "acme",
+            "local-echo-worker",
+            "1",
+            "addon.json",
+          ),
+        }),
+      ]);
+
+      const inspectCapture = createIoCapture();
+      const inspectCode = await runCli(
+        [
+          "workflow",
+          "inspect",
+          workflowName,
+          "--scope",
+          "user",
+          "--user-root",
+          userRoot,
+        ],
+        inspectCapture.io,
+      );
+      expect(inspectCode).toBe(0);
+      expect(inspectCapture.stdout.join("\n")).toContain(
+        `addonSource: addon-worker: ${addonName}@1 user`,
+      );
+    });
   });
 
   test("workflow commands reject invalid scope selectors", async () => {
@@ -1047,114 +970,115 @@ describe("runCli", () => {
     expect(inspectCode).toBe(0);
 
     const parsed = JSON.parse(inspectCapture.stdout.join("\n")) as {
-      entryNodeId: string;
+      entryStepId?: string;
       hasManagerNode: boolean;
-      managerNodeId?: string;
-      counts: { nodes: number };
+      nodeRegistryIds: readonly string[];
+      counts: {
+        nodeRegistry: number;
+        steps: number;
+        crossWorkflowDispatches: number;
+      };
     };
     expect(parsed.hasManagerNode).toBe(false);
-    expect(parsed.managerNodeId).toBeUndefined();
-    expect(parsed.entryNodeId).toBe("main-worker");
-    expect(parsed.counts.nodes).toBe(1);
+    expect(parsed.entryStepId).toBe("main-worker");
+    expect(parsed.nodeRegistryIds).toEqual(["main-worker"]);
+    expect(parsed.counts.nodeRegistry).toBe(1);
+    expect(parsed.counts.steps).toBe(1);
+    expect(parsed.counts.crossWorkflowDispatches).toBe(0);
+
+    const inspectTextCapture = createIoCapture();
+    const inspectTextCode = await runCli(
+      ["workflow", "inspect", "solo", "--workflow-root", root],
+      inspectTextCapture.io,
+    );
+    expect(inspectTextCode).toBe(0);
+    const textOut = inspectTextCapture.stdout.join("\n");
+    expect(textOut).toContain("entryStepId: main-worker");
+    expect(textOut).not.toContain("compatibility:");
   });
 
   test("inspect reports worker-only workflows without an authored manager node", async () => {
-    const root = await makeTempDir();
-    await createManagerlessWorkflowFixture(root, "worker-only");
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createManagerlessWorkflowFixture(root, "worker-only");
 
-    const capture = createIoCapture();
-    const code = await runCli(
-      [
-        "workflow",
-        "inspect",
-        "worker-only",
-        "--workflow-root",
-        root,
-        "--output",
-        "json",
-      ],
-      capture.io,
-    );
-    expect(code).toBe(0);
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "worker-only",
+          "--workflow-root",
+          root,
+          "--output",
+          "json",
+        ],
+        capture.io,
+      );
+      expect(code).toBe(0);
 
-    const parsed = JSON.parse(capture.stdout.join("\n")) as {
-      compatibility: {
-        usesEffectiveEntryManagerNodeId: boolean;
-        notes: readonly string[];
+      const parsed = JSON.parse(capture.stdout.join("\n")) as {
+        hasManagerNode: boolean;
+        entryStepId?: string;
+        nodeRegistryIds: readonly string[];
+        counts: {
+          nodeRegistry: number;
+          steps: number;
+          crossWorkflowDispatches: number;
+        };
       };
-      entryNodeId: string;
-      hasManagerNode: boolean;
-      managerNodeId?: string;
-      counts: { nodes: number };
-    };
-    expect(parsed.hasManagerNode).toBe(false);
-    expect(parsed.managerNodeId).toBeUndefined();
-    expect(parsed.entryNodeId).toBe("worker-1");
-    expect(parsed.counts.nodes).toBe(2);
-    expect(parsed.compatibility.usesEffectiveEntryManagerNodeId).toBe(true);
-    expect(parsed.compatibility.notes).toContain(
-      "Worker-only workflows normalize entryNodeId to an internal effective managerNodeId during runtime execution.",
-    );
+      expect(parsed.hasManagerNode).toBe(false);
+      expect(parsed.entryStepId).toBe("step-1");
+      expect(parsed.nodeRegistryIds).toEqual(["worker-1", "worker-2"]);
+      expect(parsed.counts.nodeRegistry).toBe(2);
+      expect(parsed.counts.steps).toBe(2);
+      expect(parsed.counts.crossWorkflowDispatches).toBe(0);
+    });
   });
 
-  test("inspect reports authored workflowCalls in json and text output", async () => {
-    const root = await makeTempDir();
-    await createWorkflowCallInspectFixture(root, "workflow-calls");
+  test("inspect reports step-derived cross-workflow calls in json and text output", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createWorkflowCallInspectFixture(root, "workflow-calls");
 
-    const jsonCapture = createIoCapture();
-    const jsonCode = await runCli(
-      [
-        "workflow",
-        "inspect",
-        "workflow-calls",
-        "--workflow-root",
-        root,
-        "--output",
-        "json",
-      ],
-      jsonCapture.io,
-    );
-    expect(jsonCode).toBe(0);
+      const jsonCapture = createIoCapture();
+      const jsonCode = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "workflow-calls",
+          "--workflow-root",
+          root,
+          "--output",
+          "json",
+        ],
+        jsonCapture.io,
+      );
+      expect(jsonCode).toBe(0);
 
-    const parsed = JSON.parse(jsonCapture.stdout.join("\n")) as {
-      compatibility: {
-        normalizesRoleAuthoredNodesToStructuralKinds: boolean;
-        usesLegacyStructuralSubWorkflows: boolean;
-        notes: readonly string[];
+      const parsed = JSON.parse(jsonCapture.stdout.join("\n")) as {
+        crossWorkflowDispatchIds: readonly string[];
+        counts: { crossWorkflowDispatches: number };
+        runtime: { ready: boolean };
       };
-      workflowCallIds: readonly string[];
-      counts: { workflowCalls: number; legacySubWorkflows: number };
-      runtime: { ready: boolean };
-    };
-    expect(parsed.workflowCallIds).toEqual(["review-call"]);
-    expect(parsed.counts.workflowCalls).toBe(1);
-    expect(parsed.counts.legacySubWorkflows).toBe(0);
-    expect(parsed.runtime.ready).toBe(true);
-    expect(
-      parsed.compatibility.normalizesRoleAuthoredNodesToStructuralKinds,
-    ).toBe(true);
-    expect(parsed.compatibility.usesLegacyStructuralSubWorkflows).toBe(false);
-    expect(parsed.compatibility.notes).toContain(
-      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-    );
+      expect(parsed.crossWorkflowDispatchIds).toEqual(["__cw:main-worker"]);
+      expect(parsed.counts.crossWorkflowDispatches).toBe(1);
+      expect(parsed.runtime.ready).toBe(true);
 
-    const textCapture = createIoCapture();
-    const textCode = await runCli(
-      ["workflow", "inspect", "workflow-calls", "--workflow-root", root],
-      textCapture.io,
-    );
-    expect(textCode).toBe(0);
-    expect(textCapture.stdout.join("\n")).toContain("workflowCalls: 1");
-    expect(textCapture.stdout.join("\n")).toContain(
-      "workflowCallIds: review-call",
-    );
-    expect(textCapture.stdout.join("\n")).toContain("compatibility:");
-    expect(textCapture.stdout.join("\n")).toContain(
-      "Role-authored nodes still normalize to structural runtime kinds internally for execution compatibility.",
-    );
-    expect(textCapture.stdout.join("\n")).not.toContain("subWorkflows:");
-    expect(textCapture.stdout.join("\n")).not.toContain("legacySubWorkflows:");
-    expect(textCapture.stdout.join("\n")).toContain("runtimeReady: yes");
+      const textCapture = createIoCapture();
+      const textCode = await runCli(
+        ["workflow", "inspect", "workflow-calls", "--workflow-root", root],
+        textCapture.io,
+      );
+      expect(textCode).toBe(0);
+      expect(textCapture.stdout.join("\n")).toContain("crossWorkflowDispatches: 1");
+      expect(textCapture.stdout.join("\n")).toContain(
+        "crossWorkflowDispatchIds: __cw:main-worker",
+      );
+      expect(textCapture.stdout.join("\n")).not.toContain("compatibility:");
+      expect(textCapture.stdout.join("\n")).not.toContain("subWorkflows:");
+      expect(textCapture.stdout.join("\n")).toContain("runtimeReady: yes");
+    });
   });
 
   test("workflow run fails early when required agent backend transport is unavailable", async () => {
@@ -1211,6 +1135,395 @@ describe("runCli", () => {
     expect(capture.stderr.join("\n")).toContain(
       "workflow runtime readiness failed",
     );
+  });
+
+  test("workflow run passes --auto-improve through to the engine (mock fail then succeed)", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const examplesRoot = path.join(process.cwd(), "examples");
+    const scenarioPath = path.join(
+      examplesRoot,
+      "supervised-mock-retry",
+      "mock-scenario.json",
+    );
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        examplesRoot,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--mock-scenario",
+        scenarioPath,
+        "--auto-improve",
+        "--max-supervised-attempts",
+        "3",
+        "--output",
+        "json",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    const out = JSON.parse(capture.stdout.join("\n")) as {
+      status: string;
+      supervision?: {
+        status: string;
+        incidents: readonly { category: string }[];
+      };
+    };
+    expect(out.status).toBe("completed");
+    expect(out.supervision).toBeDefined();
+    expect(out.supervision?.status).toBe("succeeded");
+    expect(
+      (out.supervision?.incidents ?? []).some((i) => i.category === "failure"),
+    ).toBe(true);
+  });
+
+  test("commands without auto-improve flags do not synthesize supervision policy input", async () => {
+    const root = await makeTempDir();
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["workflow", "create", "demo", "--workflow-root", root],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    expect(capture.stderr).toEqual([]);
+  });
+
+  test("workflow run rejects invalid auto-improve numeric flags", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--monitor-interval-ms",
+        "0",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "invalid --auto-improve policy: monitorIntervalMs must be a positive integer",
+    );
+  });
+
+  test("workflow run rejects a stall timeout shorter than the monitor interval", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--monitor-interval-ms",
+        "5000",
+        "--stall-timeout-ms",
+        "4999",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "invalid --auto-improve policy: stallTimeoutMs must be greater than or equal to monitorIntervalMs",
+    );
+  });
+
+  test("workflow run rejects supervision policy flags without --auto-improve", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--monitor-interval-ms requires --auto-improve",
+    );
+  });
+
+  test("workflow run rejects --nested-supervisor without --auto-improve", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--nested-supervisor",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--nested-superviser / --nested-supervisor require --auto-improve",
+    );
+  });
+
+  test("workflow run reports the first unexpected supervision flag in argv order", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--workflow-mutation-mode",
+        "execution-copy",
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--workflow-mutation-mode requires --auto-improve",
+    );
+    expect(capture.stderr.join("\n")).not.toContain(
+      "--monitor-interval-ms requires --auto-improve",
+    );
+  });
+
+  test("workflow run rejects --superviser-workflow without a value", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--superviser-workflow",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--superviser-workflow requires a value",
+    );
+  });
+
+  test("workflow run rejects --superviser-workflow when the value is missing before another flag", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--superviser-workflow",
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--superviser-workflow requires a value",
+    );
+  });
+
+  test("workflow run rejects --workflow-mutation-mode without a value", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--workflow-mutation-mode",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--workflow-mutation-mode requires a value: execution-copy or in-place",
+    );
+  });
+
+  test("workflow run rejects --workflow-mutation-mode when the value is missing before another flag", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--workflow-mutation-mode",
+        "--monitor-interval-ms",
+        "1000",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--workflow-mutation-mode requires a value: execution-copy or in-place",
+    );
+  });
+
+  test("workflow run preserves the first parse error when a later flag is also invalid", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--superviser-workflow",
+        "--workflow-mutation-mode",
+        "mutate-all-the-things",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--superviser-workflow requires a value",
+    );
+    expect(capture.stderr.join("\n")).not.toContain(
+      "invalid --workflow-mutation-mode value 'mutate-all-the-things'",
+    );
+  });
+
+  test.each([
+    {
+      name: "workflow run rejects --workflow-root without a value",
+      argv: ["workflow", "run", "supervised-mock-retry", "--workflow-root"],
+      message: "--workflow-root requires a value",
+    },
+    {
+      name: "session status rejects --endpoint without a value",
+      argv: ["session", "status", "sess-missing-endpoint", "--endpoint"],
+      message: "--endpoint requires a value",
+    },
+    {
+      name: "call-step rejects --message-file without a value",
+      argv: [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--message-file",
+      ],
+      message: "--message-file requires a value",
+    },
+    {
+      name: "workflow inspect rejects --output without a value",
+      argv: ["workflow", "inspect", "supervised-mock-retry", "--output"],
+      message: "--output requires a value: json, text, or table",
+    },
+    {
+      name: "session logs rejects --format without a value",
+      argv: ["session", "logs", "sess-format-missing", "--format"],
+      message: "--format requires a value: json, jsonl, or text",
+    },
+  ])("$name", async ({ argv, message }) => {
+    const capture = createIoCapture();
+    const code = await runCli(argv, capture.io);
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(message);
+  });
+
+  test("workflow inspect rejects --output table (table is only for workflow list and status)", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "inspect",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--output",
+        "table",
+      ],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "`--output table` is only supported for workflow list and workflow status",
+    );
+  });
+
+  test.each([
+    {
+      name: "workflow run rejects invalid --workflow-mutation-mode values",
+      argv: [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-root",
+        path.join(process.cwd(), "examples"),
+        "--auto-improve",
+        "--workflow-mutation-mode",
+        "mutate-all-the-things",
+      ],
+      message:
+        "invalid --workflow-mutation-mode value 'mutate-all-the-things'; expected execution-copy or in-place",
+    },
+    {
+      name: "workflow inspect rejects invalid --output values",
+      argv: [
+        "workflow",
+        "inspect",
+        "supervised-mock-retry",
+        "--output",
+        "yaml",
+      ],
+      message: "invalid --output value 'yaml'; expected json, text, or table",
+    },
+    {
+      name: "session logs rejects invalid --format values",
+      argv: ["session", "logs", "sess-format-invalid", "--format", "yaml"],
+      message: "invalid --format value 'yaml'; expected json, jsonl, or text",
+    },
+  ])("$name", async ({ argv, message }) => {
+    const capture = createIoCapture();
+    const code = await runCli(argv, capture.io);
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(message);
   });
 
   test("run -> status -> resume flow", async () => {
@@ -1424,11 +1737,205 @@ describe("runCli", () => {
     const rerunPayload = JSON.parse(rerunCapture.stdout.join("\n")) as {
       sourceSessionId: string;
       sessionId: string;
-      rerunFromNodeId: string;
+      rerunFromStepId: string;
     };
     expect(rerunPayload.sourceSessionId).toBe(runPayload.sessionId);
     expect(rerunPayload.sessionId).not.toBe(runPayload.sessionId);
-    expect(rerunPayload.rerunFromNodeId).toBe("main-worker");
+    expect(rerunPayload.rerunFromStepId).toBe("main-worker");
+  });
+
+  test("session progress and status expose step-centric execution state", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const sessionId = "sess-step-progress";
+    const session = {
+      ...createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "writer-node",
+        runtimeVariables: {},
+      }),
+      status: "paused" as const,
+      currentNodeId: "writer-node",
+      queue: ["writer-node"],
+      nodeExecutionCounter: 1,
+      nodeExecutionCounts: {
+        "writer-node": 1,
+      },
+      restartCounts: {
+        "writer-step": 2,
+      },
+      nodeExecutions: [
+        {
+          nodeId: "writer-node",
+          stepId: "writer-step",
+          nodeRegistryId: "writer-node",
+          nodeExecId: "exec-writer-1",
+          mailboxInstanceId: "exec-writer-1",
+          status: "succeeded" as const,
+          artifactDir: path.join(
+            artifactsRoot,
+            "demo",
+            sessionId,
+            "exec-writer-1",
+          ),
+          startedAt: "2026-04-24T05:00:00.000Z",
+          endedAt: "2026-04-24T05:00:10.000Z",
+        },
+      ],
+    };
+    const saved = await saveSession(session, {
+      sessionStoreRoot: sessionsRoot,
+    });
+    expect(saved.ok).toBe(true);
+
+    const progressCapture = createIoCapture();
+    const progressCode = await runCli(
+      [
+        "session",
+        "progress",
+        sessionId,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      progressCapture.io,
+    );
+    expect(progressCode).toBe(0);
+    const progressPayload = JSON.parse(progressCapture.stdout.join("\n")) as {
+      currentNodeId: string | null;
+      currentStepId: string | null;
+      stepSummaries: Array<{
+        stepId: string;
+        executions: number;
+        restarts: number;
+      }>;
+      nodeSummaries: Array<{
+        nodeId: string;
+        executions: number;
+        restarts: number;
+      }>;
+    };
+    expect(progressPayload.currentNodeId).toBe("writer-node");
+    expect(progressPayload.currentStepId).toBe("writer-step");
+    expect(progressPayload.nodeSummaries).toContainEqual({
+      nodeId: "writer-node",
+      executions: 1,
+      restarts: 0,
+    });
+    expect(progressPayload.stepSummaries).toEqual([
+      {
+        stepId: "writer-step",
+        executions: 1,
+        restarts: 2,
+      },
+    ]);
+
+    const statusCapture = createIoCapture();
+    const statusCode = await runCli(
+      [
+        "session",
+        "status",
+        sessionId,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      statusCapture.io,
+    );
+    expect(statusCode).toBe(0);
+    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
+      currentNodeId: string | null;
+      currentStepId: string | null;
+    };
+    expect(statusPayload.currentNodeId).toBe("writer-node");
+    expect(statusPayload.currentStepId).toBe("writer-step");
+  });
+
+  test("session progress and status infer the current step from authored workflow state before the first execution record exists", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const sessionId = "sess-step-current-target";
+
+    await createCallStepFixture(root, "demo");
+
+    const saved = await saveSession(
+      {
+        ...createSessionState({
+          sessionId,
+          workflowName: "demo",
+          workflowId: "demo",
+          initialNodeId: "manager-step",
+          runtimeVariables: {},
+        }),
+        status: "paused" as const,
+        currentNodeId: "writer-step",
+        queue: ["writer-step"],
+      },
+      {
+        sessionStoreRoot: sessionsRoot,
+      },
+    );
+    expect(saved.ok).toBe(true);
+
+    const progressCapture = createIoCapture();
+    const progressCode = await runCli(
+      [
+        "session",
+        "progress",
+        sessionId,
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      progressCapture.io,
+    );
+    expect(progressCode).toBe(0);
+    const progressPayload = JSON.parse(progressCapture.stdout.join("\n")) as {
+      currentNodeId: string | null;
+      currentStepId: string | null;
+    };
+    expect(progressPayload.currentNodeId).toBe("writer-step");
+    expect(progressPayload.currentStepId).toBe("writer-step");
+
+    const statusCapture = createIoCapture();
+    const statusCode = await runCli(
+      [
+        "session",
+        "status",
+        sessionId,
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--output",
+        "json",
+      ],
+      statusCapture.io,
+    );
+    expect(statusCode).toBe(0);
+    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
+      currentNodeId: string | null;
+      currentStepId: string | null;
+    };
+    expect(statusPayload.currentNodeId).toBe("writer-step");
+    expect(statusPayload.currentStepId).toBe("writer-step");
   });
 
   test("session export prints workflow execution logs as JSON", async () => {
@@ -1525,6 +2032,77 @@ describe("runCli", () => {
     expect(savedPayload.nodeExecutions.length).toBeGreaterThan(0);
     expect(savedPayload.nodeLogs.length).toBeGreaterThan(0);
     expect(savedPayload.communications.length).toBeGreaterThan(0);
+  });
+
+  test("session export includes continuationMetadata for history-linked sessions", async () => {
+    const root = await makeTempDir();
+    const sessionsRoot = path.join(root, "sessions");
+    const artifactRoot = path.join(root, "artifacts");
+    await mkdir(artifactRoot, { recursive: true });
+
+    const continued = {
+      ...createSessionState({
+        sessionId: "sess-export-continued",
+        workflowName: "demo",
+        workflowId: "demo-wf",
+        initialNodeId: "step-2",
+        runtimeVariables: {},
+      }),
+      continuedFromWorkflowExecutionId: "sess-export-src",
+      continuedAfterStepRunId: "ne-1",
+      continuedAfterExecutionOrdinal: 1,
+      continuedStartStepId: "step-2",
+      continuationMode: "rerun-from-history" as const,
+      historyImports: [
+        {
+          sourceWorkflowExecutionId: "sess-export-src",
+          throughStepRunId: "ne-1",
+          throughExecutionOrdinal: 1,
+        },
+      ],
+    };
+    const saved = await saveSession(continued, {
+      sessionStoreRoot: sessionsRoot,
+    });
+    expect(saved.ok).toBe(true);
+
+    const exportCapture = createIoCapture();
+    const exportCode = await runCli(
+      [
+        "session",
+        "export",
+        "sess-export-continued",
+        "--workflow-root",
+        root,
+        "--artifact-root",
+        artifactRoot,
+        "--session-store",
+        sessionsRoot,
+      ],
+      exportCapture.io,
+    );
+
+    expect(exportCode).toBe(0);
+    const exportPayload = JSON.parse(exportCapture.stdout.join("\n")) as {
+      continuationMetadata?: {
+        continuedFromWorkflowExecutionId?: string;
+        historyImports?: readonly {
+          sourceWorkflowExecutionId: string;
+          throughStepRunId: string;
+          throughExecutionOrdinal: number;
+        }[];
+      };
+    };
+    expect(exportPayload.continuationMetadata?.continuedFromWorkflowExecutionId).toBe(
+      "sess-export-src",
+    );
+    expect(exportPayload.continuationMetadata?.historyImports).toEqual([
+      {
+        sourceWorkflowExecutionId: "sess-export-src",
+        throughStepRunId: "ne-1",
+        throughExecutionOrdinal: 1,
+      },
+    ]);
   });
 
   test("top-level export is not a supported command", async () => {
@@ -1986,7 +2564,7 @@ describe("runCli", () => {
       variables: {
         input: {
           workflowExecutionId: "sess-remote-001",
-          nodeId: "workflow-output",
+          stepId: "workflow-output",
         },
       },
     });
@@ -1994,9 +2572,255 @@ describe("runCli", () => {
       sourceSessionId: "sess-remote-001",
       sessionId: "sess-remote-002",
       status: "running",
-      rerunFromNodeId: "workflow-output",
+      rerunFromStepId: "workflow-output",
       exitCode: 0,
     });
+  });
+
+  test("workflow run forwards auto-improve and nested-superviser through GraphQL transport", async () => {
+    const capture = createIoCapture();
+    const requests: Readonly<Record<string, unknown>>[] = [];
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--auto-improve",
+        "--nested-superviser",
+        "--superviser-workflow",
+        "custom-superviser",
+        "--monitor-interval-ms",
+        "6000",
+        "--stall-timeout-ms",
+        "12000",
+        "--max-supervised-attempts",
+        "4",
+        "--max-workflow-patches",
+        "2",
+        "--workflow-mutation-mode",
+        "in-place",
+        "--no-allow-targeted-rerun",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          requests.push(body);
+          const query = typeof body["query"] === "string" ? body["query"] : "";
+          if (query.includes("mutation ExecuteWorkflow")) {
+            return createJsonResponse({
+              data: {
+                executeWorkflow: {
+                  workflowExecutionId: "sess-remote-supervised",
+                  sessionId: "sess-remote-supervised",
+                  status: "running",
+                  exitCode: 0,
+                },
+              },
+            });
+          }
+          return createJsonResponse({
+            data: {
+              workflowExecution: {
+                session: {
+                  sessionId: "sess-remote-supervised",
+                  workflowName: "demo",
+                  workflowId: "demo",
+                  transitions: [],
+                },
+                nodeExecutions: [],
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requests[0]).toMatchObject({
+      variables: {
+        input: {
+          workflowName: "demo",
+          nestedSuperviser: true,
+          autoImprove: {
+            enabled: true,
+            superviserWorkflowId: "custom-superviser",
+            monitorIntervalMs: 6000,
+            stallTimeoutMs: 12000,
+            maxSupervisedAttempts: 4,
+            maxWorkflowPatches: 2,
+            workflowMutationMode: "in-place",
+            allowTargetedRerun: false,
+          },
+        },
+      },
+    });
+  });
+
+  test("workflow run forwards canonical supervisor CLI aliases through GraphQL transport", async () => {
+    const capture = createIoCapture();
+    const requests: Readonly<Record<string, unknown>>[] = [];
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--auto-improve",
+        "--nested-supervisor",
+        "--supervisor-workflow",
+        "custom-superviser",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          const body = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          requests.push(body);
+          const query = typeof body["query"] === "string" ? body["query"] : "";
+          if (query.includes("mutation ExecuteWorkflow")) {
+            return createJsonResponse({
+              data: {
+                executeWorkflow: {
+                  workflowExecutionId: "sess-remote-supervised",
+                  sessionId: "sess-remote-supervised",
+                  status: "running",
+                  exitCode: 0,
+                },
+              },
+            });
+          }
+          return createJsonResponse({
+            data: {
+              workflowExecution: {
+                session: {
+                  sessionId: "sess-remote-supervised",
+                  workflowName: "demo",
+                  workflowId: "demo",
+                  transitions: [],
+                },
+                nodeExecutions: [],
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requests[0]).toMatchObject({
+      variables: {
+        input: {
+          workflowName: "demo",
+          nestedSuperviser: true,
+          autoImprove: {
+            enabled: true,
+            superviserWorkflowId: "custom-superviser",
+          },
+        },
+      },
+    });
+  });
+
+  test("session resume forwards auto-improve and nested-superviser through GraphQL transport", async () => {
+    const capture = createIoCapture();
+    let requestedBody: Readonly<Record<string, unknown>> | undefined;
+
+    const code = await runCli(
+      [
+        "session",
+        "resume",
+        "sess-remote-001",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--auto-improve",
+        "--nested-superviser",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          requestedBody = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          return createJsonResponse({
+            data: {
+              resumeWorkflowExecution: {
+                workflowExecutionId: "sess-remote-001",
+                sessionId: "sess-remote-001",
+                status: "running",
+                exitCode: 0,
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requestedBody).toMatchObject({
+      variables: {
+        input: {
+          workflowExecutionId: "sess-remote-001",
+          nestedSuperviser: true,
+          autoImprove: {
+            enabled: true,
+          },
+        },
+      },
+    });
+  });
+
+  test("session rerun rejects nested superviser before execution", async () => {
+    const capture = createIoCapture();
+
+    const code = await runCli(
+      [
+        "session",
+        "rerun",
+        "sess-remote-001",
+        "workflow-output",
+        "--auto-improve",
+        "--nested-superviser",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "not supported for session rerun",
+    );
   });
 
   test("local session resume forwards normalized workflow run overrides", async () => {
@@ -2132,7 +2956,7 @@ describe("runCli", () => {
       expect.objectContaining({
         sessionStoreRoot,
         rerunFromSessionId: "sess-local-rerun",
-        rerunFromNodeId: "workflow-output",
+        rerunFromStepId: "workflow-output",
         workflowWorkingDirectory: "apps/reviewer",
         dryRun: true,
         maxSteps: 7,
@@ -2140,25 +2964,349 @@ describe("runCli", () => {
         defaultTimeoutMs: 1200,
       }),
     );
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sourceSessionId: "sess-local-rerun",
+      sessionId: "sess-local-rerun-2",
+      status: "running",
+      rerunFromStepId: "workflow-output",
+      exitCode: 0,
+    });
   });
 
-  test("local call-node forwards normalized working directory overrides", async () => {
+  test("session continue requires --start-step and --after-step-run", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["session", "continue", "sess-any"],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain("--start-step is required");
+    expect(capture.stderr.join("\n")).toContain("--after-step-run is required");
+  });
+
+  test("session continue rejects graphql transport", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "continue",
+        "sess-remote-001",
+        "--start-step",
+        "step-2",
+        "--after-step-run",
+        "exec-1",
+        "--endpoint",
+        "http://example.test/graphql",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async () => new Response("{}"),
+      },
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "session continue currently supports local execution only",
+    );
+  });
+
+  test("session continue rejects auto-improve", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "continue",
+        "sess-x",
+        "--start-step",
+        "step-2",
+        "--after-step-run",
+        "exec-1",
+        "--auto-improve",
+      ],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "cannot be combined with session continue",
+    );
+  });
+
+  test("local session continue forwards continuation engine options", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
     const capture = createIoCapture();
     const session = createSessionState({
-      sessionId: "sess-call-node-local",
+      sessionId: "sess-local-continue-src",
       workflowName: "demo",
       workflowId: "demo",
-      initialNodeId: "writer",
+      initialNodeId: "main-worker",
+      runtimeVariables: {},
+    });
+    await saveSession(session, { sessionStoreRoot });
+
+    const continuedSessionState = createSessionState({
+      sessionId: "sess-local-continue-new",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "step-2",
       runtimeVariables: {},
     });
 
-    const callNodeSpy = vi
-      .spyOn(workflowCallNode, "callNode")
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue(
+        ok({
+          session: {
+            ...continuedSessionState,
+            status: "running",
+          },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult),
+      );
+
+    const code = await runCli(
+      [
+        "session",
+        "continue",
+        "sess-local-continue-src",
+        "--session-store",
+        sessionStoreRoot,
+        "--start-step",
+        "step-2",
+        "--after-step-run",
+        "exec-anchor",
+        "--working-dir",
+        " apps/reviewer ",
+        "--dry-run",
+        "--max-steps",
+        "9",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        sessionStoreRoot,
+        continueFromWorkflowExecutionId: "sess-local-continue-src",
+        continueAfterStepRunId: "exec-anchor",
+        continueStartStepId: "step-2",
+        workflowWorkingDirectory: "apps/reviewer",
+        dryRun: true,
+        maxSteps: 9,
+      }),
+    );
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sourceWorkflowExecutionId: "sess-local-continue-src",
+      sessionId: "sess-local-continue-new",
+      status: "running",
+      continuedAfterStepRunId: "exec-anchor",
+      continuedStartStepId: "step-2",
+      exitCode: 0,
+    });
+  });
+
+  test("session step-runs rejects graphql transport", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "step-runs",
+        "sess-remote-001",
+        "--endpoint",
+        "http://example.test/graphql",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async () => new Response("{}"),
+      },
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "session step-runs currently supports local execution only",
+    );
+  });
+
+  test("session step-runs rejects invalid node execution status filter", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["session", "step-runs", "sess-z", "--status", "paused"],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain("invalid --status");
+  });
+
+  test("local session step-runs lists merged timeline with import markers", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    const artifactBase = path.join(root, "artifacts");
+    await mkdir(artifactBase, { recursive: true });
+
+    const source = {
+      ...createSessionState({
+        sessionId: "sess-steprun-src",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-1",
+        runtimeVariables: {},
+      }),
+      nodeExecutions: [
+        {
+          nodeId: "step-1",
+          nodeExecId: "ne-src-1",
+          executionOrdinal: 1,
+          stepId: "step-1",
+          status: "succeeded" as const,
+          artifactDir: path.join(artifactBase, "s1"),
+          startedAt: "2026-05-02T10:00:00.000Z",
+          endedAt: "2026-05-02T10:00:01.000Z",
+        },
+      ],
+    };
+    await saveSession(source, { sessionStoreRoot });
+
+    const continued = {
+      ...createSessionState({
+        sessionId: "sess-steprun-cont",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "step-2",
+        runtimeVariables: {},
+      }),
+      historyImports: [
+        {
+          sourceWorkflowExecutionId: "sess-steprun-src",
+          throughStepRunId: "ne-src-1",
+          throughExecutionOrdinal: 1,
+        },
+      ],
+      nodeExecutions: [
+        {
+          nodeId: "step-2",
+          nodeExecId: "ne-local-1",
+          executionOrdinal: 1,
+          stepId: "step-2",
+          status: "succeeded" as const,
+          artifactDir: path.join(artifactBase, "s2"),
+          startedAt: "2026-05-02T11:00:00.000Z",
+          endedAt: "2026-05-02T11:00:02.000Z",
+        },
+      ],
+    };
+    await saveSession(continued, { sessionStoreRoot });
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "step-runs",
+        "sess-steprun-cont",
+        "--session-store",
+        sessionStoreRoot,
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    const payload = JSON.parse(capture.stdout.join("\n")) as {
+      workflowExecutionId: string;
+      stepRuns: readonly { imported: boolean; stepRunId: string }[];
+    };
+    expect(payload.workflowExecutionId).toBe("sess-steprun-cont");
+    expect(payload.stepRuns).toHaveLength(2);
+    expect(payload.stepRuns[0]).toMatchObject({
+      stepRunId: "ne-src-1",
+      imported: true,
+    });
+    expect(payload.stepRuns[1]).toMatchObject({
+      stepRunId: "ne-local-1",
+      imported: false,
+    });
+
+    const filterCapture = createIoCapture();
+    const filterCode = await runCli(
+      [
+        "session",
+        "step-runs",
+        "sess-steprun-cont",
+        "--session-store",
+        sessionStoreRoot,
+        "--step",
+        "step-2",
+        "--status",
+        "succeeded",
+        "--output",
+        "json",
+      ],
+      filterCapture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+    expect(filterCode).toBe(0);
+    const filtered = JSON.parse(
+      filterCapture.stdout.join("\n"),
+    ) as { stepRuns: readonly { stepId: string }[] };
+    expect(filtered.stepRuns).toHaveLength(1);
+    expect(filtered.stepRuns[0]?.stepId).toBe("step-2");
+  });
+
+  test("local call-step forwards normalized working directory and continuation overrides", async () => {
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-call-step-local",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "writer-step",
+      runtimeVariables: {},
+    });
+
+    const callStepSpy = vi
+      .spyOn(workflowCallStep, "callStep")
       .mockResolvedValue(
         ok({
           session,
+          stepId: "writer-step",
           nodeExecution: {
-            nodeId: "writer",
+            nodeId: "writer-step",
             nodeExecId: "exec-1",
             status: "succeeded",
           },
@@ -2168,19 +3316,26 @@ describe("runCli", () => {
             path: "artifacts/output.json",
           },
           exitCode: 0,
-        } as unknown as workflowCallNode.CallNodeSuccess),
+        } as unknown as workflowCallStep.CallStepSuccess),
       );
 
     const code = await runCli(
       [
-        "call-node",
+        "call-step",
         "demo",
-        "sess-call-node-local",
-        "writer",
+        "sess-call-step-local",
+        "writer-step",
         "--working-dir",
         " apps/reviewer ",
         "--default-timeout-ms",
         "750",
+        "--timeout-ms",
+        "975",
+        "--prompt-variant",
+        "review",
+        "--continue-session",
+        "--resume-step-exec",
+        "exec-previous",
         "--dry-run",
         "--output",
         "json",
@@ -2197,15 +3352,199 @@ describe("runCli", () => {
     );
 
     expect(code).toBe(0);
-    expect(callNodeSpy).toHaveBeenCalledWith(
+    expect(callStepSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         workflowId: "demo",
-        workflowRunId: "sess-call-node-local",
-        nodeId: "writer",
+        workflowRunId: "sess-call-step-local",
+        stepId: "writer-step",
         workflowWorkingDirectory: "apps/reviewer",
         defaultTimeoutMs: 750,
+        overrides: {
+          timeoutMs: 975,
+          promptVariant: "review",
+          sessionMode: "reuse",
+          resumeStepExecId: "exec-previous",
+        },
         dryRun: true,
       }),
+    );
+  });
+
+  test("call-step accepts --resume-step-exec for resume execution id", async () => {
+    const capture = createIoCapture();
+    const session = {
+      sessionId: "sess-call-step-local",
+      status: "running" as const,
+      workflowId: "demo",
+      workflowName: "demo",
+      startedAt: "2024-01-01T00:00:00.000Z",
+      queue: [],
+      nodeExecutions: [],
+      nodeExecutionCounter: 0,
+      communications: [],
+      communicationCounter: 0,
+    };
+
+    const callStepSpy = vi
+      .spyOn(workflowCallStep, "callStep")
+      .mockResolvedValue(
+        ok({
+          session,
+          stepId: "writer-step",
+          nodeExecution: {
+            nodeId: "writer-step",
+            nodeExecId: "exec-1",
+            status: "succeeded",
+          },
+          output: { ok: true },
+          outputRef: {
+            type: "json",
+            path: "artifacts/output.json",
+          },
+          exitCode: 0,
+        } as unknown as workflowCallStep.CallStepSuccess),
+      );
+
+    const code = await runCli(
+      [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--resume-step-exec",
+        "exec-previous",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(callStepSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        overrides: { resumeStepExecId: "exec-previous" },
+      }),
+    );
+  });
+
+  test("call-step rejects removed --resume-node-exec", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--resume-node-exec",
+        "exec-a",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--resume-node-exec has been removed; use --resume-step-exec",
+    );
+  });
+
+  test("call-step rejects removed --resume-node-exec without treating its value as a positional argument", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--resume-node-exec",
+        "exec-a",
+        "--resume-step-exec",
+        "exec-b",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--resume-node-exec has been removed; use --resume-step-exec",
+    );
+  });
+
+  test("call-step rejects --resume-step-exec without a value", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--resume-step-exec",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--resume-step-exec requires an execution record id",
+    );
+  });
+
+  test("call-step rejects --resume-step-exec when value is missing before another flag", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "call-step",
+        "demo",
+        "sess-call-step-local",
+        "writer-step",
+        "--resume-step-exec",
+        "--dry-run",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+      },
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "--resume-step-exec requires an execution record id",
     );
   });
 
@@ -2253,12 +3592,21 @@ describe("runCli", () => {
   });
 
   test("serve command uses injected starter", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", { workflowRoot: root });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
     const capture = createIoCapture();
     const started: Array<{
       host?: string;
       port?: number;
       addonRoot?: string;
+      workflowRoot?: string;
       fixedWorkflowName?: string;
+      fixedResolvedWorkflowSource?: ResolvedWorkflowSource;
       readOnly?: boolean;
       noExec?: boolean;
     }> = [];
@@ -2267,6 +3615,8 @@ describe("runCli", () => {
       [
         "serve",
         "demo",
+        "--workflow-root",
+        root,
         "--host",
         "127.0.0.1",
         "--port",
@@ -2297,63 +3647,33 @@ describe("runCli", () => {
     expect(started).toHaveLength(1);
     expect(started[0]?.addonRoot).toBe("/tmp/direct-addons");
     expect(started[0]?.fixedWorkflowName).toBe("demo");
+    expect(started[0]?.workflowRoot).toBe(root);
+    expect(started[0]?.fixedResolvedWorkflowSource?.scope).toBe("direct");
+    expect(started[0]?.fixedResolvedWorkflowSource?.workflowName).toBe(
+      "demo",
+    );
     expect(started[0]?.readOnly).toBe(true);
     expect(started[0]?.noExec).toBe(true);
     const payload = JSON.parse(capture.stdout.join("\n")) as { port: number };
     expect(payload.port).toBe(7777);
   });
 
-  test("web serve command uses the serve backend", async () => {
-    const capture = createIoCapture();
-    const started: Array<{
-      host?: string;
-      port?: number;
-      fixedWorkflowName?: string;
-    }> = [];
-
-    const code = await runCli(
-      [
-        "web",
-        "serve",
-        "demo",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "7777",
-        "--output",
-        "json",
-      ],
-      capture.io,
-      {
-        startServe: async (options) => {
-          started.push(options);
-          return {
-            host: options.host ?? "127.0.0.1",
-            port: options.port ?? 7777,
-            stop: () => {},
-          };
-        },
-        isInteractiveTerminal: () => true,
-        waitForServeShutdown: async () => {},
-      },
-    );
-
-    expect(code).toBe(0);
-    expect(started).toHaveLength(1);
-    expect(started[0]?.fixedWorkflowName).toBe("demo");
-    expect(JSON.parse(capture.stdout.join("\n"))).toMatchObject({
-      fixedWorkflowName: "demo",
-      port: 7777,
-    });
-  });
-
   test("serve reports the actual bound port returned by the server", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", { workflowRoot: root });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+
     const capture = createIoCapture();
 
     const code = await runCli(
       [
         "serve",
         "demo",
+        "--workflow-root",
+        root,
         "--host",
         "127.0.0.1",
         "--port",
@@ -2387,771 +3707,6 @@ describe("runCli", () => {
       capture.io,
     );
     expect(code).toBe(2);
-  });
-
-  test("tui non-interactive fallback requires workflow name", async () => {
-    const root = await makeTempDir();
-    const capture = createIoCapture();
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const code = await runCli(["tui", "--workflow-root", root], capture.io, {
-      startServe: async () => ({
-        host: "127.0.0.1",
-        port: 7777,
-        stop: () => {},
-      }),
-      isInteractiveTerminal: () => false,
-    });
-
-    expect(code).toBe(2);
-    expect(capture.stderr.join("\n")).toContain(
-      "workflow name is required in non-interactive terminal",
-    );
-  });
-
-  test("interactive tui opens the unified OpenTUI app directly", async () => {
-    const root = await makeTempDir();
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const appCalls: Array<
-      Parameters<NonNullable<CliDependencies["runOpenTuiWorkflowApp"]>>[0]
-    > = [];
-    const runOpenTuiWorkflowApp = vi.fn<
-      NonNullable<CliDependencies["runOpenTuiWorkflowApp"]>
-    >(async (options) => {
-      appCalls.push(options);
-      return 0;
-    });
-    const code = await runCli(
-      ["tui", "--workflow-root", root],
-      createIoCapture().io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => true,
-        runOpenTuiWorkflowApp,
-      },
-    );
-
-    expect(code).toBe(0);
-    expect(runOpenTuiWorkflowApp).toHaveBeenCalledTimes(1);
-    expect(appCalls[0]).toMatchObject({
-      workflowNames: ["demo"],
-    });
-    expect(appCalls[0]?.initialWorkflowName).toBeUndefined();
-  });
-
-  test("tui supports non-interactive fallback and resume-session", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: { request: "start demo workflow" },
-      },
-    );
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const firstRunCapture = createIoCapture();
-    const firstRunCode = await runCli(
-      [
-        "tui",
-        "demo",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-        "--variables",
-        variablesPath,
-        "--max-steps",
-        "1",
-      ],
-      firstRunCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-    expect(firstRunCode).toBe(4);
-    expect(firstRunCapture.stdout.join("\n")).toContain(
-      "promptless fallback mode",
-    );
-
-    const sessionIdLine = firstRunCapture.stdout.find((line) =>
-      line.startsWith("sessionId: "),
-    );
-    expect(sessionIdLine).toBeDefined();
-    const sessionId = sessionIdLine?.replace("sessionId: ", "");
-    expect(sessionId).toBeDefined();
-
-    const resumeCapture = createIoCapture();
-    const resumeCode = await runCli(
-      [
-        "tui",
-        "--resume-session",
-        sessionId ?? "",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-      ],
-      resumeCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-    expect(resumeCode).toBe(0);
-    expect(resumeCapture.stdout.join("\n")).toContain("Resuming session");
-    expect(resumeCapture.stdout.join("\n")).toContain("status: completed");
-  });
-
-  test("tui resume-session works even when workflow directory is unavailable", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: { request: "start demo workflow" },
-      },
-    );
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const firstRunCapture = createIoCapture();
-    expect(
-      await runCli(
-        [
-          "tui",
-          "demo",
-          "--workflow-root",
-          root,
-          "--artifact-root",
-          artifactsRoot,
-          "--session-store",
-          sessionsRoot,
-          "--mock-scenario",
-          scenarioPath,
-          "--variables",
-          variablesPath,
-          "--max-steps",
-          "1",
-        ],
-        firstRunCapture.io,
-        {
-          startServe: async () => ({
-            host: "127.0.0.1",
-            port: 7777,
-            stop: () => {},
-          }),
-          isInteractiveTerminal: () => false,
-        },
-      ),
-    ).toBe(4);
-
-    const sessionId = firstRunCapture.stdout
-      .find((line) => line.startsWith("sessionId: "))
-      ?.replace("sessionId: ", "");
-    expect(sessionId).toBeDefined();
-
-    await rename(path.join(root, "demo"), path.join(root, "_demo_tmp_hidden"));
-
-    const resumeCapture = createIoCapture();
-    const resumeCode = await runCli(
-      [
-        "tui",
-        "--resume-session",
-        sessionId ?? "",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-      ],
-      resumeCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-
-    expect(resumeCode).toBe(1);
-    expect(resumeCapture.stderr.join("\n")).not.toContain("no workflows found");
-    expect(resumeCapture.stderr.join("\n")).toContain("run failed:");
-  });
-
-  test("interactive tui resume-session falls back to direct resume when OpenTUI is unavailable", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: { request: "start demo workflow" },
-      },
-    );
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const firstRunCapture = createIoCapture();
-    expect(
-      await runCli(
-        [
-          "tui",
-          "demo",
-          "--workflow-root",
-          root,
-          "--artifact-root",
-          artifactsRoot,
-          "--session-store",
-          sessionsRoot,
-          "--mock-scenario",
-          scenarioPath,
-          "--variables",
-          variablesPath,
-          "--max-steps",
-          "1",
-        ],
-        firstRunCapture.io,
-        {
-          startServe: async () => ({
-            host: "127.0.0.1",
-            port: 7777,
-            stop: () => {},
-          }),
-          isInteractiveTerminal: () => false,
-        },
-      ),
-    ).toBe(4);
-
-    const sessionId = firstRunCapture.stdout
-      .find((line) => line.startsWith("sessionId: "))
-      ?.replace("sessionId: ", "");
-    expect(sessionId).toBeDefined();
-
-    const resumeCapture = createIoCapture();
-    const resumeCode = await runCli(
-      [
-        "tui",
-        "--resume-session",
-        sessionId ?? "",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-      ],
-      resumeCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => true,
-        runOpenTuiWorkflowApp: async () => {
-          throw new Error(
-            "Cannot find package '@opentui/core' imported from src/tui",
-          );
-        },
-      },
-    );
-
-    expect(resumeCode).toBe(0);
-    expect(resumeCapture.stderr.join("\n")).toContain(
-      "falling back to readline workflow selection",
-    );
-    expect(resumeCapture.stderr.join("\n")).toContain(
-      "will use direct resume fallback",
-    );
-    expect(resumeCapture.stdout.join("\n")).toContain("Resuming session");
-    expect(resumeCapture.stdout.join("\n")).toContain("status: completed");
-  });
-
-  test("interactive tui resume-session fallback still uses workflow-local mock-scenario.json", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const workflowScenarioPath = path.join(root, "demo", "mock-scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: { request: "start demo workflow" },
-      },
-    );
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-    await writeJson(workflowScenarioPath, makeDefaultTemplateScenario());
-
-    const firstRunCapture = createIoCapture();
-    expect(
-      await runCli(
-        [
-          "tui",
-          "demo",
-          "--workflow-root",
-          root,
-          "--artifact-root",
-          artifactsRoot,
-          "--session-store",
-          sessionsRoot,
-          "--mock-scenario",
-          scenarioPath,
-          "--variables",
-          variablesPath,
-          "--max-steps",
-          "1",
-        ],
-        firstRunCapture.io,
-        {
-          startServe: async () => ({
-            host: "127.0.0.1",
-            port: 7777,
-            stop: () => {},
-          }),
-          isInteractiveTerminal: () => false,
-        },
-      ),
-    ).toBe(4);
-
-    const sessionId = firstRunCapture.stdout
-      .find((line) => line.startsWith("sessionId: "))
-      ?.replace("sessionId: ", "");
-    expect(sessionId).toBeDefined();
-
-    const resumeCapture = createIoCapture();
-    const resumeCode = await runCli(
-      [
-        "tui",
-        "--resume-session",
-        sessionId ?? "",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-      ],
-      resumeCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => true,
-        runOpenTuiWorkflowApp: async () => {
-          throw new Error(
-            "Cannot find package '@opentui/core' imported from src/tui",
-          );
-        },
-      },
-    );
-
-    expect(resumeCode).toBe(0);
-    expect(resumeCapture.stdout.join("\n")).toContain("Resuming session");
-    expect(resumeCapture.stdout.join("\n")).toContain("status: completed");
-  });
-
-  test("tui supports --workflow option in non-interactive mode", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: { request: "start demo workflow" },
-      },
-    );
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const capture = createIoCapture();
-    const code = await runCli(
-      [
-        "tui",
-        "--workflow",
-        "demo",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-        "--variables",
-        variablesPath,
-        "--max-steps",
-        "1",
-      ],
-      capture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-
-    expect(code).toBe(4);
-    expect(capture.stdout.join("\n")).toContain(
-      "using promptless fallback mode",
-    );
-  });
-
-  test("tui rejects conflicting positional and --workflow values", async () => {
-    const root = await makeTempDir();
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-    expect(
-      await runCli(
-        ["workflow", "create", "other", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const capture = createIoCapture();
-    const code = await runCli(
-      ["tui", "demo", "--workflow", "other", "--workflow-root", root],
-      capture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-
-    expect(code).toBe(2);
-    expect(capture.stderr.join("\n")).toContain("conflicting workflow names");
-  });
-
-  test("tui fallback applies --variables runtime values", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const variablesPath = path.join(root, "runtime-variables.json");
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-    await writeFile(
-      variablesPath,
-      JSON.stringify(
-        { topic: "tui-fallback", humanInput: { request: "alpha" } },
-        null,
-        2,
-      ),
-      "utf8",
-    );
-
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const runCapture = createIoCapture();
-    const runCode = await runCli(
-      [
-        "tui",
-        "demo",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-        "--variables",
-        variablesPath,
-        "--max-steps",
-        "1",
-      ],
-      runCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-
-    expect(runCode).toBe(4);
-    const sessionId = runCapture.stdout
-      .find((line) => line.startsWith("sessionId: "))
-      ?.replace("sessionId: ", "");
-    expect(sessionId).toBeDefined();
-
-    const statusCapture = createIoCapture();
-    const statusCode = await runCli(
-      [
-        "session",
-        "status",
-        sessionId ?? "",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--output",
-        "json",
-      ],
-      statusCapture.io,
-    );
-    expect(statusCode).toBe(0);
-
-    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
-      runtimeVariables: { topic?: string; humanInput?: { request?: string } };
-    };
-    expect(statusPayload.runtimeVariables.topic).toBe("tui-fallback");
-    expect(statusPayload.runtimeVariables.humanInput?.request).toBe("alpha");
-  });
-
-  test("tui resume-session merges --variables into resumed runtime values", async () => {
-    const root = await makeTempDir();
-    const artifactsRoot = path.join(root, "artifacts");
-    const sessionsRoot = path.join(root, "sessions");
-    const scenarioPath = path.join(root, "scenario.json");
-    const initialVariablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: { request: "start demo workflow" },
-      },
-    );
-    const resumeVariablesPath = path.join(root, "resume-variables.json");
-    await writeFile(
-      scenarioPath,
-      JSON.stringify(makeDefaultTemplateScenario(), null, 2),
-      "utf8",
-    );
-    await writeFile(
-      resumeVariablesPath,
-      JSON.stringify({ resumeNote: "from-file" }, null, 2),
-      "utf8",
-    );
-
-    expect(
-      await runCli(
-        ["workflow", "create", "demo", "--workflow-root", root],
-        createIoCapture().io,
-      ),
-    ).toBe(0);
-
-    const firstRunCapture = createIoCapture();
-    expect(
-      await runCli(
-        [
-          "tui",
-          "demo",
-          "--workflow-root",
-          root,
-          "--artifact-root",
-          artifactsRoot,
-          "--session-store",
-          sessionsRoot,
-          "--mock-scenario",
-          scenarioPath,
-          "--variables",
-          initialVariablesPath,
-          "--max-steps",
-          "1",
-        ],
-        firstRunCapture.io,
-        {
-          startServe: async () => ({
-            host: "127.0.0.1",
-            port: 7777,
-            stop: () => {},
-          }),
-          isInteractiveTerminal: () => false,
-        },
-      ),
-    ).toBe(4);
-
-    const sessionId = firstRunCapture.stdout
-      .find((line) => line.startsWith("sessionId: "))
-      ?.replace("sessionId: ", "");
-    expect(sessionId).toBeDefined();
-
-    const resumeCapture = createIoCapture();
-    const resumeCode = await runCli(
-      [
-        "tui",
-        "--resume-session",
-        sessionId ?? "",
-        "--workflow-root",
-        root,
-        "--artifact-root",
-        artifactsRoot,
-        "--session-store",
-        sessionsRoot,
-        "--mock-scenario",
-        scenarioPath,
-        "--variables",
-        resumeVariablesPath,
-      ],
-      resumeCapture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 7777,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => false,
-      },
-    );
-    expect(resumeCode).toBe(0);
-
-    const statusCapture = createIoCapture();
-    expect(
-      await runCli(
-        [
-          "session",
-          "status",
-          sessionId ?? "",
-          "--workflow-root",
-          root,
-          "--artifact-root",
-          artifactsRoot,
-          "--session-store",
-          sessionsRoot,
-          "--output",
-          "json",
-        ],
-        statusCapture.io,
-      ),
-    ).toBe(0);
-    const statusPayload = JSON.parse(statusCapture.stdout.join("\n")) as {
-      runtimeVariables: {
-        humanInput?: { request?: string };
-        resumeNote?: string;
-        resumedFromSessionId?: string;
-      };
-    };
-    expect(statusPayload.runtimeVariables.humanInput?.request).toBe(
-      "start demo workflow",
-    );
-    expect(statusPayload.runtimeVariables.resumeNote).toBe("from-file");
-    expect(statusPayload.runtimeVariables.resumedFromSessionId).toBe(sessionId);
   });
 
   test("events validate reports valid event configuration", async () => {
@@ -3210,96 +3765,98 @@ describe("runCli", () => {
   });
 
   test("events emit dispatches locally with mock scenario without endpoint", async () => {
-    const root = await makeTempDir();
-    const workflowRoot = path.join(root, ".divedra");
-    const eventRoot = path.join(root, ".divedra-events");
-    const artifactRoot = path.join(root, "data", "workflow");
-    const eventFile = path.join(root, "event.json");
-    const mockScenarioPath = path.join(root, "mock-scenario.json");
-    await createManagerlessWorkflowFixture(workflowRoot, "demo");
-    await mkdir(path.join(eventRoot, "sources"), { recursive: true });
-    await writeJson(path.join(eventRoot, "sources", "webhook.json"), {
-      id: "webhook",
-      kind: "webhook",
-      path: "/events/webhook",
-    });
-    await mkdir(path.join(eventRoot, "bindings"), { recursive: true });
-    await writeJson(path.join(eventRoot, "bindings", "demo.json"), {
-      id: "demo",
-      sourceId: "webhook",
-      workflowName: "demo",
-      match: { eventType: "chat.message" },
-      inputMapping: {
-        mode: "template",
-        template: { request: "{{event.input.text}}" },
-        mirrorToHumanInput: true,
-      },
-      execution: {
-        async: false,
-        allowUnsafeSyncWebhook: true,
-      },
-    });
-    await writeJson(eventFile, {
-      eventId: "evt-local-mock",
-      eventType: "chat.message",
-      input: { text: "hello local mock" },
-    });
-    await writeJson(mockScenarioPath, {
-      "worker-1": {
-        provider: "scenario-mock",
-        payload: { step: "first" },
-      },
-      "worker-2": {
-        provider: "scenario-mock",
-        payload: { step: "second" },
-      },
-    });
-    const fetchImpl = vi.fn(async () =>
-      createJsonResponse({ errors: [{ message: "unexpected fetch" }] }),
-    ) as typeof fetch;
-    const capture = createIoCapture();
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      const workflowRoot = path.join(root, ".divedra");
+      const eventRoot = path.join(root, ".divedra-events");
+      const artifactRoot = path.join(root, "data", "workflow");
+      const eventFile = path.join(root, "event.json");
+      const mockScenarioPath = path.join(root, "mock-scenario.json");
+      await createManagerlessWorkflowFixture(workflowRoot, "demo");
+      await mkdir(path.join(eventRoot, "sources"), { recursive: true });
+      await writeJson(path.join(eventRoot, "sources", "webhook.json"), {
+        id: "webhook",
+        kind: "webhook",
+        path: "/events/webhook",
+      });
+      await mkdir(path.join(eventRoot, "bindings"), { recursive: true });
+      await writeJson(path.join(eventRoot, "bindings", "demo.json"), {
+        id: "demo",
+        sourceId: "webhook",
+        workflowName: "demo",
+        match: { eventType: "chat.message" },
+        inputMapping: {
+          mode: "template",
+          template: { request: "{{event.input.text}}" },
+          mirrorToHumanInput: true,
+        },
+        execution: {
+          async: false,
+          allowUnsafeSyncWebhook: true,
+        },
+      });
+      await writeJson(eventFile, {
+        eventId: "evt-local-mock",
+        eventType: "chat.message",
+        input: { text: "hello local mock" },
+      });
+      await writeJson(mockScenarioPath, {
+        "worker-1": {
+          provider: "scenario-mock",
+          payload: { step: "first" },
+        },
+        "worker-2": {
+          provider: "scenario-mock",
+          payload: { step: "second" },
+        },
+      });
+      const fetchImpl = vi.fn(async () =>
+        createJsonResponse({ errors: [{ message: "unexpected fetch" }] }),
+      ) as typeof fetch;
+      const capture = createIoCapture();
 
-    const code = await runCli(
-      [
-        "events",
-        "emit",
-        "webhook",
-        "--workflow-root",
-        workflowRoot,
-        "--artifact-root",
-        artifactRoot,
-        "--event-root",
-        eventRoot,
-        "--event-file",
-        eventFile,
-        "--mock-scenario",
-        mockScenarioPath,
-        "--output",
-        "json",
-      ],
-      capture.io,
-      {
-        startServe: async () => ({
-          host: "127.0.0.1",
-          port: 43173,
-          stop: () => {},
-        }),
-        isInteractiveTerminal: () => true,
-        fetchImpl,
-      },
-    );
-    const payload = JSON.parse(capture.stdout.join("\n")) as {
-      receipts: readonly {
-        status: string;
-        workflowExecutionId: string | null;
-      }[];
-    };
+      const code = await runCli(
+        [
+          "events",
+          "emit",
+          "webhook",
+          "--workflow-root",
+          workflowRoot,
+          "--artifact-root",
+          artifactRoot,
+          "--event-root",
+          eventRoot,
+          "--event-file",
+          eventFile,
+          "--mock-scenario",
+          mockScenarioPath,
+          "--output",
+          "json",
+        ],
+        capture.io,
+        {
+          startServe: async () => ({
+            host: "127.0.0.1",
+            port: 43173,
+            stop: () => {},
+          }),
+          isInteractiveTerminal: () => true,
+          fetchImpl,
+        },
+      );
+      const payload = JSON.parse(capture.stdout.join("\n")) as {
+        receipts: readonly {
+          status: string;
+          workflowExecutionId: string | null;
+        }[];
+      };
 
-    expect(code).toBe(0);
-    expect(capture.stderr).toEqual([]);
-    expect(payload.receipts[0]?.status).toBe("dispatched");
-    expect(payload.receipts[0]?.workflowExecutionId).toMatch(/^div-demo-/);
-    expect(fetchImpl).not.toHaveBeenCalled();
+      expect(code).toBe(0);
+      expect(capture.stderr).toEqual([]);
+      expect(payload.receipts[0]?.status).toBe("dispatched");
+      expect(payload.receipts[0]?.workflowExecutionId).toMatch(/^div-demo-/);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
   });
 
   test("events emit honors DIVEDRA_EVENTS_READ_ONLY", async () => {

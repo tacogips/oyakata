@@ -8,6 +8,7 @@ import type {
   SessionStatus,
   WorkflowSessionState,
 } from "./session";
+import { resolveCurrentStepId } from "./session";
 import type { AdapterProcessLog } from "./adapter";
 import type { LoadOptions } from "./types";
 
@@ -17,7 +18,10 @@ const PROCESS_LOG_MESSAGE_TEXT_LIMIT = 500;
 interface RuntimeNodeExecutionRow {
   readonly sessionId: string;
   readonly nodeId: string;
+  readonly stepId?: string;
+  readonly nodeRegistryId?: string;
   readonly nodeExecId: string;
+  readonly mailboxInstanceId?: string;
   readonly status: NodeExecutionRecord["status"];
   readonly artifactDir: string;
   readonly startedAt: string;
@@ -25,9 +29,12 @@ interface RuntimeNodeExecutionRow {
   readonly attempt?: number;
   readonly outputAttemptCount?: number;
   readonly outputValidationErrors?: NodeExecutionRecord["outputValidationErrors"];
+  readonly promptVariant?: string;
+  readonly timeoutMs?: number;
   readonly backendSessionMode?: NodeExecutionRecord["backendSessionMode"];
   readonly backendSessionId?: NodeExecutionRecord["backendSessionId"];
   readonly restartedFromNodeExecId?: string;
+  readonly executionOrdinal: number;
   readonly inputJson: string;
   readonly outputJson: string;
   readonly inputHash: string;
@@ -42,6 +49,7 @@ export interface RuntimeSessionSummary {
   readonly startedAt: string;
   readonly endedAt: string | null;
   readonly currentNodeId: string | null;
+  readonly currentStepId?: string | null;
   readonly nodeExecutionCounter: number;
   readonly lastError: string | null;
   readonly updatedAt: string;
@@ -51,6 +59,9 @@ export interface RuntimeNodeExecutionSummary {
   readonly sessionId: string;
   readonly nodeExecId: string;
   readonly nodeId: string;
+  readonly stepId?: string | null;
+  readonly nodeRegistryId?: string | null;
+  readonly mailboxInstanceId?: string | null;
   readonly status: string;
   readonly artifactDir: string;
   readonly startedAt: string;
@@ -60,9 +71,12 @@ export interface RuntimeNodeExecutionSummary {
   readonly outputValidationErrors:
     | NodeExecutionRecord["outputValidationErrors"]
     | null;
+  readonly promptVariant?: string | null;
+  readonly timeoutMs?: number | null;
   readonly backendSessionMode: NodeExecutionRecord["backendSessionMode"] | null;
   readonly backendSessionId: NodeExecutionRecord["backendSessionId"] | null;
   readonly restartedFromNodeExecId: string | null;
+  readonly executionOrdinal: number | null;
   readonly inputHash: string;
   readonly outputHash: string;
   readonly inputJson: string;
@@ -89,6 +103,10 @@ export interface RuntimeEventReceiptIndexRecord {
   readonly status: string;
   readonly workflowName: string | null;
   readonly workflowExecutionId: string | null;
+  readonly supervisedRunId: string | null;
+  readonly supervisorExecutionId: string | null;
+  readonly supervisorConversationId: string | null;
+  readonly supervisorDecisionId: string | null;
   readonly artifactDir: string;
   readonly error: string | null;
   readonly receivedAt: string;
@@ -103,6 +121,10 @@ export interface RuntimeEventReceiptSaveInput {
   readonly status: string;
   readonly workflowName?: string;
   readonly workflowExecutionId?: string;
+  readonly supervisedRunId?: string;
+  readonly supervisorExecutionId?: string;
+  readonly supervisorConversationId?: string;
+  readonly supervisorDecisionId?: string;
   readonly artifactDir: string;
   readonly error?: string;
   readonly receivedAt: string;
@@ -113,7 +135,8 @@ export type RuntimeEventReplyDispatchStatus =
   | "dispatching"
   | "sent"
   | "queued"
-  | "failed";
+  | "failed"
+  | "no_delivery_target";
 
 export interface RuntimeEventReplyDispatchRecord {
   readonly idempotencyKey: string;
@@ -260,9 +283,42 @@ interface RuntimeSessionRow {
   readonly started_at: string;
   readonly ended_at: string | null;
   readonly current_node_id: string | null;
+  readonly current_step_id: string | null;
   readonly node_execution_counter: number;
   readonly last_error: string | null;
   readonly updated_at: string;
+}
+
+function backfillMissingNodeExecutionOrdinals(db: Database): void {
+  const targets = db
+    .query(
+      `SELECT DISTINCT session_id AS sessionId
+       FROM node_executions
+       WHERE execution_ordinal IS NULL`,
+    )
+    .all() as readonly { sessionId: string }[];
+  if (targets.length === 0) {
+    return;
+  }
+  const selectRows = db.prepare(
+    `SELECT node_exec_id AS nodeExecId
+     FROM node_executions
+     WHERE session_id = ?
+     ORDER BY created_at ASC, node_exec_id ASC`,
+  );
+  const updateOrdinal = db.prepare(
+    `UPDATE node_executions SET execution_ordinal = ?
+     WHERE session_id = ? AND node_exec_id = ?`,
+  );
+  for (const row of targets) {
+    const execRows = selectRows.all(row.sessionId) as readonly {
+      readonly nodeExecId: string;
+    }[];
+    let ordinal = 1;
+    for (const execution of execRows) {
+      updateOrdinal.run(ordinal++, row.sessionId, execution.nodeExecId);
+    }
+  }
 }
 
 function toRuntimeSessionSummary(
@@ -276,6 +332,9 @@ function toRuntimeSessionSummary(
     startedAt: row.started_at,
     endedAt: row.ended_at,
     currentNodeId: row.current_node_id,
+    ...(row.current_step_id === null
+      ? {}
+      : { currentStepId: row.current_step_id }),
     nodeExecutionCounter: row.node_execution_counter,
     lastError: row.last_error,
     updatedAt: row.updated_at,
@@ -293,6 +352,7 @@ function ensureSchema(db: Database): void {
       started_at TEXT NOT NULL,
       ended_at TEXT,
       current_node_id TEXT,
+      current_step_id TEXT,
       node_execution_counter INTEGER NOT NULL,
       queue_json TEXT NOT NULL,
       last_error TEXT,
@@ -302,6 +362,9 @@ function ensureSchema(db: Database): void {
       session_id TEXT NOT NULL,
       node_exec_id TEXT NOT NULL,
       node_id TEXT NOT NULL,
+      step_id TEXT,
+      node_registry_id TEXT,
+      mailbox_instance_id TEXT,
       status TEXT NOT NULL,
       artifact_dir TEXT NOT NULL,
       started_at TEXT NOT NULL,
@@ -309,9 +372,12 @@ function ensureSchema(db: Database): void {
       attempt INTEGER,
       output_attempt_count INTEGER,
       output_validation_errors_json TEXT,
+      prompt_variant TEXT,
+      timeout_ms INTEGER,
       backend_session_mode TEXT,
       backend_session_id TEXT,
       restarted_from_node_exec_id TEXT,
+      execution_ordinal INTEGER,
       input_hash TEXT NOT NULL,
       output_hash TEXT NOT NULL,
       input_json TEXT NOT NULL,
@@ -397,28 +463,218 @@ function ensureSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_hook_events_agent_session ON hook_events (workflow_execution_id, agent_session_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_hook_events_manager_session ON hook_events (manager_session_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_hook_events_node_exec ON hook_events (node_exec_id, created_at);
+    CREATE TABLE IF NOT EXISTS event_supervised_runs (
+      supervised_run_id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      correlation_key TEXT NOT NULL,
+      supervisor_workflow_name TEXT NOT NULL,
+      supervisor_execution_id TEXT,
+      target_workflow_name TEXT NOT NULL,
+      active_target_execution_id TEXT,
+      status TEXT NOT NULL,
+      restart_count INTEGER NOT NULL,
+      max_restarts_on_failure INTEGER NOT NULL,
+      auto_improve_enabled INTEGER NOT NULL,
+      artifact_dir TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS event_supervisor_commands (
+      command_id TEXT PRIMARY KEY,
+      supervised_run_id TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      binding_id TEXT NOT NULL,
+      correlation_key TEXT NOT NULL,
+      action TEXT NOT NULL,
+      receipt_id TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_event_supervised_runs_correlation
+      ON event_supervised_runs (source_id, binding_id, correlation_key, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_event_supervised_runs_active_target
+      ON event_supervised_runs (active_target_execution_id);
+    CREATE INDEX IF NOT EXISTS idx_event_supervisor_commands_run
+      ON event_supervisor_commands (supervised_run_id, created_at);
+    CREATE TABLE IF NOT EXISTS supervisor_conversations (
+      supervisor_conversation_id TEXT PRIMARY KEY,
+      supervisor_profile_id TEXT NOT NULL,
+      profile_revision TEXT NOT NULL,
+      supervisor_workflow_name TEXT NOT NULL,
+      supervisor_execution_id TEXT,
+      source_id TEXT NOT NULL,
+      binding_id TEXT,
+      correlation_key TEXT NOT NULL,
+      conversation_revision INTEGER NOT NULL,
+      selected_managed_run_id TEXT,
+      selected_managed_run_ids_by_workflow_key_json TEXT,
+      status TEXT NOT NULL,
+      artifact_dir TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS supervisor_conversation_managed_runs (
+      managed_run_id TEXT PRIMARY KEY,
+      supervisor_conversation_id TEXT NOT NULL,
+      managed_workflow_key TEXT NOT NULL,
+      target_workflow_name TEXT NOT NULL,
+      run_alias TEXT,
+      active_target_execution_id TEXT,
+      status TEXT NOT NULL,
+      restart_count INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS supervisor_dispatch_decisions (
+      decision_id TEXT PRIMARY KEY,
+      supervisor_conversation_id TEXT NOT NULL,
+      source_message_id TEXT NOT NULL,
+      profile_revision TEXT NOT NULL,
+      conversation_revision INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      proposal_json TEXT NOT NULL,
+      result_summary_json TEXT,
+      receipt_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_supervisor_conversations_correlation
+      ON supervisor_conversations (source_id, binding_id, correlation_key, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_supervisor_managed_runs_conversation
+      ON supervisor_conversation_managed_runs (supervisor_conversation_id, updated_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_supervisor_dispatch_decisions_dedupe
+      ON supervisor_dispatch_decisions (supervisor_conversation_id, source_message_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_supervisor_conversations_active_correlation
+      ON supervisor_conversations (source_id, correlation_key, ifnull(binding_id, ''))
+      WHERE status IN ('active', 'idle');
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_supervisor_managed_runs_alias_scope
+      ON supervisor_conversation_managed_runs (
+        supervisor_conversation_id,
+        managed_workflow_key,
+        run_alias
+      )
+      WHERE run_alias IS NOT NULL;
   `);
 
   const nodeExecutionColumns = db
     .query("PRAGMA table_info(node_executions)")
     .all() as Array<{ name: string }>;
-  const existingColumns = new Set(nodeExecutionColumns.map((row) => row.name));
-  if (!existingColumns.has("output_attempt_count")) {
+  const existingNodeExecutionColumns = new Set(
+    nodeExecutionColumns.map((row) => row.name),
+  );
+  if (!existingNodeExecutionColumns.has("output_attempt_count")) {
     db.exec(
       "ALTER TABLE node_executions ADD COLUMN output_attempt_count INTEGER",
     );
   }
-  if (!existingColumns.has("output_validation_errors_json")) {
+  if (!existingNodeExecutionColumns.has("output_validation_errors_json")) {
     db.exec(
       "ALTER TABLE node_executions ADD COLUMN output_validation_errors_json TEXT",
     );
   }
-  if (!existingColumns.has("backend_session_mode")) {
+  if (!existingNodeExecutionColumns.has("backend_session_mode")) {
     db.exec("ALTER TABLE node_executions ADD COLUMN backend_session_mode TEXT");
   }
-  if (!existingColumns.has("backend_session_id")) {
+  if (!existingNodeExecutionColumns.has("backend_session_id")) {
     db.exec("ALTER TABLE node_executions ADD COLUMN backend_session_id TEXT");
   }
+  const sessionColumns = db
+    .query("PRAGMA table_info(sessions)")
+    .all() as Array<{
+    name: string;
+  }>;
+  const existingSessionColumns = new Set(sessionColumns.map((row) => row.name));
+  if (!existingSessionColumns.has("current_step_id")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN current_step_id TEXT");
+  }
+  if (!existingNodeExecutionColumns.has("step_id")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN step_id TEXT");
+  }
+  if (!existingNodeExecutionColumns.has("node_registry_id")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN node_registry_id TEXT");
+  }
+  if (!existingNodeExecutionColumns.has("mailbox_instance_id")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN mailbox_instance_id TEXT");
+  }
+  if (!existingNodeExecutionColumns.has("prompt_variant")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN prompt_variant TEXT");
+  }
+  if (!existingNodeExecutionColumns.has("timeout_ms")) {
+    db.exec("ALTER TABLE node_executions ADD COLUMN timeout_ms INTEGER");
+  }
+  if (!existingNodeExecutionColumns.has("execution_ordinal")) {
+    db.exec(
+      "ALTER TABLE node_executions ADD COLUMN execution_ordinal INTEGER",
+    );
+  }
+  const sessionColumnsFinal = db
+    .query("PRAGMA table_info(sessions)")
+    .all() as Array<{ name: string }>;
+  const sessionColumnSet = new Set(sessionColumnsFinal.map((row) => row.name));
+  if (!sessionColumnSet.has("supervision_json")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN supervision_json TEXT");
+  }
+  const sessionContinuationColumns = db
+    .query("PRAGMA table_info(sessions)")
+    .all() as Array<{ name: string }>;
+  const sessionContinuationColumnSet = new Set(
+    sessionContinuationColumns.map((column) => column.name),
+  );
+  if (!sessionContinuationColumnSet.has("continuation_mode")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT");
+  }
+  if (
+    !sessionContinuationColumnSet.has(
+      "continued_from_workflow_execution_id",
+    )
+  ) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_from_workflow_execution_id TEXT",
+    );
+  }
+  if (!sessionContinuationColumnSet.has("continued_after_step_run_id")) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_after_step_run_id TEXT",
+    );
+  }
+  if (
+    !sessionContinuationColumnSet.has("continued_after_execution_ordinal")
+  ) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_after_execution_ordinal INTEGER",
+    );
+  }
+  if (!sessionContinuationColumnSet.has("continued_start_step_id")) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN continued_start_step_id TEXT",
+    );
+  }
+  if (!sessionContinuationColumnSet.has("history_imports_json")) {
+    db.exec(
+      "ALTER TABLE sessions ADD COLUMN history_imports_json TEXT",
+    );
+  }
+  const receiptColumns = db
+    .query("PRAGMA table_info(event_receipts)")
+    .all() as Array<{ name: string }>;
+  const receiptColumnSet = new Set(receiptColumns.map((row) => row.name));
+  if (!receiptColumnSet.has("supervised_run_id")) {
+    db.exec("ALTER TABLE event_receipts ADD COLUMN supervised_run_id TEXT");
+  }
+  if (!receiptColumnSet.has("supervisor_execution_id")) {
+    db.exec("ALTER TABLE event_receipts ADD COLUMN supervisor_execution_id TEXT");
+  }
+  if (!receiptColumnSet.has("supervisor_conversation_id")) {
+    db.exec(
+      "ALTER TABLE event_receipts ADD COLUMN supervisor_conversation_id TEXT",
+    );
+  }
+  if (!receiptColumnSet.has("supervisor_decision_id")) {
+    db.exec("ALTER TABLE event_receipts ADD COLUMN supervisor_decision_id TEXT");
+  }
+
+  backfillMissingNodeExecutionOrdinals(db);
 }
 
 function toRuntimeEventReceiptIndexRecord(row: {
@@ -429,6 +685,10 @@ function toRuntimeEventReceiptIndexRecord(row: {
   readonly status: string;
   readonly workflow_name: string | null;
   readonly workflow_execution_id: string | null;
+  readonly supervised_run_id?: string | null;
+  readonly supervisor_execution_id?: string | null;
+  readonly supervisor_conversation_id?: string | null;
+  readonly supervisor_decision_id?: string | null;
   readonly artifact_dir: string;
   readonly error: string | null;
   readonly received_at: string;
@@ -442,6 +702,10 @@ function toRuntimeEventReceiptIndexRecord(row: {
     status: row.status,
     workflowName: row.workflow_name,
     workflowExecutionId: row.workflow_execution_id,
+    supervisedRunId: row.supervised_run_id ?? null,
+    supervisorExecutionId: row.supervisor_execution_id ?? null,
+    supervisorConversationId: row.supervisor_conversation_id ?? null,
+    supervisorDecisionId: row.supervisor_decision_id ?? null,
     artifactDir: row.artifact_dir,
     error: row.error,
     receivedAt: row.received_at,
@@ -633,8 +897,10 @@ export async function saveEventReceiptToRuntimeDb(
     const stmt = db.prepare(`
       INSERT INTO event_receipts (
         receipt_id, source_id, binding_id, dedupe_key, status, workflow_name,
-        workflow_execution_id, artifact_dir, error, received_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        workflow_execution_id, supervised_run_id, supervisor_execution_id,
+        supervisor_conversation_id, supervisor_decision_id,
+        artifact_dir, error, received_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(receipt_id) DO UPDATE SET
         source_id=excluded.source_id,
         binding_id=excluded.binding_id,
@@ -642,6 +908,10 @@ export async function saveEventReceiptToRuntimeDb(
         status=excluded.status,
         workflow_name=excluded.workflow_name,
         workflow_execution_id=excluded.workflow_execution_id,
+        supervised_run_id=excluded.supervised_run_id,
+        supervisor_execution_id=excluded.supervisor_execution_id,
+        supervisor_conversation_id=excluded.supervisor_conversation_id,
+        supervisor_decision_id=excluded.supervisor_decision_id,
         artifact_dir=excluded.artifact_dir,
         error=excluded.error,
         received_at=excluded.received_at,
@@ -655,6 +925,10 @@ export async function saveEventReceiptToRuntimeDb(
       row.status,
       row.workflowName ?? null,
       row.workflowExecutionId ?? null,
+      row.supervisedRunId ?? null,
+      row.supervisorExecutionId ?? null,
+      row.supervisorConversationId ?? null,
+      row.supervisorDecisionId ?? null,
       row.artifactDir,
       row.error ?? null,
       row.receivedAt,
@@ -677,7 +951,9 @@ export async function findEventReceiptByDedupeKey(
       .query(
         `SELECT
           receipt_id, source_id, binding_id, dedupe_key, status, workflow_name,
-          workflow_execution_id, artifact_dir, error, received_at, updated_at
+          workflow_execution_id, supervised_run_id, supervisor_execution_id,
+          supervisor_conversation_id, supervisor_decision_id,
+          artifact_dir, error, received_at, updated_at
          FROM event_receipts
          WHERE source_id = ?
            AND binding_id IS ?
@@ -706,7 +982,9 @@ export async function loadEventReceiptFromRuntimeDb(
       .query(
         `SELECT
           receipt_id, source_id, binding_id, dedupe_key, status, workflow_name,
-          workflow_execution_id, artifact_dir, error, received_at, updated_at
+          workflow_execution_id, supervised_run_id, supervisor_execution_id,
+          supervisor_conversation_id, supervisor_decision_id,
+          artifact_dir, error, received_at, updated_at
          FROM event_receipts
          WHERE receipt_id = ?
          LIMIT 1`,
@@ -731,7 +1009,9 @@ export async function listEventReceiptsFromRuntimeDb(
       .query(
         `SELECT
           receipt_id, source_id, binding_id, dedupe_key, status, workflow_name,
-          workflow_execution_id, artifact_dir, error, received_at, updated_at
+          workflow_execution_id, supervised_run_id, supervisor_execution_id,
+          supervisor_conversation_id, supervisor_decision_id,
+          artifact_dir, error, received_at, updated_at
          FROM event_receipts
          WHERE (? IS NULL OR source_id = ?)
            AND (? IS NULL OR status = ?)
@@ -905,8 +1185,13 @@ export async function saveSessionSnapshotToRuntimeDb(
     const stmt = db.prepare(`
       INSERT INTO sessions (
         session_id, workflow_name, workflow_id, status, started_at, ended_at,
-        current_node_id, node_execution_counter, queue_json, last_error, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        current_node_id, current_step_id, node_execution_counter, queue_json, last_error,
+        supervision_json,
+        continuation_mode, continued_from_workflow_execution_id,
+        continued_after_step_run_id, continued_after_execution_ordinal,
+        continued_start_step_id, history_imports_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         workflow_name=excluded.workflow_name,
         workflow_id=excluded.workflow_id,
@@ -914,12 +1199,21 @@ export async function saveSessionSnapshotToRuntimeDb(
         started_at=excluded.started_at,
         ended_at=excluded.ended_at,
         current_node_id=excluded.current_node_id,
+        current_step_id=excluded.current_step_id,
         node_execution_counter=excluded.node_execution_counter,
         queue_json=excluded.queue_json,
         last_error=excluded.last_error,
+        supervision_json=excluded.supervision_json,
+        continuation_mode=excluded.continuation_mode,
+        continued_from_workflow_execution_id=excluded.continued_from_workflow_execution_id,
+        continued_after_step_run_id=excluded.continued_after_step_run_id,
+        continued_after_execution_ordinal=excluded.continued_after_execution_ordinal,
+        continued_start_step_id=excluded.continued_start_step_id,
+        history_imports_json=excluded.history_imports_json,
         updated_at=excluded.updated_at
     `);
     const updatedAt = new Date().toISOString();
+    const currentStepId = resolveCurrentStepId(session);
     stmt.run(
       session.sessionId,
       session.workflowName,
@@ -928,9 +1222,21 @@ export async function saveSessionSnapshotToRuntimeDb(
       session.startedAt,
       session.endedAt ?? null,
       session.currentNodeId ?? null,
+      currentStepId,
       session.nodeExecutionCounter,
       JSON.stringify(session.queue),
       session.lastError ?? null,
+      session.supervision === undefined
+        ? null
+        : JSON.stringify(session.supervision),
+      session.continuationMode ?? null,
+      session.continuedFromWorkflowExecutionId ?? null,
+      session.continuedAfterStepRunId ?? null,
+      session.continuedAfterExecutionOrdinal ?? null,
+      session.continuedStartStepId ?? null,
+      session.historyImports === undefined
+        ? null
+        : JSON.stringify(session.historyImports),
       updatedAt,
     );
   });
@@ -944,16 +1250,19 @@ export async function saveNodeExecutionToRuntimeDb(
     const now = new Date().toISOString();
     const nodeStmt = db.prepare(`
       INSERT OR REPLACE INTO node_executions (
-        session_id, node_exec_id, node_id, status, artifact_dir, started_at, ended_at,
-        attempt, output_attempt_count, output_validation_errors_json, backend_session_mode, backend_session_id,
-        restarted_from_node_exec_id,
+        session_id, node_exec_id, node_id, step_id, node_registry_id, mailbox_instance_id, status, artifact_dir, started_at, ended_at,
+        attempt, output_attempt_count, output_validation_errors_json, prompt_variant, timeout_ms, backend_session_mode, backend_session_id,
+        restarted_from_node_exec_id, execution_ordinal,
         input_hash, output_hash, input_json, output_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     nodeStmt.run(
       row.sessionId,
       row.nodeExecId,
       row.nodeId,
+      row.stepId ?? null,
+      row.nodeRegistryId ?? null,
+      row.mailboxInstanceId ?? null,
       row.status,
       row.artifactDir,
       row.startedAt,
@@ -963,9 +1272,12 @@ export async function saveNodeExecutionToRuntimeDb(
       row.outputValidationErrors === undefined
         ? null
         : JSON.stringify(row.outputValidationErrors),
+      row.promptVariant ?? null,
+      row.timeoutMs ?? null,
       row.backendSessionMode ?? null,
       row.backendSessionId ?? null,
       row.restartedFromNodeExecId ?? null,
+      row.executionOrdinal,
       row.inputHash,
       row.outputHash,
       row.inputJson,
@@ -973,6 +1285,10 @@ export async function saveNodeExecutionToRuntimeDb(
       now,
     );
 
+    const finishLogTarget =
+      row.stepId != null && row.stepId !== "" ? "step" : "node";
+    const finishKey =
+      finishLogTarget === "step" ? row.stepId! : row.nodeId;
     insertNodeLog(
       db,
       toNodeLogRow({
@@ -980,7 +1296,7 @@ export async function saveNodeExecutionToRuntimeDb(
         nodeExecId: row.nodeExecId,
         nodeId: row.nodeId,
         level: row.status === "succeeded" ? "info" : "warning",
-        message: `node ${row.nodeId} finished with status ${row.status}`,
+        message: `${finishLogTarget} ${finishKey} finished with status ${row.status}`,
         payload: {
           inputHash: row.inputHash,
           outputHash: row.outputHash,
@@ -1007,12 +1323,14 @@ function summarizeProcessLogText(text: string): string {
 function formatProcessLogMessage(input: {
   readonly nodeId: string;
   readonly log: AdapterProcessLog;
+  readonly executionLogTarget?: "node" | "step";
 }): string {
+  const target = input.executionLogTarget ?? "node";
   const label =
     input.log.label === undefined || input.log.label.length === 0
       ? ""
       : `${input.log.label} `;
-  return `node ${input.nodeId} ${label}${input.log.stream}: ${summarizeProcessLogText(input.log.text)}`;
+  return `${target} ${input.nodeId} ${label}${input.log.stream}: ${summarizeProcessLogText(input.log.text)}`;
 }
 
 export async function saveProcessLogsToRuntimeDb(
@@ -1022,6 +1340,8 @@ export async function saveProcessLogsToRuntimeDb(
     readonly nodeExecId: string;
     readonly processLogs: readonly AdapterProcessLog[];
     readonly at: string;
+    /** When set to `step`, log lines use `step …` instead of `node …` for the execution key. */
+    readonly executionLogTarget?: "node" | "step";
   },
   options: LoadOptions = {},
 ): Promise<void> {
@@ -1038,7 +1358,13 @@ export async function saveProcessLogsToRuntimeDb(
             nodeId: input.nodeId,
             nodeExecId: input.nodeExecId,
             level: log.stream === "stderr" ? "warning" : "info",
-            message: formatProcessLogMessage({ nodeId: input.nodeId, log }),
+            message: formatProcessLogMessage({
+              nodeId: input.nodeId,
+              log,
+              ...(input.executionLogTarget === undefined
+                ? {}
+                : { executionLogTarget: input.executionLogTarget }),
+            }),
             payload: {
               stream: log.stream,
               text: log.text,
@@ -1085,12 +1411,6 @@ export async function saveCommunicationEventToRuntimeDb(
           communicationId: communication.communicationId,
           fromNodeId: communication.fromNodeId,
           toNodeId: communication.toNodeId,
-          ...(communication.fromSubWorkflowId === undefined
-            ? {}
-            : { fromSubWorkflowId: communication.fromSubWorkflowId }),
-          ...(communication.toSubWorkflowId === undefined
-            ? {}
-            : { toSubWorkflowId: communication.toSubWorkflowId }),
           routingScope: communication.routingScope,
           deliveryKind: communication.deliveryKind,
           transitionWhen: communication.transitionWhen,
@@ -1122,6 +1442,7 @@ export async function listRuntimeSessions(
           started_at,
           ended_at,
           current_node_id,
+          current_step_id,
           node_execution_counter,
           last_error,
           updated_at
@@ -1149,6 +1470,7 @@ export async function loadRuntimeSessionSummary(
           started_at,
           ended_at,
           current_node_id,
+          current_step_id,
           node_execution_counter,
           last_error,
           updated_at
@@ -1168,26 +1490,32 @@ export async function listRuntimeNodeExecutions(
   return withDatabase(options, (db) => {
     const rows = db
       .query(
-        `SELECT
-          session_id,
-          node_exec_id,
-          node_id,
-          status,
-          artifact_dir,
-          started_at,
-          ended_at,
-          attempt,
-          output_attempt_count,
-          output_validation_errors_json,
-          backend_session_mode,
-          backend_session_id,
-          restarted_from_node_exec_id,
-          input_hash,
-          output_hash,
-          input_json,
-          output_json,
-          created_at
-         FROM node_executions
+        `         SELECT
+           session_id,
+           node_exec_id,
+           node_id,
+           step_id,
+           node_registry_id,
+           mailbox_instance_id,
+           status,
+           artifact_dir,
+           started_at,
+           ended_at,
+           attempt,
+           output_attempt_count,
+           output_validation_errors_json,
+           prompt_variant,
+           timeout_ms,
+           backend_session_mode,
+           backend_session_id,
+           restarted_from_node_exec_id,
+           execution_ordinal,
+           input_hash,
+           output_hash,
+           input_json,
+           output_json,
+           created_at
+          FROM node_executions
          WHERE session_id = ?
          ORDER BY created_at ASC`,
       )
@@ -1195,6 +1523,9 @@ export async function listRuntimeNodeExecutions(
       session_id: string;
       node_exec_id: string;
       node_id: string;
+      step_id: string | null;
+      node_registry_id: string | null;
+      mailbox_instance_id: string | null;
       status: string;
       artifact_dir: string;
       started_at: string;
@@ -1202,9 +1533,12 @@ export async function listRuntimeNodeExecutions(
       attempt: number | null;
       output_attempt_count: number | null;
       output_validation_errors_json: string | null;
+      prompt_variant: string | null;
+      timeout_ms: number | null;
       backend_session_mode: NodeExecutionRecord["backendSessionMode"] | null;
       backend_session_id: NodeExecutionRecord["backendSessionId"] | null;
       restarted_from_node_exec_id: string | null;
+      execution_ordinal: number | null;
       input_hash: string;
       output_hash: string;
       input_json: string;
@@ -1216,6 +1550,9 @@ export async function listRuntimeNodeExecutions(
       sessionId: row.session_id,
       nodeExecId: row.node_exec_id,
       nodeId: row.node_id,
+      stepId: row.step_id,
+      nodeRegistryId: row.node_registry_id,
+      mailboxInstanceId: row.mailbox_instance_id,
       status: row.status,
       artifactDir: row.artifact_dir,
       startedAt: row.started_at,
@@ -1228,9 +1565,12 @@ export async function listRuntimeNodeExecutions(
           : (JSON.parse(
               row.output_validation_errors_json,
             ) as NodeExecutionRecord["outputValidationErrors"]),
+      promptVariant: row.prompt_variant,
+      timeoutMs: row.timeout_ms,
       backendSessionMode: row.backend_session_mode,
       backendSessionId: row.backend_session_id,
       restartedFromNodeExecId: row.restarted_from_node_exec_id,
+      executionOrdinal: row.execution_ordinal,
       inputHash: row.input_hash,
       outputHash: row.output_hash,
       inputJson: row.input_json,
@@ -1303,3 +1643,804 @@ export async function deleteRuntimeSession(
     runDelete(sessionId);
   });
 }
+
+export interface RuntimeEventSupervisedRunSaveInput {
+  readonly supervisedRunId: string;
+  readonly sourceId: string;
+  readonly bindingId: string;
+  readonly correlationKey: string;
+  readonly supervisorWorkflowName: string;
+  readonly supervisorExecutionId?: string;
+  readonly targetWorkflowName: string;
+  readonly activeTargetExecutionId?: string;
+  readonly status: string;
+  readonly restartCount: number;
+  readonly maxRestartsOnFailure: number;
+  readonly autoImproveEnabled: boolean;
+  readonly artifactDir: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RuntimeEventSupervisorCommandSaveInput {
+  readonly commandId: string;
+  readonly supervisedRunId: string;
+  readonly sourceId: string;
+  readonly bindingId: string;
+  readonly correlationKey: string;
+  readonly action: string;
+  readonly receiptId: string;
+  readonly resultJson: string;
+  readonly createdAt: string;
+}
+
+export async function upsertEventSupervisedRunToRuntimeDb(
+  row: RuntimeEventSupervisedRunSaveInput,
+  options: LoadOptions = {},
+): Promise<void> {
+  await withDatabase(options, (db) => {
+    const stmt = db.prepare(`
+      INSERT INTO event_supervised_runs (
+        supervised_run_id, source_id, binding_id, correlation_key,
+        supervisor_workflow_name, supervisor_execution_id, target_workflow_name,
+        active_target_execution_id, status, restart_count, max_restarts_on_failure,
+        auto_improve_enabled, artifact_dir, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(supervised_run_id) DO UPDATE SET
+        supervisor_workflow_name=excluded.supervisor_workflow_name,
+        supervisor_execution_id=excluded.supervisor_execution_id,
+        target_workflow_name=excluded.target_workflow_name,
+        active_target_execution_id=excluded.active_target_execution_id,
+        status=excluded.status,
+        restart_count=excluded.restart_count,
+        max_restarts_on_failure=excluded.max_restarts_on_failure,
+        auto_improve_enabled=excluded.auto_improve_enabled,
+        artifact_dir=excluded.artifact_dir,
+        updated_at=excluded.updated_at
+    `);
+    stmt.run(
+      row.supervisedRunId,
+      row.sourceId,
+      row.bindingId,
+      row.correlationKey,
+      row.supervisorWorkflowName,
+      row.supervisorExecutionId ?? null,
+      row.targetWorkflowName,
+      row.activeTargetExecutionId ?? null,
+      row.status,
+      row.restartCount,
+      row.maxRestartsOnFailure,
+      row.autoImproveEnabled ? 1 : 0,
+      row.artifactDir,
+      row.createdAt,
+      row.updatedAt,
+    );
+  });
+}
+
+export async function findActiveEventSupervisedRunRow(
+  input: {
+    readonly sourceId: string;
+    readonly bindingId: string;
+    readonly correlationKey: string;
+  },
+  options: LoadOptions = {},
+): Promise<RuntimeEventSupervisedRunSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          supervised_run_id, source_id, binding_id, correlation_key,
+          supervisor_workflow_name, supervisor_execution_id, target_workflow_name,
+          active_target_execution_id, status, restart_count, max_restarts_on_failure,
+          auto_improve_enabled, artifact_dir, created_at, updated_at
+         FROM event_supervised_runs
+         WHERE source_id = ? AND binding_id = ? AND correlation_key = ?
+           AND status IN ('starting','running','stopping','restarting')
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(input.sourceId, input.bindingId, input.correlationKey) as {
+      readonly supervised_run_id: string;
+      readonly source_id: string;
+      readonly binding_id: string;
+      readonly correlation_key: string;
+      readonly supervisor_workflow_name: string;
+      readonly supervisor_execution_id: string | null;
+      readonly target_workflow_name: string;
+      readonly active_target_execution_id: string | null;
+      readonly status: string;
+      readonly restart_count: number;
+      readonly max_restarts_on_failure: number;
+      readonly auto_improve_enabled: number;
+      readonly artifact_dir: string;
+      readonly created_at: string;
+      readonly updated_at: string;
+    } | null;
+    if (row === null) {
+      return null;
+    }
+    return {
+      supervisedRunId: row.supervised_run_id,
+      sourceId: row.source_id,
+      bindingId: row.binding_id,
+      correlationKey: row.correlation_key,
+      supervisorWorkflowName: row.supervisor_workflow_name,
+      ...(row.supervisor_execution_id === null
+        ? {}
+        : { supervisorExecutionId: row.supervisor_execution_id }),
+      targetWorkflowName: row.target_workflow_name,
+      ...(row.active_target_execution_id === null
+        ? {}
+        : { activeTargetExecutionId: row.active_target_execution_id }),
+      status: row.status,
+      restartCount: row.restart_count,
+      maxRestartsOnFailure: row.max_restarts_on_failure,
+      autoImproveEnabled: row.auto_improve_enabled !== 0,
+      artifactDir: row.artifact_dir,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+
+export async function findLatestEventSupervisedRunRow(
+  input: {
+    readonly sourceId: string;
+    readonly bindingId: string;
+    readonly correlationKey: string;
+  },
+  options: LoadOptions = {},
+): Promise<RuntimeEventSupervisedRunSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          supervised_run_id, source_id, binding_id, correlation_key,
+          supervisor_workflow_name, supervisor_execution_id, target_workflow_name,
+          active_target_execution_id, status, restart_count, max_restarts_on_failure,
+          auto_improve_enabled, artifact_dir, created_at, updated_at
+         FROM event_supervised_runs
+         WHERE source_id = ? AND binding_id = ? AND correlation_key = ?
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(input.sourceId, input.bindingId, input.correlationKey) as {
+      readonly supervised_run_id: string;
+      readonly source_id: string;
+      readonly binding_id: string;
+      readonly correlation_key: string;
+      readonly supervisor_workflow_name: string;
+      readonly supervisor_execution_id: string | null;
+      readonly target_workflow_name: string;
+      readonly active_target_execution_id: string | null;
+      readonly status: string;
+      readonly restart_count: number;
+      readonly max_restarts_on_failure: number;
+      readonly auto_improve_enabled: number;
+      readonly artifact_dir: string;
+      readonly created_at: string;
+      readonly updated_at: string;
+    } | null;
+    if (row === null) {
+      return null;
+    }
+    return {
+      supervisedRunId: row.supervised_run_id,
+      sourceId: row.source_id,
+      bindingId: row.binding_id,
+      correlationKey: row.correlation_key,
+      supervisorWorkflowName: row.supervisor_workflow_name,
+      ...(row.supervisor_execution_id === null
+        ? {}
+        : { supervisorExecutionId: row.supervisor_execution_id }),
+      targetWorkflowName: row.target_workflow_name,
+      ...(row.active_target_execution_id === null
+        ? {}
+        : { activeTargetExecutionId: row.active_target_execution_id }),
+      status: row.status,
+      restartCount: row.restart_count,
+      maxRestartsOnFailure: row.max_restarts_on_failure,
+      autoImproveEnabled: row.auto_improve_enabled !== 0,
+      artifactDir: row.artifact_dir,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+
+export async function loadEventSupervisedRunRowById(
+  supervisedRunId: string,
+  options: LoadOptions = {},
+): Promise<RuntimeEventSupervisedRunSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          supervised_run_id, source_id, binding_id, correlation_key,
+          supervisor_workflow_name, supervisor_execution_id, target_workflow_name,
+          active_target_execution_id, status, restart_count, max_restarts_on_failure,
+          auto_improve_enabled, artifact_dir, created_at, updated_at
+         FROM event_supervised_runs
+         WHERE supervised_run_id = ?
+         LIMIT 1`,
+      )
+      .get(supervisedRunId) as {
+      readonly supervised_run_id: string;
+      readonly source_id: string;
+      readonly binding_id: string;
+      readonly correlation_key: string;
+      readonly supervisor_workflow_name: string;
+      readonly supervisor_execution_id: string | null;
+      readonly target_workflow_name: string;
+      readonly active_target_execution_id: string | null;
+      readonly status: string;
+      readonly restart_count: number;
+      readonly max_restarts_on_failure: number;
+      readonly auto_improve_enabled: number;
+      readonly artifact_dir: string;
+      readonly created_at: string;
+      readonly updated_at: string;
+    } | null;
+    if (row === null) {
+      return null;
+    }
+    return {
+      supervisedRunId: row.supervised_run_id,
+      sourceId: row.source_id,
+      bindingId: row.binding_id,
+      correlationKey: row.correlation_key,
+      supervisorWorkflowName: row.supervisor_workflow_name,
+      ...(row.supervisor_execution_id === null
+        ? {}
+        : { supervisorExecutionId: row.supervisor_execution_id }),
+      targetWorkflowName: row.target_workflow_name,
+      ...(row.active_target_execution_id === null
+        ? {}
+        : { activeTargetExecutionId: row.active_target_execution_id }),
+      status: row.status,
+      restartCount: row.restart_count,
+      maxRestartsOnFailure: row.max_restarts_on_failure,
+      autoImproveEnabled: row.auto_improve_enabled !== 0,
+      artifactDir: row.artifact_dir,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+
+export async function findEventSupervisorCommandResultJson(
+  commandId: string,
+  options: LoadOptions = {},
+): Promise<string | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        "SELECT result_json FROM event_supervisor_commands WHERE command_id = ? LIMIT 1",
+      )
+      .get(commandId) as { readonly result_json: string } | null;
+    return row === null ? null : row.result_json;
+  });
+}
+
+export async function insertEventSupervisorCommandRow(
+  row: RuntimeEventSupervisorCommandSaveInput,
+  options: LoadOptions = {},
+): Promise<"inserted" | "duplicate"> {
+  return withDatabase(options, (db) => {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO event_supervisor_commands (
+          command_id, supervised_run_id, source_id, binding_id, correlation_key,
+          action, receipt_id, result_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        row.commandId,
+        row.supervisedRunId,
+        row.sourceId,
+        row.bindingId,
+        row.correlationKey,
+        row.action,
+        row.receiptId,
+        row.resultJson,
+        row.createdAt,
+      );
+      return "inserted";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("UNIQUE constraint failed")) {
+        return "duplicate";
+      }
+      throw error;
+    }
+  });
+}
+
+export async function updateEventSupervisorCommandResultJson(
+  commandId: string,
+  resultJson: string,
+  options: LoadOptions = {},
+): Promise<void> {
+  await withDatabase(options, (db) => {
+    db.prepare(
+      "UPDATE event_supervisor_commands SET result_json = ? WHERE command_id = ?",
+    ).run(resultJson, commandId);
+  });
+}
+
+export interface RuntimeSupervisorConversationSaveInput {
+  readonly supervisorConversationId: string;
+  readonly supervisorProfileId: string;
+  readonly profileRevision: string;
+  readonly supervisorWorkflowName: string;
+  readonly supervisorExecutionId?: string;
+  readonly sourceId: string;
+  readonly bindingId?: string;
+  readonly correlationKey: string;
+  readonly conversationRevision: number;
+  readonly selectedManagedRunId?: string;
+  readonly selectedManagedRunIdsByWorkflowKeyJson?: string | null;
+  readonly status: string;
+  readonly artifactDir: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RuntimeSupervisorManagedRunSaveInput {
+  readonly managedRunId: string;
+  readonly supervisorConversationId: string;
+  readonly managedWorkflowKey: string;
+  readonly targetWorkflowName: string;
+  readonly runAlias?: string;
+  readonly activeTargetExecutionId?: string;
+  readonly status: string;
+  readonly restartCount: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface RuntimeSupervisorDispatchDecisionSaveInput {
+  readonly decisionId: string;
+  readonly supervisorConversationId: string;
+  readonly sourceMessageId: string;
+  readonly profileRevision: string;
+  readonly conversationRevision: number;
+  readonly status: string;
+  readonly proposalJson: string;
+  readonly resultSummaryJson?: string;
+  readonly receiptId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+function toRuntimeSupervisorConversationSaveInput(row: {
+  readonly supervisor_conversation_id: string;
+  readonly supervisor_profile_id: string;
+  readonly profile_revision: string;
+  readonly supervisor_workflow_name: string;
+  readonly supervisor_execution_id: string | null;
+  readonly source_id: string;
+  readonly binding_id: string | null;
+  readonly correlation_key: string;
+  readonly conversation_revision: number;
+  readonly selected_managed_run_id: string | null;
+  readonly selected_managed_run_ids_by_workflow_key_json: string | null;
+  readonly status: string;
+  readonly artifact_dir: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}): RuntimeSupervisorConversationSaveInput {
+  return {
+    supervisorConversationId: row.supervisor_conversation_id,
+    supervisorProfileId: row.supervisor_profile_id,
+    profileRevision: row.profile_revision,
+    supervisorWorkflowName: row.supervisor_workflow_name,
+    ...(row.supervisor_execution_id === null
+      ? {}
+      : { supervisorExecutionId: row.supervisor_execution_id }),
+    sourceId: row.source_id,
+    ...(row.binding_id === null ? {} : { bindingId: row.binding_id }),
+    correlationKey: row.correlation_key,
+    conversationRevision: row.conversation_revision,
+    ...(row.selected_managed_run_id === null
+      ? {}
+      : { selectedManagedRunId: row.selected_managed_run_id }),
+    ...(row.selected_managed_run_ids_by_workflow_key_json === null
+      ? {}
+      : {
+          selectedManagedRunIdsByWorkflowKeyJson:
+            row.selected_managed_run_ids_by_workflow_key_json,
+        }),
+    status: row.status,
+    artifactDir: row.artifact_dir,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function toRuntimeSupervisorManagedRunSaveInput(row: {
+  readonly managed_run_id: string;
+  readonly supervisor_conversation_id: string;
+  readonly managed_workflow_key: string;
+  readonly target_workflow_name: string;
+  readonly run_alias: string | null;
+  readonly active_target_execution_id: string | null;
+  readonly status: string;
+  readonly restart_count: number;
+  readonly created_at: string;
+  readonly updated_at: string;
+}): RuntimeSupervisorManagedRunSaveInput {
+  return {
+    managedRunId: row.managed_run_id,
+    supervisorConversationId: row.supervisor_conversation_id,
+    managedWorkflowKey: row.managed_workflow_key,
+    targetWorkflowName: row.target_workflow_name,
+    ...(row.run_alias === null ? {} : { runAlias: row.run_alias }),
+    ...(row.active_target_execution_id === null
+      ? {}
+      : { activeTargetExecutionId: row.active_target_execution_id }),
+    status: row.status,
+    restartCount: row.restart_count,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function insertSupervisorConversationToRuntimeDb(
+  row: RuntimeSupervisorConversationSaveInput,
+  options: LoadOptions = {},
+): Promise<"inserted" | "duplicate"> {
+  return withDatabase(options, (db) => {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO supervisor_conversations (
+          supervisor_conversation_id, supervisor_profile_id, profile_revision,
+          supervisor_workflow_name, supervisor_execution_id, source_id, binding_id,
+          correlation_key, conversation_revision, selected_managed_run_id,
+          selected_managed_run_ids_by_workflow_key_json, status, artifact_dir,
+          created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        row.supervisorConversationId,
+        row.supervisorProfileId,
+        row.profileRevision,
+        row.supervisorWorkflowName,
+        row.supervisorExecutionId ?? null,
+        row.sourceId,
+        row.bindingId ?? null,
+        row.correlationKey,
+        row.conversationRevision,
+        row.selectedManagedRunId ?? null,
+        row.selectedManagedRunIdsByWorkflowKeyJson ?? null,
+        row.status,
+        row.artifactDir,
+        row.createdAt,
+        row.updatedAt,
+      );
+      return "inserted";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("UNIQUE constraint failed")) {
+        return "duplicate";
+      }
+      throw error;
+    }
+  });
+}
+
+export async function loadSupervisorConversationFromRuntimeDb(
+  supervisorConversationId: string,
+  options: LoadOptions = {},
+): Promise<RuntimeSupervisorConversationSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          supervisor_conversation_id, supervisor_profile_id, profile_revision,
+          supervisor_workflow_name, supervisor_execution_id, source_id, binding_id,
+          correlation_key, conversation_revision, selected_managed_run_id,
+          selected_managed_run_ids_by_workflow_key_json, status, artifact_dir,
+          created_at, updated_at
+         FROM supervisor_conversations
+         WHERE supervisor_conversation_id = ?
+         LIMIT 1`,
+      )
+      .get(supervisorConversationId) as Parameters<
+      typeof toRuntimeSupervisorConversationSaveInput
+    >[0] | null;
+    return row === null ? null : toRuntimeSupervisorConversationSaveInput(row);
+  });
+}
+
+export async function findSupervisorConversationByCorrelationInRuntimeDb(
+  input: {
+    readonly sourceId: string;
+    readonly bindingId?: string;
+    readonly correlationKey: string;
+  },
+  options: LoadOptions = {},
+): Promise<RuntimeSupervisorConversationSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          supervisor_conversation_id, supervisor_profile_id, profile_revision,
+          supervisor_workflow_name, supervisor_execution_id, source_id, binding_id,
+          correlation_key, conversation_revision, selected_managed_run_id,
+          selected_managed_run_ids_by_workflow_key_json, status, artifact_dir,
+          created_at, updated_at
+         FROM supervisor_conversations
+         WHERE source_id = ?
+           AND binding_id IS ?
+           AND correlation_key = ?
+           AND status IN ('active', 'idle')
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(input.sourceId, input.bindingId ?? null, input.correlationKey) as
+      | Parameters<typeof toRuntimeSupervisorConversationSaveInput>[0]
+      | null;
+    return row === null ? null : toRuntimeSupervisorConversationSaveInput(row);
+  });
+}
+
+export async function updateSupervisorConversationCasInRuntimeDb(
+  input: {
+    readonly supervisorConversationId: string;
+    readonly expectedConversationRevision: number;
+    readonly next: RuntimeSupervisorConversationSaveInput;
+  },
+  options: LoadOptions = {},
+): Promise<RuntimeSupervisorConversationSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const result = db
+      .prepare(
+        `UPDATE supervisor_conversations SET
+          supervisor_execution_id = ?,
+          selected_managed_run_id = ?,
+          selected_managed_run_ids_by_workflow_key_json = ?,
+          conversation_revision = ?,
+          status = ?,
+          updated_at = ?
+        WHERE supervisor_conversation_id = ?
+          AND conversation_revision = ?`,
+      )
+      .run(
+        input.next.supervisorExecutionId ?? null,
+        input.next.selectedManagedRunId ?? null,
+        input.next.selectedManagedRunIdsByWorkflowKeyJson ?? null,
+        input.next.conversationRevision,
+        input.next.status,
+        input.next.updatedAt,
+        input.supervisorConversationId,
+        input.expectedConversationRevision,
+      );
+    if (result.changes === 0) {
+      return null;
+    }
+    const row = db
+      .query(
+        `SELECT
+          supervisor_conversation_id, supervisor_profile_id, profile_revision,
+          supervisor_workflow_name, supervisor_execution_id, source_id, binding_id,
+          correlation_key, conversation_revision, selected_managed_run_id,
+          selected_managed_run_ids_by_workflow_key_json, status, artifact_dir,
+          created_at, updated_at
+         FROM supervisor_conversations
+         WHERE supervisor_conversation_id = ?
+         LIMIT 1`,
+      )
+      .get(input.supervisorConversationId) as Parameters<
+      typeof toRuntimeSupervisorConversationSaveInput
+    >[0];
+    return toRuntimeSupervisorConversationSaveInput(row);
+  });
+}
+
+export async function upsertSupervisorManagedRunToRuntimeDb(
+  row: RuntimeSupervisorManagedRunSaveInput,
+  options: LoadOptions = {},
+): Promise<void> {
+  await withDatabase(options, (db) => {
+    try {
+      const stmt = db.prepare(`
+      INSERT INTO supervisor_conversation_managed_runs (
+        managed_run_id, supervisor_conversation_id, managed_workflow_key,
+        target_workflow_name, run_alias, active_target_execution_id, status,
+        restart_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(managed_run_id) DO UPDATE SET
+        supervisor_conversation_id=excluded.supervisor_conversation_id,
+        managed_workflow_key=excluded.managed_workflow_key,
+        target_workflow_name=excluded.target_workflow_name,
+        run_alias=excluded.run_alias,
+        active_target_execution_id=excluded.active_target_execution_id,
+        status=excluded.status,
+        restart_count=excluded.restart_count,
+        updated_at=excluded.updated_at
+    `);
+      stmt.run(
+        row.managedRunId,
+        row.supervisorConversationId,
+        row.managedWorkflowKey,
+        row.targetWorkflowName,
+        row.runAlias ?? null,
+        row.activeTargetExecutionId ?? null,
+        row.status,
+        row.restartCount,
+        row.createdAt,
+        row.updatedAt,
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "";
+      if (
+        message.includes("UNIQUE constraint failed") &&
+        (message.includes("idx_supervisor_managed_runs_alias_scope") ||
+          (message.includes("supervisor_conversation_managed_runs") &&
+            message.includes("run_alias")))
+      ) {
+        throw new Error(
+          "duplicate managed run runAlias for the same supervisor conversation and managed workflow key",
+        );
+      }
+      throw error;
+    }
+  });
+}
+
+export async function listSupervisorManagedRunsFromRuntimeDb(
+  supervisorConversationId: string,
+  options: LoadOptions = {},
+): Promise<readonly RuntimeSupervisorManagedRunSaveInput[]> {
+  return withDatabase(options, (db) => {
+    const rows = db
+      .query(
+        `SELECT
+          managed_run_id, supervisor_conversation_id, managed_workflow_key,
+          target_workflow_name, run_alias, active_target_execution_id, status,
+          restart_count, created_at, updated_at
+         FROM supervisor_conversation_managed_runs
+         WHERE supervisor_conversation_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(supervisorConversationId) as Parameters<
+      typeof toRuntimeSupervisorManagedRunSaveInput
+    >[0][];
+    return rows.map(toRuntimeSupervisorManagedRunSaveInput);
+  });
+}
+
+export async function insertSupervisorDispatchDecisionToRuntimeDb(
+  row: RuntimeSupervisorDispatchDecisionSaveInput,
+  options: LoadOptions = {},
+): Promise<"inserted" | "duplicate"> {
+  return withDatabase(options, (db) => {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO supervisor_dispatch_decisions (
+          decision_id, supervisor_conversation_id, source_message_id,
+          profile_revision, conversation_revision, status, proposal_json,
+          result_summary_json, receipt_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        row.decisionId,
+        row.supervisorConversationId,
+        row.sourceMessageId,
+        row.profileRevision,
+        row.conversationRevision,
+        row.status,
+        row.proposalJson,
+        row.resultSummaryJson ?? null,
+        row.receiptId ?? null,
+        row.createdAt,
+        row.updatedAt,
+      );
+      return "inserted";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("UNIQUE constraint failed")) {
+        return "duplicate";
+      }
+      throw error;
+    }
+  });
+}
+
+/**
+ * Transitions a dispatch decision from `proposed` to `applied` or `rejected`.
+ * Used after reserving a row with {@link insertSupervisorDispatchDecisionToRuntimeDb}
+ * so concurrent workers cannot apply side effects before the unique
+ * `(supervisor_conversation_id, source_message_id)` claim exists.
+ */
+export async function updateSupervisorDispatchDecisionFromProposedInRuntimeDb(
+  input: {
+    readonly decisionId: string;
+    readonly nextStatus: "applied" | "rejected";
+    readonly proposalJson: string;
+    readonly resultSummaryJson: string | null;
+    readonly conversationRevision: number;
+    readonly profileRevision: string;
+    readonly updatedAt: string;
+  },
+  options: LoadOptions = {},
+): Promise<boolean> {
+  return withDatabase(options, (db) => {
+    const result = db
+      .prepare(
+        `UPDATE supervisor_dispatch_decisions SET
+          status = ?,
+          proposal_json = ?,
+          result_summary_json = ?,
+          conversation_revision = ?,
+          profile_revision = ?,
+          updated_at = ?
+        WHERE decision_id = ? AND status = 'proposed'`,
+      )
+      .run(
+        input.nextStatus,
+        input.proposalJson,
+        input.resultSummaryJson,
+        input.conversationRevision,
+        input.profileRevision,
+        input.updatedAt,
+        input.decisionId,
+      );
+    return result.changes > 0;
+  });
+}
+
+export async function loadSupervisorDispatchDecisionBySourceMessageFromRuntimeDb(
+  input: {
+    readonly supervisorConversationId: string;
+    readonly sourceMessageId: string;
+  },
+  options: LoadOptions = {},
+): Promise<RuntimeSupervisorDispatchDecisionSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          decision_id, supervisor_conversation_id, source_message_id,
+          profile_revision, conversation_revision, status, proposal_json,
+          result_summary_json, receipt_id, created_at, updated_at
+         FROM supervisor_dispatch_decisions
+         WHERE supervisor_conversation_id = ? AND source_message_id = ?
+         LIMIT 1`,
+      )
+      .get(input.supervisorConversationId, input.sourceMessageId) as {
+      readonly decision_id: string;
+      readonly supervisor_conversation_id: string;
+      readonly source_message_id: string;
+      readonly profile_revision: string;
+      readonly conversation_revision: number;
+      readonly status: string;
+      readonly proposal_json: string;
+      readonly result_summary_json: string | null;
+      readonly receipt_id: string | null;
+      readonly created_at: string;
+      readonly updated_at: string;
+    } | null;
+    if (row === null) {
+      return null;
+    }
+    return {
+      decisionId: row.decision_id,
+      supervisorConversationId: row.supervisor_conversation_id,
+      sourceMessageId: row.source_message_id,
+      profileRevision: row.profile_revision,
+      conversationRevision: row.conversation_revision,
+      status: row.status,
+      proposalJson: row.proposal_json,
+      ...(row.result_summary_json === null
+        ? {}
+        : { resultSummaryJson: row.result_summary_json }),
+      ...(row.receipt_id === null ? {} : { receiptId: row.receipt_id }),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+

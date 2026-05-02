@@ -8,23 +8,35 @@ The current codebase provides:
 - a queue-driven workflow engine with persisted sessions and runtime artifacts
 - agent backends for `codex-agent`, `claude-code-agent`, `official/openai-sdk`, and `official/anthropic-sdk`
 - a local GraphQL control plane served by Bun
-- an OpenTUI-based terminal UI for browsing workflows, runs, and artifacts
+
+## Active Design Direction
+
+The current implementation remains the source of truth for shipped behavior, but the active design work in `design-docs/specs/` now targets:
+
+- step-addressed workflows (`workflow.json.steps[]`) with a reusable node registry in `workflow.json.nodes[]`
+- jump-driven routing via validated `next.stepId` rather than dedicated branch/loop authoring
+- deterministic `code` manager behavior as the default manager mode
+- explicit same-session continuation for different steps that intentionally reuse one node
+- cross-workflow handoffs authored only as `steps[].transitions` with `toWorkflowId` / `resumeStepId`; validation rejects top-level `workflow.workflowCalls`; the runtime derives deterministic dispatch ids (`__cw:<callerStepId>`) and invokes the callee using the same callable entry contract as direct `call-step` execution (typically the callee manager step, or `entryStepId` for worker-only bundles)
+- supervised `--auto-improve` execution (engine outer loop, persisted incidents/remediations, and patch audit; optional phase-2 nested `superviser` workflow with `--nested-superviser`; see `design-docs/specs/architecture.md` and `impl-plans/completed/auto-improve-superviser-workflow-phase-2.md`)
+
+Those design documents describe the intended next schema and runtime direction; they are not a claim that every item is already implemented in `src/`.
 
 ## What Is Implemented Today
 
 The source of truth is the implementation under `src/workflow/`, `src/cli.ts`,
-`src/graphql/`, `src/server/`, and `src/tui/`.
+`src/graphql/`, and `src/server/`.
 
 Current runtime behavior:
 
-- ordered `workflow.json.nodes[]` are the canonical authored flow
-- authored `edges` remain supported, but when omitted the loader synthesizes sequential edges
+- step-addressed bundles (`workflow.json.steps[]` + reusable `workflow.json.nodes[]`) are the authored workflow model for create, validate, inspect, load, and save
 - workflows persist session state, node execution artifacts, communications, and runtime indexes
 - manager nodes run inside the queue-based engine rather than replacing it with a pure external orchestrator
-- authored workflows may use role-based nodes (`manager` / `worker`) and may omit a manager when `entryNodeId` is explicit
-- manager-less workflows execute today, but the normalized runtime still derives an internal effective manager/entry identity for compatibility
-- explicit `workflowCalls` are the active cross-workflow invocation path for role-authored bundles; structural `subWorkflows` and related mailbox routing remain only as legacy compatibility behavior when those fields are still authored
-- `repeat` on a node is supported in the simplified ordered format and synthesizes loop semantics
+- authored workflows may use role-based steps (`manager` / `worker`) and may omit a manager when `entryStepId` is explicit
+- manager-less workflows execute today, and the runtime treats `entryStepId` as the effective manager/entry anchor when `managerStepId` is omitted
+- `call-step` is the supported direct-call surface for local debugging and step-addressed execution control
+- cross-workflow execution is derived from step transitions only: validation **rejects** top-level `workflow.workflowCalls` on every load/save path, and the engine projects deterministic runtime dispatch rows (`id` `__cw:<callerStepId>`) from `steps[].transitions` with `toWorkflowId` / `resumeStepId`
+- node-local `repeat` remains supported and synthesizes loop semantics from the normalized runtime node list
 - `user-action` nodes are supported and pause execution until an external reply resolves the action
 
 Current execution support by node type:
@@ -36,9 +48,12 @@ Current execution support by node type:
 - `addon`: implemented for built-in runtime-provided worker add-ons and
   host-provided third-party addon definitions or resolvers
 
-Additional authored shapes:
+Cross-workflow runtime (not an authored `workflow.json` field):
 
-- `workflowCalls`: executable workflow-to-workflow invocations. The caller's business payload is exposed to the callee as `runtimeVariables.workflowCall.input`, and `resultNodeId` can receive the callee result through a runtime-owned `workflow-call:<id>` communication.
+- Step transitions with `toWorkflowId` / `resumeStepId` drive cross-workflow execution. The runtime exposes the handoff to callees through `runtimeVariables.workflowCall` (stable template key; name is historical): caller payload as `workflowCall.input`, and optional result delivery through a runtime-owned `workflow-call:<dispatch-id>` communication (prefix historical).
+
+Additional node registry features:
+
 - `nodes[].addon`: worker add-on references that resolve to effective node
   payloads while save/edit surfaces preserve the authored add-on reference.
   Current built-ins include `divedra/chat-reply-worker`,
@@ -89,12 +104,6 @@ Start the local GraphQL control plane:
 bun run src/main.ts serve
 ```
 
-Launch the terminal UI:
-
-```bash
-bun run src/main.ts tui
-```
-
 Run `divedra` directly from the flake on Linux or Darwin:
 
 ```bash
@@ -127,14 +136,12 @@ Primary commands implemented in `src/cli.ts`:
 - `session status <session-id>`
 - `session progress <session-id>`
 - `session resume <session-id>`
-- `session rerun <session-id> <node-id>`
+- `session rerun <session-id> <step-id>`
 - `session export <session-id>`
 - `session logs <session-id>`
 - `serve [workflow-name]`
-- `web serve [workflow-name]`
 - `gql <graphql-document>`
-- `tui [workflow-name]`
-- `call-node <workflow-id> <workflow-run-id> <node-id>`
+- `call-step <workflow-id> <workflow-run-id> <step-id>`
 - `hook [--vendor claude-code|codex]`
 - `events validate`
 - `events emit <source-id> --event-file <path>`
@@ -142,9 +149,11 @@ Primary commands implemented in `src/cli.ts`:
 - `events list [--source <id>] [--status <status>] [--limit <n>]`
 - `events replay <receipt-id>`
 
-`workflow create <name>` scaffolds a role-based starter with a `claude-code-agent` manager node and a `codex-agent` worker node. The generated `workflow.json` prefers the authored-minimal surface and omits compatibility/default fields such as empty `subWorkflows`, synthesized `edges`, default `branching`, and node-level `completion: { "type": "none" }` unless they are needed. Pass `--worker-only` to scaffold a manager-less starter whose explicit `entryNodeId` points at `main-worker`.
+`workflow create <name>` scaffolds a role-based starter with a code-manager default manager node and a `codex-agent` worker node. The generated `workflow.json` prefers the authored-minimal surface and omits compatibility/default fields such as empty `subWorkflows`, synthesized `edges`, default `branching`, and node-level `completion: { "type": "none" }` unless they are needed. Pass `--worker-only` to scaffold a manager-less starter whose authored entry step points at `main-worker`.
 
-`serve` and `web serve` start the local Bun HTTP server. The root page serves a read-only Solid workflow viewer with the workflow node graph, execution run list, and selected run logs.
+`call-step` is the direct-call surface during the step-addressed cutover. It accepts targeted continuation controls such as `--prompt-variant <name>`, `--continue-session`, `--timeout-ms <ms>`, and `--resume-step-exec <id>` so a reusable node can be revisited through a specific step with invocation-local overrides.
+
+`serve` starts the local Bun HTTP server. The current server surface exposes GraphQL and health checks only.
 
 `events` commands load external event source configuration from
 `.divedra-events` next to the workflow root, or from `--event-root`. `events
@@ -170,19 +179,23 @@ Useful options:
 - `--output json`
 - `--format text|json|jsonl` for `session logs`
 
-`workflow inspect` surfaces the active cross-workflow count as `workflowCalls`
-and labels any remaining structural compatibility count as
-`legacySubWorkflows`.
+`workflow inspect` surfaces step and node-registry identity fields plus
+`crossWorkflowDispatchIds` and `counts.crossWorkflowDispatches` (derived from
+`steps[].transitions`, not from authored `workflow.workflowCalls`).
 
 - `--dry-run`
 - `--max-steps <n>`
 - `--max-loop-iterations <n>`
 - `--default-timeout-ms <ms>`
+- `--timeout-ms <ms>` for `call-step`
+- `--prompt-variant <name>` for `call-step`
+- `--continue-session` for `call-step`
+- `--resume-step-exec <id>` for `call-step` (prior execution record id)
 
 Remote execution support:
 
 - `workflow run`, `session resume`, and `session rerun` can target a remote control plane with `--endpoint`
-- `call-node`, `session export`, and `session logs` are local-only today
+- `call-step`, `session export`, and `session logs` are local-only today
 - `--mock-scenario` is local-only and cannot be combined with `--endpoint`
 
 ## GraphQL Control Plane
@@ -223,19 +236,6 @@ bun run src/main.ts gql '
 '
 ```
 
-## Terminal UI
-
-`divedra tui` is implemented through the OpenTUI stack under `src/tui/`.
-
-Current UI structure is centered on:
-
-- `src/tui/opentui-screen.ts`
-- `src/tui/opentui-controller.ts`
-- `src/tui/opentui-solid-app.tsx`
-- `src/tui/components/*.tsx`
-
-The TUI can browse workflow definitions, workflow runs, node details, and runtime history. When OpenTUI dependencies are unavailable or the process is not running in a suitable interactive terminal mode, the CLI uses its fallback behavior instead of the full screen app.
-
 ## Workflow Bundle Layout
 
 Workflows live under `<workflow-root>/<workflow-name>/`.
@@ -260,7 +260,7 @@ Typical layout:
 
 Current file roles:
 
-- `workflow.json`: canonical workflow structure, control-flow definition, and node ordering
+- `workflow.json`: canonical workflow structure, control-flow definition, and the step graph (`steps[]` transitions); legacy bundles may still imply control flow via ordered `nodes[]` and synthesized edges
 - `nodes/node-{id}.json`: default location for per-node payloads
 - `workflows/*/nodes/node-{id}.json`: optional grouped-lane or nested authoring layout
 - `prompts/*.md`: prompt bodies referenced by `promptTemplateFile`, `systemPromptTemplateFile`, or `sessionStartPromptTemplateFile`
@@ -269,61 +269,58 @@ Node payload paths are resolved relative to the top-level workflow directory, so
 
 ## `workflow.json`
 
-Current top-level authored fields include:
+Primary top-level authored fields in step-addressed bundles include:
 
 - `workflowId`
 - `description`
 - `defaults`
 - `prompts`
-- `managerNodeId`
-- `entryNodeId`
-- `workflowCalls`
-- `subWorkflows`
-- `subWorkflowConversations`
+- `managerStepId`
+- `entryStepId`
 - `nodes`
-- `edges`
-- `loops`
-- `branching`
+- `steps`
+
+Validation **rejects** top-level compatibility keys (do not author them), including:
+
+- `managerNodeId`, `entryNodeId`
+- `workflowCalls`, `branching`
+- `subWorkflows`, `subWorkflowConversations`
+- on step-addressed bundles, also `edges` and `loops` at the workflow level
+
+Cross-workflow execution is expressed only through **step-addressed** `steps[].transitions` with `toWorkflowId` and `resumeStepId` (runtime projects these as synthetic call rows; they are not authored as `workflowCalls`).
 
 Relevant current behavior:
 
-- if `edges` are omitted, sequential edges are synthesized from node order
-- if exactly one manager-role node exists, `managerNodeId` may be inferred
-- if no manager exists, `entryNodeId` is required and the runtime starts there
-- non-empty authored `subWorkflows` are reserved for legacy structural compatibility and should not be combined with authored role/control nodes
-- non-empty authored `subWorkflowConversations` are also reserved for legacy structural compatibility and should not be combined with authored role/control nodes
-- authored `subWorkflowConversations` remain legacy structural compatibility metadata and are not part of the active role-authored `workflowCalls` path
-- structural boundary `kind` values `subworkflow-manager`, `input`, and `output` are reserved for legacy compatibility and should not be combined with authored role/control nodes
+- if `steps[]` is authored, `nodes[]` is a reusable registry rather than execution order
+- if exactly one manager-role step exists, `managerStepId` may be inferred (step-addressed bundles)
+- if no manager exists, `entryStepId` remains required and also acts as the effective manager/entry runtime id
+- structural sub-workflow authoring (`subWorkflows` / `subWorkflowConversations`) is **removed**; use step graphs and step transitions for cross-workflow calls
 - inline node payload authoring is supported through `workflow.nodes[].node` when `nodeFile` is omitted
 - `workflowId` is the runtime namespace key for artifacts and session storage, so it must be filesystem-safe
+
+Step-addressed authored bundles use `entryStepId`, optional `managerStepId`, reusable `workflow.json.nodes[]`, and executable `workflow.json.steps[]`.
 
 Important node-level fields in `workflow.json.nodes[]`:
 
 - `id`
 - `nodeFile`
-- `kind`
+- `addon`
+
+Important step-level fields in `workflow.json.steps[]`:
+
+- `id`
+- `nodeId`
 - `role`
 - `control`
-- `completion`
-- `execution`
-- `group`
-- `repeat`
-
-Current `kind` values:
-
-- `task`
-- `branch-judge`
-- `loop-judge`
-- `root-manager`
-- `subworkflow-manager`
-- `input`
-- `output`
+- `transitions`
+- `promptVariant`
+- `timeoutMs`
+- `sessionPolicy`
 
 Role-based authoring note:
 
-- `role` is the authored direction of travel: `manager` or `worker`
-- role/control-authored workflows should omit structural boundary `kind` values
-- `kind` still appears in normalized runtime structures while the engine retains structural sub-workflow compatibility paths
+- `role` is the authored direction of travel at the step layer: `manager` or `worker`
+- reusable node registry entries remain payload references; execution semantics live on steps
 
 ## Node Payloads
 
@@ -368,13 +365,8 @@ The workflow engine in `src/workflow/engine.ts` currently does the following:
 6. Executes the node with timeout handling and optional backend session reuse.
 7. Validates output contracts before runtime-owned publication.
 8. Persists node execution artifacts and indexes runtime data in SQLite on a best-effort basis.
-9. Publishes downstream communications, executes authored `workflowCalls` from successful caller nodes, and rebuilds the queue.
+9. Publishes downstream communications, advances step-addressed execution targets, runs cross-workflow dispatches derived from step transitions when due, and rebuilds the queue.
 10. Marks the workflow completed when the queue drains, or paused/failed/cancelled as needed.
-
-Legacy structural conversation support:
-
-- `subWorkflowConversations[]` can relay outputs between participant sub-workflow managers for explicitly legacy structural bundles
-- turn emission is gated by newer successful outputs and conversation stop conditions
 
 ## Runtime Storage
 
@@ -420,29 +412,26 @@ The current example bundles live under `examples/`. See `examples/README.md` for
 
 Available examples:
 
+- `chat-reply-webhook`
 - `worker-only-single-step`
 - `workflow-call-simple`
 - `workflow-call-review-target`
 - `claude-divedra-codex-coding`
 - `claude-divedra-claude-worker`
 - `same-node-session-echo`
-- `subworkflow-chained-simple` (historical name; now an ordered grouped-lane example without structural `subWorkflows`)
+- `subworkflow-chained-simple` (historical name; now a step-addressed grouped-lane example without structural `subWorkflows`)
 - `node-combinations-showcase`
 - `first-four-arithmetic-pipeline`
-- `codex-codex-euthanasia-debate` (legacy structural compatibility)
+- `codex-codex-euthanasia-debate` (step-addressed multi-round debate demo)
 
 Recommended starting point:
 
-- `claude-divedra-codex-coding` shows the preferred mixed-backend split with manager nodes on `claude-code-agent` and implementation work on `codex-agent`
+- `claude-divedra-codex-coding` shows the preferred mixed-backend split in the step-addressed authored shape, with manager nodes on `claude-code-agent` and implementation work on `codex-agent`
 
 Workflow-call reference:
 
-- `workflow-call-simple` shows the current explicit `workflowCalls` path with a managed parent workflow calling a worker-only sibling workflow and resuming from the returned result
-- `subworkflow-chained-simple` is kept as a historical-name grouped-lane reference; it does not author structural `subWorkflows`
-
-Legacy compatibility reference:
-
-- `codex-codex-euthanasia-debate` remains as an explicitly legacy structural example until `subWorkflowConversations` is migrated away from structural sub-workflow boundaries
+- `workflow-call-simple` shows a step-addressed managed parent that invokes a worker-only sibling workflow through a cross-workflow step transition (`toWorkflowId` + `resumeStepId`); the engine uses the same cross-workflow dispatch path (deterministic id `__cw:<callerStepId>`) without merging authored call records into the normalized bundle
+- `subworkflow-chained-simple` is kept as a historical-name grouped-lane reference; it now uses explicit step-addressed transitions and does not author structural `subWorkflows`
 
 Examples that exercise the full node surface:
 
@@ -466,7 +455,7 @@ Primary package-root exports:
 - `getSession()`
 - `listSessions()`
 - `getRuntimeSessionView()`
-- `callWorkflowNode()`
+- `callWorkflowStep()`
 - `createWorkflowExecutionClient()`
 - `createNodeAddonPayloadResolver()`
 - `createNodeAddonRegistry()`
@@ -530,8 +519,6 @@ bun run build
 bun run test
 bun run typecheck
 bun run format:check
-task tui
-task tui-examples
 ```
 
 Environment notes:

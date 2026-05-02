@@ -1,5 +1,5 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -10,46 +10,66 @@ import {
   buildAdapterDivedraHookContext,
   ScenarioNodeAdapter,
   type AdapterAmbientManagerContext,
-  type AdapterExecutionInput,
   type AdapterExecutionOutput,
   type AdapterProcessLog,
   type MockNodeScenario,
   type NodeAdapter,
 } from "./adapter";
 import {
+  DEFAULT_SUPERVISER_WORKFLOW_ID,
+  normalizeAutoImprovePolicy,
+  resolveSuperviserWorkflowId,
+} from "./auto-improve-policy";
+import {
   executeAdapterWithTimeout,
   executeNativeNodeWithTimeout,
 } from "./adapter-execution";
 import { DispatchingNodeAdapter } from "./adapters/dispatch";
-import { resolveNodeExecutionBackend } from "./adapters/dispatch";
 import { assembleNodeInput } from "./input-assembly";
 import { normalizeExternalMailboxBusinessPayload } from "./json-boundary";
+import { publishWorkflowBusinessFinalExternalOutput } from "../events/external-output";
 import {
   validateJsonValueAgainstSchema,
   type JsonSchemaValidationError,
 } from "./json-schema";
-import { loadWorkflowByIdFromDisk, loadWorkflowFromDisk } from "./load";
+import {
+  loadWorkflowByIdFromDisk,
+  loadWorkflowFromDisk,
+  mergeLoadOptionsForSessionMutableBundle,
+  type LoadedWorkflow,
+} from "./load";
+import {
+  createExecutionCopyMutableWorkspace,
+  recordWorkflowPatchRevision,
+} from "./mutable-workspace";
+import { resolveEffectiveRoots } from "./paths";
 import {
   buildNodeExecutionMailbox,
   writeNodeExecutionMailboxArtifacts,
 } from "./node-execution-mailbox";
+import {
+  effectiveCrossWorkflowDispatches,
+  crossWorkflowDispatchesForExecutionMatch,
+  type CrossWorkflowDispatch,
+} from "./cross-workflow-from-steps";
 import { composeExecutionPrompts } from "./prompt-composition";
 import {
   parseManagerControlPayload,
   type ParsedManagerControl,
 } from "./manager-control";
-import {
-  describeWorkflowNodeKind,
-  isManagerNodeRef,
-  isSubworkflowManagerNodeRef,
-} from "./node-role";
+import { describeWorkflowNodeKind, isManagerNodeRef } from "./node-role";
 import { err, ok, type Result } from "./result";
 import {
   saveCommunicationEventToRuntimeDb,
   saveNodeExecutionToRuntimeDb,
   saveProcessLogsToRuntimeDb,
 } from "./runtime-db";
-import { executeConversationRound } from "./conversation";
+import {
+  isWorkflowOutputKindNode,
+  resolveBackendSessionSelection,
+  resolveRequiredStepExecutionAddress,
+  toStepIdentityFields,
+} from "./runtime-addressing";
 import { inspectWorkflowRuntimeReadiness } from "./runtime-readiness";
 import {
   buildAmbientManagerControlPlaneEnvironment,
@@ -58,19 +78,22 @@ import {
   mintManagerAuthToken,
 } from "./manager-session-store";
 import {
+  buildMergedContinuationTimeline,
+  loadContinuationRelatedSnapshots,
+  resolveContinuationAnchorPlacement,
+} from "./history-continuation";
+import {
   evaluateBranch,
   evaluateCompletion,
   resolveLoopTransition,
 } from "./semantics";
 import {
-  planRootManagerSubWorkflowStarts,
-  planSubWorkflowChildInputs,
-} from "./sub-workflow";
-import {
+  buildOutputRefForExecution,
   createSessionId,
   createSessionState,
+  persistNodeBackendSession,
+  resolveRequestedBackendSession,
   type CommunicationRecord,
-  type NodeBackendSessionRecord,
   type NodeExecutionRecord,
   type OutputRef,
   type PendingOptionalNodeDecision,
@@ -82,21 +105,42 @@ import {
   type SessionStoreOptions,
 } from "./session-store";
 import {
+  buildSupervisionStallWatch,
+  getEngineSupervisionPatcherId,
+  isSupervisionStallLastError,
+  planSupervisionRemediation,
+} from "./superviser";
+import {
+  buildSuperviserRuntimeControl,
+  workflowRunBaseForSuperviserControl,
+} from "./superviser-runtime-control-impl";
+import type { SuperviserRuntimeControl } from "./superviser-control";
+import {
   resolveNodeExecutionWorkingDirectory,
   resolveWorkflowExecutionWorkingDirectory,
 } from "./working-directory";
 import type {
   AgentNodePayload,
+  AutoImprovePolicy,
   ChatReplyDispatcher,
   JsonObject,
   LoadOptions,
   LoopRule,
   NodePayload,
-  SubWorkflowRef,
+  SupervisionIncident,
+  SupervisionRemediationRecord,
+  SupervisionRunState,
   WorkflowEdge,
   WorkflowJson,
+  WorkflowTimeoutPolicy,
 } from "./types";
-import { asAgentNodePayload } from "./types";
+import {
+  asAgentNodePayload,
+  getStructuralEdges,
+  getStructuralLoops,
+  getNormalizedNodePayload,
+  resolveWorkflowManagerStepId,
+} from "./types";
 
 export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly sessionId?: string;
@@ -107,10 +151,43 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly defaultTimeoutMs?: number;
   readonly dryRun?: boolean;
   readonly eventReplyDispatcher?: ChatReplyDispatcher;
+  /**
+   * Phase-2 nested superviser: passed to native add-on execution so
+   * `divedra/*` superviser control nodes can operate on the paired target session.
+   */
+  readonly superviserControl?: SuperviserRuntimeControl;
   readonly mockScenario?: MockNodeScenario;
+  /** When set on a new run (not resume), seeds {@link WorkflowSessionState.supervision} and, unless {@link supervisionLoopExecution} is set, runs the supervision retry loop. */
+  readonly autoImprove?: AutoImprovePolicy;
+  /**
+   * When true, execute the workflow directly without wrapping in the auto-improve outer retry loop
+   * (the loop uses this for inner attempts and for resume/rerun entry points).
+   * @internal
+   */
+  readonly supervisionLoopExecution?: boolean;
+  /**
+   * Phase-2: after seeding a supervised target session, run `superviserWorkflowId` as a nested
+   * step-addressed workflow with {@link superviserControl} instead of the engine-only
+   * `runAutoImproveLoop`. Ignored for resume and rerun entry points.
+   */
+  readonly nestedSuperviserDriver?: boolean;
   readonly resumeSessionId?: string;
   readonly rerunFromSessionId?: string;
-  readonly rerunFromNodeId?: string;
+  /**
+   * Rerun entry step id.
+   * Required with {@link rerunFromSessionId} for rerun entry.
+   */
+  readonly rerunFromStepId?: string;
+  /**
+   * History-linked continuation: source workflow execution id (immediate parent timeline).
+   * Requires {@link continueAfterStepRunId} and {@link continueStartStepId}.
+   * Mutually exclusive with {@link rerunFromSessionId} and {@link resumeSessionId}.
+   */
+  readonly continueFromWorkflowExecutionId?: string;
+  /** Last imported step run (`nodeExecId`) inclusive boundary on the source timeline. */
+  readonly continueAfterStepRunId?: string;
+  /** Entry step id for the new workflow execution (`queue` seed). */
+  readonly continueStartStepId?: string;
   readonly restartOnStuck?: boolean;
   readonly maxStuckRestarts?: number;
   readonly stuckRestartBackoffMs?: number;
@@ -124,6 +201,23 @@ export interface WorkflowRunResult {
 export interface WorkflowRunFailure {
   readonly exitCode: number;
   readonly message: string;
+  /**
+   * Populated when a persisted session exists at the point of failure (e.g. terminal failure
+   * after save) so the auto-improve supervision loop can load state for remediation.
+   */
+  readonly sessionId?: string;
+}
+
+function workflowRunFailure(
+  code: number,
+  message: string,
+  session?: Pick<WorkflowSessionState, "sessionId">,
+): WorkflowRunFailure {
+  return {
+    exitCode: code,
+    message,
+    ...(session === undefined ? {} : { sessionId: session.sessionId }),
+  };
 }
 
 export interface CancellationProbe {
@@ -157,8 +251,6 @@ function addMillisecondsToIso(timestamp: string, milliseconds: number): string {
 
 interface UpstreamOutputRef extends OutputRef {
   readonly fromNodeId: string;
-  readonly fromSubWorkflowId?: string;
-  readonly toSubWorkflowId?: string;
   readonly transitionWhen: string;
   readonly status:
     | NodeExecutionRecord["status"]
@@ -168,11 +260,6 @@ interface UpstreamOutputRef extends OutputRef {
 
 interface UpstreamInput extends UpstreamOutputRef {
   readonly output: Readonly<Record<string, unknown>>;
-  readonly outputRaw: string;
-}
-
-interface ForwardedManagerPayload {
-  readonly payloadRef: OutputRef;
   readonly outputRaw: string;
 }
 
@@ -197,18 +284,63 @@ function initialDeliveryAttemptId(): string {
   return "attempt-000001";
 }
 
-function resolveTimeoutMs(
-  node: NodePayload,
-  workflowTimeoutMs: number,
-  overrideTimeoutMs: number | undefined,
-): number {
-  if (node.timeoutMs !== undefined) {
-    return node.timeoutMs;
+function resolveTimeoutMs(input: {
+  readonly node: NodePayload;
+  readonly stepTimeoutMs?: number;
+  readonly workflowTimeoutMs: number;
+}): {
+  readonly timeoutMs: number;
+  readonly source: "step" | "node" | "workflow-default";
+} {
+  if (input.stepTimeoutMs !== undefined) {
+    return {
+      timeoutMs: input.stepTimeoutMs,
+      source: "step",
+    };
   }
-  if (overrideTimeoutMs !== undefined && overrideTimeoutMs > 0) {
-    return overrideTimeoutMs;
+  if (input.node.timeoutMs !== undefined) {
+    return {
+      timeoutMs: input.node.timeoutMs,
+      source: "node",
+    };
   }
-  return workflowTimeoutMs;
+  return {
+    timeoutMs: input.workflowTimeoutMs,
+    source: "workflow-default",
+  };
+}
+
+function resolveTimeoutRestartBudget(
+  timeoutPolicy: WorkflowTimeoutPolicy | undefined,
+  options: WorkflowRunOptions,
+  restartAttempt: number,
+): { readonly allowRestart: boolean; readonly maxRestarts: number } {
+  if (options.restartOnStuck === false) {
+    return { allowRestart: false, maxRestarts: 0 };
+  }
+  const optRestart = options.restartOnStuck ?? true;
+  const optMax = options.maxStuckRestarts ?? 2;
+  if (timeoutPolicy === undefined) {
+    return { allowRestart: optRestart, maxRestarts: optMax };
+  }
+  switch (timeoutPolicy.onTimeout) {
+    case "fail":
+      return { allowRestart: false, maxRestarts: 0 };
+    case "retry-same-step":
+      return {
+        allowRestart: true,
+        maxRestarts: timeoutPolicy.maxRetries ?? optMax,
+      };
+    case "jump-to-step": {
+      const retriesBeforeJump = timeoutPolicy.maxRetries ?? 0;
+      return {
+        allowRestart: restartAttempt < retriesBeforeJump,
+        maxRestarts: retriesBeforeJump,
+      };
+    }
+    default:
+      return { allowRestart: optRestart, maxRestarts: optMax };
+  }
 }
 
 function evaluateEdge(
@@ -256,10 +388,9 @@ async function failTerminalSession(
     lastError: message,
   };
   const persisted = await persistTerminalSessionState(failed, options, message);
-  return err({
-    exitCode: 1,
-    message: persisted.ok ? message : persisted.error,
-  });
+  return err(
+    workflowRunFailure(1, persisted.ok ? message : persisted.error, session),
+  );
 }
 
 function stableJson(payload: unknown): string {
@@ -491,63 +622,6 @@ async function readOutputPayloadArtifact(
   }
 }
 
-function findOwningSubWorkflowByRuntimeNodeId(
-  workflow: WorkflowJson,
-  nodeId: string,
-): SubWorkflowRef | undefined {
-  return workflow.subWorkflows.find((entry) => {
-    if (entry.nodeIds?.includes(nodeId) ?? false) {
-      return true;
-    }
-    return (
-      entry.managerNodeId === nodeId ||
-      entry.inputNodeId === nodeId ||
-      entry.outputNodeId === nodeId
-    );
-  });
-}
-
-function outputRefForExecution(
-  workflow: WorkflowJson,
-  session: WorkflowSessionState,
-  execution: NodeExecutionRecord,
-  nodeId: string,
-): OutputRef {
-  const owningSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
-    workflow,
-    nodeId,
-  );
-  return {
-    kind: "node-output",
-    workflowExecutionId: session.sessionId,
-    workflowId: session.workflowId,
-    ...(owningSubWorkflow === undefined
-      ? {}
-      : { subWorkflowId: owningSubWorkflow.id }),
-    outputNodeId: nodeId,
-    nodeExecId: execution.nodeExecId,
-    artifactDir: execution.artifactDir,
-  };
-}
-
-function findOwningSubWorkflowByInputNodeId(
-  workflow: WorkflowJson,
-  nodeId: string,
-): SubWorkflowRef | undefined {
-  return workflow.subWorkflows.find((entry) => entry.inputNodeId === nodeId);
-}
-
-function findOwningSubWorkflowByNodeId(
-  workflow: WorkflowJson,
-  nodeId: string,
-): SubWorkflowRef | undefined {
-  return findOwningSubWorkflowByRuntimeNodeId(workflow, nodeId);
-}
-
-function isRootScopeNode(workflow: WorkflowJson, nodeId: string): boolean {
-  return findOwningSubWorkflowByNodeId(workflow, nodeId) === undefined;
-}
-
 function findNodeRef(workflow: WorkflowJson, nodeId: string) {
   return workflow.nodes.find((entry) => entry.id === nodeId);
 }
@@ -558,12 +632,9 @@ function isOptionalNode(workflow: WorkflowJson, nodeId: string): boolean {
 
 function findOwningManagerNodeId(
   workflow: WorkflowJson,
-  nodeId: string,
+  _nodeId: string,
 ): string {
-  return (
-    findOwningSubWorkflowByRuntimeNodeId(workflow, nodeId)?.managerNodeId ??
-    workflow.managerNodeId
-  );
+  return resolveWorkflowManagerStepId(workflow);
 }
 
 function dedupeNodeIds(nodeIds: readonly string[]): readonly string[] {
@@ -617,7 +688,7 @@ function applyOptionalManagerDecisions(input: {
   readonly managerControl: ParsedManagerControl | null;
   readonly session: WorkflowSessionState;
   readonly workflow: WorkflowJson;
-  readonly managerNodeId: string;
+  readonly managerStepId: string;
   readonly managerNodeExecId: string;
   readonly decidedAt: string;
 }): Result<
@@ -627,6 +698,8 @@ function applyOptionalManagerDecisions(input: {
   },
   string
 > {
+  const optionalTargetNoun =
+    input.workflow.steps !== undefined ? "step" : "node";
   const managerControl = input.managerControl;
   if (managerControl === null) {
     return ok({
@@ -642,22 +715,22 @@ function applyOptionalManagerDecisions(input: {
   >();
   for (const action of managerControl.actions) {
     if (
-      action.type !== "execute-optional-node" &&
-      action.type !== "skip-optional-node"
+      action.type !== "execute-optional-step" &&
+      action.type !== "skip-optional-step"
     ) {
       continue;
     }
     const nextStatus =
-      action.type === "execute-optional-node" ? "execute" : "skip";
-    const existingAction = actionsByNodeId.get(action.nodeId);
+      action.type === "execute-optional-step" ? "execute" : "skip";
+    const existingAction = actionsByNodeId.get(action.stepId);
     if (existingAction !== undefined && existingAction.status !== nextStatus) {
       return err(
-        `invalid manager control at '${input.managerNodeId}': optional node '${action.nodeId}' cannot be both executed and skipped in one manager turn`,
+        `invalid manager control at '${input.managerStepId}': optional ${optionalTargetNoun} '${action.stepId}' cannot be both executed and skipped in one manager turn`,
       );
     }
-    actionsByNodeId.set(action.nodeId, {
+    actionsByNodeId.set(action.stepId, {
       status: nextStatus,
-      ...(action.type === "skip-optional-node" && action.reason !== undefined
+      ...(action.type === "skip-optional-step" && action.reason !== undefined
         ? { reason: action.reason }
         : {}),
     });
@@ -672,17 +745,17 @@ function applyOptionalManagerDecisions(input: {
     );
     if (currentDecision === undefined || currentDecision.status !== "pending") {
       return err(
-        `invalid manager control at '${input.managerNodeId}': optional node '${nodeId}' is not currently pending`,
+        `invalid manager control at '${input.managerStepId}': optional ${optionalTargetNoun} '${nodeId}' is not currently pending`,
       );
     }
-    if (currentDecision.owningManagerNodeId !== input.managerNodeId) {
+    if (currentDecision.owningManagerStepId !== input.managerStepId) {
       return err(
-        `invalid manager control at '${input.managerNodeId}': optional node '${nodeId}' is owned by '${currentDecision.owningManagerNodeId}'`,
+        `invalid manager control at '${input.managerStepId}': optional ${optionalTargetNoun} '${nodeId}' is owned by '${currentDecision.owningManagerStepId}'`,
       );
     }
     if (!isOptionalNode(input.workflow, nodeId)) {
       return err(
-        `invalid manager control at '${input.managerNodeId}': node '${nodeId}' is not optional`,
+        `invalid manager control at '${input.managerStepId}': ${optionalTargetNoun} '${nodeId}' is not optional`,
       );
     }
     pendingOptionalNodeDecisions = upsertPendingOptionalNodeDecision(
@@ -706,108 +779,6 @@ function applyOptionalManagerDecisions(input: {
   });
 }
 
-function isRootScopeOutputNode(
-  workflow: WorkflowJson,
-  nodeId: string,
-): boolean {
-  const node = workflow.nodes.find((entry) => entry.id === nodeId);
-  return node?.kind === "output" && isRootScopeNode(workflow, nodeId);
-}
-
-function mailboxDeliveryManagerNodeId(
-  workflow: WorkflowJson,
-  toNodeId: string,
-): string {
-  if (toNodeId === workflow.managerNodeId) {
-    return workflow.managerNodeId;
-  }
-
-  if (workflow.subWorkflows.some((entry) => entry.managerNodeId === toNodeId)) {
-    return workflow.managerNodeId;
-  }
-
-  return (
-    findOwningSubWorkflowByRuntimeNodeId(workflow, toNodeId)?.managerNodeId ??
-    workflow.managerNodeId
-  );
-}
-
-function resolveCommunicationBoundary(input: {
-  readonly workflow: WorkflowJson;
-  readonly fromNodeId: string;
-  readonly toNodeId: string;
-}): {
-  readonly routingScope: CommunicationRecord["routingScope"];
-  readonly fromSubWorkflowId?: string;
-  readonly toSubWorkflowId?: string;
-} {
-  const fromSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
-    input.workflow,
-    input.fromNodeId,
-  );
-  const toSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
-    input.workflow,
-    input.toNodeId,
-  );
-  const recipientManagerSubWorkflow = input.workflow.subWorkflows.find(
-    (entry) => entry.managerNodeId === input.toNodeId,
-  );
-
-  if (recipientManagerSubWorkflow !== undefined) {
-    if (fromSubWorkflow === undefined) {
-      return {
-        routingScope: "parent-to-sub-workflow",
-        toSubWorkflowId: recipientManagerSubWorkflow.id,
-      };
-    }
-    if (fromSubWorkflow.id === recipientManagerSubWorkflow.id) {
-      return {
-        routingScope: "intra-sub-workflow",
-        fromSubWorkflowId: fromSubWorkflow.id,
-        toSubWorkflowId: recipientManagerSubWorkflow.id,
-      };
-    }
-    return {
-      routingScope: "cross-sub-workflow",
-      fromSubWorkflowId: fromSubWorkflow.id,
-      toSubWorkflowId: recipientManagerSubWorkflow.id,
-    };
-  }
-
-  if (fromSubWorkflow !== undefined && toSubWorkflow !== undefined) {
-    if (fromSubWorkflow.id === toSubWorkflow.id) {
-      return {
-        routingScope: "intra-sub-workflow",
-        fromSubWorkflowId: fromSubWorkflow.id,
-        toSubWorkflowId: toSubWorkflow.id,
-      };
-    }
-    return {
-      routingScope: "cross-sub-workflow",
-      fromSubWorkflowId: fromSubWorkflow.id,
-      toSubWorkflowId: toSubWorkflow.id,
-    };
-  }
-
-  if (fromSubWorkflow !== undefined) {
-    return {
-      routingScope: "cross-sub-workflow",
-      fromSubWorkflowId: fromSubWorkflow.id,
-    };
-  }
-
-  if (toSubWorkflow !== undefined) {
-    return {
-      routingScope: "intra-sub-workflow",
-      toSubWorkflowId: toSubWorkflow.id,
-    };
-  }
-
-  return {
-    routingScope: "intra-sub-workflow",
-  };
-}
-
 function findLatestPublishedWorkflowResult(
   workflow: WorkflowJson,
   session: WorkflowSessionState,
@@ -817,11 +788,24 @@ function findLatestPublishedWorkflowResult(
     .find(
       (entry) =>
         entry.status === "succeeded" &&
-        isRootScopeOutputNode(workflow, entry.nodeId),
+        isWorkflowOutputKindNode(workflow, entry.nodeId),
     );
 }
 
-function findLatestWorkflowCallResultExecution(
+/**
+ * Prefix for `transitionWhen` and queued transition `when` strings from
+ * step-derived cross-workflow dispatches. Value is historical; kept so existing
+ * persisted sessions and logs that already store this prefix keep matching.
+ * Dispatch ids are `__cw:<stepId>`, not authored `workflowCalls`.
+ */
+const CROSS_WORKFLOW_DISPATCH_TRANSITION_WHEN_PREFIX = "workflow-call:";
+
+/**
+ * Picks the callee session execution used to build the cross-workflow return payload:
+ * latest succeeded workflow output-kind node when present; otherwise, for manager-less
+ * callee bundles only, the latest succeeded execution. Flat cross-workflow handoff, not a structural child workflow.
+ */
+function findLatestCrossWorkflowCalleeResultExecution(
   workflow: WorkflowJson,
   session: WorkflowSessionState,
 ): NodeExecutionRecord | undefined {
@@ -839,16 +823,25 @@ function findLatestWorkflowCallResultExecution(
     .find((entry) => entry.status === "succeeded");
 }
 
-function buildWorkflowCallRuntimeVariables(input: {
-  readonly parentRuntimeVariables: Readonly<Record<string, unknown>>;
-  readonly parentWorkflowId: string;
-  readonly parentWorkflowExecutionId: string;
-  readonly callerNodeId: string;
-  readonly workflowCallId: string;
+/**
+ * Merges caller state into `runtimeVariables.workflowCall` for a cross-workflow callee run.
+ * The top-level key remains `workflowCall` (stable runtime-variables name; not authored
+ * `workflow.workflowCalls`, which validation rejects). `workflowCall.id` is the step-derived
+ * dispatch id (`__cw:<callerStepId>`). Serialized `parentWorkflowId` /
+ * `parentWorkflowExecutionId` keep historical field names; they refer to the invoking (caller)
+ * workflow, not a structural sub-workflow relationship.
+ */
+function buildCrossWorkflowCalleeRuntimeVariables(input: {
+  readonly callerRuntimeVariables: Readonly<Record<string, unknown>>;
+  readonly callerWorkflowId: string;
+  readonly callerWorkflowExecutionId: string;
+  readonly callerNodeRegistryId: string;
+  readonly callerStepId: string;
+  readonly crossWorkflowDispatchId: string;
   readonly payload: Readonly<Record<string, unknown>>;
 }): Readonly<Record<string, unknown>> {
-  const filteredParentRuntimeVariables = Object.fromEntries(
-    Object.entries(input.parentRuntimeVariables).filter(
+  const filteredCallerRuntimeVariables = Object.fromEntries(
+    Object.entries(input.callerRuntimeVariables).filter(
       ([key]) =>
         key !== "humanInput" &&
         key !== "workflowOutput" &&
@@ -857,18 +850,24 @@ function buildWorkflowCallRuntimeVariables(input: {
   );
 
   return {
-    ...filteredParentRuntimeVariables,
+    ...filteredCallerRuntimeVariables,
     workflowCall: {
-      id: input.workflowCallId,
-      parentWorkflowId: input.parentWorkflowId,
-      parentWorkflowExecutionId: input.parentWorkflowExecutionId,
-      callerNodeId: input.callerNodeId,
+      id: input.crossWorkflowDispatchId,
+      parentWorkflowId: input.callerWorkflowId,
+      parentWorkflowExecutionId: input.callerWorkflowExecutionId,
+      callerNodeId: input.callerNodeRegistryId,
+      callerStepId: input.callerStepId,
       input: input.payload,
     },
   };
 }
 
-function buildChildWorkflowCallOptions(
+/**
+ * Run options for invoking another workflow (callee) from a step transition.
+ * This is a sibling call into another bundle, not a structural child workflow; the name avoids implying a sub-workflow tree.
+ * Same filesystem/session roots as the caller except `runtimeVariables`.
+ */
+function buildCrossWorkflowCalleeRunOptions(
   options: WorkflowRunOptions,
   runtimeVariables: Readonly<Record<string, unknown>>,
 ): WorkflowRunOptions {
@@ -876,6 +875,19 @@ function buildChildWorkflowCallOptions(
     ...(options.workflowRoot === undefined
       ? {}
       : { workflowRoot: options.workflowRoot }),
+    ...(options.workflowScope === undefined
+      ? {}
+      : { workflowScope: options.workflowScope }),
+    ...(options.userRoot === undefined ? {} : { userRoot: options.userRoot }),
+    ...(options.projectRoot === undefined
+      ? {}
+      : { projectRoot: options.projectRoot }),
+    ...(options.addonRoot === undefined
+      ? {}
+      : { addonRoot: options.addonRoot }),
+    ...(options.resolvedWorkflowSource === undefined
+      ? {}
+      : { resolvedWorkflowSource: options.resolvedWorkflowSource }),
     ...(options.artifactRoot === undefined
       ? {}
       : { artifactRoot: options.artifactRoot }),
@@ -887,6 +899,15 @@ function buildChildWorkflowCallOptions(
       : { sessionStoreRoot: options.sessionStoreRoot }),
     ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.nodeAddons === undefined
+      ? {}
+      : { nodeAddons: options.nodeAddons }),
+    ...(options.asyncNodeAddonResolvers === undefined
+      ? {}
+      : { asyncNodeAddonResolvers: options.asyncNodeAddonResolvers }),
+    ...(options.nodeAddonResolvers === undefined
+      ? {}
+      : { nodeAddonResolvers: options.nodeAddonResolvers }),
     ...(options.workflowWorkingDirectory === undefined
       ? {}
       : { workflowWorkingDirectory: options.workflowWorkingDirectory }),
@@ -914,35 +935,41 @@ function buildChildWorkflowCallOptions(
   };
 }
 
-async function persistWorkflowCallArtifact(input: {
+/**
+ * Persists cross-workflow dispatch metadata under the caller's artifact tree (`workflow-calls/`).
+ * JSON includes `crossWorkflowDispatchId` (same value as the `workflow-call:*` transition suffix and the file basename).
+ * Other field names use caller/callee semantics only (flat handoff, not a structural sub-workflow tree).
+ */
+async function persistCrossWorkflowDispatchArtifact(input: {
   readonly artifactDir: string;
   readonly callId: string;
-  readonly workflowId: string;
-  readonly callerNodeId: string;
-  readonly childWorkflowName: string;
-  readonly childWorkflowId: string;
-  readonly childSession: WorkflowSessionState;
-  readonly parentNodeExecId: string;
-  readonly resultNodeId?: string;
+  readonly callerStepId: string;
+  readonly calleeWorkflowName: string;
+  readonly calleeWorkflowId: string;
+  readonly calleeSession: WorkflowSessionState;
+  readonly callerNodeExecId: string;
+  readonly resumeStepId: string;
   readonly resultOutputRef?: OutputRef;
 }): Promise<void> {
   await mkdir(path.join(input.artifactDir, "workflow-calls"), {
     recursive: true,
   });
+  const callerExecId = input.callerNodeExecId;
+  const calleeName = input.calleeWorkflowName;
+  const calleeId = input.calleeWorkflowId;
+  const calleeSessionId = input.calleeSession.sessionId;
+  const calleeSessionStatus = input.calleeSession.status;
   await writeJsonFile(
     path.join(input.artifactDir, "workflow-calls", `${input.callId}.json`),
     {
-      workflowCallId: input.callId,
-      workflowId: input.workflowId,
-      callerNodeId: input.callerNodeId,
-      parentNodeExecId: input.parentNodeExecId,
-      childWorkflowName: input.childWorkflowName,
-      childWorkflowId: input.childWorkflowId,
-      childSessionId: input.childSession.sessionId,
-      childSessionStatus: input.childSession.status,
-      ...(input.resultNodeId === undefined
-        ? {}
-        : { resultNodeId: input.resultNodeId }),
+      crossWorkflowDispatchId: input.callId,
+      callerStepId: input.callerStepId,
+      callerNodeExecId: callerExecId,
+      calleeWorkflowName: calleeName,
+      calleeWorkflowId: calleeId,
+      calleeSessionId,
+      calleeSessionStatus,
+      resumeStepId: input.resumeStepId,
       ...(input.resultOutputRef === undefined
         ? {}
         : { resultOutputRef: input.resultOutputRef }),
@@ -950,7 +977,7 @@ async function persistWorkflowCallArtifact(input: {
   );
 }
 
-interface WorkflowCallExecutionResult {
+interface CrossWorkflowDispatchExecutionResult {
   readonly communications: readonly CommunicationRecord[];
   readonly communicationCounter: number;
   readonly queuedNodeIds: readonly string[];
@@ -961,13 +988,39 @@ interface WorkflowCallExecutionResult {
   }[];
 }
 
-async function executeWorkflowCallsForNode(input: {
+function crossWorkflowDispatchMatchesCallerExecution(input: {
+  readonly entry: CrossWorkflowDispatch;
+  readonly callerStepId: string;
+  readonly callerOutputPayload: Readonly<Record<string, unknown>>;
+}): boolean {
+  const { entry } = input;
+  if (entry.when !== undefined) {
+    if (
+      !evaluateBranch({
+        when: entry.when,
+        output: input.callerOutputPayload,
+      })
+    ) {
+      return false;
+    }
+  }
+  return entry.callerStepId === input.callerStepId;
+}
+
+/**
+ * Executes cross-workflow dispatches derived from step transitions (`steps[].transitions`).
+ * Non-step-addressed bundles yield no execution rows (cross-workflow dispatch is empty);
+ * callers invoke this unconditionally after node completion so there is one code path.
+ */
+async function executeCrossWorkflowDispatchesForNode(input: {
   readonly workflow: WorkflowJson;
   readonly workflowName: string;
   readonly session: WorkflowSessionState;
   readonly options: WorkflowRunOptions;
   readonly artifactWorkflowRoot: string;
   readonly callerNodeId: string;
+  readonly callerStepId: string;
+  readonly callerNodeRegistryId: string;
   readonly callerNodeExecId: string;
   readonly callerArtifactDir: string;
   readonly callerOutputPayload: Readonly<Record<string, unknown>>;
@@ -977,12 +1030,31 @@ async function executeWorkflowCallsForNode(input: {
   readonly currentCommunications: readonly CommunicationRecord[];
   readonly adapter: NodeAdapter;
   readonly guards: EngineExecutionGuards | undefined;
-  readonly workflowCallAncestors: readonly string[];
-}): Promise<Result<WorkflowCallExecutionResult, string>> {
-  const relevantCalls = (input.workflow.workflowCalls ?? []).filter(
-    (entry) => entry.callerNodeId === input.callerNodeId,
+  /** Workflow ids already on the active cross-workflow call stack (cycle guard). */
+  readonly crossWorkflowInvocationStack: readonly string[];
+}): Promise<Result<CrossWorkflowDispatchExecutionResult, string>> {
+  const workflowDispatches = effectiveCrossWorkflowDispatches(input.workflow);
+  if (workflowDispatches.length === 0) {
+    return ok({
+      communications: input.currentCommunications,
+      communicationCounter: input.communicationCounter,
+      queuedNodeIds: [],
+      transitions: [],
+    });
+  }
+  // Cross-workflow dispatch: only step-addressed bundles derive execution rows
+  // from `steps[].transitions`. Legacy node-graph bundles no longer dispatch
+  // authored top-level `workflow.workflowCalls`.
+  const relevantDispatches = crossWorkflowDispatchesForExecutionMatch(
+    input.workflow,
+    (entry) =>
+      crossWorkflowDispatchMatchesCallerExecution({
+        entry,
+        callerStepId: input.callerStepId,
+        callerOutputPayload: input.callerOutputPayload,
+      }),
   );
-  if (relevantCalls.length === 0) {
+  if (relevantDispatches.length === 0) {
     return ok({
       communications: input.currentCommunications,
       communicationCounter: input.communicationCounter,
@@ -1000,107 +1072,95 @@ async function executeWorkflowCallsForNode(input: {
     readonly when: string;
   }> = [];
 
-  for (const workflowCall of relevantCalls) {
+  for (const dispatch of relevantDispatches) {
     if (
-      input.workflowCallAncestors.includes(workflowCall.workflowId) ||
-      input.workflow.workflowId === workflowCall.workflowId
+      input.crossWorkflowInvocationStack.includes(dispatch.workflowId) ||
+      input.workflow.workflowId === dispatch.workflowId
     ) {
       return err(
-        `workflow-call '${workflowCall.id}' would recurse into '${workflowCall.workflowId}', which is not supported`,
+        `cross-workflow dispatch '${dispatch.id}' would recurse into '${dispatch.workflowId}', which is not supported`,
       );
     }
 
-    const loadedChild = await loadWorkflowByIdFromDisk(
-      workflowCall.workflowId,
+    const loadedCallee = await loadWorkflowByIdFromDisk(
+      dispatch.workflowId,
       input.options,
     );
-    if (!loadedChild.ok) {
+    if (!loadedCallee.ok) {
       return err(
-        `workflow-call '${workflowCall.id}' target '${workflowCall.workflowId}' could not be loaded: ${loadedChild.error.message}`,
+        `cross-workflow dispatch '${dispatch.id}' target '${dispatch.workflowId}' could not be loaded: ${loadedCallee.error.message}`,
       );
     }
 
-    const childResult = await runWorkflowInternal(
-      loadedChild.value.workflowName,
-      buildChildWorkflowCallOptions(
-        input.options,
-        buildWorkflowCallRuntimeVariables({
-          parentRuntimeVariables: input.session.runtimeVariables,
-          parentWorkflowId: input.workflow.workflowId,
-          parentWorkflowExecutionId: input.session.sessionId,
-          callerNodeId: input.callerNodeId,
-          workflowCallId: workflowCall.id,
-          payload: input.callerOutputPayload["payload"] as Readonly<
-            Record<string, unknown>
+    const calleeRun = await runWorkflowInternal(
+      loadedCallee.value.workflowName,
+        buildCrossWorkflowCalleeRunOptions(
+          input.options,
+          buildCrossWorkflowCalleeRuntimeVariables({
+            callerRuntimeVariables: input.session.runtimeVariables,
+            callerWorkflowId: input.workflow.workflowId,
+            callerWorkflowExecutionId: input.session.sessionId,
+            callerNodeRegistryId: input.callerNodeRegistryId,
+            callerStepId: input.callerStepId,
+            crossWorkflowDispatchId: dispatch.id,
+            payload: input.callerOutputPayload["payload"] as Readonly<
+              Record<string, unknown>
           >,
         }),
       ),
       input.adapter,
       input.guards,
-      [...input.workflowCallAncestors, input.workflow.workflowId],
+      [...input.crossWorkflowInvocationStack, input.workflow.workflowId],
     );
-    if (!childResult.ok) {
+    if (!calleeRun.ok) {
       return err(
-        `workflow-call '${workflowCall.id}' failed: ${childResult.error.message}`,
+        `cross-workflow dispatch '${dispatch.id}' failed: ${calleeRun.error.message}`,
       );
     }
 
-    const childWorkflow = loadedChild.value.bundle.workflow;
-    const childResultExecution = findLatestWorkflowCallResultExecution(
-      childWorkflow,
-      childResult.value.session,
+    const calleeWorkflow = loadedCallee.value.bundle.workflow;
+    const calleeResultExecution = findLatestCrossWorkflowCalleeResultExecution(
+      calleeWorkflow,
+      calleeRun.value.session,
     );
-    const childOutputRef =
-      childResultExecution === undefined
+    const calleeOutputRef =
+      calleeResultExecution === undefined
         ? undefined
-        : outputRefForExecution(
-            childWorkflow,
-            childResult.value.session,
-            childResultExecution,
-            childResultExecution.nodeId,
-          );
+        : buildOutputRefForExecution({
+            workflow: calleeWorkflow,
+            session: calleeRun.value.session,
+            execution: calleeResultExecution,
+          });
 
-    await persistWorkflowCallArtifact({
+    await persistCrossWorkflowDispatchArtifact({
       artifactDir: input.callerArtifactDir,
-      callId: workflowCall.id,
-      workflowId: workflowCall.workflowId,
-      callerNodeId: input.callerNodeId,
-      childWorkflowName: loadedChild.value.workflowName,
-      childWorkflowId: childWorkflow.workflowId,
-      childSession: childResult.value.session,
-      parentNodeExecId: input.callerNodeExecId,
-      ...(workflowCall.resultNodeId === undefined
+      callId: dispatch.id,
+      callerStepId: dispatch.callerStepId,
+      calleeWorkflowName: loadedCallee.value.workflowName,
+      calleeWorkflowId: calleeWorkflow.workflowId,
+      calleeSession: calleeRun.value.session,
+      callerNodeExecId: input.callerNodeExecId,
+      resumeStepId: dispatch.resumeStepId,
+      ...(calleeOutputRef === undefined
         ? {}
-        : { resultNodeId: workflowCall.resultNodeId }),
-      ...(childOutputRef === undefined
-        ? {}
-        : { resultOutputRef: childOutputRef }),
+        : { resultOutputRef: calleeOutputRef }),
     });
 
-    if (workflowCall.resultNodeId === undefined) {
-      continue;
-    }
-
-    if (childResultExecution === undefined || childOutputRef === undefined) {
+    if (calleeResultExecution === undefined || calleeOutputRef === undefined) {
       return err(
-        `workflow-call '${workflowCall.id}' completed without a result execution for '${workflowCall.resultNodeId}'`,
+        `cross-workflow dispatch '${dispatch.id}' completed without a result execution for '${dispatch.resumeStepId}'`,
       );
     }
 
-    const childOutput = await readOutputPayloadArtifact(
-      childResultExecution.artifactDir,
+    const calleeOutput = await readOutputPayloadArtifact(
+      calleeResultExecution.artifactDir,
     );
-    if (!childOutput.ok) {
+    if (!calleeOutput.ok) {
       return err(
-        `workflow-call '${workflowCall.id}' produced an unreadable result: ${childOutput.error}`,
+        `cross-workflow dispatch '${dispatch.id}' produced an unreadable result: ${calleeOutput.error}`,
       );
     }
 
-    const boundary = resolveCommunicationBoundary({
-      workflow: input.workflow,
-      fromNodeId: input.callerNodeId,
-      toNodeId: workflowCall.resultNodeId,
-    });
     const communication = await persistCommunicationArtifact({
       artifactWorkflowRoot: input.artifactWorkflowRoot,
       runtimeLogOptions: input.options,
@@ -1108,32 +1168,23 @@ async function executeWorkflowCallsForNode(input: {
       workflowExecutionId: input.session.sessionId,
       communicationCounter: currentCommunicationCounter,
       fromNodeId: input.callerNodeId,
-      toNodeId: workflowCall.resultNodeId,
-      ...(boundary.fromSubWorkflowId === undefined
-        ? {}
-        : { fromSubWorkflowId: boundary.fromSubWorkflowId }),
-      ...(boundary.toSubWorkflowId === undefined
-        ? {}
-        : { toSubWorkflowId: boundary.toSubWorkflowId }),
-      routingScope: boundary.routingScope,
+      toNodeId: dispatch.resumeStepId,
+      routingScope: "intra-workflow",
       deliveryKind: "edge-transition",
-      transitionWhen: `workflow-call:${workflowCall.id}`,
+      transitionWhen: `${CROSS_WORKFLOW_DISPATCH_TRANSITION_WHEN_PREFIX}${dispatch.id}`,
       sourceNodeExecId: input.callerNodeExecId,
-      payloadRef: childOutputRef,
-      outputRaw: childOutput.value.raw,
-      deliveredByNodeId: mailboxDeliveryManagerNodeId(
-        input.workflow,
-        workflowCall.resultNodeId,
-      ),
+      payloadRef: calleeOutputRef,
+      outputRaw: calleeOutput.value.raw,
+      deliveredByNodeId: resolveWorkflowManagerStepId(input.workflow),
       createdAt: input.createdAt,
     });
     currentCommunicationCounter += 1;
     currentCommunications.push(communication);
-    queuedNodeIds.push(workflowCall.resultNodeId);
+    queuedNodeIds.push(dispatch.resumeStepId);
     transitions.push({
-      from: input.callerNodeId,
-      to: workflowCall.resultNodeId,
-      when: `workflow-call:${workflowCall.id}`,
+      from: dispatch.callerStepId,
+      to: dispatch.resumeStepId,
+      when: `${CROSS_WORKFLOW_DISPATCH_TRANSITION_WHEN_PREFIX}${dispatch.id}`,
     });
   }
 
@@ -1146,30 +1197,12 @@ async function executeWorkflowCallsForNode(input: {
 }
 
 function buildUpstreamOutputRefs(
-  workflow: WorkflowJson,
   session: WorkflowSessionState,
   nodeId: string,
 ): readonly UpstreamOutputRef[] {
-  const owningSubWorkflow = findOwningSubWorkflowByInputNodeId(
-    workflow,
-    nodeId,
-  );
   const matchingCommunications = session.communications.filter(
-    (communication) => {
-      if (communication.status !== "delivered") {
-        return false;
-      }
-      if (communication.toNodeId === nodeId) {
-        return true;
-      }
-      if (owningSubWorkflow === undefined) {
-        return false;
-      }
-      return (
-        communication.toSubWorkflowId === owningSubWorkflow.id &&
-        communication.toNodeId === owningSubWorkflow.managerNodeId
-      );
-    },
+    (communication) =>
+      communication.status === "delivered" && communication.toNodeId === nodeId,
   );
   if (matchingCommunications.length === 0) {
     return [];
@@ -1182,12 +1215,6 @@ function buildUpstreamOutputRefs(
       );
       return {
         fromNodeId: communication.fromNodeId,
-        ...(communication.fromSubWorkflowId === undefined
-          ? {}
-          : { fromSubWorkflowId: communication.fromSubWorkflowId }),
-        ...(communication.toSubWorkflowId === undefined
-          ? {}
-          : { toSubWorkflowId: communication.toSubWorkflowId }),
         transitionWhen: communication.transitionWhen,
         status: execution?.status ?? communication.status,
         communicationId: communication.communicationId,
@@ -1197,12 +1224,112 @@ function buildUpstreamOutputRefs(
     .filter((entry): entry is UpstreamOutputRef => entry !== undefined);
 }
 
+function buildMergedUpstreamOutputRefs(
+  session: WorkflowSessionState,
+  nodeId: string,
+  continuationSnapshots: ReadonlyMap<string, WorkflowSessionState> | undefined,
+): Result<readonly UpstreamOutputRef[], string> {
+  const localRefs = buildUpstreamOutputRefs(session, nodeId);
+  if (
+    continuationSnapshots === undefined ||
+    session.historyImports === undefined ||
+    session.historyImports.length === 0
+  ) {
+    return ok(localRefs);
+  }
+
+  const timelineResult = buildMergedContinuationTimeline(
+    continuationSnapshots,
+    session.sessionId,
+  );
+  if (!timelineResult.ok) {
+    return err(
+      `merged continuation timeline resolution failed: ${timelineResult.error.message}`,
+    );
+  }
+  const timeline = timelineResult.value;
+  const importedExecKeys = new Set(
+    timeline
+      .filter(
+        (entry) => entry.persistedWorkflowExecutionId !== session.sessionId,
+      )
+      .map(
+        (entry) =>
+          `${entry.persistedWorkflowExecutionId}:${entry.stepRunId}`,
+      ),
+  );
+  const positionByOwnerExec = new Map<string, number>();
+  timeline.forEach((entry, index) => {
+    positionByOwnerExec.set(
+      `${entry.persistedWorkflowExecutionId}:${entry.stepRunId}`,
+      index,
+    );
+  });
+
+  const importedRefs: UpstreamOutputRef[] = [];
+  for (const snapshot of continuationSnapshots.values()) {
+    if (snapshot.sessionId === session.sessionId) {
+      continue;
+    }
+    for (const communication of snapshot.communications) {
+      if (
+        communication.status !== "delivered" ||
+        communication.toNodeId !== nodeId ||
+        !importedExecKeys.has(
+          `${snapshot.sessionId}:${communication.sourceNodeExecId}`,
+        )
+      ) {
+        continue;
+      }
+      const payloadRef = communication.payloadRef;
+      if (payloadRef.kind === "manager-message") {
+        continue;
+      }
+      const execution = snapshot.nodeExecutions.find(
+        (candidate) => candidate.nodeExecId === communication.sourceNodeExecId,
+      );
+      importedRefs.push({
+        fromNodeId: communication.fromNodeId,
+        transitionWhen: communication.transitionWhen,
+        status: execution?.status ?? communication.status,
+        communicationId: communication.communicationId,
+        ...payloadRef,
+      });
+    }
+  }
+
+  importedRefs.sort((left, right) => {
+    const leftPos =
+      positionByOwnerExec.get(`${left.workflowExecutionId}:${left.nodeExecId}`) ??
+      -1;
+    const rightPos =
+      positionByOwnerExec.get(`${right.workflowExecutionId}:${right.nodeExecId}`) ??
+      -1;
+    if (leftPos !== rightPos) {
+      return leftPos - rightPos;
+    }
+    return left.communicationId.localeCompare(right.communicationId);
+  });
+
+  return ok([...importedRefs, ...localRefs]);
+}
+
 async function buildUpstreamInputs(
   workflow: WorkflowJson,
   session: WorkflowSessionState,
   nodeId: string,
+  continuationSnapshots: ReadonlyMap<string, WorkflowSessionState> | undefined,
 ): Promise<Result<readonly UpstreamInput[], string>> {
-  const refs = buildUpstreamOutputRefs(workflow, session, nodeId);
+  const upstreamTargetNoun = workflow.steps !== undefined ? "step" : "node";
+  const refsResult = buildMergedUpstreamOutputRefs(
+    session,
+    nodeId,
+    continuationSnapshots,
+  );
+  if (!refsResult.ok) {
+    return err(refsResult.error);
+  }
+  const refs = refsResult.value;
   if (refs.length === 0) {
     return ok([]);
   }
@@ -1212,7 +1339,7 @@ async function buildUpstreamInputs(
     const output = await readOutputPayloadArtifact(ref.artifactDir);
     if (!output.ok) {
       return err(
-        `failed to resolve upstream communication '${ref.communicationId}' for node '${nodeId}': ${output.error}`,
+        `failed to resolve upstream communication '${ref.communicationId}' for ${upstreamTargetNoun} '${nodeId}': ${output.error}`,
       );
     }
     loaded.push({
@@ -1223,24 +1350,6 @@ async function buildUpstreamInputs(
   }
 
   return ok(loaded);
-}
-
-function toForwardedManagerPayload(
-  input: UpstreamInput,
-): ForwardedManagerPayload {
-  return {
-    payloadRef: {
-      workflowExecutionId: input.workflowExecutionId,
-      workflowId: input.workflowId,
-      ...(input.subWorkflowId === undefined
-        ? {}
-        : { subWorkflowId: input.subWorkflowId }),
-      outputNodeId: input.outputNodeId,
-      nodeExecId: input.nodeExecId,
-      artifactDir: input.artifactDir,
-    },
-    outputRaw: input.outputRaw,
-  };
 }
 
 function buildCommitMessageTemplate(
@@ -1258,7 +1367,6 @@ function buildCommitMessageTemplate(
     "Node execution checkpoint for deterministic output-to-input handoff.",
     "",
     `Node-ID: ${ref.outputNodeId}`,
-    `Subworkflow-ID: ${ref.subWorkflowId ?? "(unset)"}`,
     `Run-ID: ${ref.workflowExecutionId}`,
     `Workflow-ID: ${ref.workflowId}`,
     `Node-Exec-ID: ${ref.nodeExecId}`,
@@ -1277,8 +1385,6 @@ interface CreateCommunicationInput {
   readonly communicationCounter: number;
   readonly fromNodeId: string;
   readonly toNodeId: string;
-  readonly fromSubWorkflowId?: string;
-  readonly toSubWorkflowId?: string;
   readonly routingScope: CommunicationRecord["routingScope"];
   readonly deliveryKind: CommunicationRecord["deliveryKind"];
   readonly transitionWhen: string;
@@ -1307,12 +1413,6 @@ async function persistCommunicationArtifact(
     communicationId,
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
-    ...(input.fromSubWorkflowId === undefined
-      ? {}
-      : { fromSubWorkflowId: input.fromSubWorkflowId }),
-    ...(input.toSubWorkflowId === undefined
-      ? {}
-      : { toSubWorkflowId: input.toSubWorkflowId }),
     routingScope: input.routingScope,
     sourceNodeExecId: input.sourceNodeExecId,
     deliveryKind: input.deliveryKind,
@@ -1330,12 +1430,6 @@ async function persistCommunicationArtifact(
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
     sourceNodeExecId: input.sourceNodeExecId,
-    ...(input.fromSubWorkflowId === undefined
-      ? {}
-      : { fromSubWorkflowId: input.fromSubWorkflowId }),
-    ...(input.toSubWorkflowId === undefined
-      ? {}
-      : { toSubWorkflowId: input.toSubWorkflowId }),
     routingScope: input.routingScope,
     deliveryKind: input.deliveryKind,
     activeDeliveryAttemptId: deliveryAttemptId,
@@ -1399,12 +1493,6 @@ async function persistCommunicationArtifact(
     communicationId,
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
-    ...(input.fromSubWorkflowId === undefined
-      ? {}
-      : { fromSubWorkflowId: input.fromSubWorkflowId }),
-    ...(input.toSubWorkflowId === undefined
-      ? {}
-      : { toSubWorkflowId: input.toSubWorkflowId }),
     routingScope: input.routingScope,
     sourceNodeExecId: input.sourceNodeExecId,
     payloadRef: input.payloadRef,
@@ -1454,7 +1542,7 @@ async function persistExternalMailboxInputCommunication(input: {
   const outputPayload = {
     provider: "external-mailbox",
     model: "workflow-input",
-    promptText: "root workflow input mailbox delivery",
+    promptText: "workflow input mailbox delivery",
     completionPassed: true,
     when: { always: true },
     payload: normalizeExternalMailboxBusinessPayload(input.humanInput),
@@ -1518,14 +1606,13 @@ async function persistExternalMailboxOutputCommunication(input: {
     deliveryKind: "external-output",
     transitionWhen: "external-mailbox:workflow-output",
     sourceNodeExecId: input.execution.nodeExecId,
-    payloadRef: outputRefForExecution(
-      input.workflow,
-      input.session,
-      input.execution,
-      input.execution.nodeId,
-    ),
+    payloadRef: buildOutputRefForExecution({
+      workflow: input.workflow,
+      session: input.session,
+      execution: input.execution,
+    }),
     outputRaw: input.outputRaw,
-    deliveredByNodeId: input.workflow.managerNodeId,
+    deliveredByNodeId: resolveWorkflowManagerStepId(input.workflow),
     createdAt: input.createdAt,
   });
 }
@@ -1631,7 +1718,7 @@ function readBusinessPayload(
 }
 
 function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
-  return {
+  const next: WorkflowSessionState = {
     ...session,
     queue: [...session.queue],
     nodeExecutionCounts: { ...session.nodeExecutionCounts },
@@ -1650,93 +1737,104 @@ function cloneSession(session: WorkflowSessionState): WorkflowSessionState {
     activeUserActions: [...(session.activeUserActions ?? [])],
     runtimeVariables: { ...session.runtimeVariables },
   };
-}
-
-function resolveRequestedBackendSession(
-  session: WorkflowSessionState,
-  node: AgentNodePayload,
-): AdapterExecutionInput["backendSession"] | undefined {
-  if (node.sessionPolicy === undefined) {
-    return undefined;
+  if (session.supervision === undefined) {
+    return next;
   }
-
-  if (node.sessionPolicy.mode === "new") {
-    return { mode: "new" };
-  }
-
-  const existing = session.nodeBackendSessions?.[node.id];
-  if (existing === undefined) {
-    return { mode: "new" };
-  }
-
-  const backend = resolveNodeExecutionBackend(node);
-  if (existing.backend !== backend) {
-    return { mode: "new" };
-  }
-
   return {
-    mode: "reuse",
-    sessionId: existing.sessionId,
+    ...next,
+    supervision: {
+      ...session.supervision,
+      incidents: [...session.supervision.incidents],
+      ...(session.supervision.remediations === undefined
+        ? {}
+        : { remediations: [...session.supervision.remediations] }),
+    },
   };
 }
 
-function persistNodeBackendSession(input: {
-  readonly session: WorkflowSessionState;
-  readonly node: AgentNodePayload;
-  readonly nodeExecId: string;
-  readonly provider: string;
-  readonly endedAt: string;
-  readonly backendSession: AdapterExecutionInput["backendSession"];
-  readonly returnedSessionId?: string;
-}): Readonly<Record<string, NodeBackendSessionRecord>> {
-  const current = { ...(input.session.nodeBackendSessions ?? {}) };
-  if (input.node.sessionPolicy?.mode !== "reuse") {
-    return current;
-  }
-
-  const sessionId = input.returnedSessionId ?? input.backendSession?.sessionId;
-  if (sessionId === undefined) {
-    return current;
-  }
-
-  const existing = current[input.node.id];
-  current[input.node.id] = {
-    nodeId: input.node.id,
-    backend: resolveNodeExecutionBackend(input.node),
-    provider: input.provider,
-    sessionId,
-    createdAt: existing?.createdAt ?? input.endedAt,
-    updatedAt: input.endedAt,
-    lastNodeExecId: input.nodeExecId,
+function createInitialSupervisionRunState(input: {
+  readonly policy: AutoImprovePolicy;
+  readonly targetWorkflowId: string;
+}): SupervisionRunState {
+  const superviserWorkflowId = resolveSuperviserWorkflowId(
+    input.policy.superviserWorkflowId,
+  );
+  return {
+    supervisionRunId: `sup-${randomBytes(10).toString("hex")}`,
+    targetWorkflowId: input.targetWorkflowId,
+    superviserWorkflowId: superviserWorkflowId.ok
+      ? superviserWorkflowId.value
+      : DEFAULT_SUPERVISER_WORKFLOW_ID,
+    status: "running",
+    attemptCount: 1,
+    workflowPatchCount: 0,
+    policy: input.policy,
+    incidents: [],
+    remediations: [],
   };
-  return current;
+}
+
+function cloneSupervisionForContinuedRun(
+  source: SupervisionRunState,
+  policy: AutoImprovePolicy,
+): SupervisionRunState {
+  const superviserWorkflowId = resolveSuperviserWorkflowId(
+    policy.superviserWorkflowId,
+  );
+  return {
+    ...source,
+    superviserWorkflowId: superviserWorkflowId.ok
+      ? superviserWorkflowId.value
+      : DEFAULT_SUPERVISER_WORKFLOW_ID,
+    status: "running",
+    policy,
+    incidents: [...source.incidents],
+    ...(source.remediations === undefined
+      ? {}
+      : { remediations: [...source.remediations] }),
+  };
 }
 
 function buildScenarioExecutableNodePayload(
   node: NodePayload,
   hasScenarioEntry: boolean,
+  allowScenarioFallback: boolean,
+  allowDryRun: boolean,
 ): AgentNodePayload | null {
   const agentNodePayload = asAgentNodePayload(node);
   if (agentNodePayload !== null) {
     return agentNodePayload;
   }
-  if (!hasScenarioEntry) {
-    return null;
-  }
+
   if (
-    node.nodeType !== "command" &&
-    node.nodeType !== "container" &&
-    node.nodeType !== "addon"
+    node.managerType === "code" &&
+    (allowScenarioFallback || allowDryRun) &&
+    node.promptTemplate !== undefined
   ) {
-    return null;
+    return {
+      ...node,
+      nodeType: "agent",
+      model: node.model ?? "deterministic-code-manager",
+      promptTemplate: node.promptTemplate,
+    };
   }
-  const { nodeType: _nodeType, ...rest } = node;
-  return {
-    ...rest,
-    nodeType: "agent",
-    model: `scenario/${node.nodeType}`,
-    promptTemplate: node.promptTemplate ?? "",
-  };
+
+  if (
+    hasScenarioEntry &&
+    (node.nodeType === "command" ||
+      node.nodeType === "container" ||
+      node.nodeType === "addon")
+  ) {
+    const { nodeType: _nodeType, ...rest } = node;
+    return {
+      ...rest,
+      nodeType: "agent",
+      model: `scenario/${node.nodeType}`,
+      promptTemplate: node.promptTemplate ?? "",
+    };
+  }
+
+  return null;
 }
 
 async function runWorkflowInternal(
@@ -1744,7 +1842,7 @@ async function runWorkflowInternal(
   options: WorkflowRunOptions = {},
   adapter?: NodeAdapter,
   guards?: EngineExecutionGuards,
-  workflowCallAncestors: readonly string[] = [],
+  crossWorkflowInvocationStack: readonly string[] = [],
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
   let workflowWorkingDirectory: string;
   try {
@@ -1763,7 +1861,72 @@ async function runWorkflowInternal(
           : "workingDirectory must be a non-empty path when provided",
     });
   }
-  const loaded = await loadWorkflowFromDisk(workflowName, options);
+  const resumeRequested = options.resumeSessionId !== undefined;
+  const rerunRequested = options.rerunFromSessionId !== undefined;
+  const continuationRequested =
+    options.continueFromWorkflowExecutionId !== undefined;
+  if (
+    [resumeRequested, rerunRequested, continuationRequested].filter(Boolean)
+      .length > 1
+  ) {
+    return err({
+      exitCode: 2,
+      message:
+        "resumeSessionId, rerunFromSessionId, and continueFromWorkflowExecutionId are mutually exclusive",
+    });
+  }
+  /** True when seeding auto-improve supervision / mutable workspace like a brand-new execution. */
+  const isFreshAutoImproveSeed =
+    !resumeRequested && !rerunRequested && !continuationRequested;
+  let preloadedForBundlePath: WorkflowSessionState | undefined;
+  if (options.resumeSessionId !== undefined) {
+    const pre = await loadSession(options.resumeSessionId, options);
+    if (!pre.ok) {
+      return err({ exitCode: 1, message: pre.error.message });
+    }
+    if (pre.value.workflowName !== workflowName) {
+      return err({
+        exitCode: 1,
+        message: "session workflow does not match command workflow",
+      });
+    }
+    preloadedForBundlePath = pre.value;
+  } else if (options.rerunFromSessionId !== undefined) {
+    const pre = await loadSession(options.rerunFromSessionId, options);
+    if (!pre.ok) {
+      return err({ exitCode: 1, message: pre.error.message });
+    }
+    if (pre.value.workflowName !== workflowName) {
+      return err({
+        exitCode: 1,
+        message: "source session workflow does not match command workflow",
+      });
+    }
+    preloadedForBundlePath = pre.value;
+  } else if (options.continueFromWorkflowExecutionId !== undefined) {
+    const pre = await loadSession(options.continueFromWorkflowExecutionId, options);
+    if (!pre.ok) {
+      return err({ exitCode: 1, message: pre.error.message });
+    }
+    if (pre.value.workflowName !== workflowName) {
+      return err({
+        exitCode: 1,
+        message:
+          "source workflow execution workflow does not match command workflow",
+      });
+    }
+    preloadedForBundlePath = pre.value;
+  }
+  const bundlePathOverrideFromSession =
+    preloadedForBundlePath?.supervision?.mutableWorkflowDir;
+  const firstLoadOptions: WorkflowRunOptions = {
+    ...options,
+    ...(options.workflowBundleDirectoryOverride === undefined &&
+    bundlePathOverrideFromSession !== undefined
+      ? { workflowBundleDirectoryOverride: bundlePathOverrideFromSession }
+      : {}),
+  };
+  let loaded = await loadWorkflowFromDisk(workflowName, firstLoadOptions);
   if (!loaded.ok) {
     return err({
       exitCode:
@@ -1775,14 +1938,61 @@ async function runWorkflowInternal(
     });
   }
 
+  let precomputedSupervision: SupervisionRunState | undefined;
+  if (isFreshAutoImproveSeed && options.autoImprove !== undefined) {
+    const policy = options.autoImprove;
+    const initial = createInitialSupervisionRunState({
+      policy,
+      targetWorkflowId: loaded.value.bundle.workflow.workflowId,
+    });
+    const roots = resolveEffectiveRoots(options);
+    const workspace = await createExecutionCopyMutableWorkspace({
+      workflowId: loaded.value.bundle.workflow.workflowId,
+      sourceWorkflowDir: loaded.value.workflowDirectory,
+      artifactRoot: roots.artifactRoot,
+      supervisionRunId: initial.supervisionRunId,
+      mutationMode: policy.workflowMutationMode,
+    });
+    if (!workspace.ok) {
+      return err({
+        exitCode: 1,
+        message: `supervision workspace: ${workspace.error.message}`,
+      });
+    }
+    precomputedSupervision = {
+      ...initial,
+      mutableWorkflowDir: workspace.value.mutableWorkflowDir,
+    };
+    if (workspace.value.mutationMode === "execution-copy") {
+      const reloaded = await loadWorkflowFromDisk(workflowName, {
+        ...options,
+        workflowBundleDirectoryOverride: workspace.value.mutableWorkflowDir,
+      });
+      if (!reloaded.ok) {
+        return err({
+          exitCode:
+            reloaded.error.code === "VALIDATION" ||
+            reloaded.error.code === "INVALID_WORKFLOW_NAME"
+              ? 2
+              : 1,
+          message: reloaded.error.message,
+        });
+      }
+      loaded = reloaded;
+    }
+  }
+
   const runtimeVariables = options.runtimeVariables ?? {};
   const workflow = loaded.value.bundle.workflow;
+  const stepAddressedExecution = true;
+  /** Noun for the execution key (`nodeId` queue item): step id. */
+  const executionTargetNoun = "step";
   const nodeMap = loaded.value.bundle.nodePayloads;
   const workflowNodes = new Map(
     workflow.nodes.map((entry) => [entry.id, entry]),
   );
   const loopRuleByJudgeNodeId = new Map<string, LoopRule>(
-    (workflow.loops ?? []).map((entry) => [entry.judgeNodeId, entry]),
+    getStructuralLoops(workflow).map((entry) => [entry.judgeNodeId, entry]),
   );
   const effectiveAdapter =
     adapter ??
@@ -1817,27 +2027,33 @@ async function runWorkflowInternal(
 
   let session: WorkflowSessionState;
   if (options.rerunFromSessionId !== undefined) {
-    if (options.rerunFromNodeId === undefined) {
+    if (preloadedForBundlePath === undefined) {
       return err({
         exitCode: 1,
-        message: "rerunFromNodeId is required when rerunFromSessionId is set",
+        message: "internal: rerun source session missing",
       });
     }
-    if (!workflowNodes.has(options.rerunFromNodeId)) {
+    const source = preloadedForBundlePath;
+    const rerunTargetLabel = workflow.steps === undefined ? "node" : "step";
+    const rerunTargetId = options.rerunFromStepId;
+    if (rerunTargetId === undefined) {
       return err({
         exitCode: 1,
-        message: `unknown rerun node '${options.rerunFromNodeId}'`,
+        message: `rerun ${rerunTargetLabel} id is required when rerunFromSessionId is set`,
       });
     }
-
-    const source = await loadSession(options.rerunFromSessionId, options);
-    if (!source.ok) {
-      return err({ exitCode: 1, message: source.error.message });
-    }
-    if (source.value.workflowName !== workflowName) {
+    const stepIdSet =
+      workflow.steps === undefined
+        ? undefined
+        : new Set(workflow.steps.map((st) => st.id));
+    const rerunIdKnown =
+      stepIdSet === undefined
+        ? workflowNodes.has(rerunTargetId)
+        : stepIdSet.has(rerunTargetId);
+    if (!rerunIdKnown) {
       return err({
         exitCode: 1,
-        message: "source session workflow does not match command workflow",
+        message: `unknown rerun ${rerunTargetLabel} '${rerunTargetId}'`,
       });
     }
 
@@ -1845,28 +2061,138 @@ async function runWorkflowInternal(
       sessionId: createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
-      initialNodeId: options.rerunFromNodeId,
+      initialNodeId: rerunTargetId,
       runtimeVariables: {
-        ...source.value.runtimeVariables,
+        ...source.runtimeVariables,
         ...runtimeVariables,
       },
     });
-  } else if (options.resumeSessionId !== undefined) {
-    const existing = await loadSession(options.resumeSessionId, options);
-    if (!existing.ok) {
-      return err({ exitCode: 1, message: existing.error.message });
+    // Supervision outer-loop reruns mint a new session id but the target attempt
+    // continues: preserve per-node execution indices so `ScenarioNodeAdapter` (and
+    // similar sequence semantics) can advance on the next attempt.
+    if (options.supervisionLoopExecution === true) {
+      session = {
+        ...session,
+        nodeExecutionCounter: source.nodeExecutionCounter,
+        nodeExecutionCounts: { ...source.nodeExecutionCounts },
+      };
     }
-    if (existing.value.workflowName !== workflowName) {
+  } else if (options.continueFromWorkflowExecutionId !== undefined) {
+    if (preloadedForBundlePath === undefined) {
       return err({
         exitCode: 1,
-        message: "session workflow does not match command workflow",
+        message: "internal: continuation source workflow execution missing",
       });
     }
-    session = cloneSession(existing.value);
+    const sourceSession = preloadedForBundlePath;
+    const continueAfterStepRunId = options.continueAfterStepRunId;
+    const continueStartStepId = options.continueStartStepId;
+    if (
+      continueAfterStepRunId === undefined ||
+      continueAfterStepRunId.trim().length === 0 ||
+      continueStartStepId === undefined ||
+      continueStartStepId.trim().length === 0
+    ) {
+      return err({
+        exitCode: 2,
+        message:
+          "continueAfterStepRunId and continueStartStepId are required when continueFromWorkflowExecutionId is set",
+      });
+    }
+
+    const continueTargetLabel = workflow.steps === undefined ? "node" : "step";
+    const trimmedStart = continueStartStepId.trim();
+    const stepIdSetContinue =
+      workflow.steps === undefined
+        ? undefined
+        : new Set(workflow.steps.map((st) => st.id));
+    const continuationStartKnown =
+      stepIdSetContinue === undefined
+        ? workflowNodes.has(trimmedStart)
+        : stepIdSetContinue.has(trimmedStart);
+    if (!continuationStartKnown) {
+      return err({
+        exitCode: 1,
+        message: `unknown continuation ${continueTargetLabel} '${trimmedStart}'`,
+      });
+    }
+
+    const snapshotsResult = await loadContinuationRelatedSnapshots(
+      [sourceSession],
+      options,
+    );
+    if (!snapshotsResult.ok) {
+      return err({ exitCode: 1, message: snapshotsResult.error });
+    }
+    const snapshotsForAnchor = snapshotsResult.value;
+
+    const anchorResult = resolveContinuationAnchorPlacement({
+      snapshots: snapshotsForAnchor,
+      sourceWorkflowExecutionId: sourceSession.sessionId,
+      anchorStepRunId: continueAfterStepRunId.trim(),
+      expectedWorkflowId: workflow.workflowId,
+    });
+    if (!anchorResult.ok) {
+      return err({
+        exitCode: 1,
+        message: anchorResult.error.message,
+      });
+    }
+
+    session = createSessionState({
+      sessionId: createSessionId({ workflowId: workflow.workflowId }),
+      workflowName,
+      workflowId: workflow.workflowId,
+      initialNodeId: trimmedStart,
+      runtimeVariables: {
+        ...sourceSession.runtimeVariables,
+        ...runtimeVariables,
+      },
+    });
+    session = {
+      ...session,
+      continuedFromWorkflowExecutionId: sourceSession.sessionId,
+      continuedAfterStepRunId: anchorResult.value.anchor.stepRunId,
+      continuedAfterExecutionOrdinal: anchorResult.value.anchor.executionOrdinal,
+      continuedStartStepId: trimmedStart,
+      continuationMode: "rerun-from-history",
+      historyImports: anchorResult.value.flattenedHistoryImports,
+    };
+  } else if (options.resumeSessionId !== undefined) {
+    if (preloadedForBundlePath === undefined) {
+      return err({ exitCode: 1, message: "internal: resume session missing" });
+    }
+    const existing = preloadedForBundlePath;
+    session = cloneSession(existing);
+    if (options.autoImprove !== undefined) {
+      const policy = options.autoImprove;
+      if (session.supervision === undefined) {
+        return err(
+          workflowRunFailure(
+            2,
+            "autoImprove on resume requires supervision state on the session (start with workflow run --auto-improve, or omit --auto-improve when resuming a non-supervised session)",
+            existing,
+          ),
+        );
+      }
+      session = {
+        ...session,
+        supervision: cloneSupervisionForContinuedRun(
+          session.supervision,
+          policy,
+        ),
+      };
+    }
     if (session.status === "completed") {
+      if (options.autoImprove !== undefined) {
+        await saveSession(session, options);
+      }
       return ok({ session, exitCode: 0 });
     }
     if ((session.activeUserActions?.length ?? 0) > 0) {
+      if (options.autoImprove !== undefined) {
+        await saveSession(session, options);
+      }
       return ok({ session, exitCode: 4 });
     }
     session = {
@@ -1881,9 +2207,52 @@ async function runWorkflowInternal(
         createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
-      initialNodeId: workflow.managerNodeId,
+      initialNodeId: resolveWorkflowManagerStepId(workflow),
       runtimeVariables,
     });
+  }
+
+  if (
+    options.autoImprove !== undefined &&
+    options.continueFromWorkflowExecutionId !== undefined
+  ) {
+    return err({
+      exitCode: 2,
+      message:
+        "autoImprove cannot be combined with history-linked continuation (continueFromWorkflowExecutionId); omit autoImprove for this entry mode",
+    });
+  }
+
+  if (
+    options.autoImprove !== undefined &&
+    options.resumeSessionId === undefined
+  ) {
+    const policy = options.autoImprove;
+    let nextSupervision: SupervisionRunState;
+    if (precomputedSupervision !== undefined) {
+      nextSupervision = precomputedSupervision;
+    } else if (preloadedForBundlePath?.supervision !== undefined) {
+      nextSupervision = cloneSupervisionForContinuedRun(
+        preloadedForBundlePath.supervision,
+        policy,
+      );
+    } else if (options.rerunFromSessionId !== undefined) {
+      return err({
+        exitCode: 2,
+        message:
+          "autoImprove on rerun requires supervision state on the source session (for example, use workflow run with --auto-improve first, then rerun with the same policy)",
+      });
+    } else {
+      return err({
+        exitCode: 1,
+        message:
+          "internal: auto-improve supervision was not precomputed; report this as a bug",
+      });
+    }
+    session = {
+      ...session,
+      supervision: nextSupervision,
+    };
   }
 
   if (options.resumeSessionId === undefined) {
@@ -1896,8 +2265,8 @@ async function runWorkflowInternal(
           workflowId: workflow.workflowId,
           workflowExecutionId: session.sessionId,
           communicationCounter: session.communicationCounter,
-          deliveredByNodeId: workflow.managerNodeId,
-          toNodeId: workflow.managerNodeId,
+          deliveredByNodeId: resolveWorkflowManagerStepId(workflow),
+          toNodeId: resolveWorkflowManagerStepId(workflow),
           humanInput,
           createdAt: session.startedAt,
         });
@@ -1911,8 +2280,67 @@ async function runWorkflowInternal(
 
   await saveSession(session, options);
 
+  if (options.nestedSuperviserDriver === true) {
+    if (options.autoImprove === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver requires an auto-improve policy",
+          session,
+        ),
+      );
+    }
+    if (options.rerunFromSessionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver is not valid when rerunning from a source session",
+          session,
+        ),
+      );
+    }
+    if (options.continueFromWorkflowExecutionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver is not valid when continuing from imported workflow history",
+          session,
+        ),
+      );
+    }
+    if (options.resumeSessionId !== undefined) {
+      if (session.supervision?.nestedSuperviserSessionId === undefined) {
+        return err(
+          workflowRunFailure(
+            2,
+            "nestedSuperviserDriver on resume requires nestedSuperviserSessionId on supervision (start the workflow with --nested-superviser first)",
+            session,
+          ),
+        );
+      }
+    }
+    if (session.supervision === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver requires seed supervision on the session",
+          session,
+        ),
+      );
+    }
+    return runNestedSuperviserSessionDriver(
+      workflowName,
+      session,
+      loaded.value,
+      options,
+      adapter,
+      guards,
+      crossWorkflowInvocationStack,
+    );
+  }
+
   const outgoingEdges = new Map<string, WorkflowEdge[]>();
-  workflow.edges.forEach((edge) => {
+  getStructuralEdges(workflow).forEach((edge) => {
     const current = outgoingEdges.get(edge.from);
     if (current) {
       current.push(edge);
@@ -1924,8 +2352,6 @@ async function runWorkflowInternal(
   const maxLoopIterations =
     options.maxLoopIterations ?? workflow.defaults.maxLoopIterations;
   const maxSteps = options.maxSteps;
-  const restartOnStuck = options.restartOnStuck ?? true;
-  const maxStuckRestarts = options.maxStuckRestarts ?? 2;
   const stuckRestartBackoffMs = options.stuckRestartBackoffMs ?? 250;
 
   if (
@@ -1935,6 +2361,26 @@ async function runWorkflowInternal(
     return ok({ session, exitCode: 4 });
   }
 
+  let continuationSnapshotsForMergedReads:
+    | ReadonlyMap<string, WorkflowSessionState>
+    | undefined;
+  if (
+    session.historyImports !== undefined &&
+    session.historyImports.length > 0
+  ) {
+    const snapLoad = await loadContinuationRelatedSnapshots([session], options);
+    if (!snapLoad.ok) {
+      return err(
+        workflowRunFailure(
+          1,
+          `history-linked continuation snapshot load failed: ${snapLoad.error}`,
+          session,
+        ),
+      );
+    }
+    continuationSnapshotsForMergedReads = snapLoad.value;
+  }
+
   while (session.queue.length > 0) {
     const persisted = await loadSession(session.sessionId, options);
     if (persisted.ok && isTerminalStatus(persisted.value.status)) {
@@ -1942,11 +2388,13 @@ async function runWorkflowInternal(
         return ok({ session: persisted.value, exitCode: 0 });
       }
       const exitCode = persisted.value.status === "cancelled" ? 130 : 1;
-      return err({
-        exitCode,
-        message:
+      return err(
+        workflowRunFailure(
+          exitCode,
           persisted.value.lastError ?? `session ${persisted.value.status}`,
-      });
+          persisted.value,
+        ),
+      );
     }
     if (await cancellationProbe.isCancelled(session.sessionId)) {
       const cancelled: WorkflowSessionState = {
@@ -1959,10 +2407,9 @@ async function runWorkflowInternal(
         lastError: "cancelled by external request",
       };
       await saveSession(cancelled, options);
-      return err({
-        exitCode: 130,
-        message: cancelled.lastError ?? "cancelled",
-      });
+      return err(
+        workflowRunFailure(130, cancelled.lastError ?? "cancelled", cancelled),
+      );
     }
 
     if (maxSteps !== undefined && session.nodeExecutionCounter >= maxSteps) {
@@ -1986,7 +2433,7 @@ async function runWorkflowInternal(
     }
 
     const nodeRef = workflowNodes.get(nodeId);
-    const nodePayload = nodeMap[nodeId];
+    const nodePayload = getNormalizedNodePayload(loaded.value.bundle, nodeId);
     if (!nodeRef || !nodePayload) {
       const failed: WorkflowSessionState = {
         ...session,
@@ -1994,13 +2441,21 @@ async function runWorkflowInternal(
         status: "failed",
         currentNodeId: nodeId,
         endedAt: nowIso(),
-        lastError: `missing node definition for '${nodeId}'`,
+        lastError: stepAddressedExecution
+          ? `missing step definition for '${nodeId}'`
+          : `missing node definition for '${nodeId}'`,
       };
       await saveSession(failed, options);
-      return err({
-        exitCode: 1,
-        message: failed.lastError ?? "missing node definition",
-      });
+      return err(
+        workflowRunFailure(
+          1,
+          failed.lastError ??
+            (stepAddressedExecution
+              ? "missing step definition"
+              : "missing node definition"),
+          failed,
+        ),
+      );
     }
     const pendingOptionalDecision = findPendingOptionalNodeDecision(
       session,
@@ -2013,24 +2468,17 @@ async function runWorkflowInternal(
         pendingOptionalDecision.status === "pending")
     ) {
       const requestedAt = nowIso();
-      const owningManagerNodeId = findOwningManagerNodeId(workflow, nodeId);
-      const owningSubWorkflow = findOwningSubWorkflowByRuntimeNodeId(
-        workflow,
-        nodeId,
-      );
+      const owningManagerStepId = findOwningManagerNodeId(workflow, nodeId);
       session = {
         ...session,
         status: "running",
-        queue: dedupeNodeIds([...queue, owningManagerNodeId]),
-        currentNodeId: owningManagerNodeId,
+        queue: dedupeNodeIds([...queue, owningManagerStepId]),
+        currentNodeId: owningManagerStepId,
         pendingOptionalNodeDecisions: upsertPendingOptionalNodeDecision(
           session.pendingOptionalNodeDecisions ?? [],
           {
             nodeId,
-            owningManagerNodeId,
-            ...(owningSubWorkflow === undefined
-              ? {}
-              : { subWorkflowId: owningSubWorkflow.id }),
+            owningManagerStepId,
             requestedAt,
             status: "pending",
           },
@@ -2044,6 +2492,8 @@ async function runWorkflowInternal(
     const executableNodePayload = buildScenarioExecutableNodePayload(
       nodePayload,
       options.mockScenario?.[nodeId] !== undefined,
+      options.mockScenario !== undefined,
+      options.dryRun === true,
     );
     const agentNodePayload = executableNodePayload;
     const nativeNodePayload =
@@ -2065,13 +2515,21 @@ async function runWorkflowInternal(
         status: "failed",
         currentNodeId: nodeId,
         endedAt: nowIso(),
-        lastError: `node '${nodeId}' is missing executable node fields`,
+        lastError: stepAddressedExecution
+          ? `step '${nodeId}' is missing executable fields`
+          : `node '${nodeId}' is missing executable node fields`,
       };
       await saveSession(failed, options);
-      return err({
-        exitCode: 1,
-        message: failed.lastError ?? "invalid agent node payload",
-      });
+      return err(
+        workflowRunFailure(
+          1,
+          failed.lastError ??
+            (stepAddressedExecution
+              ? "invalid step execution payload"
+              : "invalid node execution payload"),
+          failed,
+        ),
+      );
     }
 
     let restartAttempt = 0;
@@ -2101,19 +2559,40 @@ async function runWorkflowInternal(
       await mkdir(artifactDir, { recursive: true });
 
       const executionNodePayload = agentNodePayload ?? nodePayload;
+      const stepExecutionAddress = resolveRequiredStepExecutionAddress(
+        workflow,
+        nodeId,
+      );
+      if (stepExecutionAddress === undefined) {
+        const failed: WorkflowSessionState = {
+          ...session,
+          queue,
+          status: "failed",
+          currentNodeId: nodeId,
+          endedAt: nowIso(),
+          lastError:
+            `normalized workflow runtime node '${nodeId}' is missing its authored step definition`,
+        };
+        await saveSession(failed, options);
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ?? "missing step execution address",
+            failed,
+          ),
+        );
+      }
+      const stepIdentityFields = toStepIdentityFields(stepExecutionAddress);
+      const mailboxInstanceId = nodeExecId;
       const mergedVariables = mergeVariables(
         executionNodePayload.variables,
         session.runtimeVariables,
-      );
-      const upstreamOutputRefs = buildUpstreamOutputRefs(
-        workflow,
-        session,
-        nodeId,
       );
       const upstreamInputsResult = await buildUpstreamInputs(
         workflow,
         session,
         nodeId,
+        continuationSnapshotsForMergedReads,
       );
       if (!upstreamInputsResult.ok) {
         const failed: WorkflowSessionState = {
@@ -2125,13 +2604,18 @@ async function runWorkflowInternal(
           lastError: upstreamInputsResult.error,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 1,
-          message:
+        return err(
+          workflowRunFailure(
+            1,
             failed.lastError ?? "upstream communication resolution failed",
-        });
+            failed,
+          ),
+        );
       }
       const upstreamInputs = upstreamInputsResult.value;
+      const upstreamOutputRefs = upstreamInputs.map(
+        ({ output, outputRaw, ...ref }) => ref,
+      );
       const upstreamBindingInputs = upstreamInputs.map((entry) => ({
         fromNodeId: entry.fromNodeId,
         transitionWhen: entry.transitionWhen,
@@ -2145,10 +2629,8 @@ async function runWorkflowInternal(
       const transcriptInput = (session.conversationTurns ?? []).map((turn) => ({
         conversationId: turn.conversationId,
         turnIndex: turn.turnIndex,
-        fromSubWorkflowId: turn.fromSubWorkflowId,
-        toSubWorkflowId: turn.toSubWorkflowId,
-        fromManagerNodeId: turn.fromManagerNodeId,
-        toManagerNodeId: turn.toManagerNodeId,
+        fromManagerStepId: turn.fromManagerStepId,
+        toManagerStepId: turn.toManagerStepId,
         communicationId: turn.communicationId,
         outputRef: turn.outputRef,
         sentAt: turn.sentAt,
@@ -2173,6 +2655,8 @@ async function runWorkflowInternal(
           workflow,
           nodeRef,
           node: executionNodePayload,
+          ...stepIdentityFields,
+          mailboxInstanceId,
           nodePayloads: nodeMap,
           runtimeVariables: session.runtimeVariables,
           basePromptText: assembled.promptText,
@@ -2192,13 +2676,16 @@ async function runWorkflowInternal(
           status: "failed",
           currentNodeId: nodeId,
           endedAt: nowIso(),
-          lastError: `input assembly failed at '${nodeId}': ${message}`,
+          lastError: `input assembly failed for ${executionTargetNoun} '${nodeId}': ${message}`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 3,
-          message: failed.lastError ?? "input assembly failed",
-        });
+        return err(
+          workflowRunFailure(
+            3,
+            failed.lastError ?? "input assembly failed",
+            failed,
+          ),
+        );
       }
       if (executionMailbox === undefined) {
         const failed: WorkflowSessionState = {
@@ -2207,13 +2694,16 @@ async function runWorkflowInternal(
           status: "failed",
           currentNodeId: nodeId,
           endedAt: nowIso(),
-          lastError: `input assembly failed at '${nodeId}': execution mailbox was not created`,
+          lastError: `input assembly failed for ${executionTargetNoun} '${nodeId}': execution mailbox was not created`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 3,
-          message: failed.lastError ?? "execution mailbox creation failed",
-        });
+        return err(
+          workflowRunFailure(
+            3,
+            failed.lastError ?? "execution mailbox creation failed",
+            failed,
+          ),
+        );
       }
 
       try {
@@ -2229,13 +2719,16 @@ async function runWorkflowInternal(
           status: "failed",
           currentNodeId: nodeId,
           endedAt: nowIso(),
-          lastError: `failed to persist execution mailbox at '${nodeId}': ${message}`,
+          lastError: `failed to persist execution mailbox for ${executionTargetNoun} '${nodeId}': ${message}`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 1,
-          message: failed.lastError ?? "execution mailbox persistence failed",
-        });
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ?? "execution mailbox persistence failed",
+            failed,
+          ),
+        );
       }
 
       const baseInputPayload = {
@@ -2243,7 +2736,9 @@ async function runWorkflowInternal(
         workflowExecutionId: session.sessionId,
         workflowId: workflow.workflowId,
         nodeId,
+        ...stepIdentityFields,
         nodeExecId,
+        mailboxInstanceId,
         promptTemplate: executionNodePayload.promptTemplate,
         promptText: assembledPromptText,
         arguments: assembledArguments,
@@ -2251,6 +2746,9 @@ async function runWorkflowInternal(
         upstreamOutputRefs,
         upstreamCommunications: upstreamCommunicationIds,
         executionMailbox,
+        ...(stepExecutionAddress.promptVariant === undefined
+          ? {}
+          : { promptVariant: stepExecutionAddress.promptVariant }),
         restartAttempt,
         ...(previousNodeExecId === undefined
           ? {}
@@ -2380,18 +2878,23 @@ async function runWorkflowInternal(
         );
         const nodeExecution: NodeExecutionRecord = {
           nodeId,
+          ...stepIdentityFields,
           nodeExecId,
+          executionOrdinal: nextExecutionCounter,
+          mailboxInstanceId,
           status: "skipped",
           artifactDir,
           startedAt,
           endedAt,
+          ...(stepExecutionAddress.promptVariant === undefined
+            ? {}
+            : { promptVariant: stepExecutionAddress.promptVariant }),
         };
-        const outputRef = outputRefForExecution(
+        const outputRef = buildOutputRefForExecution({
           workflow,
           session,
-          nodeExecution,
-          nodeId,
-        );
+          execution: nodeExecution,
+        });
         const outputJson = stableJson(outputPayload);
         const outputRaw = `${outputJson}\n`;
         const inputHash = sha256Hex(inputJson);
@@ -2403,16 +2906,23 @@ async function runWorkflowInternal(
         );
         await writeJsonFile(path.join(artifactDir, "meta.json"), {
           nodeId,
+          ...stepIdentityFields,
           nodeExecId,
+          mailboxInstanceId,
           status: "skipped",
           startedAt,
           endedAt,
+          ...(stepExecutionAddress.promptVariant === undefined
+            ? {}
+            : { promptVariant: stepExecutionAddress.promptVariant }),
           optionalDecision: "skip",
         });
         await writeJsonFile(path.join(artifactDir, "handoff.json"), {
           schemaVersion: 1,
           generatedAt: endedAt,
           nodeId,
+          ...stepIdentityFields,
+          mailboxInstanceId,
           outputRef,
           inputHash: `sha256:${inputHash}`,
           outputHash: `sha256:${outputHash}`,
@@ -2427,11 +2937,17 @@ async function runWorkflowInternal(
             {
               sessionId: session.sessionId,
               nodeId,
+              ...stepIdentityFields,
               nodeExecId,
+              executionOrdinal: nextExecutionCounter,
+              mailboxInstanceId,
               status: "skipped",
               artifactDir,
               startedAt,
               endedAt,
+              ...(stepExecutionAddress.promptVariant === undefined
+                ? {}
+                : { promptVariant: stepExecutionAddress.promptVariant }),
               inputJson,
               outputJson,
               inputHash: `sha256:${inputHash}`,
@@ -2471,11 +2987,6 @@ async function runWorkflowInternal(
         let currentCommunications = consumedCommunicationsResult.value;
         const transitionCommunications = await Promise.all(
           selected.map((edge, index) => {
-            const boundary = resolveCommunicationBoundary({
-              workflow,
-              fromNodeId: edge.from,
-              toNodeId: edge.to,
-            });
             return persistCommunicationArtifact({
               artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
               runtimeLogOptions: options,
@@ -2484,23 +2995,14 @@ async function runWorkflowInternal(
               communicationCounter: session.communicationCounter + index,
               fromNodeId: edge.from,
               toNodeId: edge.to,
-              ...(boundary.fromSubWorkflowId === undefined
-                ? {}
-                : { fromSubWorkflowId: boundary.fromSubWorkflowId }),
-              ...(boundary.toSubWorkflowId === undefined
-                ? {}
-                : { toSubWorkflowId: boundary.toSubWorkflowId }),
-              routingScope: boundary.routingScope,
+              routingScope: "intra-workflow",
               deliveryKind:
                 edge.to === edge.from ? "loop-back" : "edge-transition",
               transitionWhen: edge.when,
               sourceNodeExecId: nodeExecId,
               payloadRef: outputRef,
               outputRaw,
-              deliveredByNodeId: mailboxDeliveryManagerNodeId(
-                workflow,
-                edge.to,
-              ),
+              deliveredByNodeId: resolveWorkflowManagerStepId(workflow),
               createdAt: endedAt,
             });
           }),
@@ -2529,7 +3031,7 @@ async function runWorkflowInternal(
           communicationCounter:
             session.communicationCounter + transitionCommunications.length,
           communications: currentCommunications,
-          runtimeVariables: isRootScopeOutputNode(workflow, nodeId)
+          runtimeVariables: isWorkflowOutputKindNode(workflow, nodeId)
             ? {
                 ...session.runtimeVariables,
                 workflowOutput: outputPayload["payload"],
@@ -2551,19 +3053,56 @@ async function runWorkflowInternal(
           status: "failed",
           currentNodeId: nodeId,
           endedAt: nowIso(),
-          lastError: `node '${nodeId}' is missing agent execution fields`,
+          lastError: stepAddressedExecution
+            ? `step '${nodeId}' is missing agent execution fields`
+            : `node '${nodeId}' is missing agent execution fields`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 1,
-          message: failed.lastError ?? "invalid node execution payload",
-        });
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ??
+              (stepAddressedExecution
+                ? "invalid step execution payload"
+                : "invalid node execution payload"),
+            failed,
+          ),
+        );
       }
 
+      const backendSessionSelection =
+        agentNodePayload === null
+          ? undefined
+          : resolveBackendSessionSelection(
+              stepExecutionAddress,
+              agentNodePayload,
+            );
+      const backendSessionIdentityFields =
+        backendSessionSelection === undefined
+          ? undefined
+          : toStepIdentityFields(backendSessionSelection);
       let backendSession =
         agentNodePayload === null
           ? undefined
-          : resolveRequestedBackendSession(session, agentNodePayload);
+          : resolveRequestedBackendSession({
+              session,
+              node: agentNodePayload,
+              ...(backendSessionSelection?.sessionLookupNodeId === undefined
+                ? {}
+                : {
+                    sessionLookupNodeId:
+                      backendSessionSelection.sessionLookupNodeId,
+                  }),
+              ...(backendSessionSelection?.nodeRegistryId === undefined
+                ? {}
+                : { nodeRegistryId: backendSessionSelection.nodeRegistryId }),
+              ...(backendSessionSelection?.inheritFromStepId === undefined
+                ? {}
+                : {
+                    inheritFromStepId:
+                      backendSessionSelection.inheritFromStepId,
+                  }),
+            });
       const composedPrompts = composeExecutionPrompts({
         promptComposition: {
           workflow,
@@ -2619,11 +3158,26 @@ async function runWorkflowInternal(
       );
 
       const startedAt = nowIso();
-      const timeoutMs = resolveTimeoutMs(
-        executionNodePayload,
-        workflow.defaults.nodeTimeoutMs,
-        options.defaultTimeoutMs,
-      );
+      const resolvedTimeout = resolveTimeoutMs({
+        node: executionNodePayload,
+        workflowTimeoutMs:
+          options.defaultTimeoutMs ?? workflow.defaults.nodeTimeoutMs,
+        ...(stepExecutionAddress.timeoutMs === undefined
+          ? {}
+          : { stepTimeoutMs: stepExecutionAddress.timeoutMs }),
+      });
+      const baseTimeoutMs = resolvedTimeout.timeoutMs;
+      const timeoutPolicy = workflow.defaults.timeoutPolicy;
+      const timeoutIncrementMs = timeoutPolicy?.retryTimeoutIncrementMs ?? 0;
+      const applyTimeoutIncrement =
+        timeoutIncrementMs > 0 &&
+        restartAttempt > 0 &&
+        timeoutPolicy !== undefined &&
+        (timeoutPolicy.onTimeout === "retry-same-step" ||
+          timeoutPolicy.onTimeout === "jump-to-step");
+      const timeoutMs =
+        baseTimeoutMs +
+        (applyTimeoutIncrement ? timeoutIncrementMs * restartAttempt : 0);
       let ambientManagerContext: AdapterAmbientManagerContext | undefined;
       let managerSessionId: string | undefined;
 
@@ -2638,7 +3192,7 @@ async function runWorkflowInternal(
           environment: buildAmbientManagerControlPlaneEnvironment({
             workflowId: workflow.workflowId,
             workflowExecutionId: session.sessionId,
-            managerNodeId: nodeId,
+            managerStepId: nodeId,
             managerNodeExecId: nodeExecId,
             managerSessionId,
             authToken: managerAuthToken,
@@ -2650,7 +3204,7 @@ async function runWorkflowInternal(
             managerSessionId,
             workflowId: workflow.workflowId,
             workflowExecutionId: session.sessionId,
-            managerNodeId: nodeId,
+            managerStepId: nodeId,
             managerNodeExecId: nodeExecId,
             status: "active",
             createdAt: startedAt,
@@ -2669,7 +3223,7 @@ async function runWorkflowInternal(
             status: "failed",
             currentNodeId: nodeId,
             endedAt: startedAt,
-            lastError: `failed to start manager session at '${nodeId}': ${message}`,
+            lastError: `failed to start manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
           };
           await saveSession(failed, options);
           return err({
@@ -2799,6 +3353,10 @@ async function runWorkflowInternal(
                     validationErrors: retryValidationFeedback,
                     publication: buildOutputPublicationPolicy(),
                   };
+            const supervisionStall = buildSupervisionStallWatch(
+              session,
+              options,
+            );
             const execution =
               agentNodePayload !== null
                 ? await executeAdapterWithTimeout(
@@ -2845,6 +3403,7 @@ async function runWorkflowInternal(
                         : { output: adapterOutputContract }),
                     },
                     timeoutMs,
+                    supervisionStall,
                   )
                 : await executeNativeNodeWithTimeout({
                     workflowDirectory: loaded.value.workflowDirectory,
@@ -2866,7 +3425,13 @@ async function runWorkflowInternal(
                       ? {}
                       : { chatReplyDispatcher: options.eventReplyDispatcher }),
                     ...(options.env === undefined ? {} : { env: options.env }),
+                    ...(options.superviserControl === undefined
+                      ? {}
+                      : { superviserControl: options.superviserControl }),
                     timeoutMs,
+                    ...(supervisionStall === undefined
+                      ? {}
+                      : { supervisionStall }),
                   });
 
             if (!execution.ok) {
@@ -2921,7 +3486,11 @@ async function runWorkflowInternal(
                 promptText: effectivePromptText,
                 completionPassed: false,
                 when: {},
-                payload: {},
+                payload:
+                  execution.error.code === "provider_error" &&
+                  execution.error.message.length > 0
+                    ? { providerErrorMessage: execution.error.message }
+                    : {},
                 error: execution.error.code,
               };
               break;
@@ -3087,6 +3656,9 @@ async function runWorkflowInternal(
             nodeExecId,
             processLogs,
             at: endedAt,
+            ...(stepExecutionAddress.stepId === undefined
+              ? {}
+              : { executionLogTarget: "step" as const }),
           },
           options,
         );
@@ -3100,6 +3672,13 @@ async function runWorkflowInternal(
               session,
               node: agentNodePayload,
               nodeExecId,
+              ...(backendSessionIdentityFields ?? {}),
+              ...(backendSessionSelection?.inheritFromStepId === undefined
+                ? {}
+                : {
+                    inheritFromStepId:
+                      backendSessionSelection.inheritFromStepId,
+                  }),
               provider:
                 backendSessionProvider ??
                 outputPayload["provider"]?.toString() ??
@@ -3114,7 +3693,10 @@ async function runWorkflowInternal(
         status: NodeExecutionRecord["status"] = nodeStatus,
       ): NodeExecutionRecord => ({
         nodeId,
+        ...stepIdentityFields,
         nodeExecId,
+        executionOrdinal: nextExecutionCounter,
+        mailboxInstanceId,
         status,
         artifactDir,
         startedAt,
@@ -3131,6 +3713,10 @@ async function runWorkflowInternal(
         ...(previousNodeExecId === undefined
           ? {}
           : { restartedFromNodeExecId: previousNodeExecId }),
+        ...(stepExecutionAddress.promptVariant === undefined
+          ? {}
+          : { promptVariant: stepExecutionAddress.promptVariant }),
+        timeoutMs,
       });
       const buildNodeExecutions = (
         status: NodeExecutionRecord["status"] = nodeStatus,
@@ -3151,7 +3737,7 @@ async function runWorkflowInternal(
           managerSessionId,
           workflowId: workflow.workflowId,
           workflowExecutionId: session.sessionId,
-          managerNodeId: nodeId,
+          managerStepId: nodeId,
           managerNodeExecId: nodeExecId,
           status: finalStatus,
           createdAt: startedAt,
@@ -3170,8 +3756,7 @@ async function runWorkflowInternal(
             businessPayload === null
               ? null
               : parseManagerControlPayload(businessPayload, workflow, {
-                  managerNodeId: nodeId,
-                  managerKind: nodeRef.kind,
+                  managerStepId: nodeId,
                   ...(nodeRef.role === undefined
                     ? {}
                     : { managerRole: nodeRef.role }),
@@ -3198,7 +3783,7 @@ async function runWorkflowInternal(
               communicationCounter: session.communicationCounter,
               communications: session.communications,
               nodeBackendSessions: nextNodeBackendSessions,
-              lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+              lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
             };
             await saveSession(failed, options);
             return err({
@@ -3222,7 +3807,7 @@ async function runWorkflowInternal(
             communicationCounter: session.communicationCounter,
             communications: session.communications,
             nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control at '${nodeId}': ${message}`,
+            lastError: `invalid manager control for ${executionTargetNoun} '${nodeId}': ${message}`,
           };
           await saveSession(failed, options);
           return err({
@@ -3259,7 +3844,7 @@ async function runWorkflowInternal(
                   communicationCounter: session.communicationCounter,
                   communications: session.communications,
                   nodeBackendSessions: nextNodeBackendSessions,
-                  lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+                  lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
                 };
                 await saveSession(failed, options);
                 return err({
@@ -3280,7 +3865,7 @@ async function runWorkflowInternal(
                 communicationCounter: session.communicationCounter,
                 communications: session.communications,
                 nodeBackendSessions: nextNodeBackendSessions,
-                lastError: `invalid manager control at '${nodeId}': manager execution cannot mix GraphQL manager messages with payload managerControl`,
+                lastError: `invalid manager control for ${executionTargetNoun} '${nodeId}': manager execution cannot mix GraphQL manager messages with payload managerControl`,
               };
               await saveSession(failed, options);
               return err({
@@ -3310,7 +3895,7 @@ async function runWorkflowInternal(
                 communicationCounter: session.communicationCounter,
                 communications: session.communications,
                 nodeBackendSessions: nextNodeBackendSessions,
-                lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+                lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
               };
               await saveSession(failed, options);
               return err({
@@ -3335,7 +3920,7 @@ async function runWorkflowInternal(
               communicationCounter: session.communicationCounter,
               communications: session.communications,
               nodeBackendSessions: nextNodeBackendSessions,
-              lastError: `invalid manager control at '${nodeId}': ${message}`,
+              lastError: `invalid manager control for ${executionTargetNoun} '${nodeId}': ${message}`,
             };
             await saveSession(failed, options);
             return err({
@@ -3344,120 +3929,12 @@ async function runWorkflowInternal(
             });
           }
         }
-
-        if (
-          nodeId !== workflow.managerNodeId &&
-          (managerControl?.startSubWorkflowIds.length ?? 0) > 0
-        ) {
-          nodeStatus = "failed";
-          const nodeExecutions = buildNodeExecutions();
-          try {
-            await finalizeManagerSession("failed");
-          } catch (finalizationError: unknown) {
-            const message =
-              finalizationError instanceof Error
-                ? finalizationError.message
-                : "unknown manager session finalization failure";
-            const failed: WorkflowSessionState = {
-              ...session,
-              queue,
-              status: "failed",
-              currentNodeId: nodeId,
-              endedAt,
-              nodeExecutionCounter: nextExecutionCounter,
-              nodeExecutionCounts: updatedCounts,
-              nodeExecutions,
-              communicationCounter: session.communicationCounter,
-              communications: session.communications,
-              nodeBackendSessions: nextNodeBackendSessions,
-              lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
-            };
-            await saveSession(failed, options);
-            return err({
-              exitCode: 1,
-              message: failed.lastError ?? "failed to finalize manager session",
-            });
-          }
-          const failed: WorkflowSessionState = {
-            ...session,
-            queue,
-            status: "failed",
-            currentNodeId: nodeId,
-            endedAt,
-            nodeExecutionCounter: nextExecutionCounter,
-            nodeExecutionCounts: updatedCounts,
-            nodeExecutions,
-            communicationCounter: session.communicationCounter,
-            communications: session.communications,
-            nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control at '${nodeId}': only the root manager can start sub-workflows`,
-          };
-          await saveSession(failed, options);
-          return err({
-            exitCode: 5,
-            message: failed.lastError ?? "invalid manager control",
-          });
-        }
-
-        if (
-          !isSubworkflowManagerNodeRef(nodeRef) &&
-          (managerControl?.childInputNodeIds.length ?? 0) > 0
-        ) {
-          nodeStatus = "failed";
-          const nodeExecutions = buildNodeExecutions();
-          try {
-            await finalizeManagerSession("failed");
-          } catch (finalizationError: unknown) {
-            const message =
-              finalizationError instanceof Error
-                ? finalizationError.message
-                : "unknown manager session finalization failure";
-            const failed: WorkflowSessionState = {
-              ...session,
-              queue,
-              status: "failed",
-              currentNodeId: nodeId,
-              endedAt,
-              nodeExecutionCounter: nextExecutionCounter,
-              nodeExecutionCounts: updatedCounts,
-              nodeExecutions,
-              communicationCounter: session.communicationCounter,
-              communications: session.communications,
-              nodeBackendSessions: nextNodeBackendSessions,
-              lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
-            };
-            await saveSession(failed, options);
-            return err({
-              exitCode: 1,
-              message: failed.lastError ?? "failed to finalize manager session",
-            });
-          }
-          const failed: WorkflowSessionState = {
-            ...session,
-            queue,
-            status: "failed",
-            currentNodeId: nodeId,
-            endedAt,
-            nodeExecutionCounter: nextExecutionCounter,
-            nodeExecutionCounts: updatedCounts,
-            nodeExecutions,
-            communicationCounter: session.communicationCounter,
-            communications: session.communications,
-            nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `invalid manager control at '${nodeId}': only a subworkflow-manager can dispatch child input nodes`,
-          };
-          await saveSession(failed, options);
-          return err({
-            exitCode: 5,
-            message: failed.lastError ?? "invalid manager control",
-          });
-        }
       }
       const optionalManagerDecisionsResult = applyOptionalManagerDecisions({
         managerControl,
         session,
         workflow,
-        managerNodeId: nodeId,
+        managerStepId: nodeId,
         managerNodeExecId: nodeExecId,
         decidedAt: endedAt,
       });
@@ -3483,7 +3960,7 @@ async function runWorkflowInternal(
             communicationCounter: session.communicationCounter,
             communications: session.communications,
             nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+            lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
           };
           await saveSession(failed, options);
           return err({
@@ -3539,13 +4016,16 @@ async function runWorkflowInternal(
           communicationCounter: session.communicationCounter,
           communications: session.communications,
           nodeBackendSessions: nextNodeBackendSessions,
-          lastError: `failed to finalize manager session at '${nodeId}': ${message}`,
+          lastError: `failed to finalize manager session for ${executionTargetNoun} '${nodeId}': ${message}`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 1,
-          message: failed.lastError ?? "failed to finalize manager session",
-        });
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ?? "failed to finalize manager session",
+            failed,
+          ),
+        );
       }
       const edges = outgoingEdges.get(nodeId) ?? [];
       const matched = edges.filter((edge) => evaluateEdge(edge, outputPayload));
@@ -3594,32 +4074,11 @@ async function runWorkflowInternal(
             nodeExecutionCounts: updatedCounts,
             nodeExecutions: [
               ...session.nodeExecutions,
-              {
-                nodeId,
-                nodeExecId,
-                status: nodeStatus,
-                artifactDir,
-                startedAt,
-                endedAt,
-                ...(restartAttempt === 0
-                  ? {}
-                  : { attempt: restartAttempt + 1 }),
-                ...(outputAttemptCount === 1 ? {} : { outputAttemptCount }),
-                ...(outputValidationErrors.length === 0
-                  ? {}
-                  : { outputValidationErrors }),
-                ...(backendSessionId === undefined ? {} : { backendSessionId }),
-                ...(requestedBackendSessionMode === undefined
-                  ? {}
-                  : { backendSessionMode: requestedBackendSessionMode }),
-                ...(previousNodeExecId === undefined
-                  ? {}
-                  : { restartedFromNodeExecId: previousNodeExecId }),
-              },
+              buildNodeExecutionRecord(),
             ],
             loopIterationCounts: updatedLoopIterationCounts,
             nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `loop transition '${transition}' has no matching edge at '${nodeId}'`,
+            lastError: `loop transition '${transition}' has no matching edge for ${executionTargetNoun} '${nodeId}'`,
           };
           await saveSession(failed, options);
           return err({
@@ -3634,12 +4093,17 @@ async function runWorkflowInternal(
       const outputRaw = `${outputJson}\n`;
       const metaPayload = {
         nodeId,
+        ...stepIdentityFields,
         nodeExecId,
+        mailboxInstanceId,
         status: nodeStatus,
         startedAt,
         endedAt,
         model: executionNodePayload.model,
         timeoutMs,
+        ...(stepExecutionAddress.promptVariant === undefined
+          ? {}
+          : { promptVariant: stepExecutionAddress.promptVariant }),
         restartAttempt,
         outputAttemptCount,
         ...(backendSessionId === undefined ? {} : { backendSessionId }),
@@ -3653,25 +4117,30 @@ async function runWorkflowInternal(
           ? {}
           : { restartedFromNodeExecId: previousNodeExecId }),
       };
-      const outputRef = outputRefForExecution(
+      const outputRef = buildOutputRefForExecution({
         workflow,
-        { ...session, workflowId: workflow.workflowId },
-        {
+        session: { ...session, workflowId: workflow.workflowId },
+        execution: {
           nodeId,
+          ...stepIdentityFields,
           nodeExecId,
+          mailboxInstanceId,
           status: nodeStatus,
           artifactDir,
           startedAt,
           endedAt,
+          ...(stepExecutionAddress.promptVariant === undefined
+            ? {}
+            : { promptVariant: stepExecutionAddress.promptVariant }),
+          timeoutMs,
         },
-        nodeId,
-      );
+      });
       const inputHash = sha256Hex(inputJson);
       const outputHash = sha256Hex(outputJson);
       let currentCommunications: readonly CommunicationRecord[] =
         session.communications;
       let currentCommunicationCounter = session.communicationCounter;
-      const currentRuntimeVariables = isRootScopeOutputNode(workflow, nodeId)
+      const currentRuntimeVariables = isWorkflowOutputKindNode(workflow, nodeId)
         ? {
             ...session.runtimeVariables,
             workflowOutput: outputPayload["payload"],
@@ -3682,6 +4151,8 @@ async function runWorkflowInternal(
         schemaVersion: 1,
         generatedAt: endedAt,
         nodeId,
+        ...stepIdentityFields,
+        mailboxInstanceId,
         outputRef,
         inputHash: `sha256:${inputHash}`,
         outputHash: `sha256:${outputHash}`,
@@ -3710,7 +4181,10 @@ async function runWorkflowInternal(
           {
             sessionId: session.sessionId,
             nodeId,
+            ...stepIdentityFields,
             nodeExecId,
+            executionOrdinal: nextExecutionCounter,
+            mailboxInstanceId,
             status: nodeStatus,
             artifactDir,
             startedAt,
@@ -3720,6 +4194,10 @@ async function runWorkflowInternal(
             ...(outputValidationErrors.length === 0
               ? {}
               : { outputValidationErrors }),
+            ...(stepExecutionAddress.promptVariant === undefined
+              ? {}
+              : { promptVariant: stepExecutionAddress.promptVariant }),
+            timeoutMs,
             ...(requestedBackendSessionMode === undefined
               ? {}
               : { backendSessionMode: requestedBackendSessionMode }),
@@ -3739,7 +4217,60 @@ async function runWorkflowInternal(
       }
 
       if (nodeStatus === "timed_out") {
-        if (restartOnStuck && restartAttempt < maxStuckRestarts) {
+        const authoredTimeoutPolicy = workflow.defaults.timeoutPolicy;
+        if (
+          options.restartOnStuck !== false &&
+          authoredTimeoutPolicy?.onTimeout === "jump-to-step" &&
+          authoredTimeoutPolicy.jumpStepId !== undefined
+        ) {
+          const retriesBeforeJump = authoredTimeoutPolicy.maxRetries ?? 0;
+          if (restartAttempt >= retriesBeforeJump) {
+            const jumpId = authoredTimeoutPolicy.jumpStepId;
+            if (!workflowNodes.has(jumpId)) {
+              const failed: WorkflowSessionState = {
+                ...session,
+                queue,
+                status: "failed",
+                currentNodeId: nodeId,
+                endedAt,
+                nodeExecutionCounter: nextExecutionCounter,
+                nodeExecutionCounts: updatedCounts,
+                nodeExecutions,
+                communicationCounter: currentCommunicationCounter,
+                communications: currentCommunications,
+                nodeBackendSessions: nextNodeBackendSessions,
+                lastError: `${executionTargetNoun} timeout at '${nodeId}': timeout policy jump target '${jumpId}' is not a known workflow ${executionTargetNoun}`,
+              };
+              await saveSession(failed, options);
+              return err({
+                exitCode: 6,
+                message: failed.lastError ?? `${executionTargetNoun} timeout`,
+              });
+            }
+            session = {
+              ...session,
+              status: "running",
+              queue: [...dedupeNodeIds([jumpId, ...queue])],
+              currentNodeId: nodeId,
+              nodeExecutionCounter: nextExecutionCounter,
+              nodeExecutionCounts: updatedCounts,
+              nodeExecutions,
+              communicationCounter: currentCommunicationCounter,
+              communications: currentCommunications,
+              nodeBackendSessions: nextNodeBackendSessions,
+              lastError: `${executionTargetNoun} timeout at '${nodeId}', jumping to '${jumpId}'`,
+            };
+            await saveSession(session, options);
+            break;
+          }
+        }
+
+        const { allowRestart, maxRestarts } = resolveTimeoutRestartBudget(
+          authoredTimeoutPolicy,
+          options,
+          restartAttempt,
+        );
+        if (allowRestart && restartAttempt < maxRestarts) {
           const restartCountForNode =
             (session.restartCounts?.[nodeId] ?? 0) + 1;
           const restartEvents = [
@@ -3769,7 +4300,7 @@ async function runWorkflowInternal(
             communicationCounter: currentCommunicationCounter,
             communications: currentCommunications,
             nodeBackendSessions: nextNodeBackendSessions,
-            lastError: `stuck detected at '${nodeId}', restarting attempt ${restartAttempt + 1}`,
+            lastError: `stuck detected for ${executionTargetNoun} '${nodeId}', restarting attempt ${restartAttempt + 1}`,
           };
           await saveSession(session, options);
 
@@ -3793,22 +4324,38 @@ async function runWorkflowInternal(
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
           nodeBackendSessions: nextNodeBackendSessions,
-          lastError: `node timeout at '${nodeId}'`,
+          lastError: `${executionTargetNoun} timeout at '${nodeId}'`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 6,
-          message: failed.lastError ?? "node timeout",
-        });
+        return err(
+          workflowRunFailure(
+            6,
+            failed.lastError ?? `${executionTargetNoun} timeout`,
+            failed,
+          ),
+        );
       }
 
       if (nodeStatus === "failed") {
-        const failureReason =
-          outputPayload["error"] === "invalid_output"
-            ? `invalid adapter output at '${nodeId}'`
-            : outputValidationErrors.length > 0
-              ? `output validation failed at '${nodeId}'`
-              : `adapter failure at '${nodeId}'`;
+        const providerErrMessage = (() => {
+          const p = outputPayload["payload"];
+          if (typeof p !== "object" || p === null) {
+            return undefined;
+          }
+          const m = (p as Readonly<Record<string, unknown>>)[
+            "providerErrorMessage"
+          ];
+          return typeof m === "string" && m.length > 0 ? m : undefined;
+        })();
+        const failureReason: string =
+          providerErrMessage !== undefined &&
+          isSupervisionStallLastError(providerErrMessage)
+            ? providerErrMessage
+            : outputPayload["error"] === "invalid_output"
+              ? `invalid adapter output for ${executionTargetNoun} '${nodeId}'`
+              : outputValidationErrors.length > 0
+                ? `output validation failed for ${executionTargetNoun} '${nodeId}'`
+                : `adapter failure for ${executionTargetNoun} '${nodeId}'`;
         const failed: WorkflowSessionState = {
           ...session,
           queue,
@@ -3824,10 +4371,9 @@ async function runWorkflowInternal(
           lastError: failureReason,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 5,
-          message: failed.lastError ?? "adapter failure",
-        });
+        return err(
+          workflowRunFailure(5, failed.lastError ?? "adapter failure", failed),
+        );
       }
 
       const completion = evaluateCompletion({
@@ -3850,14 +4396,17 @@ async function runWorkflowInternal(
           nodeBackendSessions: nextNodeBackendSessions,
           lastError:
             completion.reason === null
-              ? `completion condition not met at '${nodeId}'`
-              : `completion condition not met at '${nodeId}': ${completion.reason}`,
+              ? `completion condition not met for ${executionTargetNoun} '${nodeId}'`
+              : `completion condition not met for ${executionTargetNoun} '${nodeId}': ${completion.reason}`,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 3,
-          message: failed.lastError ?? "completion condition not met",
-        });
+        return err(
+          workflowRunFailure(
+            3,
+            failed.lastError ?? "completion condition not met",
+            failed,
+          ),
+        );
       }
       const consumedCommunicationsResult = await markCommunicationsConsumed(
         { ...session, communications: currentCommunications },
@@ -3882,19 +4431,17 @@ async function runWorkflowInternal(
           lastError: consumedCommunicationsResult.error,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 1,
-          message: failed.lastError ?? "mailbox consumption persistence failed",
-        });
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ?? "mailbox consumption persistence failed",
+            failed,
+          ),
+        );
       }
       currentCommunications = consumedCommunicationsResult.value;
       const transitionCommunications = await Promise.all(
         selected.map((edge, index) => {
-          const boundary = resolveCommunicationBoundary({
-            workflow,
-            fromNodeId: edge.from,
-            toNodeId: edge.to,
-          });
           return persistCommunicationArtifact({
             artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
             runtimeLogOptions: options,
@@ -3903,20 +4450,14 @@ async function runWorkflowInternal(
             communicationCounter: currentCommunicationCounter + index,
             fromNodeId: edge.from,
             toNodeId: edge.to,
-            ...(boundary.fromSubWorkflowId === undefined
-              ? {}
-              : { fromSubWorkflowId: boundary.fromSubWorkflowId }),
-            ...(boundary.toSubWorkflowId === undefined
-              ? {}
-              : { toSubWorkflowId: boundary.toSubWorkflowId }),
-            routingScope: boundary.routingScope,
+            routingScope: "intra-workflow",
             deliveryKind:
               edge.to === edge.from ? "loop-back" : "edge-transition",
             transitionWhen: edge.when,
             sourceNodeExecId: nodeExecId,
             payloadRef: outputRef,
             outputRaw,
-            deliveredByNodeId: mailboxDeliveryManagerNodeId(workflow, edge.to),
+            deliveredByNodeId: resolveWorkflowManagerStepId(workflow),
             createdAt: endedAt,
           });
         }),
@@ -3927,31 +4468,34 @@ async function runWorkflowInternal(
       ];
       currentCommunicationCounter += transitionCommunications.length;
 
-      const workflowCallResult = await executeWorkflowCallsForNode({
-        workflow,
-        workflowName,
-        session: {
-          ...session,
-          nodeExecutions,
+      const crossWorkflowDispatchResult =
+        await executeCrossWorkflowDispatchesForNode({
+          workflow,
+          workflowName,
+          session: {
+            ...session,
+            nodeExecutions,
+            communicationCounter: currentCommunicationCounter,
+            communications: currentCommunications,
+            runtimeVariables: currentRuntimeVariables,
+          },
+          options,
+          artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
+          callerNodeId: nodeId,
+          callerStepId: stepExecutionAddress.stepId,
+          callerNodeRegistryId: stepExecutionAddress.nodeRegistryId,
+          callerNodeExecId: nodeExecId,
+          callerArtifactDir: artifactDir,
+          callerOutputPayload: outputPayload,
+          callerOutputRaw: outputRaw,
+          createdAt: endedAt,
           communicationCounter: currentCommunicationCounter,
-          communications: currentCommunications,
-          runtimeVariables: currentRuntimeVariables,
-        },
-        options,
-        artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-        callerNodeId: nodeId,
-        callerNodeExecId: nodeExecId,
-        callerArtifactDir: artifactDir,
-        callerOutputPayload: outputPayload,
-        callerOutputRaw: outputRaw,
-        createdAt: endedAt,
-        communicationCounter: currentCommunicationCounter,
-        currentCommunications,
-        adapter: effectiveAdapter,
-        guards,
-        workflowCallAncestors,
-      });
-      if (!workflowCallResult.ok) {
+          currentCommunications,
+          adapter: effectiveAdapter,
+          guards,
+          crossWorkflowInvocationStack,
+        });
+      if (!crossWorkflowDispatchResult.ok) {
         const failed: WorkflowSessionState = {
           ...session,
           queue,
@@ -3965,17 +4509,20 @@ async function runWorkflowInternal(
           communicationCounter: currentCommunicationCounter,
           communications: currentCommunications,
           nodeBackendSessions: nextNodeBackendSessions,
-          lastError: workflowCallResult.error,
+          lastError: crossWorkflowDispatchResult.error,
         };
         await saveSession(failed, options);
-        return err({
-          exitCode: 1,
-          message: failed.lastError ?? "workflow-call execution failed",
-        });
+        return err(
+          workflowRunFailure(
+            1,
+            failed.lastError ?? "cross-workflow dispatch execution failed",
+            failed,
+          ),
+        );
       }
-      currentCommunications = workflowCallResult.value.communications;
+      currentCommunications = crossWorkflowDispatchResult.value.communications;
       currentCommunicationCounter =
-        workflowCallResult.value.communicationCounter;
+        crossWorkflowDispatchResult.value.communicationCounter;
 
       const transitions = [
         ...session.transitions,
@@ -3984,294 +4531,17 @@ async function runWorkflowInternal(
           to: edge.to,
           when: edge.when,
         })),
-        ...workflowCallResult.value.transitions,
+        ...crossWorkflowDispatchResult.value.transitions,
       ];
       const transitionNextNodes = selected.map((edge) => edge.to);
-      const pendingSessionState: WorkflowSessionState = {
-        ...session,
-        queue: [
-          ...queue,
-          ...transitionNextNodes,
-          ...workflowCallResult.value.queuedNodeIds,
-        ].filter((value, index, all) => all.indexOf(value) === index),
-        nodeExecutions,
-        communicationCounter: currentCommunicationCounter,
-        communications: currentCommunications,
-        runtimeVariables: currentRuntimeVariables,
-      };
-      let managerPlannedInputs = isManagerNodeRef(nodeRef)
-        ? isSubworkflowManagerNodeRef(nodeRef)
-          ? [
-              ...((managerControl?.overridesChildInputPlanning ?? false)
-                ? (managerControl?.childInputNodeIds ?? [])
-                : planSubWorkflowChildInputs({
-                    workflow,
-                    session: pendingSessionState,
-                    managerNodeId: nodeId,
-                  })),
-            ]
-          : []
-        : [];
-
-      let managerPlannedCommunications: readonly CommunicationRecord[] = [];
-      if (nodeId === workflow.managerNodeId) {
-        const plannedSubWorkflowStarts =
-          managerControl?.overridesRootSubWorkflowPlanning === true
-            ? managerControl.startSubWorkflowIds
-                .map((subWorkflowId) =>
-                  workflow.subWorkflows.find(
-                    (entry) => entry.id === subWorkflowId,
-                  ),
-                )
-                .filter(
-                  (subWorkflow): subWorkflow is SubWorkflowRef =>
-                    subWorkflow !== undefined,
-                )
-            : planRootManagerSubWorkflowStarts({
-                workflow,
-                session: pendingSessionState,
-              });
-        const persistedStarts: CommunicationRecord[] = [];
-        for (const subWorkflow of plannedSubWorkflowStarts) {
-          if (subWorkflow.managerNodeId === workflow.managerNodeId) {
-            managerPlannedInputs.push(subWorkflow.inputNodeId);
-            continue;
-          }
-          const communication = await persistCommunicationArtifact({
-            artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-            runtimeLogOptions: options,
-            workflowId: workflow.workflowId,
-            workflowExecutionId: session.sessionId,
-            communicationCounter: currentCommunicationCounter,
-            fromNodeId: nodeId,
-            toNodeId: subWorkflow.managerNodeId,
-            toSubWorkflowId: subWorkflow.id,
-            routingScope: "parent-to-sub-workflow",
-            deliveryKind: "edge-transition",
-            transitionWhen: `sub-workflow-start:${subWorkflow.id}`,
-            sourceNodeExecId: nodeExecId,
-            payloadRef: outputRef,
-            outputRaw,
-            deliveredByNodeId: mailboxDeliveryManagerNodeId(
-              workflow,
-              subWorkflow.managerNodeId,
-            ),
-            createdAt: endedAt,
-          });
-          currentCommunicationCounter += 1;
-          persistedStarts.push(communication);
-          managerPlannedInputs.push(subWorkflow.managerNodeId);
-        }
-        const persistedChildInputs: CommunicationRecord[] = [];
-        const rootManagedSubWorkflows = workflow.subWorkflows.filter(
-          (entry) => entry.managerNodeId === nodeId,
-        );
-        for (const subWorkflow of rootManagedSubWorkflows) {
-          const forwardedPayloads = upstreamInputs
-            .filter((entry) => entry.toSubWorkflowId === subWorkflow.id)
-            .map((entry) => toForwardedManagerPayload(entry));
-          if (forwardedPayloads.length === 0) {
-            continue;
-          }
-          managerPlannedInputs.push(subWorkflow.inputNodeId);
-          for (const forwarded of forwardedPayloads) {
-            const communication = await persistCommunicationArtifact({
-              artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-              runtimeLogOptions: options,
-              workflowId: workflow.workflowId,
-              workflowExecutionId: session.sessionId,
-              communicationCounter: currentCommunicationCounter,
-              fromNodeId: nodeId,
-              toNodeId: subWorkflow.inputNodeId,
-              toSubWorkflowId: subWorkflow.id,
-              routingScope: "intra-sub-workflow",
-              deliveryKind: "edge-transition",
-              transitionWhen: `root-manager-input:${subWorkflow.inputNodeId}`,
-              sourceNodeExecId: forwarded.payloadRef.nodeExecId,
-              payloadRef: forwarded.payloadRef,
-              outputRaw: forwarded.outputRaw,
-              deliveredByNodeId: mailboxDeliveryManagerNodeId(
-                workflow,
-                subWorkflow.inputNodeId,
-              ),
-              createdAt: endedAt,
-            });
-            currentCommunicationCounter += 1;
-            persistedChildInputs.push(communication);
-          }
-        }
-        managerPlannedCommunications = [
-          ...persistedStarts,
-          ...persistedChildInputs,
-        ];
-      } else if (isSubworkflowManagerNodeRef(nodeRef)) {
-        const forwardedPayloads = [{ payloadRef: outputRef, outputRaw }];
-        const persistedChildInputs: CommunicationRecord[] = [];
-        for (const inputNodeId of managerPlannedInputs) {
-          for (const forwarded of forwardedPayloads) {
-            const communication = await persistCommunicationArtifact({
-              artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-              runtimeLogOptions: options,
-              workflowId: workflow.workflowId,
-              workflowExecutionId: session.sessionId,
-              communicationCounter: currentCommunicationCounter,
-              fromNodeId: nodeId,
-              toNodeId: inputNodeId,
-              routingScope: "intra-sub-workflow",
-              deliveryKind: "edge-transition",
-              transitionWhen: `subworkflow-manager-input:${inputNodeId}`,
-              sourceNodeExecId: forwarded.payloadRef.nodeExecId,
-              payloadRef: forwarded.payloadRef,
-              outputRaw: forwarded.outputRaw,
-              deliveredByNodeId: mailboxDeliveryManagerNodeId(
-                workflow,
-                inputNodeId,
-              ),
-              createdAt: endedAt,
-            });
-            currentCommunicationCounter += 1;
-            persistedChildInputs.push(communication);
-          }
-        }
-        managerPlannedCommunications = persistedChildInputs;
-      }
-      currentCommunications = [
-        ...currentCommunications,
-        ...managerPlannedCommunications,
-      ];
-
-      let conversationTurns = [...(session.conversationTurns ?? [])];
-      let conversationPlannedInputs: string[] = [];
-      if (isManagerNodeRef(nodeRef)) {
-        const conversationRound = await executeConversationRound({
-          workflow,
-          workflowExecutionId: session.sessionId,
-          session: {
-            ...session,
-            nodeExecutions,
-            conversationTurns,
-            communicationCounter: currentCommunicationCounter,
-            communications: currentCommunications,
-          },
-        });
-
-        if (conversationRound.status === "failed") {
-          const failed: WorkflowSessionState = {
-            ...session,
-            queue,
-            status: "failed",
-            currentNodeId: nodeId,
-            endedAt,
-            nodeExecutionCounter: nextExecutionCounter,
-            nodeExecutionCounts: updatedCounts,
-            nodeExecutions,
-            loopIterationCounts: updatedLoopIterationCounts,
-            communicationCounter: currentCommunicationCounter,
-            communications: currentCommunications,
-            conversationTurns,
-            nodeBackendSessions: nextNodeBackendSessions,
-            lastError: "conversation round execution failed",
-          };
-          await saveSession(failed, options);
-          return err({
-            exitCode: 1,
-            message: failed.lastError ?? "conversation round execution failed",
-          });
-        }
-
-        if (conversationRound.turns.length > 0) {
-          const successfulTurnDeliveries: Array<{
-            readonly turn: (typeof conversationRound.turns)[number];
-            readonly communication: CommunicationRecord;
-            readonly receiverManagerNodeId: string;
-          }> = [];
-          for (const turn of conversationRound.turns) {
-            if (turn.toManagerNodeId === undefined) {
-              continue;
-            }
-            const parsedOutput = await readOutputPayloadArtifact(
-              turn.outputRef.artifactDir,
-            );
-            if (!parsedOutput.ok) {
-              const failed: WorkflowSessionState = {
-                ...session,
-                queue,
-                status: "failed",
-                currentNodeId: nodeId,
-                endedAt,
-                nodeExecutionCounter: nextExecutionCounter,
-                nodeExecutionCounts: updatedCounts,
-                nodeExecutions,
-                loopIterationCounts: updatedLoopIterationCounts,
-                communicationCounter: currentCommunicationCounter,
-                communications: currentCommunications,
-                conversationTurns,
-                nodeBackendSessions: nextNodeBackendSessions,
-                lastError:
-                  `failed to resolve conversation output for '${turn.fromSubWorkflowId}' -> '${turn.toSubWorkflowId}': ` +
-                  parsedOutput.error,
-              };
-              await saveSession(failed, options);
-              return err({
-                exitCode: 1,
-                message:
-                  failed.lastError ?? "conversation output resolution failed",
-              });
-            }
-            const communication = await persistCommunicationArtifact({
-              artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,
-              runtimeLogOptions: options,
-              workflowId: workflow.workflowId,
-              workflowExecutionId: session.sessionId,
-              communicationCounter: currentCommunicationCounter,
-              fromNodeId: turn.fromManagerNodeId,
-              toNodeId: turn.toManagerNodeId,
-              fromSubWorkflowId: turn.fromSubWorkflowId,
-              toSubWorkflowId: turn.toSubWorkflowId,
-              routingScope: "cross-sub-workflow",
-              deliveryKind: "conversation-turn",
-              transitionWhen: `conversation:${turn.conversationId}:${turn.turnIndex}`,
-              sourceNodeExecId: turn.outputRef.nodeExecId,
-              payloadRef: turn.outputRef,
-              outputRaw: parsedOutput.value.raw,
-              deliveredByNodeId: workflow.managerNodeId,
-              createdAt: endedAt,
-            });
-            currentCommunicationCounter += 1;
-            successfulTurnDeliveries.push({
-              turn,
-              communication,
-              receiverManagerNodeId: turn.toManagerNodeId,
-            });
-          }
-          currentCommunications = [
-            ...currentCommunications,
-            ...successfulTurnDeliveries.map((entry) => entry.communication),
-          ];
-          conversationTurns = [
-            ...conversationTurns,
-            ...successfulTurnDeliveries.map((entry) => ({
-              ...entry.turn,
-              communicationId: entry.communication.communicationId,
-              sentAt: endedAt,
-            })),
-          ];
-          conversationPlannedInputs = successfulTurnDeliveries.map(
-            (entry) => entry.receiverManagerNodeId,
-          );
-        }
-      }
-
-      const retryNodeIds = managerControl?.retryNodeIds ?? [];
+      const retryStepIds = managerControl?.retryStepIds ?? [];
       const nextQueue = [
         ...queue,
         ...transitionNextNodes,
-        ...workflowCallResult.value.queuedNodeIds,
-        ...managerPlannedInputs,
-        ...conversationPlannedInputs,
+        ...crossWorkflowDispatchResult.value.queuedNodeIds,
         ...queuedOptionalDecisionNodeIds,
       ].filter((value, index, all) => all.indexOf(value) === index);
-      const nextQueueWithRetries = [...nextQueue, ...retryNodeIds].filter(
+      const nextQueueWithRetries = [...nextQueue, ...retryStepIds].filter(
         (value, index, all) => all.indexOf(value) === index,
       );
 
@@ -4287,7 +4557,9 @@ async function runWorkflowInternal(
         nodeExecutions,
         communicationCounter: currentCommunicationCounter,
         communications: currentCommunications,
-        conversationTurns,
+        ...(session.conversationTurns === undefined
+          ? {}
+          : { conversationTurns: session.conversationTurns }),
         nodeBackendSessions: nextNodeBackendSessions,
         pendingOptionalNodeDecisions: isOptionalExecutionNode
           ? removePendingOptionalNodeDecision(
@@ -4309,12 +4581,14 @@ async function runWorkflowInternal(
       return ok({ session: beforeComplete.value, exitCode: 0 });
     }
     const exitCode = beforeComplete.value.status === "cancelled" ? 130 : 1;
-    return err({
-      exitCode,
-      message:
+    return err(
+      workflowRunFailure(
+        exitCode,
         beforeComplete.value.lastError ??
-        `session ${beforeComplete.value.status}`,
-    });
+          `session ${beforeComplete.value.status}`,
+        beforeComplete.value,
+      ),
+    );
   }
 
   let completed: WorkflowSessionState = {
@@ -4329,12 +4603,16 @@ async function runWorkflowInternal(
     completed,
   );
   if (publishedResultExecution !== undefined) {
+    const publishedTargetId =
+      stepAddressedExecution && publishedResultExecution.stepId !== undefined
+        ? publishedResultExecution.stepId
+        : publishedResultExecution.nodeId;
     const outputPayload = await readOutputPayloadArtifact(
       publishedResultExecution.artifactDir,
     );
     if (!outputPayload.ok) {
       const publicationFailureMessage =
-        `failed to publish selected external output for '${publishedResultExecution.nodeId}' ` +
+        `failed to publish selected external output for ${executionTargetNoun} '${publishedTargetId}' ` +
         `(${publishedResultExecution.nodeExecId}): ${outputPayload.error}`;
       return await failTerminalSession(
         completed,
@@ -4361,7 +4639,7 @@ async function runWorkflowInternal(
           ? error.message
           : "unknown external output publication failure";
       const publicationFailureMessage =
-        `failed to persist external output publication for '${publishedResultExecution.nodeId}' ` +
+        `failed to persist external output publication for ${executionTargetNoun} '${publishedTargetId}' ` +
         `(${publishedResultExecution.nodeExecId}): ${message}`;
       return await failTerminalSession(
         completed,
@@ -4377,6 +4655,23 @@ async function runWorkflowInternal(
         externalOutputCommunication,
       ],
     };
+    if (options.eventReplyDispatcher !== undefined) {
+      try {
+        await publishWorkflowBusinessFinalExternalOutput({
+          dispatcher: options.eventReplyDispatcher,
+          runtimeOptions: options,
+          workflowId: workflow.workflowId,
+          workflowExecutionId: completed.sessionId,
+          runtimeVariables: completed.runtimeVariables,
+          publishedNodeId: publishedTargetId,
+          publishedNodeExecId: publishedResultExecution.nodeExecId,
+          workflowOutputPayload: outputPayload.value.payload,
+          createdAt: completed.endedAt ?? nowIso(),
+        });
+      } catch {
+        // Best-effort: outbound provider delivery must not fail terminal completion.
+      }
+    }
   }
 
   const persistedCompleted = await persistCompletedSessionState(
@@ -4384,9 +4679,283 @@ async function runWorkflowInternal(
     options,
   );
   if (!persistedCompleted.ok) {
-    return err({ exitCode: 1, message: persistedCompleted.error });
+    return err(workflowRunFailure(1, persistedCompleted.error, completed));
   }
   return ok({ session: completed, exitCode: 0 });
+}
+
+/**
+ * Outermost auto-improve cycle: re-run the target after terminal failure until success or
+ * {@link AutoImprovePolicy.maxSupervisedAttempts}, recording incidents and remediations.
+ * In-step stall is detected from persisted `sessions.updated_at` while a step executes
+ * (`executeAdapterWithTimeout` + `buildSupervisionStallWatch`). A nested `superviserWorkflowId`
+ * workflow is still a follow-up.
+ */
+async function runAutoImproveLoop(
+  workflowName: string,
+  options: WorkflowRunOptions,
+  adapter: NodeAdapter | undefined,
+  guards: EngineExecutionGuards | undefined,
+): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
+  const policy = options.autoImprove;
+  if (policy === undefined) {
+    return err(workflowRunFailure(1, "internal: autoImprove policy missing"));
+  }
+  const innerBase: WorkflowRunOptions = {
+    ...options,
+    supervisionLoopExecution: true,
+  };
+  let current: WorkflowRunOptions = innerBase;
+
+  for (;;) {
+    const result = await runWorkflowInternal(
+      workflowName,
+      current,
+      adapter,
+      guards,
+    );
+
+    if (result.ok) {
+      const persisted = await loadSession(
+        result.value.session.sessionId,
+        options,
+      );
+      const latest = persisted.ok ? persisted.value : result.value.session;
+      if (latest.status !== "completed" || result.value.exitCode !== 0) {
+        return ok({ ...result.value, session: latest });
+      }
+      if (latest.supervision !== undefined) {
+        const next: WorkflowSessionState = {
+          ...latest,
+          supervision: { ...latest.supervision, status: "succeeded" },
+        };
+        const saved = await saveSession(next, options);
+        if (!saved.ok) {
+          return err(workflowRunFailure(1, saved.error.message, next));
+        }
+        return ok({ session: next, exitCode: 0 });
+      }
+      return ok({ ...result.value, session: latest });
+    }
+
+    const failure = result.error;
+    if (failure.sessionId === undefined) {
+      return result;
+    }
+    if (failure.exitCode === 130) {
+      return result;
+    }
+
+    const loaded = await loadSession(failure.sessionId, options);
+    if (!loaded.ok) {
+      return result;
+    }
+    const failedSession = loaded.value;
+    if (failedSession.supervision === undefined) {
+      return result;
+    }
+
+    const sup = failedSession.supervision;
+    if (sup.attemptCount >= policy.maxSupervisedAttempts) {
+      const t = nowIso();
+      const lastErr = failedSession.lastError;
+      const terminalIncident: SupervisionIncident = {
+        incidentId: `inc-${randomBytes(6).toString("hex")}`,
+        supervisedAttemptId: failedSession.sessionId,
+        category: isSupervisionStallLastError(lastErr) ? "stall" : "failure",
+        summary: lastErr ?? failure.message,
+        detectedAt: t,
+      };
+      const budgetIncident: SupervisionIncident = {
+        incidentId: `inc-${randomBytes(6).toString("hex")}`,
+        supervisedAttemptId: failedSession.sessionId,
+        category: "budget-exhausted",
+        summary: `max supervised attempts (${policy.maxSupervisedAttempts}) reached`,
+        detectedAt: t,
+      };
+      const remediation: SupervisionRemediationRecord = {
+        remediationId: `rem-${randomBytes(6).toString("hex")}`,
+        incidentId: budgetIncident.incidentId,
+        decidedAt: t,
+        action: "stop-supervision",
+        reason: "supervision attempt budget exhausted",
+      };
+      const nextSession: WorkflowSessionState = {
+        ...failedSession,
+        supervision: {
+          ...sup,
+          status: "stopped",
+          incidents: [...sup.incidents, terminalIncident, budgetIncident],
+          remediations: [...(sup.remediations ?? []), remediation],
+        },
+      };
+      const saved = await saveSession(nextSession, options);
+      if (!saved.ok) {
+        return err(workflowRunFailure(1, saved.error.message, nextSession));
+      }
+      return err(
+        workflowRunFailure(
+          1,
+          nextSession.lastError ?? failure.message,
+          nextSession,
+        ),
+      );
+    }
+
+    const t = nowIso();
+    const lastErr = failedSession.lastError;
+    const failIncident: SupervisionIncident = {
+      incidentId: `inc-${randomBytes(6).toString("hex")}`,
+      supervisedAttemptId: failedSession.sessionId,
+      category: isSupervisionStallLastError(lastErr) ? "stall" : "failure",
+      summary: lastErr ?? failure.message,
+      detectedAt: t,
+    };
+    const nextAttempt = sup.attemptCount + 1;
+
+    const loadOptsForTarget = mergeLoadOptionsForSessionMutableBundle(
+      options,
+      failedSession,
+    );
+    const wfForTarget = await loadWorkflowFromDisk(
+      workflowName,
+      loadOptsForTarget,
+    );
+    if (!wfForTarget.ok) {
+      return err(
+        workflowRunFailure(
+          2,
+          `supervision rerun: load workflow: ${wfForTarget.error.message}`,
+          failedSession,
+        ),
+      );
+    }
+    const targetWorkflow = wfForTarget.value.bundle.workflow;
+    const workflowForSupervision = targetWorkflow;
+    const remediationPlan = planSupervisionRemediation({
+      policy,
+      sup,
+      workflow: workflowForSupervision,
+      session: failedSession,
+      failIncident,
+    });
+
+    if (remediationPlan.kind === "stop-patch-budget") {
+      const tStop = nowIso();
+      const patchBudgetIncident: SupervisionIncident = {
+        incidentId: `inc-${randomBytes(6).toString("hex")}`,
+        supervisedAttemptId: failedSession.sessionId,
+        category: "budget-exhausted",
+        summary: `max workflow patches (${policy.maxWorkflowPatches}) reached; repeated supervised incident: ${lastErr ?? failure.message}`,
+        detectedAt: tStop,
+      };
+      const patchStopRemediation: SupervisionRemediationRecord = {
+        remediationId: `rem-${randomBytes(6).toString("hex")}`,
+        incidentId: patchBudgetIncident.incidentId,
+        decidedAt: tStop,
+        action: "stop-supervision",
+        reason: "workflow patch budget exhausted",
+      };
+      const nextSession: WorkflowSessionState = {
+        ...failedSession,
+        supervision: {
+          ...sup,
+          status: "stopped",
+          incidents: [...sup.incidents, failIncident, patchBudgetIncident],
+          remediations: [...(sup.remediations ?? []), patchStopRemediation],
+        },
+      };
+      const savedP = await saveSession(nextSession, options);
+      if (!savedP.ok) {
+        return err(workflowRunFailure(1, savedP.error.message, nextSession));
+      }
+      return err(
+        workflowRunFailure(
+          1,
+          nextSession.lastError ?? failure.message,
+          nextSession,
+        ),
+      );
+    }
+
+    let nextPatchCount = sup.workflowPatchCount;
+    if (remediationPlan.kind === "patch-then-rerun") {
+      const roots = resolveEffectiveRoots(current);
+      if (sup.mutableWorkflowDir === undefined) {
+        return err(
+          workflowRunFailure(
+            2,
+            "supervision: mutable workflow directory missing; cannot record patch revision",
+            failedSession,
+          ),
+        );
+      }
+      const patchRec = await recordWorkflowPatchRevision({
+        artifactRoot: roots.artifactRoot,
+        supervisionRunId: sup.supervisionRunId,
+        mutableWorkflowDir: sup.mutableWorkflowDir,
+        reason: remediationPlan.patchRecordReason,
+        patchedByStepId: getEngineSupervisionPatcherId(),
+      });
+      if (!patchRec.ok) {
+        return err(
+          workflowRunFailure(
+            2,
+            `supervision: ${patchRec.error.message}`,
+            failedSession,
+          ),
+        );
+      }
+      nextPatchCount += 1;
+    }
+
+    const rem: SupervisionRemediationRecord = {
+      remediationId: `rem-${randomBytes(6).toString("hex")}`,
+      incidentId: failIncident.incidentId,
+      decidedAt: t,
+      action:
+        remediationPlan.kind === "patch-then-rerun"
+          ? "patch-workflow"
+          : remediationPlan.remediationAction,
+      reason:
+        remediationPlan.kind === "patch-then-rerun"
+          ? remediationPlan.patchRecordReason
+          : "automatic target workflow rerun after terminal failure or stall",
+      ...(remediationPlan.targetStepId === undefined
+        ? {}
+        : { targetStepId: remediationPlan.targetStepId }),
+    };
+    const withUpdates: WorkflowSessionState = {
+      ...failedSession,
+      supervision: {
+        ...sup,
+        attemptCount: nextAttempt,
+        workflowPatchCount: nextPatchCount,
+        incidents: [...sup.incidents, failIncident],
+        remediations: [...(sup.remediations ?? []), rem],
+        ...(sup.policy === undefined ? { policy } : {}),
+      },
+    };
+    const saved2 = await saveSession(withUpdates, options);
+    if (!saved2.ok) {
+      return err(workflowRunFailure(1, saved2.error.message, withUpdates));
+    }
+
+    const {
+      resumeSessionId: _resumeSessionId,
+      rerunFromSessionId: _rerunFromSessionId,
+      rerunFromStepId: _rerunFromStepId,
+      ...rerunBase
+    } = innerBase;
+    current = {
+      ...rerunBase,
+      autoImprove: policy,
+      supervisionLoopExecution: true,
+      rerunFromSessionId: withUpdates.sessionId,
+      rerunFromStepId:
+        remediationPlan.targetStepId ?? remediationPlan.rerunFromStepId,
+    };
+  }
 }
 
 export async function runWorkflow(
@@ -4395,5 +4964,284 @@ export async function runWorkflow(
   adapter?: NodeAdapter,
   guards?: EngineExecutionGuards,
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
-  return runWorkflowInternal(workflowName, options, adapter, guards, []);
+  let normalizedOptions = options;
+  if (options.autoImprove !== undefined) {
+    const normalizedPolicy = normalizeAutoImprovePolicy(options.autoImprove);
+    if (!normalizedPolicy.ok || normalizedPolicy.value === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          normalizedPolicy.ok
+            ? "autoImprove.enabled must be true when autoImprove is set"
+            : `invalid autoImprove policy: ${normalizedPolicy.error}`,
+        ),
+      );
+    }
+    normalizedOptions = {
+      ...options,
+      autoImprove: normalizedPolicy.value,
+    };
+  }
+
+  if (normalizedOptions.autoImprove === undefined) {
+    return runWorkflowInternal(
+      workflowName,
+      normalizedOptions,
+      adapter,
+      guards,
+      [],
+    );
+  }
+  if (normalizedOptions.supervisionLoopExecution === true) {
+    return runWorkflowInternal(
+      workflowName,
+      normalizedOptions,
+      adapter,
+      guards,
+      [],
+    );
+  }
+  if (normalizedOptions.nestedSuperviserDriver === true) {
+    if (normalizedOptions.rerunFromSessionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver cannot be combined with rerunFromSessionId",
+        ),
+      );
+    }
+    if (normalizedOptions.continueFromWorkflowExecutionId !== undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "nestedSuperviserDriver cannot be combined with continueFromWorkflowExecutionId",
+        ),
+      );
+    }
+    return runWorkflowInternal(
+      workflowName,
+      normalizedOptions,
+      adapter,
+      guards,
+      [],
+    );
+  }
+  return runAutoImproveLoop(workflowName, normalizedOptions, adapter, guards);
+}
+
+async function runNestedSuperviserSessionDriver(
+  workflowName: string,
+  session: WorkflowSessionState,
+  loaded: LoadedWorkflow,
+  options: WorkflowRunOptions,
+  adapter: NodeAdapter | undefined,
+  guards: EngineExecutionGuards | undefined,
+  crossWorkflowInvocationStack: readonly string[],
+): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
+  const sup = session.supervision;
+  if (sup === undefined || options.autoImprove === undefined) {
+    return err(
+      workflowRunFailure(
+        2,
+        "internal: nested superviser requires supervision and policy",
+      ),
+    );
+  }
+  const supLoad = await loadWorkflowByIdFromDisk(
+    sup.superviserWorkflowId,
+    options,
+  );
+  if (!supLoad.ok) {
+    return err(
+      workflowRunFailure(
+        2,
+        `nested superviser: load '${sup.superviserWorkflowId}': ${supLoad.error.message}`,
+        session,
+      ),
+    );
+  }
+  const resumingTarget =
+    options.resumeSessionId !== undefined &&
+    options.resumeSessionId === session.sessionId;
+  const existingSuperviserRunSessionId = sup.nestedSuperviserSessionId;
+  let sessionWithSuperviserRunId: WorkflowSessionState;
+  let superviserRunSessionId: string;
+  /**
+   * When true, run the phase-2 superviser bundle with `resumeSessionId` set to
+   * `superviserRunSessionId` (continue an in-flight superviser run). When false, start a new
+   * superviser run with a fresh `sessionId` (no structural sub-workflow tree; flat supervision).
+   */
+  let resumeSuperviserRunSession: boolean;
+  if (resumingTarget) {
+    if (existingSuperviserRunSessionId === undefined) {
+      return err(
+        workflowRunFailure(
+          2,
+          "internal: nested superviser resume requires nestedSuperviserSessionId on supervision",
+          session,
+        ),
+      );
+    }
+    const superviserRunLoaded = await loadSession(
+      existingSuperviserRunSessionId,
+      options,
+    );
+    if (!superviserRunLoaded.ok) {
+      return err(
+        workflowRunFailure(
+          1,
+          `nested superviser: load session for superviser run: ${superviserRunLoaded.error.message}`,
+          session,
+        ),
+      );
+    }
+    const superviserRunCompleted =
+      superviserRunLoaded.value.status === "completed";
+    const targetStillActive = session.status !== "completed";
+    if (superviserRunCompleted && targetStillActive) {
+      // The superviser bundle finished (for example a one-shot add-on) while the
+      // target session is still paused or failed. Resume the target by running another
+      // superviser round with a fresh superviser session id (reusing the same supervision run).
+      superviserRunSessionId = createSessionId({
+        workflowId: supLoad.value.bundle.workflow.workflowId,
+      });
+      sessionWithSuperviserRunId = {
+        ...session,
+        supervision: {
+          ...sup,
+          nestedSuperviserSessionId: superviserRunSessionId,
+        },
+      };
+      const savedSuperviser = await saveSession(
+        sessionWithSuperviserRunId,
+        options,
+      );
+      if (!savedSuperviser.ok) {
+        return err(
+          workflowRunFailure(
+            1,
+            savedSuperviser.error.message,
+            sessionWithSuperviserRunId,
+          ),
+        );
+      }
+      resumeSuperviserRunSession = false;
+    } else {
+      superviserRunSessionId = existingSuperviserRunSessionId;
+      sessionWithSuperviserRunId = session;
+      resumeSuperviserRunSession = true;
+    }
+  } else {
+    superviserRunSessionId = createSessionId({
+      workflowId: supLoad.value.bundle.workflow.workflowId,
+    });
+    sessionWithSuperviserRunId = {
+      ...session,
+      supervision: {
+        ...sup,
+        nestedSuperviserSessionId: superviserRunSessionId,
+      },
+    };
+    const savedSuperviser = await saveSession(
+      sessionWithSuperviserRunId,
+      options,
+    );
+    if (!savedSuperviser.ok) {
+      return err(
+        workflowRunFailure(
+          1,
+          savedSuperviser.error.message,
+          sessionWithSuperviserRunId,
+        ),
+      );
+    }
+    resumeSuperviserRunSession = false;
+  }
+  const baseForControl = workflowRunBaseForSuperviserControl(options);
+  const runWorkflowWithAdapter = (
+    name: string,
+    opts: WorkflowRunOptions,
+  ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> =>
+    runWorkflow(name, opts, adapter, guards);
+  const control = buildSuperviserRuntimeControl({
+    base: baseForControl,
+    runWorkflow: runWorkflowWithAdapter,
+    auth: {
+      supervisionRunId: sup.supervisionRunId,
+      targetSessionId: session.sessionId,
+    },
+    targetWorkflowName: workflowName,
+    targetExpectedWorkflowId: loaded.bundle.workflow.workflowId,
+    defaultPolicy: options.autoImprove,
+  });
+  const {
+    autoImprove: _ai2,
+    supervisionLoopExecution: _sl2,
+    nestedSuperviserDriver: _nd2,
+    superviserControl: _sc2,
+    ...supOptsBase
+  } = baseForControl;
+  const baseRv = supOptsBase.runtimeVariables ?? {};
+  const supOpts: WorkflowRunOptions = {
+    ...supOptsBase,
+    runtimeVariables: {
+      ...baseRv,
+      supervisionRunId: sup.supervisionRunId,
+      targetSessionId: session.sessionId,
+      superviserTargetWorkflowId: loaded.bundle.workflow.workflowId,
+    },
+    superviserControl: control,
+    ...(resumeSuperviserRunSession
+      ? { resumeSessionId: superviserRunSessionId }
+      : { sessionId: superviserRunSessionId }),
+  };
+  const supResult = await runWorkflowInternal(
+    supLoad.value.workflowName,
+    supOpts,
+    adapter,
+    guards,
+    crossWorkflowInvocationStack,
+  );
+  const reloaded = await loadSession(session.sessionId, options);
+  const target =
+    reloaded.ok && reloaded.value.supervision !== undefined
+      ? reloaded.value
+      : sessionWithSuperviserRunId;
+  if (supResult.ok) {
+    const exit = supResult.value.exitCode;
+    const st: SupervisionRunState["status"] =
+      exit === 0 ? "succeeded" : exit === 4 ? "stopped" : "failed";
+    const nextSup: SupervisionRunState = {
+      ...(target.supervision as SupervisionRunState),
+      status: st,
+    };
+    const stamped: WorkflowSessionState = {
+      ...target,
+      supervision: nextSup,
+    };
+    const w = await saveSession(stamped, options);
+    if (!w.ok) {
+      return err(workflowRunFailure(1, w.error.message, stamped));
+    }
+    return ok({ session: stamped, exitCode: exit });
+  }
+  const nextSup: SupervisionRunState = {
+    ...((target.supervision ?? sup) as SupervisionRunState),
+    status: "failed",
+  };
+  const stamped: WorkflowSessionState = {
+    ...target,
+    supervision: nextSup,
+  };
+  const w = await saveSession(stamped, options);
+  if (!w.ok) {
+    return err(workflowRunFailure(1, w.error.message, stamped));
+  }
+  return err(
+    workflowRunFailure(
+      supResult.error.exitCode,
+      supResult.error.message,
+      stamped,
+    ),
+  );
 }

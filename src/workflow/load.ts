@@ -1,6 +1,10 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { NODE_TEMPLATE_FIELD_SPECS } from "./node-template-fields";
+import {
+  cloneNodeTemplateAwarePayload,
+  listNodeTemplateFieldContainers,
+  NODE_TEMPLATE_FIELD_SPECS,
+} from "./node-template-fields";
 import {
   INLINE_NODE_FIELD,
   resolveAuthoredNodeFileReference,
@@ -24,6 +28,38 @@ import type {
   ResolvedWorkflowSource,
   ValidationIssue,
 } from "./types";
+
+function resolveWorkflowBundleDirectory(
+  options: LoadOptions,
+  rootsWorkflowRoot: string,
+  workflowName: string,
+): string {
+  if (options.workflowBundleDirectoryOverride !== undefined) {
+    return path.resolve(
+      options.cwd ?? process.cwd(),
+      options.workflowBundleDirectoryOverride,
+    );
+  }
+  return path.join(rootsWorkflowRoot, workflowName);
+}
+
+/**
+ * When a session is tied to a supervision execution copy (or in-place) bundle path,
+ * load that directory instead of the workflow catalog path.
+ */
+export function mergeLoadOptionsForSessionMutableBundle(
+  options: LoadOptions,
+  session: { readonly supervision?: { readonly mutableWorkflowDir?: string } },
+): LoadOptions {
+  const dir = session.supervision?.mutableWorkflowDir;
+  if (dir === undefined) {
+    return options;
+  }
+  if (options.workflowBundleDirectoryOverride !== undefined) {
+    return options;
+  }
+  return { ...options, workflowBundleDirectoryOverride: dir };
+}
 
 export interface LoadedWorkflow {
   readonly workflowName: string;
@@ -120,36 +156,163 @@ async function resolvePromptTemplateFileForNode(input: {
   }
 
   const payload = input.rawPayload as Record<string, unknown>;
-  const resolvedPayload: Record<string, unknown> = { ...payload };
-  for (const spec of NODE_TEMPLATE_FIELD_SPECS) {
-    const templateFile = payload[spec.fileField];
-    if (typeof templateFile !== "string" || templateFile.length === 0) {
+  const resolvedPayload = cloneNodeTemplateAwarePayload(payload);
+  for (const { record } of listNodeTemplateFieldContainers(resolvedPayload)) {
+    for (const spec of NODE_TEMPLATE_FIELD_SPECS) {
+      const templateFile = record[spec.fileField];
+      if (typeof templateFile !== "string" || templateFile.length === 0) {
+        continue;
+      }
+
+      const resolvedPath = resolveWorkflowRelativePath(
+        input.workflowDirectory,
+        templateFile,
+      );
+      if (!resolvedPath.ok) {
+        return err({
+          code: "IO",
+          message: resolvedPath.error.message,
+        });
+      }
+
+      const promptText = await readTextFile(resolvedPath.value);
+      if (!promptText.ok) {
+        return err({
+          code: promptText.error.code,
+          message: `failed resolving ${spec.fileField} for '${input.nodeFile}': ${promptText.error.message}`,
+        });
+      }
+
+      record[spec.textField] = promptText.value;
+    }
+  }
+
+  return ok(resolvedPayload);
+}
+
+async function resolveWorkflowStepFiles(input: {
+  readonly workflowDirectory: string;
+  readonly workflow: unknown;
+}): Promise<Result<unknown, LoadFailure>> {
+  if (
+    typeof input.workflow !== "object" ||
+    input.workflow === null ||
+    Array.isArray(input.workflow)
+  ) {
+    return ok(input.workflow);
+  }
+
+  const workflowRecord = input.workflow as Record<string, unknown>;
+  const stepsRaw = workflowRecord["steps"];
+  if (!Array.isArray(stepsRaw)) {
+    return ok(input.workflow);
+  }
+
+  const resolvedSteps: unknown[] = [];
+  for (const [index, step] of stepsRaw.entries()) {
+    if (typeof step !== "object" || step === null || Array.isArray(step)) {
+      resolvedSteps.push(step);
       continue;
+    }
+
+    const stepRecord = step as Record<string, unknown>;
+    const stepFileRaw = stepRecord["stepFile"];
+    if (typeof stepFileRaw !== "string" || stepFileRaw.length === 0) {
+      resolvedSteps.push(step);
+      continue;
+    }
+
+    const unsupportedInlineFields = Object.keys(stepRecord).filter(
+      (key) => key !== "id" && key !== "stepFile",
+    );
+    if (unsupportedInlineFields.length > 0) {
+      return err({
+        code: "VALIDATION",
+        message: "workflow validation failed",
+        issues: unsupportedInlineFields.map((fieldName) => ({
+          severity: "error" as const,
+          path: `workflow.steps[${index}].${fieldName}`,
+          message:
+            "must not be authored inline when workflow.steps[].stepFile is used",
+        })),
+      });
     }
 
     const resolvedPath = resolveWorkflowRelativePath(
       input.workflowDirectory,
-      templateFile,
+      stepFileRaw,
     );
     if (!resolvedPath.ok) {
       return err({
-        code: "IO",
-        message: resolvedPath.error.message,
+        code: "VALIDATION",
+        message: "workflow validation failed",
+        issues: [
+          {
+            severity: "error",
+            path: `workflow.steps[${index}].stepFile`,
+            message: resolvedPath.error.message,
+          },
+        ],
       });
     }
 
-    const promptText = await readTextFile(resolvedPath.value);
-    if (!promptText.ok) {
+    const stepRaw = await readJsonFile(resolvedPath.value);
+    if (!stepRaw.ok) {
+      return err(stepRaw.error);
+    }
+    if (
+      typeof stepRaw.value !== "object" ||
+      stepRaw.value === null ||
+      Array.isArray(stepRaw.value)
+    ) {
       return err({
-        code: promptText.error.code,
-        message: `failed resolving ${spec.fileField} for '${input.nodeFile}': ${promptText.error.message}`,
+        code: "VALIDATION",
+        message: "workflow validation failed",
+        issues: [
+          {
+            severity: "error",
+            path: `workflow.steps[${index}]`,
+            message: "step file must contain an object",
+          },
+        ],
       });
     }
 
-    resolvedPayload[spec.textField] = promptText.value;
+    const resolvedStepRecord = stepRaw.value as Record<string, unknown>;
+    const stepIdRaw = stepRecord["id"];
+    const resolvedStepIdRaw = resolvedStepRecord["id"];
+    if (
+      typeof stepIdRaw === "string" &&
+      stepIdRaw.length > 0 &&
+      typeof resolvedStepIdRaw === "string" &&
+      resolvedStepIdRaw.length > 0 &&
+      stepIdRaw !== resolvedStepIdRaw
+    ) {
+      return err({
+        code: "VALIDATION",
+        message: "workflow validation failed",
+        issues: [
+          {
+            severity: "error",
+            path: `workflow.steps[${index}].stepFile`,
+            message: `step file id '${resolvedStepIdRaw}' must match workflow step id '${stepIdRaw}'`,
+          },
+        ],
+      });
+    }
+
+    resolvedSteps.push({
+      ...resolvedStepRecord,
+      ...stepRecord,
+      ...(stepRecord["id"] === undefined ? {} : { id: stepRecord["id"] }),
+      stepFile: stepFileRaw,
+    });
   }
 
-  return ok(resolvedPayload);
+  return ok({
+    ...workflowRecord,
+    steps: resolvedSteps,
+  });
 }
 
 export async function loadWorkflowFromDisk(
@@ -164,7 +327,11 @@ export async function loadWorkflowFromDisk(
   }
 
   const roots = resolveEffectiveRoots(options);
-  const workflowDirectory = path.join(roots.workflowRoot, workflowName);
+  const workflowDirectory = resolveWorkflowBundleDirectory(
+    options,
+    roots.workflowRoot,
+    workflowName,
+  );
 
   const workflowPath = path.join(workflowDirectory, "workflow.json");
 
@@ -191,8 +358,16 @@ export async function loadWorkflowFromDisk(
     });
   }
 
+  const resolvedWorkflow = await resolveWorkflowStepFiles({
+    workflowDirectory,
+    workflow: workflowRaw.value,
+  });
+  if (!resolvedWorkflow.ok) {
+    return err(resolvedWorkflow.error);
+  }
+
   const workflowNodes = (
-    workflowRaw.value as { nodes: Array<Record<string, unknown>> }
+    resolvedWorkflow.value as { nodes: Array<Record<string, unknown>> }
   ).nodes;
   const nodePayloads: Record<string, unknown> = {};
 
@@ -244,10 +419,13 @@ export async function loadWorkflowFromDisk(
 
   const validation = await validateWorkflowBundleAsync(
     {
-      workflow: workflowRaw.value,
+      workflow: resolvedWorkflow.value,
       nodePayloads,
     },
-    options,
+    {
+      ...options,
+      allowResolvedStepFileFields: true,
+    },
   );
 
   if (!validation.ok) {
@@ -322,12 +500,16 @@ export async function loadWorkflowByIdFromDisk(
   workflowId: string,
   options: LoadOptions = {},
 ): Promise<Result<LoadedWorkflow, LoadFailure>> {
-  const direct = await loadWorkflowFromDisk(workflowId, options);
+  // Callee resolution always walks the workflow root; never inherit a root run's
+  // execution-copy bundle directory.
+  const { workflowBundleDirectoryOverride: _bdo, ...discoveryOptions } =
+    options;
+  const direct = await loadWorkflowFromDisk(workflowId, discoveryOptions);
   if (direct.ok && direct.value.bundle.workflow.workflowId === workflowId) {
     return direct;
   }
 
-  const roots = resolveEffectiveRoots(options);
+  const roots = resolveEffectiveRoots(discoveryOptions);
   let directoryEntries: Awaited<ReturnType<typeof readdir>>;
   try {
     directoryEntries = await readdir(roots.workflowRoot, {
@@ -360,7 +542,7 @@ export async function loadWorkflowByIdFromDisk(
       continue;
     }
 
-    return await loadWorkflowFromDisk(entry.name, options);
+    return await loadWorkflowFromDisk(entry.name, discoveryOptions);
   }
 
   if (direct.ok) {

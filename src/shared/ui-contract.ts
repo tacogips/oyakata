@@ -27,10 +27,17 @@ export interface WorkflowExecutionSummary {
   readonly workflowName: string;
   readonly status: SessionStatus;
   readonly currentNodeId: string | null;
+  readonly currentStepId?: string | null;
   readonly nodeExecutionCounter: number;
   readonly startedAt: string;
   readonly endedAt: string | null;
 }
+
+/**
+ * Execution row shape for workflow overview list/status surfaces (aligned with
+ * {@link WorkflowExecutionSummary}; keeps a dedicated alias for overview typing).
+ */
+export type WorkflowExecutionCompactSummary = WorkflowExecutionSummary;
 
 export interface SessionsResponse {
   readonly sessions: readonly WorkflowExecutionSummary[];
@@ -77,7 +84,7 @@ export interface ExecuteWorkflowRequest extends WorkflowRunRequest {
 }
 
 export interface RerunWorkflowRequest extends WorkflowRunRequest {
-  readonly fromNodeId?: string;
+  readonly fromStepId?: string;
 }
 
 export interface SaveWorkflowResponse {
@@ -107,7 +114,7 @@ export interface RerunWorkflowResponse {
   readonly workflowExecutionId: string;
   readonly sessionId: string;
   readonly status: SessionStatus;
-  readonly rerunFromNodeId: string;
+  readonly rerunFromStepId?: string;
   readonly exitCode?: number;
 }
 

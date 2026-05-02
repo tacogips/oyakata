@@ -3,12 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
-  callWorkflowNode,
+  callWorkflowStep,
   createNodeAddonPayloadResolver,
   createWorkflowExecutionClient,
   executeWorkflow,
   getRuntimeSessionView,
   getSession,
+  getSupervisionSummary,
   inspectWorkflow,
   listSessions,
   rerunWorkflow,
@@ -17,6 +18,7 @@ import {
 import type { NodeAddonDefinition, NodeAddonPayloadResolver } from "./lib";
 import type { MockNodeScenario } from "./workflow/adapter";
 import { createWorkflowTemplate } from "./workflow/create";
+import * as workflowEngine from "./workflow/engine";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
 
@@ -32,45 +34,47 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
-async function createCallNodeFixture(
+async function createCallStepFixture(
   workflowRoot: string,
   workflowName: string,
 ): Promise<void> {
   const workflowDirectory = path.join(workflowRoot, workflowName);
-  await mkdir(workflowDirectory, { recursive: true });
+  await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
   await writeJson(path.join(workflowDirectory, "workflow.json"), {
     workflowId: workflowName,
-    description: "call node library fixture",
+    description: "call step library fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "manager-step",
+    entryStepId: "manager-step",
     nodes: [
       {
-        id: "divedra-manager",
-        kind: "root-manager",
-        nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
+        id: "manager-node",
+        nodeFile: "nodes/node-manager.json",
       },
       {
-        id: "writer",
-        kind: "task",
-        nodeFile: "node-writer.json",
-        completion: { type: "none" },
+        id: "writer-node",
+        nodeFile: "nodes/node-writer.json",
       },
     ],
-    edges: [],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "manager-step",
+        nodeId: "manager-node",
+        role: "manager",
+        transitions: [{ toStepId: "writer-step" }],
+      },
+      {
+        id: "writer-step",
+        nodeId: "writer-node",
+      },
+    ],
   });
-  await writeJson(path.join(workflowDirectory, "node-divedra-manager.json"), {
-    id: "divedra-manager",
-    executionBackend: "claude-code-agent",
-    model: "claude-opus-4-1",
-    promptTemplate: "manager",
+  await writeJson(path.join(workflowDirectory, "nodes", "node-manager.json"), {
+    id: "manager-node",
     variables: {},
   });
-  await writeJson(path.join(workflowDirectory, "node-writer.json"), {
-    id: "writer",
+  await writeJson(path.join(workflowDirectory, "nodes", "node-writer.json"), {
+    id: "writer-node",
     executionBackend: "codex-agent",
     model: "gpt-5",
     promptTemplate: "writer",
@@ -86,55 +90,36 @@ async function createThirdPartyAddonWorkflowFixture(input: {
   const workflowDirectory = path.join(input.workflowRoot, input.workflowName);
   await mkdir(workflowDirectory, { recursive: true });
 
-  const nodes =
-    input.includeSetupNode === true
-      ? [
-          {
-            id: "setup",
-            role: "worker",
-            nodeFile: "nodes/node-setup.json",
-            completion: { type: "none" },
-          },
-          {
-            id: "addon-worker",
-            role: "worker",
-            addon: {
-              name: "acme/echo-worker",
-              version: "1",
-              inputs: { message: "from addon" },
-            },
-            completion: { type: "none" },
-          },
-        ]
-      : [
-          {
-            id: "addon-worker",
-            role: "worker",
-            addon: {
-              name: "acme/echo-worker",
-              version: "1",
-              inputs: { message: "from addon" },
-            },
-            completion: { type: "none" },
-          },
-        ];
-
-  await writeJson(path.join(workflowDirectory, "workflow.json"), {
-    workflowId: input.workflowName,
-    description: "third-party add-on library fixture",
-    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    entryNodeId: input.includeSetupNode === true ? "setup" : "addon-worker",
-    nodes,
-    edges:
-      input.includeSetupNode === true
-        ? [{ from: "setup", to: "addon-worker", when: "always" }]
-        : [],
-    loops: [],
-    branching: { mode: "fan-out" },
-  });
-
   if (input.includeSetupNode === true) {
     await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+    await writeJson(path.join(workflowDirectory, "workflow.json"), {
+      workflowId: input.workflowName,
+      description: "third-party add-on library fixture",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      entryStepId: "setup",
+      nodes: [
+        {
+          id: "setup",
+          nodeFile: "nodes/node-setup.json",
+        },
+        {
+          id: "addon-worker",
+          addon: {
+            name: "acme/echo-worker",
+            version: "1",
+            inputs: { message: "from addon" },
+          },
+        },
+      ],
+      steps: [
+        {
+          id: "setup",
+          nodeId: "setup",
+          transitions: [{ toStepId: "addon-worker" }],
+        },
+        { id: "addon-worker", nodeId: "addon-worker" },
+      ],
+    });
     await writeJson(path.join(workflowDirectory, "nodes/node-setup.json"), {
       id: "setup",
       executionBackend: "codex-agent",
@@ -142,7 +127,26 @@ async function createThirdPartyAddonWorkflowFixture(input: {
       promptTemplate: "setup",
       variables: {},
     });
+    return;
   }
+
+  await writeJson(path.join(workflowDirectory, "workflow.json"), {
+    workflowId: input.workflowName,
+    description: "third-party add-on library fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "addon-worker",
+    nodes: [
+      {
+        id: "addon-worker",
+        addon: {
+          name: "acme/echo-worker",
+          version: "1",
+          inputs: { message: "from addon" },
+        },
+      },
+    ],
+    steps: [{ id: "addon-worker", nodeId: "addon-worker" }],
+  });
 }
 
 async function writeLocalAddonManifest(input: {
@@ -230,6 +234,7 @@ function createAsyncThirdPartyAddonDefinition(): NodeAddonDefinition {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     tempDirs
       .splice(0)
@@ -266,6 +271,8 @@ describe("library api", () => {
     const options = {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
       cwd: root,
     };
     const mockScenario = makeDefaultTemplateScenario();
@@ -280,7 +287,14 @@ describe("library api", () => {
       fetchSpy.mockRestore();
     }
     expect(summary.workflowName).toBe("demo");
-    expect(summary.runtime.ready).toBe(true);
+    expect(summary.entryStepId).toBe("divedra-manager");
+    expect(summary.counts.nodeRegistry).toBe(2);
+    expect(summary.counts.steps).toBe(2);
+    expect(summary.counts.crossWorkflowDispatches).toBe(0);
+    expect(summary.runtime.ready).toBe(false);
+    expect(summary.runtime.blockers).toEqual(
+      expect.arrayContaining([expect.stringContaining("code-manager runtime")]),
+    );
 
     const paused = await executeWorkflow({
       workflowName: "demo",
@@ -313,20 +327,120 @@ describe("library api", () => {
     expect(runtimeView.nodeLogs.length).toBeGreaterThan(0);
   });
 
-  test("calls one workflow node through the library wrapper", async () => {
+  test("lists persisted sessions from the session store even when runtime-db indexing fails", async () => {
     const root = await makeTempDir();
-    const workflowName = "call-node-lib";
-    const sessionId = "sess-call-node-lib";
+    const rootDataDir = path.join(root, "blocked-root-data");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const startedAt = "2026-04-24T00:00:00.000Z";
+    const endedAt = "2026-04-24T00:01:00.000Z";
+
+    await writeFile(rootDataDir, "not-a-directory\n", "utf8");
+
+    const saved = await saveSession(
+      {
+        ...createSessionState({
+          sessionId: "sess-library-list-fallback",
+          workflowName: "step-demo",
+          workflowId: "step-demo",
+          initialNodeId: "writer-step",
+          runtimeVariables: {},
+        }),
+        startedAt,
+        endedAt,
+        currentNodeId: "writer-step",
+        nodeExecutionCounter: 1,
+        nodeExecutionCounts: {
+          "writer-step": 1,
+        },
+        nodeExecutions: [
+          {
+            nodeId: "writer-step",
+            stepId: "writer-step",
+            nodeRegistryId: "writer-node",
+            nodeExecId: "exec-000001",
+            mailboxInstanceId: "exec-000001",
+            status: "succeeded",
+            artifactDir: path.join(root, "artifacts", "exec-000001"),
+            startedAt,
+            endedAt,
+          },
+        ],
+        status: "completed" as const,
+      },
+      {
+        sessionStoreRoot,
+        rootDataDir,
+      },
+    );
+    expect(saved.ok).toBe(true);
+
+    const sessions = await listSessions({
+      sessionStoreRoot,
+      rootDataDir,
+    });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.sessionId).toBe("sess-library-list-fallback");
+    expect(sessions[0]?.currentStepId).toBe("writer-step");
+  });
+
+  test("derives currentStepId from authored workflow state before the first execution record exists", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    const rootDataDir = path.join(root, "data");
+    const sessionId = "sess-library-current-step";
+
+    await createCallStepFixture(root, "demo");
+
+    const saved = await saveSession(
+      {
+        ...createSessionState({
+          sessionId,
+          workflowName: "demo",
+          workflowId: "demo",
+          initialNodeId: "manager-step",
+          runtimeVariables: {},
+        }),
+        status: "paused" as const,
+        currentNodeId: "writer-step",
+        queue: ["writer-step"],
+      },
+      {
+        sessionStoreRoot,
+        rootDataDir,
+      },
+    );
+    expect(saved.ok).toBe(true);
+
+    const sessions = await listSessions({
+      workflowRoot: root,
+      sessionStoreRoot,
+      rootDataDir,
+    });
+    expect(sessions[0]?.currentStepId).toBe("writer-step");
+
+    const runtimeView = await getRuntimeSessionView(sessionId, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot,
+      rootDataDir,
+    });
+    expect(runtimeView.session.currentStepId).toBe("writer-step");
+  });
+
+  test("calls one workflow step through the library wrapper", async () => {
+    const root = await makeTempDir();
+    const workflowName = "call-step-lib";
+    const sessionId = "sess-call-step-lib";
     const sessionStoreRoot = path.join(root, "sessions");
 
-    await createCallNodeFixture(root, workflowName);
+    await createCallStepFixture(root, workflowName);
 
     const saved = await saveSession(
       createSessionState({
         sessionId,
         workflowName,
         workflowId: workflowName,
-        initialNodeId: "divedra-manager",
+        initialNodeId: "manager-step",
         runtimeVariables: {},
       }),
       {
@@ -335,25 +449,34 @@ describe("library api", () => {
     );
     expect(saved.ok).toBe(true);
 
-    const result = await callWorkflowNode({
+    const result = await callWorkflowStep({
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot,
       workflowId: workflowName,
       workflowRunId: sessionId,
-      nodeId: "writer",
+      stepId: "writer-step",
       mockScenario: {
-        writer: {
+        "writer-step": {
           provider: "scenario-mock",
           when: { always: true },
-          payload: { summary: "library ok" },
+          payload: { summary: "library step ok" },
         },
       },
     });
 
     expect(result.sessionId).toBe(sessionId);
+    expect(result.stepId).toBe("writer-step");
     expect(result.status).toBe("succeeded");
-    expect(result.output["payload"]).toEqual({ summary: "library ok" });
+    expect(result.output["payload"]).toEqual({ summary: "library step ok" });
+
+    const runtimeView = await getRuntimeSessionView(sessionId, {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot,
+    });
+    expect(runtimeView.session.currentStepId).toBe("writer-step");
   });
 
   test("executes a fixed workflow through the library client", async () => {
@@ -481,15 +604,15 @@ describe("library api", () => {
     workflowJson["nodes"] = [
       {
         id: "addon-worker",
-        role: "worker",
         addon: {
           name: addonName,
           version: "1",
           inputs: { message: "from local library" },
         },
-        completion: { type: "none" },
       },
     ];
+    workflowJson["entryStepId"] = "addon-worker";
+    workflowJson["steps"] = [{ id: "addon-worker", nodeId: "addon-worker" }];
     await writeJson(workflowPath, workflowJson);
 
     const summary = await inspectWorkflow(workflowName, {
@@ -625,10 +748,132 @@ describe("library api", () => {
     const rerun = await rerunWorkflow({
       ...options,
       sourceSessionId: resumed.sessionId,
-      fromNodeId: "addon-worker",
+      fromStepId: "addon-worker",
     });
     expect(rerun.status).toBe("completed");
     expect(rerun.exitCode).toBe(0);
+    expect(rerun.rerunFromStepId).toBe("addon-worker");
+  });
+
+  test("rerunWorkflow forwards only the authored step id", async () => {
+    const root = await makeTempDir();
+    const workflowName = "rerun-call-step-lib";
+    const sessionId = "sess-rerun-call-step-lib";
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    await createCallStepFixture(root, workflowName);
+    await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName,
+        workflowId: workflowName,
+        initialNodeId: "writer-step",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-rerun-call-step-lib-2",
+              workflowName,
+              workflowId: workflowName,
+              initialNodeId: "writer-step",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const rerun = await rerunWorkflow({
+      ...options,
+      sourceSessionId: sessionId,
+      fromStepId: "writer-step",
+    });
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      workflowName,
+      expect.objectContaining({
+        rerunFromSessionId: sessionId,
+        rerunFromStepId: "writer-step",
+      }),
+    );
+    expect(rerun).toMatchObject({
+      sessionId: "sess-rerun-call-step-lib-2",
+      status: "running",
+      rerunFromStepId: "writer-step",
+      exitCode: 0,
+    });
+  });
+
+  test("resumeWorkflow forwards autoImprove to runWorkflow", async () => {
+    const root = await makeTempDir();
+    const workflowName = "resume-ai-lib";
+    const sessionId = "sess-resume-ai-lib";
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1111,
+      stallTimeoutMs: 60_000,
+      maxSupervisedAttempts: 3,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+    await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName,
+        workflowId: workflowName,
+        initialNodeId: "step-a",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: createSessionState({
+            sessionId,
+            workflowName,
+            workflowId: workflowName,
+            initialNodeId: "step-a",
+            runtimeVariables: {},
+          }),
+          exitCode: 0,
+        },
+      });
+
+    await resumeWorkflow({
+      ...options,
+      sessionId,
+      autoImprove: policy,
+    });
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      workflowName,
+      expect.objectContaining({
+        resumeSessionId: sessionId,
+        autoImprove: policy,
+      }),
+    );
+    runWorkflowSpy.mockRestore();
   });
 
   test("executes a fixed workflow through the endpoint-backed library client", async () => {
@@ -712,5 +957,127 @@ describe("library api", () => {
         runtimeVariables: { humanInput: { request: "two" } },
       }),
     ).rejects.toThrow("use only one of input or runtimeVariables");
+  });
+});
+
+describe("getSupervisionSummary", () => {
+  test("returns undefined when the session has no supervision block", () => {
+    const session = createSessionState({
+      sessionId: "s1",
+      workflowName: "w",
+      workflowId: "w",
+      initialNodeId: "m",
+      runtimeVariables: {},
+    });
+    expect(getSupervisionSummary(session)).toBeUndefined();
+  });
+
+  test("maps stored supervision to a summary with latest incident id", () => {
+    const session = {
+      ...createSessionState({
+        sessionId: "s1",
+        workflowName: "w",
+        workflowId: "w",
+        initialNodeId: "m",
+        runtimeVariables: {},
+      }),
+      supervision: {
+        supervisionRunId: "run-a",
+        targetWorkflowId: "target-wf",
+        superviserWorkflowId: "sup-wf",
+        status: "running" as const,
+        attemptCount: 3,
+        workflowPatchCount: 1,
+        incidents: [
+          {
+            incidentId: "i1",
+            supervisedAttemptId: "t1",
+            category: "failure" as const,
+            summary: "first",
+            detectedAt: "2026-04-25T00:00:00.000Z",
+          },
+          {
+            incidentId: "i2",
+            supervisedAttemptId: "t2",
+            category: "stall" as const,
+            summary: "second",
+            detectedAt: "2026-04-25T00:01:00.000Z",
+          },
+        ],
+      },
+    };
+    const summary = getSupervisionSummary(session);
+    expect(summary?.latestIncidentId).toBe("i2");
+    expect(summary?.attemptCount).toBe(3);
+    expect(summary?.status).toBe("running");
+    expect(summary?.superviserWorkflowId).toBe("sup-wf");
+    expect(summary?.workflowPatchCount).toBe(1);
+    expect(summary?.latestRemediationId).toBeUndefined();
+    expect(summary?.nestedSuperviserSessionId).toBeUndefined();
+  });
+
+  test("includes nestedSuperviserSessionId when present on supervision", () => {
+    const session = {
+      ...createSessionState({
+        sessionId: "s1",
+        workflowName: "w",
+        workflowId: "w",
+        initialNodeId: "m",
+        runtimeVariables: {},
+      }),
+      supervision: {
+        supervisionRunId: "run-n",
+        targetWorkflowId: "target-wf",
+        superviserWorkflowId: "sup-wf",
+        status: "running" as const,
+        attemptCount: 0,
+        workflowPatchCount: 0,
+        nestedSuperviserSessionId: "nested-sess-1",
+        incidents: [],
+      },
+    };
+    expect(getSupervisionSummary(session)?.nestedSuperviserSessionId).toBe(
+      "nested-sess-1",
+    );
+  });
+
+  test("maps latest remediation id when remediations are present", () => {
+    const session = {
+      ...createSessionState({
+        sessionId: "s1",
+        workflowName: "w",
+        workflowId: "w",
+        initialNodeId: "m",
+        runtimeVariables: {},
+      }),
+      supervision: {
+        supervisionRunId: "run-b",
+        targetWorkflowId: "target-wf",
+        superviserWorkflowId: "sup-wf",
+        status: "running" as const,
+        attemptCount: 1,
+        workflowPatchCount: 2,
+        incidents: [],
+        remediations: [
+          {
+            remediationId: "r1",
+            incidentId: "i1",
+            decidedAt: "2026-04-25T00:00:00.000Z",
+            action: "rerun-workflow" as const,
+            reason: "retry",
+          },
+          {
+            remediationId: "r2",
+            incidentId: "i2",
+            decidedAt: "2026-04-25T00:01:00.000Z",
+            action: "patch-workflow" as const,
+            reason: "defect",
+          },
+        ],
+      },
+    };
+    const summary = getSupervisionSummary(session);
+    expect(summary?.latestRemediationId).toBe("r2");
+    expect(summary?.workflowPatchCount).toBe(2);
   });
 });

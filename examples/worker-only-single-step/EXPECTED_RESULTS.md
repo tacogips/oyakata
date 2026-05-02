@@ -24,8 +24,8 @@ bun run src/main.ts workflow inspect worker-only-single-step --workflow-root ./e
 Expected stable inspection facts:
 
 - `hasManagerNode` is `false`
-- `entryNodeId` is `main-worker`
-- `managerNodeId` is omitted from the authored bundle and reported as absent in user-facing summaries
+- authored `entryStepId` is `main-worker`
+- the step-first inspection summary does not emit removed top-level node-addressed entry/manager fields; `managerStepId` is absent for this worker-only bundle
 
 ## Run
 

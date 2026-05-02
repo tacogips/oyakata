@@ -5,7 +5,8 @@ import type {
   ValidationResponse,
   WorkflowResponse,
 } from "../shared/ui-contract";
-import { runWorkflow } from "../workflow/engine";
+import { normalizeAutoImprovePolicy } from "../workflow/auto-improve-policy";
+import { runWorkflow, type WorkflowRunOptions } from "../workflow/engine";
 import {
   createWorkflowTemplate,
   type CreateWorkflowTemplateMode,
@@ -41,7 +42,14 @@ import {
   type ManagerSessionStore,
 } from "../workflow/manager-session-store";
 import { assertCommunicationInManagerScope } from "../workflow/manager-control";
-import { type CommunicationRecord } from "../workflow/session";
+import {
+  createSessionId,
+  resolveCurrentStepId,
+  resolveCurrentStepIdFromWorkflow,
+  type CommunicationRecord,
+  type NodeExecutionRecord,
+  type WorkflowSessionState,
+} from "../workflow/session";
 import {
   listEventReplyDispatchesFromRuntimeDb,
   listRuntimeHookEvents,
@@ -50,14 +58,43 @@ import {
   type RuntimeNodeExecutionSummary,
   type RuntimeNodeLogEntry,
 } from "../workflow/runtime-db";
-import { loadSession, saveSession } from "../workflow/session-store";
-import { listSessions } from "../workflow/session-store";
-import type { WorkflowSessionState } from "../workflow/session";
-import { createSessionId } from "../workflow/session";
+import type {
+  EventBinding,
+  EventSupervisedRunRecord,
+  EventSupervisorAction,
+  EventSupervisorCommand,
+  ExternalEventEnvelope,
+} from "../events/types";
+import { resolveEventRoot } from "../events/config";
+import { createRuntimeSupervisorConversationRepository } from "../events/supervisor-conversations";
+import { assertSupervisedBindingGraphqlPolicy } from "../events/validate";
+import { createEventSupervisedRunRepository } from "../events/supervised-runs";
+import { dispatchSupervisorChat } from "../events/dispatch-supervisor-chat";
+import {
+  createWorkflowSupervisorClient,
+  reconcileTerminalSupervisedRunForCorrelation,
+  reconcileTerminalSupervisedRunRecord,
+} from "../workflow/supervisor-client";
+import { createWorkflowSupervisorDispatchClient } from "../workflow/supervisor-dispatch-client";
+import {
+  listSessions,
+  loadSession,
+  saveSession,
+} from "../workflow/session-store";
 import type { WorkflowExecutionSummary } from "../shared/ui-contract";
+import { err, ok, type Result } from "../workflow/result";
 import { validateWorkflowBundleDetailedAsync } from "../workflow/validate";
 import { deriveWorkflowVisualization } from "../workflow/visualization";
 import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
+import { parseWorkflowBundleInput } from "../workflow/workflow-bundle-input";
+import type { WorkflowJson } from "../workflow/types";
+import { continueWorkflowFromHistory, listMergedWorkflowExecutionStepRuns } from "../lib";
+import {
+  buildWorkflowCatalogOverview,
+  buildWorkflowStatusOverview,
+  type WorkflowCatalogOverview,
+  type WorkflowStatusOverview,
+} from "../workflow/overview";
 import type {
   CreateWorkflowDefinitionInput,
   CommunicationConnection,
@@ -81,6 +118,8 @@ import type {
   WorkflowExecutionConnection,
   WorkflowExecutionOverviewLookupInput,
   WorkflowExecutionOverviewView,
+  WorkflowExecutionStepRunsPayload,
+  WorkflowExecutionStepRunsQueryInput,
   ReplayCommunicationInput,
   ReplayCommunicationPayload,
   RetryCommunicationDeliveryInput,
@@ -94,15 +133,117 @@ import type {
   WorkflowExecutionLookupInput,
   WorkflowExecutionsQueryInput,
   WorkflowExecutionView,
+  WorkflowCatalogOverviewGraphqlInput,
   WorkflowLookupInput,
+  WorkflowSessionView,
+  WorkflowStatusOverviewGraphqlInput,
   WorkflowView,
   CommunicationsQueryInput,
   CancelWorkflowExecutionInput,
   CancelWorkflowExecutionPayload,
+  ContinueWorkflowExecutionInput,
+  ContinueWorkflowExecutionPayload,
+  DispatchSupervisedWorkflowCommandInput,
+  DispatchSupervisorChatGraphqlInput,
+  DispatchSupervisorChatPayload,
+  DispatchSupervisorConversationGraphqlInput,
+  DispatchSupervisorConversationPayload,
+  SupervisorDispatchConversationGraphqlPayload,
+  SupervisorDispatchConversationLookupGraphqlInput,
+  EventSupervisorCommandInput,
+  SupervisedWorkflowGraphqlPayload,
+  SupervisedWorkflowLookupGraphqlInput,
 } from "./types";
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+interface GraphqlWorkflowRunOverridesInput {
+  readonly autoImprove?: ExecuteWorkflowInput["autoImprove"];
+  readonly nestedSuperviser?: boolean;
+  readonly workingDirectory?: string;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+}
+
+function buildGraphqlWorkflowRunOverrides(
+  input: GraphqlWorkflowRunOverridesInput,
+): Result<
+  Pick<
+    WorkflowRunOptions,
+    | "autoImprove"
+    | "nestedSuperviserDriver"
+    | "workflowWorkingDirectory"
+    | "dryRun"
+    | "maxSteps"
+    | "maxLoopIterations"
+    | "defaultTimeoutMs"
+  >,
+  string
+> {
+  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
+    input.workingDirectory,
+  );
+  const normalizedAutoImprove =
+    input.autoImprove === undefined
+      ? { ok: true as const, value: undefined }
+      : normalizeAutoImprovePolicy(input.autoImprove);
+  if (!normalizedAutoImprove.ok) {
+    return err(`invalid autoImprove policy: ${normalizedAutoImprove.error}`);
+  }
+  if (
+    input.nestedSuperviser === true &&
+    normalizedAutoImprove.value === undefined
+  ) {
+    return err("nestedSuperviser requires autoImprove");
+  }
+  return ok({
+    ...(workflowWorkingDirectory === undefined
+      ? {}
+      : { workflowWorkingDirectory }),
+    ...(normalizedAutoImprove.value === undefined
+      ? {}
+      : { autoImprove: normalizedAutoImprove.value }),
+    ...(input.nestedSuperviser === true
+      ? { nestedSuperviserDriver: true }
+      : {}),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
+    ...(input.maxLoopIterations === undefined
+      ? {}
+      : { maxLoopIterations: input.maxLoopIterations }),
+    ...(input.defaultTimeoutMs === undefined
+      ? {}
+      : { defaultTimeoutMs: input.defaultTimeoutMs }),
+  });
+}
+
+function parseWorkflowExecutionStepRunsStatusFilter(
+  raw: string | undefined | null,
+): NodeExecutionRecord["status"] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  const allowed: ReadonlySet<string> = new Set([
+    "succeeded",
+    "failed",
+    "timed_out",
+    "cancelled",
+    "skipped",
+  ]);
+  if (!allowed.has(trimmed)) {
+    throw new Error(
+      `invalid workflowExecutionStepRuns status '${raw}' (expected succeeded, failed, timed_out, cancelled, or skipped)`,
+    );
+  }
+  return trimmed as NodeExecutionRecord["status"];
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {
@@ -206,6 +347,83 @@ function assertWorkflowDefinitionAccess(
   ) {
     throw new Error("workflow name not allowed in fixed workflow mode");
   }
+}
+
+function isOverviewWorkflowCatalogNotFound(error: {
+  readonly code: string;
+  readonly message: string;
+}): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "NOT_FOUND" &&
+    typeof error.message === "string" &&
+    !error.message.startsWith("session not found:")
+  );
+}
+
+async function workflowCatalogOverviewQuery(
+  input: WorkflowCatalogOverviewGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowCatalogOverview> {
+  const catalogInput = {
+    ...(input.workflowScope === undefined
+      ? {}
+      : { workflowScope: input.workflowScope }),
+    ...(input.status === undefined ? {} : { status: input.status }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  };
+  const built = await buildWorkflowCatalogOverview(catalogInput, context);
+  if (!built.ok) {
+    throw new Error(built.error.message);
+  }
+  let workflows = built.value.workflows;
+  if (
+    context.fixedWorkflowName !== undefined &&
+    context.fixedResolvedWorkflowSource === undefined
+  ) {
+    workflows = workflows.filter(
+      (row) => row.workflowName === context.fixedWorkflowName,
+    );
+  }
+  return { workflows };
+}
+
+function workflowStatusOverviewInputForFixedMode(
+  input: WorkflowStatusOverviewGraphqlInput,
+  context: GraphqlRequestContext,
+): WorkflowStatusOverviewGraphqlInput {
+  const fixedSource = context.fixedResolvedWorkflowSource;
+  if (fixedSource === undefined) {
+    return input;
+  }
+  return {
+    workflowName: fixedSource.workflowName,
+    ...(fixedSource.scope === "direct"
+      ? {}
+      : { workflowScope: fixedSource.scope }),
+    ...(input.limit === undefined ? {} : { limit: input.limit }),
+  };
+}
+
+async function workflowStatusOverviewQuery(
+  input: WorkflowStatusOverviewGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowStatusOverview | null> {
+  assertWorkflowDefinitionAccess(input.workflowName, context);
+  const effectiveInput = workflowStatusOverviewInputForFixedMode(
+    input,
+    context,
+  );
+  const built = await buildWorkflowStatusOverview(effectiveInput, context);
+  if (!built.ok) {
+    if (isOverviewWorkflowCatalogNotFound(built.error)) {
+      return null;
+    }
+    throw new Error(built.error.message);
+  }
+  return built.value;
 }
 
 function assertWorkflowDefinitionWritable(
@@ -330,6 +548,14 @@ async function saveWorkflowDefinitionMutation(
   input: SaveWorkflowDefinitionInput,
   context: GraphqlRequestContext,
 ): Promise<SaveWorkflowDefinitionPayload> {
+  const parsedBundle = parseWorkflowBundleInput(input.bundle, "input.bundle");
+  if (!parsedBundle.ok) {
+    return {
+      workflowName: input.workflowName,
+      error: parsedBundle.error,
+      issues: [],
+    };
+  }
   assertWorkflowDefinitionWritable(input.workflowName, context);
   const workflowContext = await resolveWorkflowContextForGraphql(
     input.workflowName,
@@ -338,8 +564,8 @@ async function saveWorkflowDefinitionMutation(
   const saveResult = await saveWorkflowToDisk(
     input.workflowName,
     {
-      workflow: input.bundle.workflow,
-      nodePayloads: input.bundle.nodePayloads,
+      workflow: parsedBundle.value.workflow,
+      nodePayloads: parsedBundle.value.nodePayloads,
       ...(input.expectedRevision === undefined
         ? {}
         : { expectedRevision: input.expectedRevision }),
@@ -370,14 +596,18 @@ async function validateWorkflowDefinitionMutation(
   context: GraphqlRequestContext,
 ): Promise<ValidateWorkflowDefinitionPayload> {
   if (input.bundle !== undefined) {
+    const parsedBundle = parseWorkflowBundleInput(input.bundle, "input.bundle");
+    if (!parsedBundle.ok) {
+      return {
+        valid: false,
+        error: parsedBundle.error,
+        issues: [],
+      } satisfies ValidationResponse;
+    }
     const validation = await validateWorkflowBundleDetailedAsync(
       {
-        workflow: input.bundle.workflow as unknown as Readonly<
-          Record<string, unknown>
-        >,
-        nodePayloads: input.bundle.nodePayloads as unknown as Readonly<
-          Record<string, unknown>
-        >,
+        workflow: parsedBundle.value.workflow,
+        nodePayloads: parsedBundle.value.nodePayloads,
       },
       context,
     );
@@ -479,17 +709,9 @@ function assertWorkflowExecutionScope(
 }
 
 function assertManagerIdentity(
-  input: Pick<SendManagerMessageInput, "managerNodeId" | "managerNodeExecId">,
+  input: Pick<SendManagerMessageInput, "managerNodeExecId">,
   scope: GraphqlManagerScope,
 ): void {
-  if (
-    input.managerNodeId !== undefined &&
-    input.managerNodeId !== scope.session.managerNodeId
-  ) {
-    throw new Error(
-      "managerNodeId does not match the authenticated manager session",
-    );
-  }
   if (
     input.managerNodeExecId !== undefined &&
     input.managerNodeExecId !== scope.session.managerNodeExecId
@@ -543,7 +765,16 @@ async function buildNodeExecutionViewFromState(
     workflowId: session.workflowId,
     workflowExecutionId: session.sessionId,
     nodeId: sessionRecord.nodeId,
+    ...(sessionRecord.stepId === undefined
+      ? {}
+      : { stepId: sessionRecord.stepId }),
+    ...(sessionRecord.nodeRegistryId === undefined
+      ? {}
+      : { nodeRegistryId: sessionRecord.nodeRegistryId }),
     nodeExecId: sessionRecord.nodeExecId,
+    ...(sessionRecord.mailboxInstanceId === undefined
+      ? {}
+      : { mailboxInstanceId: sessionRecord.mailboxInstanceId }),
     status: sessionRecord.status,
     startedAt: sessionRecord.startedAt,
     endedAt: sessionRecord.endedAt,
@@ -556,6 +787,12 @@ async function buildNodeExecutionViewFromState(
     ...(sessionRecord.outputValidationErrors === undefined
       ? {}
       : { outputValidationErrors: sessionRecord.outputValidationErrors }),
+    ...(sessionRecord.promptVariant === undefined
+      ? {}
+      : { promptVariant: sessionRecord.promptVariant }),
+    ...(sessionRecord.timeoutMs === undefined
+      ? {}
+      : { timeoutMs: sessionRecord.timeoutMs }),
     ...(sessionRecord.backendSessionId === undefined
       ? {}
       : { backendSessionId: sessionRecord.backendSessionId }),
@@ -623,6 +860,7 @@ async function buildNodeExecutionView(
 
 function toWorkflowExecutionSummary(
   session: WorkflowSessionState,
+  currentStepId: string | null = resolveCurrentStepId(session),
 ): WorkflowExecutionSummary {
   return {
     workflowExecutionId: session.sessionId,
@@ -630,9 +868,70 @@ function toWorkflowExecutionSummary(
     workflowName: session.workflowName,
     status: session.status,
     currentNodeId: session.currentNodeId ?? null,
+    ...(currentStepId === null ? {} : { currentStepId }),
     nodeExecutionCounter: session.nodeExecutionCounter,
     startedAt: session.startedAt,
     endedAt: session.endedAt ?? null,
+  };
+}
+
+interface CurrentStepWorkflowView {
+  readonly workflowId: string;
+  readonly steps?: WorkflowJson["steps"];
+}
+
+async function resolveSessionCurrentStepId(input: {
+  readonly session: WorkflowSessionState;
+  readonly context: GraphqlRequestContext;
+  readonly workflowCache?: Map<
+    string,
+    Promise<CurrentStepWorkflowView | undefined>
+  >;
+}): Promise<string | null> {
+  const currentStepId = resolveCurrentStepId(input.session);
+  if (currentStepId !== null) {
+    return currentStepId;
+  }
+
+  const cache =
+    input.workflowCache ??
+    new Map<string, Promise<CurrentStepWorkflowView | undefined>>();
+  const cacheKey = input.session.workflowName;
+  const cached = cache.get(cacheKey);
+  let pending: Promise<CurrentStepWorkflowView | undefined>;
+  if (cached === undefined) {
+    pending = loadWorkflowFromCatalog(cacheKey, input.context).then((loaded) =>
+      loaded.ok
+        ? {
+            workflowId: loaded.value.bundle.workflow.workflowId,
+            ...(loaded.value.bundle.workflow.steps === undefined
+              ? {}
+              : { steps: loaded.value.bundle.workflow.steps }),
+          }
+        : undefined,
+    );
+    cache.set(cacheKey, pending);
+  } else {
+    pending = cached;
+  }
+  const workflow = await pending;
+  if (workflow?.workflowId !== input.session.workflowId) {
+    return null;
+  }
+
+  return resolveCurrentStepIdFromWorkflow(
+    input.session,
+    workflow.steps === undefined ? undefined : { steps: workflow.steps },
+  );
+}
+
+async function toWorkflowSessionView(
+  session: WorkflowSessionState,
+  context: GraphqlRequestContext,
+): Promise<WorkflowSessionView> {
+  return {
+    ...session,
+    currentStepId: await resolveSessionCurrentStepId({ session, context }),
   };
 }
 
@@ -645,13 +944,22 @@ async function buildWorkflowExecutionConnection(
     throw new Error(listed.error.message);
   }
 
+  const workflowCache = new Map<
+    string,
+    Promise<CurrentStepWorkflowView | undefined>
+  >();
   const loadedSessions = await Promise.all(
     listed.value.map(async (workflowExecutionId) => {
       const loaded = await loadSession(workflowExecutionId, context);
       if (!loaded.ok) {
         return undefined;
       }
-      return toWorkflowExecutionSummary(loaded.value);
+      const currentStepId = await resolveSessionCurrentStepId({
+        session: loaded.value,
+        context,
+        workflowCache,
+      });
+      return toWorkflowExecutionSummary(loaded.value, currentStepId);
     }),
   );
 
@@ -714,7 +1022,7 @@ async function buildWorkflowExecutionView(
     ]);
   return {
     workflowExecutionId: input.workflowExecutionId,
-    session: loaded.value,
+    session: await toWorkflowSessionView(loaded.value, context),
     nodeExecutions,
     nodeLogs,
     hookEvents,
@@ -775,7 +1083,7 @@ async function buildWorkflowExecutionOverviewView(
     workflowId: session.workflowId,
     workflowName: session.workflowName,
     status: session.status,
-    session,
+    session: await toWorkflowSessionView(session, context),
     nodes,
     communications,
     nodeLogs: runtimeLogs,
@@ -888,15 +1196,11 @@ async function loadScopedCommunicationForManagerMutation(
   if (loadedWorkflow === null) {
     throw new Error(`workflow '${loaded.value.workflowName}' was not found`);
   }
-  const managerNodeRef = loadedWorkflow.bundle.workflow.nodes.find(
-    (entry) => entry.id === scope.session.managerNodeId,
-  );
   assertCommunicationInManagerScope(
     communication,
     loadedWorkflow.bundle.workflow,
     {
-      managerNodeId: scope.session.managerNodeId,
-      managerKind: managerNodeRef?.kind,
+      managerStepId: scope.session.managerStepId,
     },
     "GraphQL manager mutation",
   );
@@ -907,9 +1211,10 @@ async function executeWorkflowMutation(
   input: ExecuteWorkflowInput,
   context: GraphqlRequestContext,
 ): Promise<ExecuteWorkflowPayload> {
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    input.workingDirectory,
-  );
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
   const workflowContext = await resolveWorkflowContextForGraphql(
     input.workflowName,
     context,
@@ -928,23 +1233,13 @@ async function executeWorkflowMutation(
     void runWorkflow(input.workflowName, {
       ...workflowContext,
       sessionId: workflowExecutionId,
-      ...(workingDirectory === undefined
-        ? {}
-        : { workflowWorkingDirectory: workingDirectory }),
+      ...workflowRunOverrides.value,
       ...(input.runtimeVariables === undefined
         ? {}
         : { runtimeVariables: input.runtimeVariables }),
       ...(input.mockScenario === undefined
         ? {}
         : { mockScenario: input.mockScenario }),
-      ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-      ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-      ...(input.maxLoopIterations === undefined
-        ? {}
-        : { maxLoopIterations: input.maxLoopIterations }),
-      ...(input.defaultTimeoutMs === undefined
-        ? {}
-        : { defaultTimeoutMs: input.defaultTimeoutMs }),
     }).catch(() => undefined);
     return {
       workflowExecutionId,
@@ -956,23 +1251,13 @@ async function executeWorkflowMutation(
 
   const result = await runWorkflow(input.workflowName, {
     ...workflowContext,
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
+    ...workflowRunOverrides.value,
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
     ...(input.mockScenario === undefined
       ? {}
       : { mockScenario: input.mockScenario }),
-    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: input.defaultTimeoutMs }),
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -989,9 +1274,10 @@ async function resumeWorkflowExecutionMutation(
   input: ResumeWorkflowExecutionInput,
   context: GraphqlRequestContext,
 ): Promise<ResumeWorkflowExecutionPayload> {
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    input.workingDirectory,
-  );
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
   const existing = await loadSession(input.workflowExecutionId, context);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -1003,17 +1289,7 @@ async function resumeWorkflowExecutionMutation(
   const result = await runWorkflow(existing.value.workflowName, {
     ...workflowContext,
     resumeSessionId: input.workflowExecutionId,
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
-    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...workflowRunOverrides.value,
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -1030,9 +1306,14 @@ async function rerunWorkflowExecutionMutation(
   input: RerunWorkflowExecutionInput,
   context: GraphqlRequestContext,
 ): Promise<RerunWorkflowExecutionPayload> {
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    input.workingDirectory,
-  );
+  const rerunFromStepId = input.stepId.trim();
+  if (rerunFromStepId.length === 0) {
+    throw new Error("stepId is required");
+  }
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
   const existing = await loadSession(input.workflowExecutionId, context);
   if (!existing.ok) {
     throw new Error(existing.error.message);
@@ -1044,21 +1325,11 @@ async function rerunWorkflowExecutionMutation(
   const result = await runWorkflow(existing.value.workflowName, {
     ...workflowContext,
     rerunFromSessionId: input.workflowExecutionId,
-    rerunFromNodeId: input.nodeId,
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
+    rerunFromStepId,
+    ...workflowRunOverrides.value,
     ...(input.runtimeVariables === undefined
       ? {}
       : { runtimeVariables: input.runtimeVariables }),
-    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
-    ...(input.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: input.maxLoopIterations }),
-    ...(input.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: input.defaultTimeoutMs }),
   });
   if (!result.ok) {
     throw new Error(result.error.message);
@@ -1067,7 +1338,614 @@ async function rerunWorkflowExecutionMutation(
     workflowExecutionId: result.value.session.sessionId,
     sessionId: result.value.session.sessionId,
     status: result.value.session.status,
+    rerunFromStepId,
     exitCode: result.value.exitCode,
+  };
+}
+
+async function workflowExecutionStepRunsQuery(
+  input: WorkflowExecutionStepRunsQueryInput,
+  context: GraphqlRequestContext,
+): Promise<WorkflowExecutionStepRunsPayload> {
+  const workflowExecutionId = input.workflowExecutionId.trim();
+  if (workflowExecutionId.length === 0) {
+    throw new Error("workflowExecutionId is required");
+  }
+  const stepTrimmed = input.stepId?.trim();
+  const filterStepId =
+    stepTrimmed === undefined || stepTrimmed.length === 0
+      ? undefined
+      : stepTrimmed;
+  const filterStatus = parseWorkflowExecutionStepRunsStatusFilter(
+    input.status,
+  );
+  const listed = await listMergedWorkflowExecutionStepRuns({
+    workflowExecutionId,
+    ...(filterStepId === undefined ? {} : { filterStepId }),
+    ...(filterStatus === undefined ? {} : { filterStatus }),
+    ...context,
+  });
+  return {
+    workflowExecutionId: listed.workflowExecutionId,
+    workflowId: listed.workflowId,
+    workflowName: listed.workflowName,
+    stepRuns: listed.stepRuns.map((row) => ({
+      workflowExecutionId: listed.workflowExecutionId,
+      timelineOrdinal: row.timelineOrdinal,
+      executionOrdinal: row.executionOrdinal,
+      stepRunId: row.stepRunId,
+      ...(row.stepId === undefined ? {} : { stepId: row.stepId }),
+      ...(row.nodeRegistryId === undefined
+        ? {}
+        : { nodeRegistryId: row.nodeRegistryId }),
+      status: row.status,
+      imported: row.imported,
+      sourceWorkflowExecutionId: row.persistedWorkflowExecutionId,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+    })),
+  };
+}
+
+async function continueWorkflowExecutionMutation(
+  input: ContinueWorkflowExecutionInput,
+  context: GraphqlRequestContext,
+): Promise<ContinueWorkflowExecutionPayload> {
+  if (context.readOnly === true) {
+    throw new Error("read-only mode enabled");
+  }
+  const sourceWorkflowExecutionId = input.sourceWorkflowExecutionId.trim();
+  const startStepId = input.startStepId.trim();
+  const afterStepRunId = input.afterStepRunId.trim();
+  if (sourceWorkflowExecutionId.length === 0) {
+    throw new Error("sourceWorkflowExecutionId is required");
+  }
+  if (startStepId.length === 0) {
+    throw new Error("startStepId is required");
+  }
+  if (afterStepRunId.length === 0) {
+    throw new Error("afterStepRunId is required");
+  }
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  if (!workflowRunOverrides.ok) {
+    throw new Error(workflowRunOverrides.error);
+  }
+  const existing = await loadSession(sourceWorkflowExecutionId, context);
+  if (!existing.ok) {
+    throw new Error(existing.error.message);
+  }
+  const workflowContext = await resolveWorkflowContextForGraphql(
+    existing.value.workflowName,
+    context,
+  );
+  const result = await continueWorkflowFromHistory({
+    ...workflowContext,
+    ...workflowRunOverrides.value,
+    sourceWorkflowExecutionId,
+    startStepId,
+    afterStepRunId,
+    ...(input.runtimeVariables === undefined
+      ? {}
+      : { runtimeVariables: input.runtimeVariables }),
+    ...(input.mockScenario === undefined
+      ? {}
+      : { mockScenario: input.mockScenario }),
+  });
+  return {
+    workflowExecutionId: result.sessionId,
+    sessionId: result.sessionId,
+    status: result.status,
+    exitCode: result.exitCode,
+    continuedAfterStepRunId: result.continuedAfterStepRunId,
+    continuedStartStepId: result.continuedStartStepId,
+  };
+}
+
+const SUPERVISOR_ACTION_SET_FOR_GRAPHQL = new Set<EventSupervisorAction>([
+  "start",
+  "stop",
+  "restart",
+  "status",
+  "input",
+]);
+
+function assertJsonObjectForSupervisor(
+  value: unknown,
+  label: string,
+): Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object`);
+  }
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function requireNonEmptySupervisorString(
+  value: unknown,
+  label: string,
+): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requireOptionalSupervisorString(
+  value: unknown,
+  label: string,
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return requireNonEmptySupervisorString(value, label);
+}
+
+function requireOptionalSupervisorBoolean(
+  value: unknown,
+  label: string,
+): boolean | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean when set`);
+  }
+  return value;
+}
+
+function requireOptionalSupervisorInteger(
+  value: unknown,
+  label: string,
+): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Number.isInteger(value)) {
+    throw new Error(`${label} must be an integer when set`);
+  }
+  return value as number;
+}
+
+function parseEventBindingFromGraphql(value: unknown): EventBinding {
+  const o = assertJsonObjectForSupervisor(value, "binding");
+  requireNonEmptySupervisorString(o["id"], "binding.id");
+  requireNonEmptySupervisorString(o["sourceId"], "binding.sourceId");
+  const inputMap = o["inputMapping"];
+  if (
+    typeof inputMap !== "object" ||
+    inputMap === null ||
+    Array.isArray(inputMap)
+  ) {
+    throw new Error("binding.inputMapping must be a JSON object");
+  }
+  const execution = o["execution"];
+  if (
+    execution !== undefined &&
+    execution !== null &&
+    (typeof execution !== "object" || Array.isArray(execution))
+  ) {
+    throw new Error("binding.execution must be a JSON object when set");
+  }
+  const mode =
+    execution !== undefined &&
+    execution !== null &&
+    typeof execution === "object" &&
+    !Array.isArray(execution) &&
+    typeof (execution as { readonly mode?: unknown }).mode === "string"
+      ? (execution as { readonly mode: string }).mode
+      : undefined;
+  const wfRaw = o["workflowName"];
+  if (mode === "supervisor-dispatch") {
+    if (
+      wfRaw !== undefined &&
+      wfRaw !== null &&
+      (typeof wfRaw !== "string" || wfRaw.length === 0)
+    ) {
+      throw new Error(
+        "binding.workflowName must be a non-empty string when provided for supervisor-dispatch bindings",
+      );
+    }
+  } else {
+    requireNonEmptySupervisorString(o["workflowName"], "binding.workflowName");
+  }
+  return o as unknown as EventBinding;
+}
+
+function parseOptionalSupervisorRuntimeVariables(
+  value: unknown,
+  label: string,
+): Readonly<Record<string, unknown>> | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return assertJsonObjectForSupervisor(value, label);
+}
+
+function parseExternalEventEnvelopeFromGraphql(
+  value: unknown,
+): ExternalEventEnvelope {
+  const o = assertJsonObjectForSupervisor(value, "event");
+  const input = assertJsonObjectForSupervisor(o["input"], "event.input");
+  const actorRaw = o["actor"];
+  const conversationRaw = o["conversation"];
+  const rawRefRaw = o["rawRef"];
+  const occurredAt = requireOptionalSupervisorString(
+    o["occurredAt"],
+    "event.occurredAt",
+  );
+
+  return {
+    sourceId: requireNonEmptySupervisorString(o["sourceId"], "event.sourceId"),
+    eventId: requireNonEmptySupervisorString(o["eventId"], "event.eventId"),
+    provider: requireNonEmptySupervisorString(o["provider"], "event.provider"),
+    eventType: requireNonEmptySupervisorString(
+      o["eventType"],
+      "event.eventType",
+    ),
+    receivedAt: requireNonEmptySupervisorString(
+      o["receivedAt"],
+      "event.receivedAt",
+    ),
+    dedupeKey: requireNonEmptySupervisorString(
+      o["dedupeKey"],
+      "event.dedupeKey",
+    ),
+    input,
+    ...(occurredAt !== undefined ? { occurredAt } : {}),
+    ...(actorRaw !== undefined && actorRaw !== null
+      ? { actor: actorRaw as ExternalEventEnvelope["actor"] }
+      : {}),
+    ...(conversationRaw !== undefined && conversationRaw !== null
+      ? {
+          conversation:
+            conversationRaw as ExternalEventEnvelope["conversation"],
+        }
+      : {}),
+    ...(rawRefRaw !== undefined && rawRefRaw !== null
+      ? { rawRef: rawRefRaw as ExternalEventEnvelope["rawRef"] }
+      : {}),
+  } as ExternalEventEnvelope;
+}
+
+type ParsedSupervisedWorkflowLookup =
+  | { readonly kind: "id"; readonly supervisedRunId: string }
+  | {
+      readonly kind: "correlation";
+      readonly sourceId: string;
+      readonly bindingId: string;
+      readonly correlationKey: string;
+    };
+
+function parseSupervisedWorkflowLookupGraphqlInput(
+  input: SupervisedWorkflowLookupGraphqlInput,
+): ParsedSupervisedWorkflowLookup {
+  const runIdRaw = input.supervisedRunId;
+  const runId =
+    typeof runIdRaw === "string" && runIdRaw.trim().length > 0
+      ? runIdRaw.trim()
+      : undefined;
+  if (runId !== undefined) {
+    return { kind: "id", supervisedRunId: runId };
+  }
+  const sourceId = requireNonEmptySupervisorString(
+    input.sourceId,
+    "input.sourceId",
+  );
+  const bindingId = requireNonEmptySupervisorString(
+    input.bindingId,
+    "input.bindingId",
+  );
+  const correlationKey = requireNonEmptySupervisorString(
+    input.correlationKey,
+    "input.correlationKey",
+  );
+  return { kind: "correlation", sourceId, bindingId, correlationKey };
+}
+
+function parseEventSupervisorCommandFromGraphql(
+  raw: EventSupervisorCommandInput,
+): EventSupervisorCommand {
+  if (
+    !SUPERVISOR_ACTION_SET_FOR_GRAPHQL.has(raw.action as EventSupervisorAction)
+  ) {
+    throw new Error(`invalid supervisor action '${raw.action}'`);
+  }
+  const reason = requireOptionalSupervisorString(raw.reason, "command.reason");
+  const runtimeVariables = parseOptionalSupervisorRuntimeVariables(
+    raw.runtimeVariables,
+    "command.runtimeVariables",
+  );
+  const supervisedRunIdRaw = (raw as { readonly supervisedRunId?: unknown })
+    .supervisedRunId;
+  const supervisedRunId =
+    typeof supervisedRunIdRaw === "string" &&
+    supervisedRunIdRaw.trim().length > 0
+      ? supervisedRunIdRaw.trim()
+      : undefined;
+  return {
+    commandId: requireNonEmptySupervisorString(
+      raw.commandId,
+      "command.commandId",
+    ),
+    sourceId: requireNonEmptySupervisorString(raw.sourceId, "command.sourceId"),
+    bindingId: requireNonEmptySupervisorString(
+      raw.bindingId,
+      "command.bindingId",
+    ),
+    correlationKey: requireNonEmptySupervisorString(
+      raw.correlationKey,
+      "command.correlationKey",
+    ),
+    action: raw.action as EventSupervisorAction,
+    targetWorkflowName: requireNonEmptySupervisorString(
+      raw.targetWorkflowName,
+      "command.targetWorkflowName",
+    ),
+    ...(supervisedRunId === undefined ? {} : { supervisedRunId }),
+    ...(raw.targetWorkflowExecutionId === undefined ||
+    typeof raw.targetWorkflowExecutionId !== "string" ||
+    raw.targetWorkflowExecutionId.length === 0
+      ? {}
+      : {
+          targetWorkflowExecutionId: raw.targetWorkflowExecutionId,
+        }),
+    ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
+    ...(reason === undefined ? {} : { reason }),
+    receivedEventReceiptId: requireNonEmptySupervisorString(
+      raw.receivedEventReceiptId,
+      "command.receivedEventReceiptId",
+    ),
+  };
+}
+
+async function supervisedWorkflowRunQuery(
+  input: SupervisedWorkflowLookupGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<SupervisedWorkflowGraphqlPayload> {
+  const parsed = parseSupervisedWorkflowLookupGraphqlInput(input);
+  const repo = createEventSupervisedRunRepository(context);
+  let record: EventSupervisedRunRecord | null = null;
+  if (parsed.kind === "id") {
+    record = await repo.loadById(parsed.supervisedRunId);
+  } else {
+    await reconcileTerminalSupervisedRunForCorrelation(
+      {
+        sourceId: parsed.sourceId,
+        bindingId: parsed.bindingId,
+        correlationKey: parsed.correlationKey,
+      },
+      repo,
+      context,
+    );
+    record = await repo.findLatestByCorrelation({
+      sourceId: parsed.sourceId,
+      bindingId: parsed.bindingId,
+      correlationKey: parsed.correlationKey,
+    });
+  }
+  if (record === null) {
+    throw new Error("no supervised run matches the lookup");
+  }
+  record = await reconcileTerminalSupervisedRunRecord(record, repo, context);
+  let activeTargetStatus: WorkflowSessionState["status"] | undefined;
+  const targetId = record.activeTargetExecutionId;
+  if (targetId !== undefined) {
+    const loaded = await loadSession(targetId, context);
+    if (loaded.ok) {
+      activeTargetStatus = loaded.value.status;
+    }
+  }
+  return {
+    supervisedRun: record,
+    ...(activeTargetStatus === undefined ? {} : { activeTargetStatus }),
+  };
+}
+
+async function dispatchSupervisedWorkflowCommandMutation(
+  input: DispatchSupervisedWorkflowCommandInput,
+  context: GraphqlRequestContext,
+): Promise<SupervisedWorkflowGraphqlPayload> {
+  const binding = parseEventBindingFromGraphql(input.binding);
+  if (binding.execution?.mode !== "supervised") {
+    throw new Error(
+      'dispatchSupervisedWorkflowCommand requires binding.execution.mode to be "supervised"',
+    );
+  }
+  assertSupervisedBindingGraphqlPolicy(binding);
+  const command = parseEventSupervisorCommandFromGraphql(input.command);
+  const runtimeVariables =
+    parseOptionalSupervisorRuntimeVariables(
+      input.runtimeVariables,
+      "runtimeVariables",
+    ) ?? {};
+  const client = createWorkflowSupervisorClient(context);
+  const dryRun = requireOptionalSupervisorBoolean(input.dryRun, "dryRun");
+  const maxSteps = requireOptionalSupervisorInteger(input.maxSteps, "maxSteps");
+  const maxLoopIterations = requireOptionalSupervisorInteger(
+    input.maxLoopIterations,
+    "maxLoopIterations",
+  );
+  const defaultTimeoutMs = requireOptionalSupervisorInteger(
+    input.defaultTimeoutMs,
+    "defaultTimeoutMs",
+  );
+  const engine =
+    input.mockScenario === undefined &&
+    dryRun === undefined &&
+    maxSteps === undefined &&
+    maxLoopIterations === undefined &&
+    defaultTimeoutMs === undefined
+      ? undefined
+      : {
+          ...(input.mockScenario === undefined
+            ? {}
+            : { mockScenario: input.mockScenario }),
+          ...(dryRun === undefined ? {} : { dryRun }),
+          ...(maxSteps === undefined ? {} : { maxSteps }),
+          ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
+          ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+        };
+  const view = await client.dispatchCommand({
+    command,
+    binding,
+    runtimeVariables,
+    ...(engine === undefined ? {} : { engine }),
+  });
+  return {
+    supervisedRun: view.supervisedRun,
+    ...(view.activeTargetStatus === undefined
+      ? {}
+      : { activeTargetStatus: view.activeTargetStatus }),
+  };
+}
+
+async function supervisorDispatchConversationQuery(
+  input: SupervisorDispatchConversationLookupGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<SupervisorDispatchConversationGraphqlPayload> {
+  const id = requireNonEmptySupervisorString(
+    input.supervisorConversationId,
+    "input.supervisorConversationId",
+  );
+  const repo = createRuntimeSupervisorConversationRepository(context);
+  const conversation = await repo.loadConversation(id);
+  if (conversation === null) {
+    throw new Error("no supervisor dispatch conversation matches the lookup");
+  }
+  const managedRuns = await repo.listManagedRuns(id);
+  return { conversation, managedRuns };
+}
+
+async function dispatchSupervisorConversationMutation(
+  input: DispatchSupervisorConversationGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<DispatchSupervisorConversationPayload> {
+  const binding = parseEventBindingFromGraphql(input.binding);
+  if (binding.execution?.mode !== "supervisor-dispatch") {
+    throw new Error(
+      'dispatchSupervisorConversation requires binding.execution.mode "supervisor-dispatch"',
+    );
+  }
+  const supervisorProfileId = requireNonEmptySupervisorString(
+    input.supervisorProfileId,
+    "input.supervisorProfileId",
+  );
+  const correlationKey = requireNonEmptySupervisorString(
+    input.correlationKey,
+    "input.correlationKey",
+  );
+  const sourceMessageId = requireNonEmptySupervisorString(
+    input.sourceMessageId,
+    "input.sourceMessageId",
+  );
+  const event = parseExternalEventEnvelopeFromGraphql(input.event);
+  const eventRoot = resolveEventRoot(context);
+  const dryRun = requireOptionalSupervisorBoolean(input.dryRun, "dryRun");
+  const maxSteps = requireOptionalSupervisorInteger(input.maxSteps, "maxSteps");
+  const maxLoopIterations = requireOptionalSupervisorInteger(
+    input.maxLoopIterations,
+    "maxLoopIterations",
+  );
+  const defaultTimeoutMs = requireOptionalSupervisorInteger(
+    input.defaultTimeoutMs,
+    "defaultTimeoutMs",
+  );
+  const engine =
+    input.mockScenario === undefined &&
+    dryRun === undefined &&
+    maxSteps === undefined &&
+    maxLoopIterations === undefined &&
+    defaultTimeoutMs === undefined
+      ? undefined
+      : {
+          ...(input.mockScenario === undefined
+            ? {}
+            : { mockScenario: input.mockScenario }),
+          ...(dryRun === undefined ? {} : { dryRun }),
+          ...(maxSteps === undefined ? {} : { maxSteps }),
+          ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
+          ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+        };
+  const client = createWorkflowSupervisorDispatchClient(context);
+  const view = await client.dispatchExternalInput({
+    ...context,
+    eventRoot,
+    binding,
+    event,
+    supervisorProfileId,
+    correlationKey,
+    sourceMessageId,
+    ...(context.eventReplyDispatcher === undefined
+      ? {}
+      : { eventReplyDispatcher: context.eventReplyDispatcher }),
+    ...(engine === undefined ? {} : engine),
+  });
+  return {
+    conversation: view.conversation,
+    managedRuns: view.managedRuns,
+    decision: view.decision,
+    proposal: view.proposal,
+    applied: view.applied,
+    ...(view.validationIssues === undefined ||
+    view.validationIssues.length === 0
+      ? {}
+      : { validationIssues: view.validationIssues }),
+  };
+}
+
+async function dispatchSupervisorChatMutation(
+  input: DispatchSupervisorChatGraphqlInput,
+  context: GraphqlRequestContext,
+): Promise<DispatchSupervisorChatPayload> {
+  if (
+    typeof input.sourceId !== "string" ||
+    input.sourceId.trim().length === 0
+  ) {
+    throw new Error("dispatchSupervisorChat requires sourceId");
+  }
+  if (typeof input.text !== "string" || input.text.trim().length === 0) {
+    throw new Error("dispatchSupervisorChat requires non-empty text");
+  }
+  const rows = await dispatchSupervisorChat({
+    ...context,
+    sourceId: input.sourceId,
+    text: input.text,
+    ...(input.conversationId === undefined
+      ? {}
+      : { conversationId: input.conversationId }),
+    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+    ...(input.eventId === undefined ? {} : { eventId: input.eventId }),
+    ...(input.eventType === undefined ? {} : { eventType: input.eventType }),
+    ...(input.provider === undefined ? {} : { provider: input.provider }),
+    ...(input.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: input.idempotencyKey }),
+  });
+  return {
+    results: rows.map((row) => ({
+      receiptId: row.receipt.receiptId,
+      status: row.receipt.status,
+      duplicate: row.duplicate,
+      ...(row.receipt.bindingId === undefined
+        ? {}
+        : { bindingId: row.receipt.bindingId }),
+      ...(row.receipt.workflowName === undefined
+        ? {}
+        : { workflowName: row.receipt.workflowName }),
+      ...(row.receipt.workflowExecutionId === undefined
+        ? {}
+        : { workflowExecutionId: row.receipt.workflowExecutionId }),
+      ...(row.receipt.supervisedRunId === undefined
+        ? {}
+        : { supervisedRunId: row.receipt.supervisedRunId }),
+      ...(row.receipt.supervisorExecutionId === undefined &&
+      row.supervisorExecutionId === undefined
+        ? {}
+        : {
+            supervisorExecutionId:
+              row.receipt.supervisorExecutionId ?? row.supervisorExecutionId,
+          }),
+      ...(row.receipt.error === undefined ? {} : { error: row.receipt.error }),
+    })),
   };
 }
 
@@ -1173,6 +2051,20 @@ export function createGraphqlSchema(
         return buildWorkflowExecutionConnection(input, context);
       },
 
+      async workflowCatalogOverview(
+        input: WorkflowCatalogOverviewGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowCatalogOverview> {
+        return workflowCatalogOverviewQuery(input, context);
+      },
+
+      async workflowStatusOverview(
+        input: WorkflowStatusOverviewGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowStatusOverview | null> {
+        return workflowStatusOverviewQuery(input, context);
+      },
+
       async communications(
         input: CommunicationsQueryInput,
         context: GraphqlRequestContext = {},
@@ -1210,6 +2102,27 @@ export function createGraphqlSchema(
           session: scope.session,
           messages,
         };
+      },
+
+      async supervisedWorkflowRun(
+        input: SupervisedWorkflowLookupGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<SupervisedWorkflowGraphqlPayload> {
+        return supervisedWorkflowRunQuery(input, context);
+      },
+
+      async supervisorDispatchConversation(
+        input: SupervisorDispatchConversationLookupGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<SupervisorDispatchConversationGraphqlPayload> {
+        return supervisorDispatchConversationQuery(input, context);
+      },
+
+      async workflowExecutionStepRuns(
+        input: WorkflowExecutionStepRunsQueryInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<WorkflowExecutionStepRunsPayload> {
+        return workflowExecutionStepRunsQuery(input, context);
       },
     },
 
@@ -1254,6 +2167,13 @@ export function createGraphqlSchema(
         context: GraphqlRequestContext = {},
       ): Promise<RerunWorkflowExecutionPayload> {
         return rerunWorkflowExecutionMutation(input, context);
+      },
+
+      async continueWorkflowExecution(
+        input: ContinueWorkflowExecutionInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<ContinueWorkflowExecutionPayload> {
+        return continueWorkflowExecutionMutation(input, context);
       },
 
       async sendManagerMessage(
@@ -1366,6 +2286,27 @@ export function createGraphqlSchema(
         context: GraphqlRequestContext = {},
       ): Promise<CancelWorkflowExecutionPayload> {
         return cancelWorkflowExecutionMutation(input, context);
+      },
+
+      async dispatchSupervisedWorkflowCommand(
+        input: DispatchSupervisedWorkflowCommandInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<SupervisedWorkflowGraphqlPayload> {
+        return dispatchSupervisedWorkflowCommandMutation(input, context);
+      },
+
+      async dispatchSupervisorChat(
+        input: DispatchSupervisorChatGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<DispatchSupervisorChatPayload> {
+        return dispatchSupervisorChatMutation(input, context);
+      },
+
+      async dispatchSupervisorConversation(
+        input: DispatchSupervisorConversationGraphqlInput,
+        context: GraphqlRequestContext = {},
+      ): Promise<DispatchSupervisorConversationPayload> {
+        return dispatchSupervisorConversationMutation(input, context);
       },
     },
   };

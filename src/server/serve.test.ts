@@ -1,4 +1,11 @@
-import { describe, expect, test } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { createWorkflowTemplate } from "../workflow/create";
+import { createSessionState } from "../workflow/session";
+import { saveSession } from "../workflow/session-store";
+import { BROWSER_WORKFLOW_OVERVIEW_RECENT_LIMIT, handleApiRequest } from "./api";
 import { startServe } from "./serve";
 
 describe("startServe", () => {
@@ -166,5 +173,152 @@ describe("startServe", () => {
         },
       ),
     ).rejects.toThrow("invalid serve port '5173.5'");
+  });
+});
+
+describe("handleApiRequest workflow overview routes", () => {
+  const tempDirs: string[] = [];
+
+  async function makeTempDir(): Promise<string> {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "divedra-serve-overview-"),
+    );
+    tempDirs.push(directory);
+    return directory;
+  }
+
+  afterEach(async () => {
+    await Promise.all(
+      tempDirs
+        .splice(0)
+        .map((directory) => rm(directory, { recursive: true, force: true })),
+    );
+  });
+
+  test("GET /overview returns workflow overview JSON without runtime detail fields", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+    const sessionStoreRoot = path.join(root, "sessions");
+    const response = await handleApiRequest(
+      new Request("http://127.0.0.1/overview"),
+      {
+        workflowRoot: root,
+        sessionStoreRoot,
+        cwd: root,
+      },
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      readonly workflows: readonly { readonly workflowName: string }[];
+      readonly selectedWorkflow: { readonly recentExecutions: unknown[] } | null;
+    };
+    expect(body.workflows.length).toBeGreaterThanOrEqual(1);
+    expect(body.selectedWorkflow).not.toBeNull();
+    expect(Array.isArray(body.selectedWorkflow?.recentExecutions)).toBe(true);
+  });
+
+  test("GET / serves HTML overview page that reads JSON from /overview", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+    const page = await handleApiRequest(new Request("http://127.0.0.1/"), {
+      workflowRoot: root,
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    });
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    const html = await page.text();
+    expect(html).toContain("/overview");
+    expect(html).toContain("workflow overview");
+  });
+
+  test("overview JSON caps recent executions at the browser default limit", async () => {
+    const root = await makeTempDir();
+    const workflowName = "demo";
+    const created = await createWorkflowTemplate(workflowName, {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowId = workflowName;
+    const extras = BROWSER_WORKFLOW_OVERVIEW_RECENT_LIMIT + 2;
+    const baseOpts = {
+      workflowRoot: root,
+      sessionStoreRoot,
+      cwd: root,
+    };
+    for (let i = 0; i < extras; i += 1) {
+      const sessionId = `sess-${String(i).padStart(3, "0")}`;
+      await saveSession(
+        {
+          ...createSessionState({
+            sessionId,
+            workflowName,
+            workflowId,
+            initialNodeId: "divedra-manager",
+            runtimeVariables: {},
+          }),
+          startedAt: new Date(Date.UTC(2026, 0, 1 + i)).toISOString(),
+          status: "completed",
+          endedAt: new Date(Date.UTC(2026, 0, 2 + i)).toISOString(),
+        },
+        baseOpts,
+      );
+    }
+    const response = await handleApiRequest(
+      new Request("http://127.0.0.1/overview"),
+      baseOpts,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      readonly selectedWorkflow: { readonly recentExecutions: readonly unknown[] };
+    };
+    expect(body.selectedWorkflow.recentExecutions).toHaveLength(
+      BROWSER_WORKFLOW_OVERVIEW_RECENT_LIMIT,
+    );
+  });
+
+  test("normalizes trailing slash on /overview path", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("solo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    const response = await handleApiRequest(
+      new Request("http://127.0.0.1/overview/"),
+      {
+        workflowRoot: root,
+        sessionStoreRoot: path.join(root, "sessions"),
+        cwd: root,
+      },
+    );
+    expect(response.status).toBe(200);
+  });
+
+  test("rejects non-GET methods for overview route", async () => {
+    const root = await makeTempDir();
+    const response = await handleApiRequest(
+      new Request("http://127.0.0.1/", { method: "POST" }),
+      {
+        workflowRoot: root,
+        cwd: root,
+      },
+    );
+    expect(response.status).toBe(405);
   });
 });

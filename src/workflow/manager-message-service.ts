@@ -1,5 +1,8 @@
 import { createCommunicationService } from "./communication-service";
-import { loadWorkflowFromDisk } from "./load";
+import {
+  loadWorkflowFromDisk,
+  mergeLoadOptionsForSessionMutableBundle,
+} from "./load";
 import {
   createManagerSessionStore,
   type ManagerIntentSummary,
@@ -12,7 +15,6 @@ import { loadSession, saveSession } from "./session-store";
 import type { WorkflowSessionState } from "./session";
 import {
   normalizeAttachmentsForIdempotency,
-  persistManagerMessageCommunication,
   prepareManagerMessageArtifacts,
   validateAttachments,
   writeManagerMessageEnvelope,
@@ -24,11 +26,9 @@ import {
 import {
   applyOptionalNodeDecision,
   dedupe,
-  findOwnedSubWorkflow,
   isTerminalStatus,
   normalizeActionsForIdempotency,
   normalizeManagerMessageText,
-  queueTargetNodeIdForStartSubWorkflow,
   toIntentSummary,
 } from "./manager-message-service/session";
 import type {
@@ -128,22 +128,21 @@ export function createManagerMessageService(
 
           const loadedWorkflow = await loadWorkflowFromDisk(
             loadedSession.value.workflowName,
-            options,
+            mergeLoadOptionsForSessionMutableBundle(
+              options,
+              loadedSession.value,
+            ),
           );
           if (!loadedWorkflow.ok) {
             throw new Error(loadedWorkflow.error.message);
           }
           const workflow = loadedWorkflow.value.bundle.workflow;
 
-          const managerNodeRef = workflow.nodes.find(
-            (entry) => entry.id === managerSession.managerNodeId,
-          );
           const parsedActions = parseManagerControlActions(
             normalizedActions as readonly unknown[],
             workflow,
             {
-              managerNodeId: managerSession.managerNodeId,
-              managerKind: managerNodeRef?.kind,
+              managerStepId: managerSession.managerStepId,
             },
           );
 
@@ -171,19 +170,14 @@ export function createManagerMessageService(
               : ([
                   { kind: "planner-note" },
                 ] satisfies readonly ManagerIntentSummary[]);
-          const ownedSubWorkflow = findOwnedSubWorkflow(
-            workflow,
-            managerSession.managerNodeId,
-          );
           const artifacts = await prepareManagerMessageArtifacts({
             artifactWorkflowRoot: loadedWorkflow.value.artifactWorkflowRoot,
             workflowId: input.workflowId,
             workflowExecutionId: input.workflowExecutionId,
             managerSessionId: input.managerSessionId,
             managerMessageId,
-            managerNodeId: managerSession.managerNodeId,
+            managerStepId: managerSession.managerStepId,
             managerNodeExecId: managerSession.managerNodeExecId,
-            subWorkflowId: ownedSubWorkflow?.id,
             message: trimmedMessage,
             attachments,
             actions: parsedActions.actions,
@@ -197,8 +191,8 @@ export function createManagerMessageService(
               switch (action.type) {
                 case "planner-note":
                   break;
-                case "retry-node":
-                  queuedNodeIds.push(action.nodeId);
+                case "retry-step":
+                  queuedNodeIds.push(action.stepId);
                   break;
                 case "replay-communication": {
                   const sourceCommunication = nextSession.communications.find(
@@ -213,8 +207,7 @@ export function createManagerMessageService(
                     sourceCommunication,
                     workflow,
                     {
-                      managerNodeId: managerSession.managerNodeId,
-                      managerKind: managerNodeRef?.kind,
+                      managerStepId: managerSession.managerStepId,
                     },
                     "managerControl replay-communication",
                   );
@@ -236,62 +229,17 @@ export function createManagerMessageService(
                   );
                   break;
                 }
-                case "start-sub-workflow":
-                  queuedNodeIds.push(
-                    queueTargetNodeIdForStartSubWorkflow({
-                      workflow,
-                      subWorkflowId: action.subWorkflowId,
-                    }),
-                  );
-                  break;
-                case "deliver-to-child-input": {
-                  if (
-                    ownedSubWorkflow === undefined ||
-                    ownedSubWorkflow.inputNodeId !== action.inputNodeId
-                  ) {
-                    throw new Error(
-                      `manager node '${managerSession.managerNodeId}' does not own child input '${action.inputNodeId}'`,
-                    );
-                  }
-                  const communication =
-                    await persistManagerMessageCommunication({
-                      artifactWorkflowRoot:
-                        loadedWorkflow.value.artifactWorkflowRoot,
-                      workflowId: input.workflowId,
-                      workflowExecutionId: input.workflowExecutionId,
-                      communicationCounter: nextSession.communicationCounter,
-                      managerMessageId,
-                      managerNodeId: managerSession.managerNodeId,
-                      managerNodeExecId: managerSession.managerNodeExecId,
-                      targetNodeId: action.inputNodeId,
-                      subWorkflowId: ownedSubWorkflow.id,
-                      payloadRef: artifacts.payloadRef,
-                      outputRaw: artifacts.outputRaw,
-                      createdAt: now,
-                    });
-                  nextSession = {
-                    ...nextSession,
-                    communicationCounter: nextSession.communicationCounter + 1,
-                    communications: [
-                      ...nextSession.communications,
-                      communication,
-                    ],
-                  };
-                  createdCommunicationIds.push(communication.communicationId);
-                  queuedNodeIds.push(action.inputNodeId);
-                  break;
-                }
-                case "execute-optional-node":
-                case "skip-optional-node":
+                case "execute-optional-step":
+                case "skip-optional-step":
                   nextSession = applyOptionalNodeDecision({
                     session: nextSession,
                     workflow,
-                    managerNodeId: managerSession.managerNodeId,
+                    managerStepId: managerSession.managerStepId,
                     managerNodeExecId: managerSession.managerNodeExecId,
                     action,
                     decidedAt: now,
                   });
-                  queuedNodeIds.push(action.nodeId);
+                  queuedNodeIds.push(action.stepId);
                   break;
               }
             }
@@ -346,7 +294,7 @@ export function createManagerMessageService(
               workflowExecutionId: input.workflowExecutionId,
               managerSessionId: input.managerSessionId,
               managerMessageId,
-              managerNodeId: managerSession.managerNodeId,
+              managerStepId: managerSession.managerStepId,
               managerNodeExecId: managerSession.managerNodeExecId,
               message: trimmedMessage,
               attachments,
@@ -362,7 +310,7 @@ export function createManagerMessageService(
               managerSessionId: input.managerSessionId,
               workflowId: input.workflowId,
               workflowExecutionId: input.workflowExecutionId,
-              managerNodeId: managerSession.managerNodeId,
+              managerStepId: managerSession.managerStepId,
               managerNodeExecId: managerSession.managerNodeExecId,
               ...(trimmedMessage === undefined
                 ? {}
@@ -381,7 +329,7 @@ export function createManagerMessageService(
               workflowExecutionId: input.workflowExecutionId,
               managerSessionId: input.managerSessionId,
               managerMessageId,
-              managerNodeId: managerSession.managerNodeId,
+              managerStepId: managerSession.managerStepId,
               managerNodeExecId: managerSession.managerNodeExecId,
               message: trimmedMessage,
               attachments,
@@ -398,7 +346,7 @@ export function createManagerMessageService(
               managerSessionId: input.managerSessionId,
               workflowId: input.workflowId,
               workflowExecutionId: input.workflowExecutionId,
-              managerNodeId: managerSession.managerNodeId,
+              managerStepId: managerSession.managerStepId,
               managerNodeExecId: managerSession.managerNodeExecId,
               ...(trimmedMessage === undefined
                 ? {}

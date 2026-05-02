@@ -3,9 +3,30 @@ import type { ValueNode } from "graphql";
 import { createSchema } from "graphql-yoga";
 import { createGraphqlSchema } from "../graphql/schema";
 import type {
+  CommunicationsQueryInput,
+  ContinueWorkflowExecutionInput,
+  CreateWorkflowDefinitionInput,
+  DispatchSupervisedWorkflowCommandInput,
+  DispatchSupervisorChatGraphqlInput,
+  DispatchSupervisorConversationGraphqlInput,
+  ExecuteWorkflowInput,
   GraphqlRequestContext,
   GraphqlSchemaDependencies,
+  ReplayCommunicationInput,
+  RerunWorkflowExecutionInput,
+  ResumeWorkflowExecutionInput,
+  RetryCommunicationDeliveryInput,
+  SaveWorkflowDefinitionInput,
+  SendManagerMessageInput,
+  SupervisedWorkflowLookupGraphqlInput,
+  SupervisorDispatchConversationLookupGraphqlInput,
+  ValidateWorkflowDefinitionInput,
+  WorkflowCatalogOverviewGraphqlInput,
+  WorkflowExecutionsQueryInput,
+  WorkflowStatusOverviewGraphqlInput,
 } from "../graphql/types";
+import type { WorkflowOverviewStatus } from "../workflow/overview";
+import type { WorkflowScopeSelector } from "../workflow/types";
 
 const GRAPHQL_SCHEMA_TEXT = `
   scalar JSON
@@ -16,11 +37,9 @@ const GRAPHQL_SCHEMA_TEXT = `
   }
 
   type WorkflowCounts {
-    nodes: Int!
-    edges: Int!
-    loops: Int!
-    workflowCalls: Int!
-    legacySubWorkflows: Int!
+    steps: Int!
+    nodeRegistry: Int!
+    crossWorkflowDispatches: Int!
   }
 
   type WorkflowAddonSource {
@@ -34,20 +53,39 @@ const GRAPHQL_SCHEMA_TEXT = `
     scopeRoot: String
   }
 
+  type WorkflowRuntimeRequirement {
+    id: String!
+    kind: String!
+    label: String!
+    status: String!
+    detail: String!
+    sourceStepIds: [String!]!
+  }
+
+  type WorkflowRuntimeReadiness {
+    ready: Boolean!
+    checkedAt: String!
+    requirements: [WorkflowRuntimeRequirement!]!
+    blockers: [String!]!
+  }
+
   type WorkflowView {
     workflowName: String!
     workflowId: String!
     description: String!
     hasManagerNode: Boolean!
-    managerNodeId: String
-    entryNodeId: String!
-    workflowCallIds: [String!]!
+    managerStepId: String
+    entryStepId: String
+    stepIds: [String!]!
+    nodeRegistryIds: [String!]!
+    crossWorkflowDispatchIds: [String!]!
     defaults: WorkflowDefaults!
     counts: WorkflowCounts!
     nodeFiles: [String!]!
     workflowDirectory: String!
     artifactWorkflowRoot: String!
     addonSources: [WorkflowAddonSource!]!
+    runtime: WorkflowRuntimeReadiness!
   }
 
   type WorkflowDefinitionView {
@@ -65,9 +103,54 @@ const GRAPHQL_SCHEMA_TEXT = `
     when: String!
   }
 
+  type AutoImprovePolicy {
+    enabled: Boolean!
+    superviserWorkflowId: String
+    monitorIntervalMs: Int!
+    stallTimeoutMs: Int!
+    maxSupervisedAttempts: Int!
+    maxWorkflowPatches: Int!
+    workflowMutationMode: String!
+    allowTargetedRerun: Boolean
+  }
+
+  type SupervisionIncident {
+    incidentId: String!
+    supervisedAttemptId: String!
+    category: String!
+    summary: String!
+    detectedAt: String!
+  }
+
+  type SupervisionRemediationRecord {
+    remediationId: String!
+    incidentId: String!
+    decidedAt: String!
+    action: String!
+    targetStepId: String
+    reason: String!
+  }
+
+  type SupervisionRunState {
+    supervisionRunId: String!
+    targetWorkflowId: String!
+    superviserWorkflowId: String!
+    status: String!
+    attemptCount: Int!
+    workflowPatchCount: Int!
+    mutableWorkflowDir: String
+    nestedSuperviserSessionId: String
+    policy: AutoImprovePolicy
+    incidents: [SupervisionIncident!]!
+    remediations: [SupervisionRemediationRecord!]!
+  }
+
   type NodeExecutionRecord {
     nodeId: String!
+    stepId: String
+    nodeRegistryId: String
     nodeExecId: String!
+    mailboxInstanceId: String
     status: String!
     artifactDir: String!
     startedAt: String!
@@ -75,6 +158,8 @@ const GRAPHQL_SCHEMA_TEXT = `
     attempt: Int
     outputAttemptCount: Int
     outputValidationErrors: JSON
+    promptVariant: String
+    timeoutMs: Int
     backendSessionId: String
     backendSessionMode: String
     restartedFromNodeExecId: String
@@ -89,6 +174,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     endedAt: String
     queue: [String!]!
     currentNodeId: String
+    currentStepId: String
     nodeExecutionCounter: Int!
     nodeExecutionCounts: JSON!
     loopIterationCounts: JSON
@@ -102,12 +188,16 @@ const GRAPHQL_SCHEMA_TEXT = `
     nodeBackendSessions: JSON!
     runtimeVariables: JSON!
     lastError: String
+    supervision: SupervisionRunState
   }
 
   type RuntimeNodeExecutionSummary {
     sessionId: String!
     nodeExecId: String!
     nodeId: String!
+    stepId: String
+    nodeRegistryId: String
+    mailboxInstanceId: String
     status: String!
     artifactDir: String!
     startedAt: String!
@@ -115,6 +205,8 @@ const GRAPHQL_SCHEMA_TEXT = `
     attempt: Int
     outputAttemptCount: Int
     outputValidationErrors: JSON
+    promptVariant: String
+    timeoutMs: Int
     backendSessionMode: String
     backendSessionId: String
     restartedFromNodeExecId: String
@@ -195,13 +287,18 @@ const GRAPHQL_SCHEMA_TEXT = `
     workflowId: String!
     workflowExecutionId: String!
     nodeId: String!
+    stepId: String
+    nodeRegistryId: String
     nodeExecId: String!
+    mailboxInstanceId: String
     status: String!
     startedAt: String!
     endedAt: String!
     attempt: Int
     outputAttemptCount: Int
     outputValidationErrors: JSON
+    promptVariant: String
+    timeoutMs: Int
     backendSessionId: String
     backendSessionMode: String
     restartedFromNodeExecId: String
@@ -218,8 +315,6 @@ const GRAPHQL_SCHEMA_TEXT = `
     communicationId: String!
     fromNodeId: String!
     toNodeId: String!
-    fromSubWorkflowId: String
-    toSubWorkflowId: String
     routingScope: String!
     sourceNodeExecId: String!
     payloadRef: JSON!
@@ -272,6 +367,44 @@ const GRAPHQL_SCHEMA_TEXT = `
     items: JSON!
     totalCount: Int!
     nextCursor: String
+  }
+
+  type WorkflowExecutionCompactSummary {
+    workflowExecutionId: String!
+    sessionId: String!
+    workflowName: String!
+    status: String!
+    currentNodeId: String
+    currentStepId: String
+    nodeExecutionCounter: Int!
+    startedAt: String!
+    endedAt: String
+  }
+
+  type WorkflowOverviewRow {
+    workflowName: String!
+    sourceScope: String!
+    workflowDirectory: String!
+    description: String!
+    aggregateStatus: String!
+    activeExecutionCount: Int!
+    latestExecution: WorkflowExecutionCompactSummary
+  }
+
+  type WorkflowCatalogOverviewPayload {
+    workflows: [WorkflowOverviewRow!]!
+  }
+
+  type WorkflowStatusOverviewPayload {
+    workflowName: String!
+    sourceScope: String!
+    workflowDirectory: String!
+    description: String!
+    aggregateStatus: String!
+    activeExecutionCount: Int!
+    latestExecution: WorkflowExecutionCompactSummary
+    newestActiveExecution: WorkflowExecutionCompactSummary
+    recentExecutions: [WorkflowExecutionCompactSummary!]!
   }
 
   type WorkflowExecutionOverviewView {
@@ -335,7 +468,38 @@ const GRAPHQL_SCHEMA_TEXT = `
     workflowExecutionId: String!
     sessionId: String!
     status: String!
+    rerunFromStepId: String
     exitCode: Int!
+  }
+
+  type ContinueWorkflowExecutionPayload {
+    workflowExecutionId: String!
+    sessionId: String!
+    status: String!
+    exitCode: Int!
+    continuedAfterStepRunId: String!
+    continuedStartStepId: String!
+  }
+
+  type WorkflowExecutionStepRun {
+    workflowExecutionId: String!
+    timelineOrdinal: Int!
+    executionOrdinal: Int!
+    stepRunId: String!
+    stepId: String
+    nodeRegistryId: String
+    status: String!
+    imported: Boolean!
+    sourceWorkflowExecutionId: String!
+    startedAt: String!
+    endedAt: String!
+  }
+
+  type WorkflowExecutionStepRunsPayload {
+    workflowExecutionId: String!
+    workflowId: String!
+    workflowName: String!
+    stepRuns: [WorkflowExecutionStepRun!]!
   }
 
   type CancelWorkflowExecutionPayload {
@@ -343,6 +507,41 @@ const GRAPHQL_SCHEMA_TEXT = `
     workflowExecutionId: String!
     sessionId: String!
     status: String!
+  }
+
+  type SupervisedWorkflowGraphqlPayload {
+    supervisedRun: JSON!
+    activeTargetStatus: String
+  }
+
+  type DispatchSupervisorChatResult {
+    receiptId: String!
+    status: String!
+    duplicate: Boolean!
+    bindingId: String
+    workflowName: String
+    workflowExecutionId: String
+    supervisedRunId: String
+    supervisorExecutionId: String
+    error: String
+  }
+
+  type DispatchSupervisorChatPayload {
+    results: [DispatchSupervisorChatResult!]!
+  }
+
+  type DispatchSupervisorConversationPayload {
+    conversation: JSON!
+    managedRuns: [JSON!]!
+    decision: JSON!
+    proposal: JSON!
+    applied: Boolean!
+    validationIssues: JSON
+  }
+
+  type SupervisorDispatchConversationPayload {
+    conversation: JSON!
+    managedRuns: [JSON!]!
   }
 
   type SendManagerMessagePayload {
@@ -370,9 +569,22 @@ const GRAPHQL_SCHEMA_TEXT = `
     status: String!
   }
 
+  input AutoImprovePolicyInput {
+    enabled: Boolean!
+    superviserWorkflowId: String
+    monitorIntervalMs: Int
+    stallTimeoutMs: Int
+    maxSupervisedAttempts: Int
+    maxWorkflowPatches: Int
+    workflowMutationMode: String
+    allowTargetedRerun: Boolean
+  }
+
   input ExecuteWorkflowInput {
     workflowName: String!
     runtimeVariables: JSON
+    autoImprove: AutoImprovePolicyInput
+    nestedSuperviser: Boolean
     workingDirectory: String
     mockScenario: JSON
     async: Boolean
@@ -405,6 +617,8 @@ const GRAPHQL_SCHEMA_TEXT = `
 
   input ResumeWorkflowExecutionInput {
     workflowExecutionId: String!
+    autoImprove: AutoImprovePolicyInput
+    nestedSuperviser: Boolean
     workingDirectory: String
     dryRun: Boolean
     maxSteps: Int
@@ -414,7 +628,8 @@ const GRAPHQL_SCHEMA_TEXT = `
 
   input RerunWorkflowExecutionInput {
     workflowExecutionId: String!
-    nodeId: String!
+    stepId: String!
+    autoImprove: AutoImprovePolicyInput
     runtimeVariables: JSON
     workingDirectory: String
     dryRun: Boolean
@@ -423,8 +638,83 @@ const GRAPHQL_SCHEMA_TEXT = `
     defaultTimeoutMs: Int
   }
 
+  input ContinueWorkflowExecutionInput {
+    sourceWorkflowExecutionId: String!
+    startStepId: String!
+    afterStepRunId: String!
+    autoImprove: AutoImprovePolicyInput
+    nestedSuperviser: Boolean
+    runtimeVariables: JSON
+    workingDirectory: String
+    dryRun: Boolean
+    maxSteps: Int
+    maxLoopIterations: Int
+    defaultTimeoutMs: Int
+    mockScenario: JSON
+  }
+
   input CancelWorkflowExecutionInput {
     workflowExecutionId: String!
+  }
+
+  input EventSupervisorCommandInput {
+    commandId: String!
+    sourceId: String!
+    bindingId: String!
+    correlationKey: String!
+    action: String!
+    targetWorkflowName: String!
+    supervisedRunId: String
+    targetWorkflowExecutionId: String
+    runtimeVariables: JSON
+    reason: String
+    receivedEventReceiptId: String!
+  }
+
+  input DispatchSupervisedWorkflowCommandInput {
+    command: EventSupervisorCommandInput!
+    binding: JSON!
+    runtimeVariables: JSON
+    mockScenario: JSON
+    dryRun: Boolean
+    maxSteps: Int
+    maxLoopIterations: Int
+    defaultTimeoutMs: Int
+  }
+
+  input SupervisedWorkflowLookupGraphqlInput {
+    supervisedRunId: String
+    sourceId: String
+    bindingId: String
+    correlationKey: String
+  }
+
+  input DispatchSupervisorChatInput {
+    sourceId: String!
+    text: String!
+    conversationId: String
+    threadId: String
+    eventId: String
+    eventType: String
+    provider: String
+    idempotencyKey: String
+  }
+
+  input DispatchSupervisorConversationInput {
+    binding: JSON!
+    event: JSON!
+    supervisorProfileId: String!
+    correlationKey: String!
+    sourceMessageId: String!
+    mockScenario: JSON
+    dryRun: Boolean
+    maxSteps: Int
+    maxLoopIterations: Int
+    defaultTimeoutMs: Int
+  }
+
+  input SupervisorDispatchConversationLookupInput {
+    supervisorConversationId: String!
   }
 
   input SendManagerMessageInput {
@@ -435,7 +725,6 @@ const GRAPHQL_SCHEMA_TEXT = `
     attachments: JSON
     idempotencyKey: String
     managerSessionId: String
-    managerNodeId: String
     managerNodeExecId: String
   }
 
@@ -474,6 +763,16 @@ const GRAPHQL_SCHEMA_TEXT = `
       first: Int
       afterWorkflowExecutionId: String
     ): WorkflowExecutionConnection!
+    workflowCatalogOverview(
+      workflowScope: String
+      status: String
+      limit: Int
+    ): WorkflowCatalogOverviewPayload!
+    workflowStatusOverview(
+      workflowName: String!
+      workflowScope: String
+      limit: Int
+    ): WorkflowStatusOverviewPayload
     communications(
       workflowId: String!
       workflowExecutionId: String!
@@ -496,6 +795,17 @@ const GRAPHQL_SCHEMA_TEXT = `
       recentLogLimit: Int
     ): NodeExecutionView
     managerSession(managerSessionId: String): ManagerSessionView
+    supervisedWorkflowRun(
+      input: SupervisedWorkflowLookupGraphqlInput!
+    ): SupervisedWorkflowGraphqlPayload!
+    supervisorDispatchConversation(
+      input: SupervisorDispatchConversationLookupInput!
+    ): SupervisorDispatchConversationPayload!
+    workflowExecutionStepRuns(
+      workflowExecutionId: String!
+      stepId: String
+      status: String
+    ): WorkflowExecutionStepRunsPayload!
   }
 
   type Mutation {
@@ -505,12 +815,83 @@ const GRAPHQL_SCHEMA_TEXT = `
     executeWorkflow(input: ExecuteWorkflowInput!): ExecuteWorkflowPayload!
     resumeWorkflowExecution(input: ResumeWorkflowExecutionInput!): ResumeWorkflowExecutionPayload!
     rerunWorkflowExecution(input: RerunWorkflowExecutionInput!): RerunWorkflowExecutionPayload!
+    continueWorkflowExecution(
+      input: ContinueWorkflowExecutionInput!
+    ): ContinueWorkflowExecutionPayload!
     sendManagerMessage(input: SendManagerMessageInput!): SendManagerMessagePayload!
     retryCommunicationDelivery(input: RetryCommunicationDeliveryInput!): RetryCommunicationDeliveryPayload!
     replayCommunication(input: ReplayCommunicationInput!): ReplayCommunicationPayload!
     cancelWorkflowExecution(input: CancelWorkflowExecutionInput!): CancelWorkflowExecutionPayload!
+    dispatchSupervisedWorkflowCommand(
+      input: DispatchSupervisedWorkflowCommandInput!
+    ): SupervisedWorkflowGraphqlPayload!
+    dispatchSupervisorChat(
+      input: DispatchSupervisorChatInput!
+    ): DispatchSupervisorChatPayload!
+    dispatchSupervisorConversation(
+      input: DispatchSupervisorConversationInput!
+    ): DispatchSupervisorConversationPayload!
   }
 `;
+
+function parseOverviewWorkflowScopeArg(
+  value: string | undefined | null,
+): WorkflowScopeSelector | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (value === "auto" || value === "project" || value === "user") {
+    return value;
+  }
+  throw new Error(`invalid workflowScope '${value}'`);
+}
+
+function parseOverviewAggregateStatusArg(
+  value: string | undefined | null,
+): WorkflowOverviewStatus | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const allowed: readonly WorkflowOverviewStatus[] = [
+    "running",
+    "paused",
+    "completed",
+    "failed",
+    "cancelled",
+    "never-run",
+  ];
+  if ((allowed as readonly string[]).includes(value)) {
+    return value as WorkflowOverviewStatus;
+  }
+  throw new Error(`invalid workflow overview status '${value}'`);
+}
+
+function parseWorkflowCatalogOverviewGraphqlArgs(args: {
+  readonly workflowScope?: string | null;
+  readonly status?: string | null;
+  readonly limit?: number | null;
+}): WorkflowCatalogOverviewGraphqlInput {
+  const workflowScope = parseOverviewWorkflowScopeArg(args.workflowScope);
+  const status = parseOverviewAggregateStatusArg(args.status);
+  return {
+    ...(workflowScope === undefined ? {} : { workflowScope }),
+    ...(status === undefined ? {} : { status }),
+    ...(args.limit == null ? {} : { limit: args.limit }),
+  };
+}
+
+function parseWorkflowStatusOverviewGraphqlArgs(args: {
+  readonly workflowName: string;
+  readonly workflowScope?: string | null;
+  readonly limit?: number | null;
+}): WorkflowStatusOverviewGraphqlInput {
+  const workflowScope = parseOverviewWorkflowScopeArg(args.workflowScope);
+  return {
+    workflowName: args.workflowName,
+    ...(workflowScope === undefined ? {} : { workflowScope }),
+    ...(args.limit == null ? {} : { limit: args.limit }),
+  };
+}
 
 function parseJsonLiteral(value: ValueNode): unknown {
   switch (value.kind) {
@@ -561,6 +942,23 @@ export function createExecutableGraphqlSchema(
     typeDefs: GRAPHQL_SCHEMA_TEXT,
     resolvers: {
       JSON: createJsonScalar(),
+      WorkflowSessionState: {
+        supervision(parent: { readonly supervision?: unknown }): unknown {
+          return parent.supervision ?? null;
+        },
+      },
+      SupervisionRunState: {
+        incidents(parent: {
+          readonly incidents?: readonly unknown[];
+        }): unknown {
+          return parent.incidents ?? [];
+        },
+        remediations(parent: {
+          readonly remediations?: readonly unknown[];
+        }): unknown {
+          return parent.remediations ?? [];
+        },
+      },
       Query: {
         workflows(
           _parent: unknown,
@@ -604,30 +1002,45 @@ export function createExecutableGraphqlSchema(
         },
         workflowExecutions(
           _parent: unknown,
+          args: WorkflowExecutionsQueryInput,
+          context: GraphqlRequestContext,
+        ) {
+          return schema.query.workflowExecutions(args, context);
+        },
+        workflowCatalogOverview(
+          _parent: unknown,
           args: {
-            readonly workflowName?: string;
-            readonly status?: string;
-            readonly first?: number;
-            readonly afterWorkflowExecutionId?: string;
+            readonly workflowScope?: string | null;
+            readonly status?: string | null;
+            readonly limit?: number | null;
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.query.workflowExecutions(args as never, context);
+          return schema.query.workflowCatalogOverview(
+            parseWorkflowCatalogOverviewGraphqlArgs(args),
+            context,
+          );
+        },
+        workflowStatusOverview(
+          _parent: unknown,
+          args: {
+            readonly workflowName: string;
+            readonly workflowScope?: string | null;
+            readonly limit?: number | null;
+          },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.query.workflowStatusOverview(
+            parseWorkflowStatusOverviewGraphqlArgs(args),
+            context,
+          );
         },
         communications(
           _parent: unknown,
-          args: {
-            readonly workflowId: string;
-            readonly workflowExecutionId: string;
-            readonly fromNodeId?: string;
-            readonly toNodeId?: string;
-            readonly status?: string;
-            readonly first?: number;
-            readonly afterCommunicationId?: string;
-          },
+          args: CommunicationsQueryInput,
           context: GraphqlRequestContext,
         ) {
-          return schema.query.communications(args as never, context);
+          return schema.query.communications(args, context);
         },
         communication(
           _parent: unknown,
@@ -660,161 +1073,131 @@ export function createExecutableGraphqlSchema(
         ) {
           return schema.query.managerSession(args, context);
         },
+        supervisedWorkflowRun(
+          _parent: unknown,
+          args: { readonly input: SupervisedWorkflowLookupGraphqlInput },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.query.supervisedWorkflowRun(args.input, context);
+        },
+        supervisorDispatchConversation(
+          _parent: unknown,
+          args: {
+            readonly input: SupervisorDispatchConversationLookupGraphqlInput;
+          },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.query.supervisorDispatchConversation(
+            args.input,
+            context,
+          );
+        },
+        workflowExecutionStepRuns(
+          _parent: unknown,
+          args: {
+            readonly workflowExecutionId: string;
+            readonly stepId?: string | null;
+            readonly status?: string | null;
+          },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.query.workflowExecutionStepRuns(
+            {
+              workflowExecutionId: args.workflowExecutionId,
+              ...(args.stepId === undefined ||
+              args.stepId === null ||
+              args.stepId === ""
+                ? {}
+                : { stepId: args.stepId }),
+              ...(args.status === undefined ||
+              args.status === null ||
+              args.status === ""
+                ? {}
+                : { status: args.status }),
+            },
+            context,
+          );
+        },
       },
       Mutation: {
         createWorkflowDefinition(
           _parent: unknown,
-          args: { readonly input: { readonly workflowName: string } },
+          args: { readonly input: CreateWorkflowDefinitionInput },
           context: GraphqlRequestContext,
         ) {
           return schema.mutation.createWorkflowDefinition(args.input, context);
         },
         saveWorkflowDefinition(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowName: string;
-              readonly bundle: unknown;
-              readonly expectedRevision?: string;
-            };
-          },
+          args: { readonly input: SaveWorkflowDefinitionInput },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.saveWorkflowDefinition(
-            args.input as never,
-            context,
-          );
+          return schema.mutation.saveWorkflowDefinition(args.input, context);
         },
         validateWorkflowDefinition(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowName: string;
-              readonly bundle?: unknown;
-            };
-          },
+          args: { readonly input: ValidateWorkflowDefinitionInput },
           context: GraphqlRequestContext,
         ) {
           return schema.mutation.validateWorkflowDefinition(
-            args.input as never,
+            args.input,
             context,
           );
         },
         executeWorkflow(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowName: string;
-              readonly runtimeVariables?: unknown;
-              readonly workingDirectory?: string;
-              readonly mockScenario?: unknown;
-              readonly async?: boolean;
-              readonly dryRun?: boolean;
-              readonly maxSteps?: number;
-              readonly maxLoopIterations?: number;
-              readonly defaultTimeoutMs?: number;
-            };
-          },
+          args: { readonly input: ExecuteWorkflowInput },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.executeWorkflow(args.input as never, context);
+          return schema.mutation.executeWorkflow(args.input, context);
         },
         resumeWorkflowExecution(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowExecutionId: string;
-              readonly workingDirectory?: string;
-              readonly dryRun?: boolean;
-              readonly maxSteps?: number;
-              readonly maxLoopIterations?: number;
-              readonly defaultTimeoutMs?: number;
-            };
-          },
+          args: { readonly input: ResumeWorkflowExecutionInput },
           context: GraphqlRequestContext,
         ) {
           return schema.mutation.resumeWorkflowExecution(args.input, context);
         },
         rerunWorkflowExecution(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowExecutionId: string;
-              readonly nodeId: string;
-              readonly runtimeVariables?: unknown;
-              readonly workingDirectory?: string;
-              readonly dryRun?: boolean;
-              readonly maxSteps?: number;
-              readonly maxLoopIterations?: number;
-              readonly defaultTimeoutMs?: number;
-            };
-          },
+          args: { readonly input: RerunWorkflowExecutionInput },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.rerunWorkflowExecution(
-            args.input as never,
+          return schema.mutation.rerunWorkflowExecution(args.input, context);
+        },
+        continueWorkflowExecution(
+          _parent: unknown,
+          args: { readonly input: ContinueWorkflowExecutionInput },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.mutation.continueWorkflowExecution(
+            args.input,
             context,
           );
         },
         sendManagerMessage(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowId: string;
-              readonly workflowExecutionId: string;
-              readonly message?: string;
-              readonly actions?: unknown;
-              readonly attachments?: unknown;
-              readonly idempotencyKey?: string;
-              readonly managerSessionId?: string;
-              readonly managerNodeId?: string;
-              readonly managerNodeExecId?: string;
-            };
-          },
+          args: { readonly input: SendManagerMessageInput },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.sendManagerMessage(
-            args.input as never,
-            context,
-          );
+          return schema.mutation.sendManagerMessage(args.input, context);
         },
         retryCommunicationDelivery(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowId: string;
-              readonly workflowExecutionId: string;
-              readonly communicationId: string;
-              readonly reason?: string;
-              readonly idempotencyKey?: string;
-              readonly managerSessionId?: string;
-            };
-          },
+          args: { readonly input: RetryCommunicationDeliveryInput },
           context: GraphqlRequestContext,
         ) {
           return schema.mutation.retryCommunicationDelivery(
-            args.input as never,
+            args.input,
             context,
           );
         },
         replayCommunication(
           _parent: unknown,
-          args: {
-            readonly input: {
-              readonly workflowId: string;
-              readonly workflowExecutionId: string;
-              readonly communicationId: string;
-              readonly reason?: string;
-              readonly idempotencyKey?: string;
-              readonly managerSessionId?: string;
-            };
-          },
+          args: { readonly input: ReplayCommunicationInput },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.replayCommunication(
-            args.input as never,
-            context,
-          );
+          return schema.mutation.replayCommunication(args.input, context);
         },
         cancelWorkflowExecution(
           _parent: unknown,
@@ -822,6 +1205,33 @@ export function createExecutableGraphqlSchema(
           context: GraphqlRequestContext,
         ) {
           return schema.mutation.cancelWorkflowExecution(args.input, context);
+        },
+        dispatchSupervisedWorkflowCommand(
+          _parent: unknown,
+          args: { readonly input: DispatchSupervisedWorkflowCommandInput },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.mutation.dispatchSupervisedWorkflowCommand(
+            args.input,
+            context,
+          );
+        },
+        dispatchSupervisorChat(
+          _parent: unknown,
+          args: { readonly input: DispatchSupervisorChatGraphqlInput },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.mutation.dispatchSupervisorChat(args.input, context);
+        },
+        dispatchSupervisorConversation(
+          _parent: unknown,
+          args: { readonly input: DispatchSupervisorConversationGraphqlInput },
+          context: GraphqlRequestContext,
+        ) {
+          return schema.mutation.dispatchSupervisorConversation(
+            args.input,
+            context,
+          );
         },
       },
     },

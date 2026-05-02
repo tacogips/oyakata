@@ -1,13 +1,13 @@
 # Manager Kind Simplification Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-manager-kind-simplification.md, design-docs/specs/design-workflow-json.md#workflownoderef
+**Design Reference**: design-docs/specs/design-unified-workflow-role-model.md, design-docs/specs/design-workflow-json.md#workflownoderef
 **Created**: 2026-03-18
 **Last Updated**: 2026-03-18
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-manager-kind-simplification.md`
+**Source**: historical manager-kind notes now consolidated into `design-docs/specs/notes.md`
 
 ### Summary
 
@@ -61,8 +61,8 @@ function normalizeNodeKind(value: unknown): NodeKind | undefined;
 **Checklist**:
 - [x] Replace `sub-divedra-manager` with `subworkflow-manager` in shared types
 - [x] Remove authored compatibility aliases for `manager` and `sub-manager`
-- [x] Require `workflow.managerNodeId` to target `root-manager`
-- [x] Require `subWorkflows[].managerNodeId` to target `subworkflow-manager`
+- [x] Require `workflow.managerRuntimeId` to target `root-manager`
+- [x] Require `subWorkflows[].managerRuntimeId` to target `subworkflow-manager`
 - [x] Update workflow template generation to emit canonical manager kinds
 - [x] Update validator/load tests for acceptance and rejection cases
 
@@ -74,7 +74,7 @@ function normalizeNodeKind(value: unknown): NodeKind | undefined;
 
 ```typescript
 interface ManagerControlParseContext {
-  readonly managerNodeId: string;
+  readonly managerRuntimeId: string;
   readonly managerKind: NodeKind | undefined;
 }
 

@@ -1,11 +1,18 @@
 import { isJsonObject } from "../shared/json";
 import { listWorkflowCatalogSources } from "../workflow/catalog";
-import { isEventSourceEnabled, loadEventConfiguration } from "./config";
+import {
+  isEventSourceEnabled,
+  loadEventConfiguration,
+} from "./config";
 import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
 import {
   isValidEventHttpPath,
   resolveEventSourceHttpPath,
 } from "./http-routes";
+import {
+  loadSupervisorProfilesFromEventRoot,
+  type WorkflowSupervisorProfile,
+} from "./supervisor-profiles";
 import type {
   EventBinding,
   EventConfigLoadOptions,
@@ -88,7 +95,9 @@ function validateTemplateValue(
       const ref = match[1];
       if (
         ref === undefined ||
-        (!ref.startsWith("event.") && !ref.startsWith("source."))
+        (!ref.startsWith("event.") &&
+          !ref.startsWith("source.") &&
+          !ref.startsWith("binding."))
       ) {
         issues.push(
           error(pathName, `unsupported template reference '${ref ?? ""}'`),
@@ -291,10 +300,411 @@ async function listWorkflowNames(
   return new Set(sources.value.map((source) => source.workflowName));
 }
 
+const SUPERVISOR_ACTION_SET = new Set<string>([
+  "start",
+  "stop",
+  "restart",
+  "status",
+  "input",
+]);
+
+function isSupervisorActionName(value: unknown): value is string {
+  return typeof value === "string" && SUPERVISOR_ACTION_SET.has(value);
+}
+
+export function assertSupervisedBindingGraphqlPolicy(
+  binding: EventBinding,
+): void {
+  const issues: EventConfigValidationIssue[] = [];
+  validateSupervisedBinding(binding, issues);
+  const firstError = issues.find((issue) => issue.severity === "error");
+  if (firstError !== undefined) {
+    throw new Error(`${firstError.path}: ${firstError.message}`);
+  }
+}
+
+function validateSupervisedBinding(
+  binding: EventBinding,
+  issues: EventConfigValidationIssue[],
+): void {
+  const execution = binding.execution;
+  if (execution?.mode !== "supervised") {
+    return;
+  }
+  const pathPrefix = `bindings.${binding.id}.execution`;
+  if (
+    execution.supervisorWorkflowName !== undefined &&
+    execution.supervisorWorkflowName !== null &&
+    (typeof execution.supervisorWorkflowName !== "string" ||
+      execution.supervisorWorkflowName.length === 0)
+  ) {
+    issues.push(
+      error(
+        `${pathPrefix}.supervisorWorkflowName`,
+        "supervisorWorkflowName must be a non-empty string when set",
+      ),
+    );
+  }
+  const maxRestarts = execution.maxRestartsOnFailure;
+  if (
+    maxRestarts !== undefined &&
+    (!Number.isInteger(maxRestarts) || maxRestarts < 0)
+  ) {
+    issues.push(
+      error(
+        `${pathPrefix}.maxRestartsOnFailure`,
+        "maxRestartsOnFailure must be a non-negative integer",
+      ),
+    );
+  }
+  const control = execution.control;
+  if (control?.correlationKey !== undefined) {
+    if (typeof control.correlationKey !== "string") {
+      issues.push(
+        error(
+          `${pathPrefix}.control.correlationKey`,
+          "correlationKey must be a string template",
+        ),
+      );
+    } else {
+      validateTemplateValue(
+        control.correlationKey,
+        `${pathPrefix}.control.correlationKey`,
+        issues,
+      );
+    }
+  }
+  if (
+    control?.startOnFirstInput !== undefined &&
+    typeof control.startOnFirstInput !== "boolean"
+  ) {
+    issues.push(
+      error(
+        `${pathPrefix}.control.startOnFirstInput`,
+        "startOnFirstInput must be a boolean when set",
+      ),
+    );
+  }
+  const allow = control?.allowActions;
+  if (allow !== undefined) {
+    if (!Array.isArray(allow) || allow.length === 0) {
+      issues.push(
+        error(
+          `${pathPrefix}.control.allowActions`,
+          "allowActions must be a non-empty array when set",
+        ),
+      );
+    } else {
+      for (const [index, entry] of allow.entries()) {
+        if (typeof entry !== "string" || !SUPERVISOR_ACTION_SET.has(entry)) {
+          issues.push(
+            error(
+              `${pathPrefix}.control.allowActions[${String(index)}]`,
+              `unknown supervisor action '${String(entry)}'`,
+            ),
+          );
+        }
+      }
+    }
+  }
+  const intent = control?.intentMapping;
+  if (intent !== undefined && !isJsonObject(intent)) {
+    issues.push(
+      error(
+        `${pathPrefix}.control.intentMapping`,
+        "intentMapping must be an object",
+      ),
+    );
+  } else if (isJsonObject(intent)) {
+    const mode = intent["mode"];
+    if (
+      mode !== "structured-or-command" &&
+      mode !== "command-map" &&
+      mode !== "structured-only" &&
+      mode !== "llm-command"
+    ) {
+      issues.push(
+        error(
+          `${pathPrefix}.control.intentMapping.mode`,
+          "intentMapping.mode must be structured-or-command, command-map, structured-only, or llm-command",
+        ),
+      );
+    }
+    const defaultAction = intent["defaultAction"];
+    if (mode !== "llm-command") {
+      if (
+        defaultAction !== undefined &&
+        !isSupervisorActionName(defaultAction)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.defaultAction`,
+            "defaultAction must be one of start, stop, restart, status, or input when set",
+          ),
+        );
+      }
+    }
+    if (mode === "llm-command") {
+      const resolverWorkflowName = intent["resolverWorkflowName"];
+      if (
+        typeof resolverWorkflowName !== "string" ||
+        resolverWorkflowName.length === 0
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.resolverWorkflowName`,
+            "llm-command intentMapping.resolverWorkflowName must be a non-empty string",
+          ),
+        );
+      }
+      const resolverNodeId = intent["resolverNodeId"];
+      if (typeof resolverNodeId !== "string" || resolverNodeId.length === 0) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.resolverNodeId`,
+            "llm-command intentMapping.resolverNodeId must be a non-empty string",
+          ),
+        );
+      }
+      const minConfidence = intent["minConfidence"];
+      if (minConfidence !== undefined) {
+        if (
+          typeof minConfidence !== "number" ||
+          minConfidence < 0 ||
+          minConfidence > 1
+        ) {
+          issues.push(
+            error(
+              `${pathPrefix}.control.intentMapping.minConfidence`,
+              "minConfidence must be a number in [0, 1] when set",
+            ),
+          );
+        }
+      }
+      const llmDefaultAction = intent["defaultAction"];
+      if (
+        llmDefaultAction !== undefined &&
+        llmDefaultAction !== "input" &&
+        llmDefaultAction !== "ignore"
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.defaultAction`,
+            "llm-command defaultAction must be 'input' or 'ignore' when set",
+          ),
+        );
+      }
+      const inputPath = intent["inputPath"];
+      if (
+        inputPath !== undefined &&
+        (typeof inputPath !== "string" || inputPath.length === 0)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.inputPath`,
+            "inputPath must be a non-empty dotted path when set",
+          ),
+        );
+      }
+    }
+    if (mode === "command-map") {
+      const commands = intent["commands"];
+      if (!isJsonObject(commands)) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.commands`,
+            "command-map intentMapping.commands must be an object",
+          ),
+        );
+      } else {
+        for (const [actionName, token] of Object.entries(commands)) {
+          if (!isSupervisorActionName(actionName)) {
+            issues.push(
+              error(
+                `${pathPrefix}.control.intentMapping.commands.${actionName}`,
+                `unknown supervisor action '${actionName}'`,
+              ),
+            );
+            continue;
+          }
+          if (typeof token !== "string" || token.length === 0) {
+            issues.push(
+              error(
+                `${pathPrefix}.control.intentMapping.commands.${actionName}`,
+                "command token must be a non-empty string",
+              ),
+            );
+          }
+        }
+      }
+      const inputPath = intent["inputPath"];
+      if (
+        inputPath !== undefined &&
+        (typeof inputPath !== "string" || inputPath.length === 0)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.inputPath`,
+            "inputPath must be a non-empty dotted path when set",
+          ),
+        );
+      }
+    }
+  }
+}
+
+function validateSupervisorDispatchBinding(
+  binding: EventBinding,
+  profilesById: ReadonlyMap<string, WorkflowSupervisorProfile>,
+  workflowNames: ReadonlySet<string>,
+  issues: EventConfigValidationIssue[],
+): void {
+  const execution = binding.execution;
+  if (execution?.mode !== "supervisor-dispatch") {
+    return;
+  }
+  const pathPrefix = `bindings.${binding.id}.execution`;
+  const profileIdRaw = execution.supervisorProfileId;
+  if (
+    typeof profileIdRaw !== "string" ||
+    profileIdRaw.trim().length === 0
+  ) {
+    issues.push(
+      error(
+        `${pathPrefix}.supervisorProfileId`,
+        "supervisorProfileId is required when execution.mode is supervisor-dispatch",
+      ),
+    );
+    return;
+  }
+  const profileId = profileIdRaw.trim();
+  const profile = profilesById.get(profileId);
+  if (profile === undefined) {
+    issues.push(
+      error(
+        `${pathPrefix}.supervisorProfileId`,
+        `unknown supervisor profile '${profileId}' (expected JSON under supervisors/)`,
+      ),
+    );
+    return;
+  }
+
+  const overrideSw = execution.supervisorWorkflowName;
+  if (overrideSw !== undefined && overrideSw !== null) {
+    if (typeof overrideSw !== "string" || overrideSw.length === 0) {
+      issues.push(
+        error(
+          `${pathPrefix}.supervisorWorkflowName`,
+          "supervisorWorkflowName must be a non-empty string when set",
+        ),
+      );
+    } else if (overrideSw.trim() !== profile.supervisorWorkflowName) {
+      issues.push(
+        error(
+          `${pathPrefix}.supervisorWorkflowName`,
+          `must match profile supervisorWorkflowName '${profile.supervisorWorkflowName}'`,
+        ),
+      );
+    }
+  }
+
+  const bwn = binding.workflowName;
+  if (bwn !== undefined && bwn.trim().length > 0) {
+    if (bwn.trim() !== profile.supervisorWorkflowName) {
+      issues.push(
+        error(
+          `bindings.${binding.id}.workflowName`,
+          `for supervisor-dispatch, workflowName must be omitted or equal the profile supervisorWorkflowName '${profile.supervisorWorkflowName}'`,
+        ),
+      );
+    } else if (!workflowNames.has(bwn.trim())) {
+      issues.push(
+        error(
+          `bindings.${binding.id}.workflowName`,
+          `unknown workflow '${bwn.trim()}'`,
+        ),
+      );
+    }
+  }
+}
+
+function validateMailboxBridge(
+  binding: EventBinding,
+  issues: EventConfigValidationIssue[],
+): void {
+  const mb = binding.mailboxBridge;
+  if (mb === undefined) {
+    return;
+  }
+  const base = `bindings.${binding.id}.mailboxBridge`;
+  if (!isJsonObject(mb as unknown)) {
+    issues.push(error(base, "mailboxBridge must be an object when set"));
+    return;
+  }
+  const mode = binding.execution?.mode;
+  const supervisedLike = mode === "supervised" || mode === "supervisor-dispatch";
+  if (mb.input?.consumer === "supervisor" && !supervisedLike) {
+    issues.push(
+      error(
+        `${base}.input.consumer`,
+        'mailboxBridge.input.consumer "supervisor" requires execution.mode "supervised" or "supervisor-dispatch"',
+      ),
+    );
+  }
+  if (mb.input?.consumer === "direct-workflow" && supervisedLike) {
+    issues.push(
+      error(
+        `${base}.input.consumer`,
+        'mailboxBridge.input.consumer "direct-workflow" cannot be used with execution.mode "supervised" or "supervisor-dispatch"',
+      ),
+    );
+  }
+  const replyMode = mb.output?.reply?.mode;
+  if (
+    replyMode !== undefined &&
+    (typeof replyMode !== "string" ||
+      (replyMode !== "none" && replyMode !== "final"))
+  ) {
+    issues.push(
+      error(
+        `${base}.output.reply.mode`,
+        `invalid reply mode '${String(replyMode)}' (expected none or final)`,
+      ),
+    );
+  }
+  const progressMode = mb.output?.progress?.mode;
+  if (
+    progressMode !== undefined &&
+    (typeof progressMode !== "string" ||
+      (progressMode !== "none" && progressMode !== "status-only"))
+  ) {
+    issues.push(
+      error(
+        `${base}.output.progress.mode`,
+        `invalid progress mode '${String(progressMode)}' (expected none or status-only)`,
+      ),
+    );
+  }
+  const controlMode = mb.output?.control?.mode;
+  if (
+    controlMode !== undefined &&
+    (typeof controlMode !== "string" ||
+      (controlMode !== "none" && controlMode !== "status-only"))
+  ) {
+    issues.push(
+      error(
+        `${base}.output.control.mode`,
+        `invalid control mode '${String(controlMode)}' (expected none or status-only)`,
+      ),
+    );
+  }
+}
+
 function validateBinding(
   binding: EventBinding,
   sourcesById: ReadonlyMap<string, EventSourceConfig>,
   workflowNames: ReadonlySet<string>,
+  profilesById: ReadonlyMap<string, WorkflowSupervisorProfile>,
   issues: EventConfigValidationIssue[],
 ): void {
   const source = sourcesById.get(binding.sourceId);
@@ -306,11 +716,22 @@ function validateBinding(
       ),
     );
   }
-  if (!workflowNames.has(binding.workflowName)) {
+  const isDispatch = binding.execution?.mode === "supervisor-dispatch";
+  const workflowName = binding.workflowName?.trim();
+  if (workflowName !== undefined && workflowName.length > 0) {
+    if (!workflowNames.has(workflowName)) {
+      issues.push(
+        error(
+          `bindings.${binding.id}.workflowName`,
+          `unknown workflow '${workflowName}'`,
+        ),
+      );
+    }
+  } else if (!isDispatch) {
     issues.push(
       error(
         `bindings.${binding.id}.workflowName`,
-        `unknown workflow '${binding.workflowName}'`,
+        "workflowName is required for non-dispatcher bindings",
       ),
     );
   }
@@ -346,6 +767,14 @@ function validateBinding(
   if (binding.enabled === false) {
     issues.push(warning(`bindings.${binding.id}`, "binding is disabled"));
   }
+  validateSupervisedBinding(binding, issues);
+  validateSupervisorDispatchBinding(
+    binding,
+    profilesById,
+    workflowNames,
+    issues,
+  );
+  validateMailboxBridge(binding, issues);
 }
 
 export async function validateEventConfiguration(
@@ -371,8 +800,22 @@ export async function validateEventConfiguration(
     configuration.sources.map((source) => [source.id, source] as const),
   );
   const workflowNames = await listWorkflowNames(options, issues);
+  const supervisorProfileLoad = await loadSupervisorProfilesFromEventRoot(
+    configuration.eventRoot,
+    workflowNames,
+  );
+  for (const issue of supervisorProfileLoad.issues) {
+    issues.push(error(issue.path, issue.message));
+  }
+  const profilesById = supervisorProfileLoad.profilesById;
   for (const binding of configuration.bindings) {
-    validateBinding(binding, sourcesById, workflowNames, issues);
+    validateBinding(
+      binding,
+      sourcesById,
+      workflowNames,
+      profilesById,
+      issues,
+    );
   }
 
   return {

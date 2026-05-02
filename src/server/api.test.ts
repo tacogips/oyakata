@@ -3,10 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { handleApiRequest } from "./api";
-import {
-  WORKFLOW_VIEWER_DOCUMENT_PATHS,
-  WORKFLOW_VIEWER_SCRIPT_PATH,
-} from "./web-viewer";
 import { createWorkflowTemplate } from "../workflow/create";
 
 const tempDirs: string[] = [];
@@ -79,68 +75,35 @@ describe("handleApiRequest", () => {
     });
   });
 
-  test("serves the read-only workflow viewer shell from web document paths", async () => {
-    const root = await makeTempDir();
-    await createWorkflowTemplate("demo", { workflowRoot: root });
-    const context = {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-      fixedWorkflowName: "demo",
-      readOnly: true,
-      noExec: true,
-    };
-
-    for (const pathname of [...WORKFLOW_VIEWER_DOCUMENT_PATHS, "/web/"]) {
-      const response = await handleApiRequest(
-        new Request(`http://localhost${pathname}`),
-        context,
-      );
-
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toContain("text/html");
-      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-      const html = await response.text();
-      expect(html).toContain(
-        `<script type="module" src="${WORKFLOW_VIEWER_SCRIPT_PATH}">`,
-      );
-      expect(html).toContain('"fixedWorkflowName":"demo"');
-      expect(html).toContain('"readOnly":true');
-    }
-  });
-
-  test("serves the bundled workflow viewer browser script", async () => {
-    const root = await makeTempDir();
-    await createWorkflowTemplate("demo", { workflowRoot: root });
-
-    const response = await handleApiRequest(
-      new Request(`http://localhost${WORKFLOW_VIEWER_SCRIPT_PATH}`),
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-      },
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toContain("text/javascript");
-    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    const script = await response.text();
-    expect(script).toContain("document.getElementById");
-    expect(script).toContain("Workflow node graph");
-    expect(script).not.toContain("React.createElement");
-    expect(script).not.toContain("workflow viewer failed to load");
-  });
-
   test("returns 404 for removed REST routes", async () => {
     const root = await makeTempDir();
+    await createWorkflowTemplate("demo", { workflowRoot: root });
     const context = {
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
     };
 
+    const overviewResponse = await handleApiRequest(
+      new Request("http://localhost/overview"),
+      context,
+    );
+    expect(overviewResponse.status).toBe(200);
+    await expect(overviewResponse.json()).resolves.toMatchObject({
+      workflows: expect.any(Array),
+      selectedWorkflow: expect.anything(),
+    });
+
+    const rootPage = await handleApiRequest(new Request("http://localhost/"), context);
+    expect(rootPage.status).toBe(200);
+    expect(rootPage.headers.get("content-type")).toContain("text/html");
+    await expect(rootPage.text()).resolves.toContain("workflow overview");
+
     for (const url of [
+      "http://localhost/web",
+      "http://localhost/web/",
+      "http://localhost/ui",
       "http://localhost/api/ui-config",
       "http://localhost/api/workflows",
       "http://localhost/api/workflows/demo",

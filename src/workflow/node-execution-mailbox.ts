@@ -5,18 +5,22 @@ import {
   normalizeManagerMessageForMailbox,
   normalizePlainTextValue,
 } from "./json-boundary";
+import { effectiveCrossWorkflowDispatches } from "./cross-workflow-from-steps";
 import { describeWorkflowNodeKind, isManagerNodeRef } from "./node-role";
-import type {
-  JsonObject,
-  NodePayload,
-  WorkflowJson,
-  WorkflowNodeRef,
+import {
+  toStepIdentityFields,
+  type StepIdentityFields,
+} from "./runtime-addressing";
+import {
+  resolveWorkflowManagerStepId,
+  type JsonObject,
+  type NodePayload,
+  type WorkflowJson,
+  type WorkflowNodeRef,
 } from "./types";
 
 export interface PromptCompositionUpstreamInput {
   readonly fromNodeId: string;
-  readonly fromSubWorkflowId?: string;
-  readonly toSubWorkflowId?: string;
   readonly transitionWhen: string;
   readonly communicationId: string;
   readonly output: Readonly<Record<string, unknown>>;
@@ -24,46 +28,41 @@ export interface PromptCompositionUpstreamInput {
 }
 
 export interface NodeExecutionMailboxManagedChild {
-  readonly kind: "sub-workflow" | "node";
   readonly id: string;
   readonly nodeKind?: string;
-  readonly description?: string;
   readonly reason: string;
   readonly expectedReturn: string;
-  readonly handoff?: string;
   readonly promptSeed?: string;
 }
 
+/**
+ * High-level view of the workflow graph for manager mailboxes for the current
+ * workflow execution. Cross-workflow calls are separate executions.
+ */
 export interface NodeExecutionMailboxStructure {
-  readonly type: "root-workflow" | "sub-workflow";
-  readonly rootManagerNodeId?: string;
-  readonly subWorkflows?: readonly {
-    readonly id: string;
-    readonly managerNodeId: string;
-    readonly inputNodeId: string;
-    readonly outputNodeId: string;
-  }[];
+  /** Step-addressed mailbox structure discriminant for the current workflow run. */
+  readonly type: "workflow-run";
+  /**
+   * Manager step id (`resolveWorkflowManagerStepId`) in the same step-id space
+   * as the workflow queue.
+   */
+  readonly managerStepId?: string;
   readonly nodes?: readonly {
     readonly id: string;
     readonly kind: string;
   }[];
-  readonly subWorkflowId?: string;
-  readonly description?: string;
-  readonly managerNodeId?: string;
-  readonly inputNodeId?: string;
-  readonly outputNodeId?: string;
-  readonly ownedNodeIds?: readonly string[];
 }
 
 export interface NodeExecutionMailboxMeta {
   readonly protocolVersion: 1;
   readonly mailboxDirEnvVar: "DIVEDRA_MAILBOX_DIR";
+  readonly mailboxInstanceId?: string;
   readonly node: {
     readonly workflowId: string;
     readonly workflowDescription: string;
     readonly nodeId: string;
     readonly nodeKind: string;
-  };
+  } & StepIdentityFields;
   readonly objective: {
     readonly reason: string;
     readonly expectedReturn: string;
@@ -81,8 +80,6 @@ export interface NodeExecutionMailboxMeta {
       readonly fromNodeId: string;
       readonly transitionWhen: string;
       readonly communicationId: string;
-      readonly fromSubWorkflowId?: string;
-      readonly toSubWorkflowId?: string;
     }[];
   };
   readonly output: {
@@ -127,39 +124,17 @@ export interface NodeExecutionMailboxArtifactPaths {
   readonly inputPath: string;
 }
 
-export interface BuildNodeExecutionMailboxInput {
+export interface BuildNodeExecutionMailboxInput extends StepIdentityFields {
   readonly workflow: WorkflowJson;
   readonly nodeRef: WorkflowNodeRef;
   readonly node: NodePayload;
+  readonly mailboxInstanceId?: string;
   readonly nodePayloads: Readonly<Record<string, NodePayload>>;
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly basePromptText: string;
   readonly assembledArguments: Readonly<Record<string, unknown>> | null;
   readonly upstreamInputs: readonly PromptCompositionUpstreamInput[];
   readonly managerMessage?: unknown;
-}
-
-function hasStructuralSubWorkflowBoundaries(workflow: WorkflowJson): boolean {
-  return workflow.subWorkflows.length > 0;
-}
-
-function getSubWorkflowOwnedNodeIds(
-  subWorkflow: WorkflowJson["subWorkflows"][number],
-): readonly string[] {
-  return [
-    ...new Set([
-      subWorkflow.managerNodeId,
-      subWorkflow.inputNodeId,
-      subWorkflow.outputNodeId,
-      ...subWorkflow.nodeIds,
-    ]),
-  ];
-}
-
-function findOwnedSubWorkflow(workflow: WorkflowJson, nodeId: string) {
-  return workflow.subWorkflows.find((entry) =>
-    getSubWorkflowOwnedNodeIds(entry).includes(nodeId),
-  );
 }
 
 function summarizePromptTemplate(
@@ -192,30 +167,18 @@ function summarizeNodeExecutionSeed(node: NodePayload): string {
 function buildNodeReason(
   nodeRef: Pick<WorkflowNodeRef, "kind" | "role" | "control">,
   workflow: WorkflowJson,
-  nodeId: string,
 ): string {
-  const ownedSubWorkflow = findOwnedSubWorkflow(workflow, nodeId);
-
-  if (nodeRef.kind === "root-manager") {
-    return "Coordinate the overall workflow plan, sub-workflow dispatch, output assessment, and retry decisions.";
-  }
-  if (nodeRef.role === "manager") {
-    return hasStructuralSubWorkflowBoundaries(workflow)
-      ? "Coordinate the overall workflow plan, child-scope execution, output assessment, and retry decisions."
-      : (workflow.workflowCalls ?? []).length > 0
-        ? "Coordinate the current workflow plan, worker execution, workflow-call decisions, output assessment, and retry decisions."
-        : "Coordinate the current workflow plan, worker execution, output assessment, and retry decisions.";
+  if (isManagerNodeRef(nodeRef)) {
+    return effectiveCrossWorkflowDispatches(workflow).length > 0
+      ? "Coordinate the current workflow plan, worker execution, cross-workflow dispatch decisions, output assessment, and retry decisions."
+      : "Coordinate the current workflow plan, worker execution, output assessment, and retry decisions.";
   }
 
   switch (nodeRef.kind ?? nodeRef.control) {
-    case "subworkflow-manager":
-      return ownedSubWorkflow === undefined
-        ? "Coordinate the current sub-workflow scope."
-        : `Coordinate sub-workflow '${ownedSubWorkflow.id}' and translate parent mailbox input into child-node work.`;
     case "input":
       return "Convert received mailbox/runtime input into a clean workflow-scoped input payload for downstream work.";
     case "output":
-      return "Assemble the final result for the current workflow or sub-workflow boundary.";
+      return "Assemble the final result for the current workflow.";
     case "branch-judge":
       return "Judge branch conditions so downstream routing matches the workflow goal.";
     case "loop-judge":
@@ -237,17 +200,15 @@ function buildExpectedReturn(
     return node.output.description;
   }
 
-  if (nodeRef.kind === "root-manager" || nodeRef.role === "manager") {
+  if (isManagerNodeRef(nodeRef)) {
     return "Return a manager assessment/plan JSON object that records the current state, what was judged, and what should happen next.";
   }
 
   switch (nodeRef.kind ?? nodeRef.control) {
-    case "subworkflow-manager":
-      return "Return a manager assessment/plan JSON object that records the current state, what was judged, and what should happen next.";
     case "input":
       return "Return normalized input JSON for the owned workflow scope.";
     case "output":
-      return "Return the finalized workflow or sub-workflow output JSON.";
+      return "Return the finalized workflow output JSON.";
     case "branch-judge":
       return "Return a JSON object with branch decision signals used by outgoing edges.";
     case "loop-judge":
@@ -258,28 +219,6 @@ function buildExpectedReturn(
   }
 }
 
-function buildSubWorkflowExpectedReturn(
-  workflow: WorkflowJson,
-  subWorkflowId: string,
-  nodePayloads: Readonly<Record<string, NodePayload>>,
-): string {
-  const subWorkflow = workflow.subWorkflows.find(
-    (entry) => entry.id === subWorkflowId,
-  );
-  if (subWorkflow === undefined) {
-    return "Return the finalized sub-workflow output JSON to the parent workflow mailbox boundary.";
-  }
-
-  const outputNode = workflow.nodes.find(
-    (entry) => entry.id === subWorkflow.outputNodeId,
-  );
-  const outputPayload = nodePayloads[subWorkflow.outputNodeId];
-  if (outputNode !== undefined && outputPayload !== undefined) {
-    return buildExpectedReturn(outputNode, outputPayload);
-  }
-  return "Return the finalized sub-workflow output JSON to the parent workflow mailbox boundary.";
-}
-
 function buildManagedChildren(input: {
   readonly workflow: WorkflowJson;
   readonly nodeRef: WorkflowNodeRef;
@@ -288,30 +227,9 @@ function buildManagedChildren(input: {
   const { workflow, nodeRef, nodePayloads } = input;
   const children: NodeExecutionMailboxManagedChild[] = [];
 
-  if (nodeRef.kind === "root-manager" || nodeRef.role === "manager") {
-    for (const subWorkflow of workflow.subWorkflows) {
-      children.push({
-        kind: "sub-workflow",
-        id: subWorkflow.id,
-        description: subWorkflow.description,
-        reason:
-          "Invoke this sub-workflow as one child unit that advances the workflow goal.",
-        handoff: `Parent manager output is delivered by mailbox to manager '${subWorkflow.managerNodeId}', then translated within the child scope.`,
-        expectedReturn: buildSubWorkflowExpectedReturn(
-          workflow,
-          subWorkflow.id,
-          nodePayloads,
-        ),
-      });
-    }
-
-    const ownedNodeIds = new Set(
-      workflow.subWorkflows.flatMap((subWorkflow) =>
-        getSubWorkflowOwnedNodeIds(subWorkflow),
-      ),
-    );
+  if (isManagerNodeRef(nodeRef)) {
     const directChildren = workflow.nodes.filter(
-      (entry) => entry.id !== nodeRef.id && !ownedNodeIds.has(entry.id),
+      (entry) => entry.id !== nodeRef.id,
     );
     for (const child of directChildren) {
       const payload = nodePayloads[child.id];
@@ -319,39 +237,14 @@ function buildManagedChildren(input: {
         continue;
       }
       children.push({
-        kind: "node",
         id: child.id,
         nodeKind: describeWorkflowNodeKind(child),
-        reason: buildNodeReason(child, workflow, child.id),
+        reason: buildNodeReason(child, workflow),
         expectedReturn: buildExpectedReturn(child, payload),
         promptSeed: summarizeNodeExecutionSeed(payload),
       });
     }
     return children;
-  }
-
-  const ownedSubWorkflow = findOwnedSubWorkflow(workflow, nodeRef.id);
-  if (ownedSubWorkflow === undefined) {
-    return children;
-  }
-
-  const childNodeIds = getSubWorkflowOwnedNodeIds(ownedSubWorkflow).filter(
-    (childNodeId) => childNodeId !== nodeRef.id,
-  );
-  for (const childNodeId of childNodeIds) {
-    const child = workflow.nodes.find((entry) => entry.id === childNodeId);
-    const payload = nodePayloads[childNodeId];
-    if (child === undefined || payload === undefined) {
-      continue;
-    }
-    children.push({
-      kind: "node",
-      id: child.id,
-      nodeKind: describeWorkflowNodeKind(child),
-      reason: buildNodeReason(child, workflow, child.id),
-      expectedReturn: buildExpectedReturn(child, payload),
-      promptSeed: summarizeNodeExecutionSeed(payload),
-    });
   }
   return children;
 }
@@ -360,40 +253,14 @@ function buildMailboxStructure(input: {
   readonly workflow: WorkflowJson;
   readonly nodeRef: Pick<WorkflowNodeRef, "id" | "kind" | "role" | "control">;
 }): NodeExecutionMailboxStructure | undefined {
-  const ownedSubWorkflow = findOwnedSubWorkflow(
-    input.workflow,
-    input.nodeRef.id,
-  );
-
-  if (
-    input.nodeRef.kind === "root-manager" ||
-    input.nodeRef.role === "manager"
-  ) {
+  if (isManagerNodeRef(input.nodeRef)) {
     return {
-      type: "root-workflow",
-      rootManagerNodeId: input.workflow.managerNodeId,
-      subWorkflows: input.workflow.subWorkflows.map((subWorkflow) => ({
-        id: subWorkflow.id,
-        managerNodeId: subWorkflow.managerNodeId,
-        inputNodeId: subWorkflow.inputNodeId,
-        outputNodeId: subWorkflow.outputNodeId,
-      })),
+      type: "workflow-run",
+      managerStepId: resolveWorkflowManagerStepId(input.workflow),
       nodes: input.workflow.nodes.map((node) => ({
         id: node.id,
         kind: describeWorkflowNodeKind(node),
       })),
-    };
-  }
-
-  if (ownedSubWorkflow !== undefined) {
-    return {
-      type: "sub-workflow",
-      subWorkflowId: ownedSubWorkflow.id,
-      description: ownedSubWorkflow.description,
-      managerNodeId: ownedSubWorkflow.managerNodeId,
-      inputNodeId: ownedSubWorkflow.inputNodeId,
-      outputNodeId: ownedSubWorkflow.outputNodeId,
-      ownedNodeIds: getSubWorkflowOwnedNodeIds(ownedSubWorkflow),
     };
   }
 
@@ -408,66 +275,21 @@ function buildManagerControlMetadata(input: {
     return undefined;
   }
 
-  if (input.nodeRef.kind === "subworkflow-manager") {
-    return {
-      preferredTransport: "divedra gql",
-      fallbackField: "managerControl",
-      supportedActions: [
-        "deliver-to-child-input",
-        "retry-node",
-        "replay-communication",
-        "execute-optional-node",
-        "skip-optional-node",
-      ],
-      rules: [
-        "Manager scope is limited to the current sub-workflow execution owned by this manager.",
-        "Use `deliver-to-child-input` when this manager chooses to pass instruction/output to its owned input node.",
-        "Use `retry-node` when a prior child node result is insufficient and that node must run again.",
-        "Use `replay-communication` to redeliver an existing communication that stays within this manager's current scope.",
-        "Use `execute-optional-node` or `skip-optional-node` only for pending optional nodes owned by this manager.",
-        "Omit `managerControl` when no runtime control change is needed.",
-      ],
-    };
-  }
-
-  if (hasStructuralSubWorkflowBoundaries(input.workflow)) {
-    return {
-      preferredTransport: "divedra gql",
-      fallbackField: "managerControl",
-      supportedActions: [
-        "start-sub-workflow",
-        "retry-node",
-        "replay-communication",
-        "execute-optional-node",
-        "skip-optional-node",
-      ],
-      rules: [
-        "Manager scope is limited to the current workflow execution.",
-        "Use `start-sub-workflow` when the root manager chooses to invoke or re-invoke a structural child scope as one unit.",
-        "Use `retry-node` when a prior child node result is insufficient and that node must run again.",
-        "Use `replay-communication` to redeliver an existing communication that stays within the current workflow execution scope.",
-        "Use `execute-optional-node` or `skip-optional-node` only for pending optional nodes owned by this manager.",
-        "Root manager must not use `retry-node` for internal nodes owned by a structural sub-workflow; re-run that child unit with `start-sub-workflow` instead.",
-        "Omit `managerControl` when no runtime control change is needed.",
-      ],
-    };
-  }
-
   return {
     preferredTransport: "divedra gql",
     fallbackField: "managerControl",
     supportedActions: [
-      "retry-node",
+      "retry-step",
       "replay-communication",
-      "execute-optional-node",
-      "skip-optional-node",
+      "execute-optional-step",
+      "skip-optional-step",
     ],
     rules: [
       "Manager scope is limited to the current workflow execution.",
-      "Use `retry-node` when a prior worker result is insufficient and that node must run again.",
+      "Use `retry-step` with the execution step id when a prior worker result is insufficient and that step must run again.",
       "Use `replay-communication` to redeliver an existing communication within the current workflow execution.",
-      "Use `execute-optional-node` or `skip-optional-node` only for pending optional nodes owned by this manager.",
-      "Explicit `workflowCalls` run automatically from authored caller nodes; do not emit `start-sub-workflow` or `deliver-to-child-input` for that path.",
+      "Use `execute-optional-step` or `skip-optional-step` only for pending optional steps owned by this manager.",
+      "Cross-workflow calls (step-addressed: `steps[].transitions` with `toWorkflowId` and `resumeStepId`) run automatically from the caller step.",
       "Omit `managerControl` when no runtime control change is needed.",
     ],
   };
@@ -476,6 +298,7 @@ function buildManagerControlMetadata(input: {
 export function buildNodeExecutionMailbox(
   input: BuildNodeExecutionMailboxInput,
 ): NodeExecutionMailbox {
+  const stepIdentityFields = toStepIdentityFields(input);
   const reservedContextKeys = new Set([
     "humanInput",
     "workflowOutput",
@@ -509,18 +332,18 @@ export function buildNodeExecutionMailbox(
     meta: {
       protocolVersion: 1,
       mailboxDirEnvVar: "DIVEDRA_MAILBOX_DIR",
+      ...(input.mailboxInstanceId === undefined
+        ? {}
+        : { mailboxInstanceId: input.mailboxInstanceId }),
       node: {
         workflowId: input.workflow.workflowId,
         workflowDescription: input.workflow.description,
         nodeId: input.nodeRef.id,
+        ...stepIdentityFields,
         nodeKind: describeWorkflowNodeKind(input.nodeRef),
       },
       objective: {
-        reason: buildNodeReason(
-          input.nodeRef,
-          input.workflow,
-          input.nodeRef.id,
-        ),
+        reason: buildNodeReason(input.nodeRef, input.workflow),
         expectedReturn: buildExpectedReturn(input.nodeRef, input.node),
         instruction: input.basePromptText.trim(),
       },
@@ -536,12 +359,6 @@ export function buildNodeExecutionMailbox(
           fromNodeId: entry.fromNodeId,
           transitionWhen: entry.transitionWhen,
           communicationId: entry.communicationId,
-          ...(entry.fromSubWorkflowId === undefined
-            ? {}
-            : { fromSubWorkflowId: entry.fromSubWorkflowId }),
-          ...(entry.toSubWorkflowId === undefined
-            ? {}
-            : { toSubWorkflowId: entry.toSubWorkflowId }),
         })),
       },
       output: {
@@ -604,32 +421,13 @@ function renderStructureSection(
   if (structure === undefined) {
     return "";
   }
-  if (structure.type === "root-workflow") {
-    const lines = ["Workflow structure:"];
-    lines.push(`- Root manager: ${structure.rootManagerNodeId ?? ""}`);
-    if ((structure.subWorkflows ?? []).length > 0) {
-      lines.push("- Sub-workflows:");
-      for (const subWorkflow of structure.subWorkflows ?? []) {
-        lines.push(
-          `  - ${subWorkflow.id}: manager=${subWorkflow.managerNodeId}, input=${subWorkflow.inputNodeId}, output=${subWorkflow.outputNodeId}`,
-        );
-      }
-    }
-    lines.push("- Nodes:");
-    for (const node of structure.nodes ?? []) {
-      lines.push(`  - ${node.id} (${node.kind})`);
-    }
-    return lines.join("\n");
-  }
-
-  const lines = ["Current sub-workflow scope:"];
-  lines.push(`- Sub-workflow: ${structure.subWorkflowId ?? ""}`);
-  lines.push(`- Description: ${structure.description ?? ""}`);
-  lines.push(`- Manager node: ${structure.managerNodeId ?? ""}`);
-  lines.push(`- Input node: ${structure.inputNodeId ?? ""}`);
-  lines.push(`- Output node: ${structure.outputNodeId ?? ""}`);
-  if ((structure.ownedNodeIds ?? []).length > 0) {
-    lines.push(`- Owned nodes: ${(structure.ownedNodeIds ?? []).join(", ")}`);
+  const lines = ["Workflow structure:"];
+  lines.push(
+    `- Manager execution id: ${structure.managerStepId ?? ""}`,
+  );
+  lines.push("- Nodes:");
+  for (const node of structure.nodes ?? []) {
+    lines.push(`  - ${node.id} (${node.kind})`);
   }
   return lines.join("\n");
 }
@@ -640,21 +438,9 @@ function renderManagedChildrenSection(
   if (children === undefined || children.length === 0) {
     return "";
   }
-  const lines = ["Managed children in current scope:"];
+  const lines = ["Other nodes in this workflow:"];
   for (const child of children) {
-    if (child.kind === "sub-workflow") {
-      lines.push(`- Child sub-workflow: ${child.id}`);
-      if (child.description !== undefined) {
-        lines.push(`  description=${child.description}`);
-      }
-      lines.push(`  reason=${child.reason}`);
-      if (child.handoff !== undefined) {
-        lines.push(`  handoff=${child.handoff}`);
-      }
-      lines.push(`  expectedReturn=${child.expectedReturn}`);
-      continue;
-    }
-    lines.push(`- Child node: ${child.id} (${child.nodeKind ?? "task"})`);
+    lines.push(`- Node: ${child.id} (${child.nodeKind ?? "task"})`);
     lines.push(`  reason=${child.reason}`);
     lines.push(`  expectedReturn=${child.expectedReturn}`);
     if (child.promptSeed !== undefined) {
@@ -709,12 +495,6 @@ function renderUpstreamSection(
       `when=${entry.transitionWhen}`,
       `communication=${entry.communicationId}`,
     ];
-    if (entry.fromSubWorkflowId !== undefined) {
-      routeParts.push(`fromSubWorkflow=${entry.fromSubWorkflowId}`);
-    }
-    if (entry.toSubWorkflowId !== undefined) {
-      routeParts.push(`toSubWorkflow=${entry.toSubWorkflowId}`);
-    }
     lines.push(`- ${routeParts.join(", ")}`);
     lines.push(`  payload=${summarizeJson(entry.output)}`);
   }
@@ -730,21 +510,17 @@ function renderManagerControlSection(
   return [
     "Manager control payload:",
     "When `divedra gql` is available in the execution environment, prefer typed GraphQL manager actions over freeform control prose.",
-    "Use payload `managerControl` only as the compatibility fallback when `divedra gql` is unavailable for that execution backend.",
+    "Use payload `managerControl` when typed GraphQL manager actions are unavailable for that execution backend (e.g. no `divedra gql` in the environment).",
     "Include workflow assessment in normal JSON fields, and place runtime control decisions under `managerControl`.",
     "Supported actions:",
     ...managerControl.supportedActions.map((action) =>
-      action === "start-sub-workflow"
-        ? '- `{"type":"start-sub-workflow","subWorkflowId":"<sub-workflow-id>"}`'
-        : action === "deliver-to-child-input"
-          ? '- `{"type":"deliver-to-child-input","inputNodeId":"<input-node-id>"}`'
-          : action === "retry-node"
-            ? '- `{"type":"retry-node","nodeId":"<node-id>"}`'
-            : action === "replay-communication"
-              ? '- `{"type":"replay-communication","communicationId":"<communication-id>","reason":"<optional-reason>"}`'
-              : action === "execute-optional-node"
-                ? '- `{"type":"execute-optional-node","nodeId":"<node-id>"}`'
-                : '- `{"type":"skip-optional-node","nodeId":"<node-id>","reason":"<optional-reason>"}`',
+      action === "retry-step"
+        ? '- `{"type":"retry-step","stepId":"<step-id>"}`'
+        : action === "replay-communication"
+          ? '- `{"type":"replay-communication","communicationId":"<communication-id>","reason":"<optional-reason>"}`'
+          : action === "execute-optional-step"
+            ? '- `{"type":"execute-optional-step","stepId":"<step-id>"}`'
+            : '- `{"type":"skip-optional-step","stepId":"<step-id>","reason":"<optional-reason>"}`',
     ),
     "Rules:",
     ...managerControl.rules.map((rule) => `- ${rule}`),

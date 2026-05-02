@@ -299,6 +299,17 @@ Therefore a user workflow run from any project records its default history under
 the user scope root. A project workflow records its default history under the
 project scope root.
 
+Direct `--workflow-root` and other non-scoped runtime entrypoints do not have an
+owning project/user workflow scope. They should default to the user runtime data
+root instead of creating a separate per-cwd artifact namespace:
+
+```text
+artifact root: <user-root>/artifacts/workflow
+session root:  <user-root>/artifacts/sessions
+file root:     <user-root>/artifacts/files
+db path:       <user-root>/artifacts/divedra.db
+```
+
 Explicit runtime roots remain higher precedence:
 
 1. command argument
@@ -411,17 +422,20 @@ enumerating another scope.
 `DIVEDRA_WORKFLOW_ROOT`. It should point at a directory containing
 `<namespace>/<addon-name>/<version>/addon.json`, not at a scope root. During
 scoped catalog loading it is prepended to add-on candidates and does not
-suppress project/user fallback on a miss. During direct workflow-root
-compatibility loading it is the only filesystem add-on root unless the host
-also supplies resolver functions.
+suppress project/user fallback on a miss. When the host resolves workflows via
+a direct `DIVEDRA_WORKFLOW_ROOT` (bypassing scoped catalog roots), that same
+override is the only filesystem add-on root unless the host also supplies
+resolver functions.
 
-## Workflow Calls Across Scopes
+## Cross-workflow references across scopes
 
-`workflowCalls[].workflowId` currently names another workflow under the
-configured workflow root. Under catalog lookup it should resolve through the
-same catalog as CLI workflow lookup.
+A cross-workflow step transition names the callee with `toWorkflowId` (and
+optional `resumeStepId`) on `steps[].transitions` (`design-workflow-json.md`).
+That `toWorkflowId` names another workflow under the configured workflow root.
+Under catalog lookup it should resolve through the same catalog as CLI workflow
+lookup.
 
-Default call resolution:
+Default callee resolution order:
 
 1. caller workflow's owning scope
 2. project scope, when different from the caller scope and present
@@ -430,21 +444,25 @@ Default call resolution:
 This keeps same-scope calls stable while allowing project workflows to call
 shared user workflows by name.
 
-Future explicit form:
+Future explicit scope on a transition (not authored today) could disambiguate
+shadowed workflow names; the same ordered catalog remains the default when
+`scope` is omitted.
+
+Example shape (illustrative; real bundles use full step-addressed `workflow.json`):
 
 ```json
 {
-  "id": "shared-review",
-  "workflowId": "review-pr",
-  "scope": "user",
-  "callerNodeId": "review",
-  "resultNodeId": "summarize"
+  "id": "draft-write",
+  "nodeId": "writer-node",
+  "transitions": [
+    {
+      "toStepId": "entry",
+      "toWorkflowId": "review-pr",
+      "resumeStepId": "summarize"
+    }
+  ]
 }
 ```
-
-The explicit `scope` field is not required for first-iteration catalog lookup,
-but it is the recommended schema extension if shadowing becomes a practical
-problem for workflow calls.
 
 ## Backward Compatibility
 

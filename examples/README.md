@@ -6,24 +6,20 @@ without copying them into `./.divedra`.
 Each example directory also includes `EXPECTED_RESULTS.md`, which records the
 stable assertions used for deterministic verification.
 
-Most example bundles now use the simplified authored shape:
+Shipped reference bundles use the step-addressed authored shape; repository
+tests may still construct legacy fixtures under explicit non-strict validation.
 
-- ordered `nodes[]` are the canonical flow
-- authored `edges` are omitted
-- authored `subWorkflows` are omitted
-- authored `workflowCalls` model cross-workflow invocation without structural
-  child-boundary metadata
-- worker-only bundles use explicit `entryNodeId` instead of an authored manager
-- repeat-style examples use node-local `repeat`
+- most bundles use `workflow -> steps[] + nodes[]`, where `entryStepId`
+  names the authored entry step and `nodes[]` is a reusable registry
+- `workflow-call-simple` is fully step-addressed; cross-workflow invocation is
+  authored as a `steps[].transitions[]` entry with `toWorkflowId` and
+  `resumeStepId` (executed as a derived cross-workflow dispatch at runtime; not stored on `workflow.workflowCalls`)
+- shipped workflow bundles omit structural `subWorkflows` and
+  `subWorkflowConversations`; multi-round demos use explicit steps (for example a
+  judge step with labeled `transitions`, as in `codex-codex-euthanasia-debate`
+  and the foreach lane in `node-combinations-showcase`)
 - node payload files live under `nodes/` by default
 - grouped lane payloads may live under `workflows/*/nodes/`
-- inline node payload authoring is exercised by `same-node-session-echo`
-
-Explicit legacy-compatibility exception:
-
-- `codex-codex-euthanasia-debate` still uses the structural sub-workflow form
-  because `subWorkflowConversations` has not yet been migrated to the
-  simplified format
 
 ## Available Examples
 
@@ -31,8 +27,8 @@ Explicit legacy-compatibility exception:
 
 Minimal runnable reference for a manager-less workflow:
 
-- no authored `managerNodeId`
-- explicit `entryNodeId: "main-worker"`
+- no authored `managerStepId`
+- explicit `entryStepId: "main-worker"`
 - one `codex-agent` worker node runs directly from workflow start
 - includes a deterministic mock scenario for validate/inspect/run demos
 
@@ -57,10 +53,57 @@ bun run src/main.ts workflow run worker-only-single-step \
   --output json
 ```
 
+### `supervised-mock-retry`
+
+Same shape as `worker-only-single-step`, but the bundled `mock-scenario.json` is
+a **two-entry sequence** for the worker: the first entry forces a failure; after
+a supervised outer rerun, the second entry returns success. Use with
+`--auto-improve` to exercise the failure-to-rerun path without custom adapters.
+See `examples/auto-improve/README.md` and `examples/supervised-mock-retry/EXPECTED_RESULTS.md`.
+
+### `default-superviser`
+
+Minimal **phase-2 nested superviser** reference bundle (`workflowId`:
+`divedra-default-superviser`): one step invokes `divedra/start-workflow` so a
+nested superviser run can start the paired target when the engine injects
+`supervisionRunId`, `targetSessionId`, and `superviserTargetWorkflowId` (see
+`examples/auto-improve/README.md` and `examples/default-superviser/EXPECTED_RESULTS.md`). Not
+a standalone runnable demo without a supervised target and those variables.
+
+### `default-supervisor-dispatcher` (demo index)
+
+Cross-cutting **supervisor-dispatch** demo documented under
+`examples/default-supervisor-dispatcher/`:
+
+- supervisor workflow `divedra-default-workflow-supervisor`
+- resolver stub `dispatcher-llm-resolver-stub`
+- managed catalog entry pointing at `worker-only-single-step`
+- profile and binding under `examples/event-sources/.divedra-events/`
+
+See that directory's `README.md` for `events validate` / `events emit` examples.
+
+### `divedra-default-workflow-supervisor`
+
+Minimal manager workflow bundle matching the design-default supervisor id. Used
+by the dispatcher demo and validated like other reference workflows:
+
+```bash
+bun run src/main.ts workflow validate divedra-default-workflow-supervisor --workflow-root ./examples
+```
+
+### `dispatcher-llm-resolver-stub`
+
+Single-worker bundle referenced as the LLM resolver target for
+`webhook-supervisor-dispatch-demo`. Pair with mock scenarios under
+`default-supervisor-dispatcher/`.
+
 ### `chat-reply-webhook`
 
 Minimal worker-only workflow showing the built-in node add-on catalog:
 
+- no authored `managerStepId`
+- explicit `entryStepId: "reply-to-chat"`
+- `steps[]` contains one worker step that targets a reusable node-registry entry
 - no workflow-local worker implementation file is needed
 - `nodes[].addon.name` selects `divedra/chat-reply-worker`
 - the node renders a reply from `runtimeVariables.event`
@@ -84,14 +127,20 @@ endpoint demo.
 
 ### `workflow-call-simple`
 
-Managed parent workflow reference for explicit workflow invocation:
+Managed parent workflow reference for cross-workflow invocation in the
+step-addressed authored shape:
 
 - `divedra-manager` stays on `claude-code-agent`
 - `draft-write` and `apply-review` stay on `codex-agent`
-- authored `workflowCalls` invoke the sibling workflow
-  `workflow-call-review-target`
-- the parent bundle only authors the manager edge; `apply-review` runs when the
-  workflow-call result is delivered back through `workflow-call:call-review`
+- explicit `managerStepId: "divedra-manager"` and `entryStepId:
+"divedra-manager"` define the parent entry
+- `steps[]` carries the authored manager-to-draft progression directly
+- `draft-write` declares a cross-workflow transition targeting
+  `workflow-call-review-target` (`toStepId: "reviewer"`) with
+  `resumeStepId: "apply-review"`
+- the engine executes that transition using the deterministic runtime workflow-call id
+  `__cw:draft-write`; session communications use
+  `transitionWhen = "workflow-call:__cw:draft-write"`
 - the bundled deterministic mock scenario covers both the parent and callee
   node ids so the full call chain can be run from one command
 
@@ -120,8 +169,8 @@ bun run src/main.ts workflow run workflow-call-simple \
 
 Worker-only callee bundle used by `workflow-call-simple`:
 
-- no authored `managerNodeId`
-- explicit `entryNodeId: "reviewer"`
+- no authored `managerStepId`
+- explicit `entryStepId: "reviewer"`
 - returns its latest succeeded worker result to the caller workflow-call
   contract
 - can also be validated, inspected, and run standalone
@@ -149,11 +198,13 @@ bun run src/main.ts workflow run workflow-call-review-target \
 
 ### `subworkflow-chained-simple`
 
-Minimal runnable reference for two sequential grouped lanes in one ordered node
-list. The directory name is historical; this is not the structural
-sub-workflow compatibility reference. The beta lane follows the alpha lane
-without authored `edges` or `subWorkflows`, and the grouped lane payloads now
-live under `workflows/alpha/` and `workflows/beta/`.
+Minimal runnable reference for two sequential grouped lanes in the
+step-addressed authored shape. The directory name is historical; this is not
+the structural sub-workflow compatibility reference.
+
+- explicit `managerStepId: "divedra-manager"` and `entryStepId: "divedra-manager"`
+- `steps[]` carries the alpha-to-beta execution order directly
+- grouped lane payloads live under `workflows/alpha/` and `workflows/beta/`
 
 Validate it:
 
@@ -180,6 +231,8 @@ bun run src/main.ts workflow run subworkflow-chained-simple \
 
 Recommended mixed-backend reference:
 
+- explicit `managerStepId: "divedra-manager"` and `entryStepId: "divedra-manager"`
+- `steps[]` expresses the execution order directly while `nodes[]` stays a reusable registry
 - `divedra` manager nodes use `claude-code-agent`
 - implementation planning/finalization stays on `claude-code`
 - the actual coding node uses `codex-agent`
@@ -211,22 +264,27 @@ bun run src/main.ts workflow run claude-divedra-codex-coding \
 
 ### `node-combinations-showcase`
 
-Validation-oriented reference bundle for the newer node authoring surface:
+Validation-oriented reference bundle in the step-addressed authored shape:
 
-- ordered grouped nodes replace authored sibling sub-workflows
-- a node-local `repeat` shows the repeated-iteration pattern for `foreach`
+- `managerStepId` / `entryStepId` plus explicit `steps[]` transitions (the
+  foreach lane uses two labeled transitions from the judge step:
+  `continue_items` back to `foreach-manager` and `!(continue_items)` forward to
+  `foreach-output`, matching the former repeat-edge semantics)
 - one task uses `nodeType: "command"`
 - one task uses `nodeType: "container"`
 - workflow-relative support assets are included for the command script and
   container build context
 - node payload files live under `nodes/`
 
-Important current limitation:
+Execution notes:
 
-- live `workflow run` still does not implement real `command` or `container`
-  execution in the current runtime
-- the bundled deterministic mock scenario can still exercise the full ordered
-  workflow, including those node types, for example/demo purposes
+- live `workflow run` can execute the authored `command` and `container` nodes
+  when the local runtime prerequisites are available
+- inspect or validate the workflow first to confirm runner readiness in the
+  current environment before relying on a live run
+- the bundled deterministic mock scenario remains the stable demo path when you
+  want reproducible results without depending on local shell or container
+  tooling
 
 Validate it:
 
@@ -253,6 +311,8 @@ bun run src/main.ts workflow run node-combinations-showcase \
 
 Validation-oriented arithmetic pipeline reference:
 
+- explicit `managerStepId: "divedra-manager"` and `entryStepId: "divedra-manager"`
+- `steps[]` carries the add, multiply, and divide stages directly
 - accepts a human input string containing at least four space-separated numbers
 - uses only the first four numbers from that input
 - stage 1 uses an `agent` worker to add the first two numbers
@@ -268,12 +328,16 @@ Validation-oriented arithmetic pipeline reference:
   which demonstrates workflow-local asset
   reuse across nested directories
 
-Important current limitation:
+Execution notes:
 
-- live `workflow run` still does not execute real `command` or `container`
-  workers in the current runtime
-- the bundled deterministic mock scenario can still exercise the authored
-  command/container graph for example and verification purposes
+- live `workflow run` can execute the authored `command` and `container`
+  workers when the required local shell and container runner tooling is
+  available
+- inspect or validate the workflow first to confirm runner readiness in the
+  current environment before relying on a live run
+- the bundled deterministic mock scenario remains the stable verification path
+  when you want reproducible arithmetic results without depending on local
+  toolchain availability
 
 Validate it:
 
@@ -301,6 +365,8 @@ bun run src/main.ts workflow run first-four-arithmetic-pipeline \
 Reference workflow for the case where a regular task node also uses
 `claude-code-agent`:
 
+- explicit `managerStepId: "divedra-manager"` and `entryStepId: "divedra-manager"`
+- `steps[]` expresses the manager-to-worker handoff directly while `nodes[]` stays reusable
 - `divedra` manager nodes use `claude-code-agent`
 - the task node `claude-task` also uses `claude-code-agent`
 - the bundle includes a deterministic mock scenario for validate/run demos
@@ -330,13 +396,18 @@ bun run src/main.ts workflow run claude-divedra-claude-worker \
 
 Reference workflow for the case where one worker node should run twice:
 
-- the same node id `echo-session` is revisited through node-local `repeat`
+- explicit `managerStepId: "divedra-manager"` and `entryStepId: "divedra-manager"`
+- `steps[]` revisits the shared node-registry entry `echo-session` through
+  two distinct steps: `echo-request` and `answer-request`
 - `nodes/node-echo-session.json` opts into `sessionPolicy.mode = "reuse"`
+- the `answer-request` step explicitly inherits that reusable backend session
+  from `echo-request`
+- the `answer-request` step also switches to the `answer` prompt variant for
+  the second visit
 - the first visit echoes the normalized request
 - the second visit answers using that earlier echo
 - the prompt also reads `{{inbox.latest.output.echoText}}` so the earlier echo is
   available explicitly in workflow data, not only via backend memory
-- the root manager payload is authored inline in `workflow.json`
 
 Validate it:
 
@@ -367,14 +438,17 @@ Live execution note:
 
 ### `codex-codex-euthanasia-debate`
 
-Legacy compatibility debate bundle for the new node-local prompt split:
+Step-addressed debate bundle for the node-local prompt split:
 
-- two `codex-agent` speaker nodes debate euthanasia from opposing positions
+- two `codex-agent` speaker lanes (grouped under `workflows/*/nodes/`) debate euthanasia from opposing positions
 - the affirmative speaker uses a node-local `systemPromptTemplateFile`
 - the negative speaker uses a different node-local `systemPromptTemplateFile`
 - both speakers use `sessionStartPromptTemplateFile` with the first-turn wrapper format:
   `##prompt ... ## args ...`
-- `subWorkflowConversations.maxTurns = 10` stops the debate after 10 turns
+- after each full affirmative-then-negative round, `debate-judge` chooses labeled
+  transitions (`continue_debate` / `!(continue_debate)`) to loop or finish at
+  `debate-summary`; the bundled mock runs six rounds (same node-execution depth as
+  the former structural conversation fixture)
 
 Validate it:
 

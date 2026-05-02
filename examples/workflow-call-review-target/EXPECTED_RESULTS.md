@@ -24,8 +24,9 @@ bun run src/main.ts workflow inspect workflow-call-review-target --workflow-root
 Expected stable inspection facts:
 
 - `hasManagerNode` is `false`
-- `entryNodeId` is `reviewer`
-- `counts.workflowCalls` is `0`
+- authored `entryStepId` is `reviewer`
+- inspection reports `entryStepId` as `reviewer` and does not surface a top-level `entryNodeId` field
+- `counts.crossWorkflowDispatches` is `0`
 
 ## Run
 

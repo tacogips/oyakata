@@ -1,32 +1,24 @@
 import type { CommunicationRecord } from "./session";
-import type { NodeKind, NodeRole, WorkflowJson } from "./types";
+import {
+  resolveWorkflowManagerStepId,
+  type NodeRole,
+  type WorkflowJson,
+} from "./types";
 
 export type ManagerControlActionType =
   | "planner-note"
-  | "start-sub-workflow"
-  | "deliver-to-child-input"
-  | "retry-node"
+  | "retry-step"
   | "replay-communication"
-  | "execute-optional-node"
-  | "skip-optional-node";
+  | "execute-optional-step"
+  | "skip-optional-step";
 
 export interface PlannerNoteAction {
   readonly type: "planner-note";
 }
 
-export interface StartSubWorkflowAction {
-  readonly type: "start-sub-workflow";
-  readonly subWorkflowId: string;
-}
-
-export interface DeliverToChildInputAction {
-  readonly type: "deliver-to-child-input";
-  readonly inputNodeId: string;
-}
-
-export interface RetryNodeAction {
-  readonly type: "retry-node";
-  readonly nodeId: string;
+export interface RetryStepAction {
+  readonly type: "retry-step";
+  readonly stepId: string;
 }
 
 export interface ReplayCommunicationAction {
@@ -35,41 +27,34 @@ export interface ReplayCommunicationAction {
   readonly reason?: string;
 }
 
-export interface ExecuteOptionalNodeAction {
-  readonly type: "execute-optional-node";
-  readonly nodeId: string;
+export interface ExecuteOptionalStepAction {
+  readonly type: "execute-optional-step";
+  readonly stepId: string;
 }
 
-export interface SkipOptionalNodeAction {
-  readonly type: "skip-optional-node";
-  readonly nodeId: string;
+export interface SkipOptionalStepAction {
+  readonly type: "skip-optional-step";
+  readonly stepId: string;
   readonly reason?: string;
 }
 
 export type ManagerControlAction =
   | PlannerNoteAction
-  | StartSubWorkflowAction
-  | DeliverToChildInputAction
-  | RetryNodeAction
+  | RetryStepAction
   | ReplayCommunicationAction
-  | ExecuteOptionalNodeAction
-  | SkipOptionalNodeAction;
+  | ExecuteOptionalStepAction
+  | SkipOptionalStepAction;
 
 export interface ParsedManagerControl {
   readonly actions: readonly ManagerControlAction[];
-  readonly startSubWorkflowIds: readonly string[];
-  readonly childInputNodeIds: readonly string[];
-  readonly retryNodeIds: readonly string[];
+  readonly retryStepIds: readonly string[];
   readonly replayCommunicationIds: readonly string[];
-  readonly executeOptionalNodeIds: readonly string[];
-  readonly skipOptionalNodeIds: readonly string[];
-  readonly overridesRootSubWorkflowPlanning: boolean;
-  readonly overridesChildInputPlanning: boolean;
+  readonly executeOptionalStepIds: readonly string[];
+  readonly skipOptionalStepIds: readonly string[];
 }
 
 export interface ManagerControlParseContext {
-  readonly managerNodeId: string;
-  readonly managerKind: NodeKind | undefined;
+  readonly managerStepId: string;
   readonly managerRole?: NodeRole;
 }
 
@@ -77,16 +62,32 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readStringField(
+function readTrimmedStringField(
   value: Readonly<Record<string, unknown>>,
   fieldName: string,
   actionLabel: string,
 ): string {
   const fieldValue = value[fieldName];
-  if (typeof fieldValue !== "string" || fieldValue.length === 0) {
+  if (typeof fieldValue !== "string" || fieldValue.trim().length === 0) {
     throw new Error(`${actionLabel}.${fieldName} must be a non-empty string`);
   }
-  return fieldValue;
+  return fieldValue.trim();
+}
+
+function readOptionalTrimmedStringField(
+  value: Readonly<Record<string, unknown>>,
+  fieldName: string,
+  actionLabel: string,
+): string | undefined {
+  const fieldValue = value[fieldName];
+  if (fieldValue === undefined) {
+    return undefined;
+  }
+  if (typeof fieldValue !== "string") {
+    throw new Error(`${actionLabel}.${fieldName} must be a string when provided`);
+  }
+  const trimmed = fieldValue.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
 }
 
 export function parseManagerControlActionInput(
@@ -106,62 +107,54 @@ export function parseManagerControlActionInput(
       return {
         type,
       };
-    case "start-sub-workflow":
+    case "retry-step":
       return {
-        type,
-        subWorkflowId: readStringField(
+        type: "retry-step",
+        stepId: readTrimmedStringField(
           value,
-          "subWorkflowId",
+          "stepId",
           "managerControl.actions[]",
         ),
       };
-    case "deliver-to-child-input":
+    case "execute-optional-step":
       return {
-        type,
-        inputNodeId: readStringField(
+        type: "execute-optional-step",
+        stepId: readTrimmedStringField(
           value,
-          "inputNodeId",
+          "stepId",
           "managerControl.actions[]",
         ),
       };
-    case "retry-node":
+    case "skip-optional-step": {
+      const reason = readOptionalTrimmedStringField(
+        value,
+        "reason",
+        "managerControl.actions[]",
+      );
       return {
-        type,
-        nodeId: readStringField(value, "nodeId", "managerControl.actions[]"),
-      };
-    case "execute-optional-node":
-      return {
-        type,
-        nodeId: readStringField(value, "nodeId", "managerControl.actions[]"),
-      };
-    case "skip-optional-node": {
-      const reason = value["reason"];
-      if (reason !== undefined && typeof reason !== "string") {
-        throw new Error(
-          "managerControl.actions[].reason must be a string when provided",
-        );
-      }
-      return {
-        type,
-        nodeId: readStringField(value, "nodeId", "managerControl.actions[]"),
-        ...(typeof reason === "string" && reason.length > 0 ? { reason } : {}),
+        type: "skip-optional-step",
+        stepId: readTrimmedStringField(
+          value,
+          "stepId",
+          "managerControl.actions[]",
+        ),
+        ...(reason === undefined ? {} : { reason }),
       };
     }
     case "replay-communication": {
-      const reason = value["reason"];
-      if (reason !== undefined && typeof reason !== "string") {
-        throw new Error(
-          "managerControl.actions[].reason must be a string when provided",
-        );
-      }
+      const reason = readOptionalTrimmedStringField(
+        value,
+        "reason",
+        "managerControl.actions[]",
+      );
       return {
         type,
-        communicationId: readStringField(
+        communicationId: readTrimmedStringField(
           value,
           "communicationId",
           "managerControl.actions[]",
         ),
-        ...(typeof reason === "string" && reason.length > 0 ? { reason } : {}),
+        ...(reason === undefined ? {} : { reason }),
       };
     }
     default:
@@ -175,158 +168,60 @@ function dedupe(values: readonly string[]): readonly string[] {
   return values.filter((value, index, all) => all.indexOf(value) === index);
 }
 
-function hasStructuralSubWorkflows(workflow: WorkflowJson): boolean {
-  return workflow.subWorkflows.length > 0;
-}
-
-function findOwnedSubWorkflow(workflow: WorkflowJson, managerNodeId: string) {
-  return workflow.subWorkflows.find(
-    (entry) => entry.managerNodeId === managerNodeId,
-  );
-}
-
-function getOwnedSubWorkflowForNode(workflow: WorkflowJson, nodeId: string) {
-  return workflow.subWorkflows.find((entry) => entry.nodeIds.includes(nodeId));
-}
-
-function isRootManagerControlContext(
+function isWorkflowManagerControlContext(
   workflow: WorkflowJson,
   context: ManagerControlParseContext,
 ): boolean {
   return (
-    context.managerNodeId === workflow.managerNodeId &&
-    context.managerKind !== "subworkflow-manager" &&
+    context.managerStepId === resolveWorkflowManagerStepId(workflow) &&
     context.managerRole !== "worker"
   );
 }
 
-function isSubworkflowManagerControlContext(
-  context: ManagerControlParseContext,
-): boolean {
-  return context.managerKind === "subworkflow-manager";
-}
-
-function assertOptionalNodeDecisionScope(
+function assertOptionalStepDecisionScope(
   workflow: WorkflowJson,
   context: ManagerControlParseContext,
-  nodeId: string,
-  actionType: "execute-optional-node" | "skip-optional-node",
+  stepId: string,
+  actionType: "execute-optional-step" | "skip-optional-step",
 ): void {
-  const node = workflow.nodes.find((entry) => entry.id === nodeId);
+  const node = workflow.nodes.find((entry) => entry.id === stepId);
   if (node === undefined) {
     throw new Error(
-      `managerControl ${actionType} node '${nodeId}' does not exist`,
+      `managerControl ${actionType} step '${stepId}' does not exist`,
     );
   }
-  if (node.id === context.managerNodeId) {
+  if (node.id === context.managerStepId) {
     throw new Error(
-      `managerControl ${actionType} node '${nodeId}' cannot target the manager node itself`,
+      `managerControl ${actionType} step '${stepId}' cannot target the manager itself`,
     );
   }
   if (node.execution?.mode !== "optional") {
     throw new Error(
-      `managerControl ${actionType} node '${nodeId}' must reference a node with workflow execution.mode 'optional'`,
+      `managerControl ${actionType} step '${stepId}' must reference a node with workflow execution.mode 'optional'`,
     );
   }
 
-  if (isRootManagerControlContext(workflow, context)) {
-    const ownedSubWorkflow = getOwnedSubWorkflowForNode(workflow, nodeId);
-    if (ownedSubWorkflow !== undefined) {
-      throw new Error(
-        `managerControl ${actionType} node '${nodeId}' is inside sub-workflow '${ownedSubWorkflow.id}'; use the owning subworkflow-manager instead`,
-      );
-    }
-    return;
-  }
-
-  if (isSubworkflowManagerControlContext(context)) {
-    const ownedSubWorkflow = findOwnedSubWorkflow(
-      workflow,
-      context.managerNodeId,
-    );
-    if (ownedSubWorkflow === undefined) {
-      throw new Error(
-        `manager node '${context.managerNodeId}' does not own a sub-workflow`,
-      );
-    }
-    if (!ownedSubWorkflow.nodeIds.includes(nodeId)) {
-      throw new Error(
-        `managerControl ${actionType} node '${nodeId}' must belong to sub-workflow '${ownedSubWorkflow.id}' owned by '${context.managerNodeId}'`,
-      );
-    }
+  if (isWorkflowManagerControlContext(workflow, context)) {
     return;
   }
 
   throw new Error(
-    `manager node '${context.managerNodeId}' does not have a recognized control scope`,
+    `manager '${context.managerStepId}' does not have a recognized control scope`,
   );
-}
-
-function resolveEffectiveCommunicationScope(
-  communication: CommunicationRecord,
-  workflow: WorkflowJson,
-): {
-  readonly fromSubWorkflowId?: string;
-  readonly toSubWorkflowId?: string;
-} {
-  const fromSubWorkflowId =
-    communication.fromSubWorkflowId ??
-    getOwnedSubWorkflowForNode(workflow, communication.fromNodeId)?.id;
-  const toSubWorkflowId =
-    communication.toSubWorkflowId ??
-    getOwnedSubWorkflowForNode(workflow, communication.toNodeId)?.id;
-  return {
-    ...(fromSubWorkflowId === undefined ? {} : { fromSubWorkflowId }),
-    ...(toSubWorkflowId === undefined ? {} : { toSubWorkflowId }),
-  };
 }
 
 export function assertCommunicationInManagerScope(
-  communication: CommunicationRecord,
+  _communication: CommunicationRecord,
   workflow: WorkflowJson,
   context: ManagerControlParseContext,
-  operationLabel = "managerControl",
+  _operationLabel = "managerControl",
 ): void {
-  const effectiveScope = resolveEffectiveCommunicationScope(
-    communication,
-    workflow,
-  );
-
-  if (isSubworkflowManagerControlContext(context)) {
-    const ownedSubWorkflow = findOwnedSubWorkflow(
-      workflow,
-      context.managerNodeId,
-    );
-    if (ownedSubWorkflow === undefined) {
-      throw new Error(
-        `manager node '${context.managerNodeId}' does not own a sub-workflow`,
-      );
-    }
-    if (
-      effectiveScope.fromSubWorkflowId !== ownedSubWorkflow.id ||
-      effectiveScope.toSubWorkflowId !== ownedSubWorkflow.id
-    ) {
-      throw new Error(
-        `${operationLabel} communication '${communication.communicationId}' must stay within sub-workflow '${ownedSubWorkflow.id}' owned by '${context.managerNodeId}'`,
-      );
-    }
-    return;
-  }
-
-  if (isRootManagerControlContext(workflow, context)) {
-    if (
-      effectiveScope.fromSubWorkflowId !== undefined ||
-      effectiveScope.toSubWorkflowId !== undefined
-    ) {
-      throw new Error(
-        `${operationLabel} communication '${communication.communicationId}' is outside root-manager scope; re-invoke the sub-workflow or use the owning subworkflow-manager`,
-      );
-    }
+  if (isWorkflowManagerControlContext(workflow, context)) {
     return;
   }
 
   throw new Error(
-    `manager node '${context.managerNodeId}' does not have a recognized control scope`,
+    `manager '${context.managerStepId}' does not have a recognized control scope`,
   );
 }
 
@@ -343,136 +238,45 @@ export function parseManagerControlActions(
       continue;
     }
 
-    if (action.type === "start-sub-workflow") {
-      if (!hasStructuralSubWorkflows(workflow)) {
-        throw new Error(
-          "managerControl start-sub-workflow is unavailable when the workflow has no structural sub-workflows; explicit workflowCalls run automatically from their caller nodes",
-        );
-      }
-      if (!isRootManagerControlContext(workflow, context)) {
-        throw new Error(
-          "managerControl start-sub-workflow is only allowed for the root manager",
-        );
-      }
-      const subWorkflow = workflow.subWorkflows.find(
-        (entry) => entry.id === action.subWorkflowId,
-      );
-      if (subWorkflow === undefined) {
-        throw new Error(
-          `managerControl references unknown sub-workflow '${action.subWorkflowId}'`,
-        );
-      }
-      continue;
-    }
-
-    if (action.type === "deliver-to-child-input") {
-      if (!isSubworkflowManagerControlContext(context)) {
-        throw new Error(
-          "managerControl deliver-to-child-input is only allowed for a subworkflow-manager",
-        );
-      }
-      const node = workflow.nodes.find(
-        (entry) => entry.id === action.inputNodeId,
-      );
-      if (node?.kind !== "input") {
-        throw new Error(
-          `managerControl input node '${action.inputNodeId}' must exist with kind 'input'`,
-        );
-      }
-      const ownedSubWorkflow = findOwnedSubWorkflow(
-        workflow,
-        context.managerNodeId,
-      );
-      if (ownedSubWorkflow === undefined) {
-        throw new Error(
-          `manager node '${context.managerNodeId}' does not own a sub-workflow`,
-        );
-      }
-      if (ownedSubWorkflow.inputNodeId !== action.inputNodeId) {
-        throw new Error(
-          `managerControl input node '${action.inputNodeId}' must be the owned input node '${ownedSubWorkflow.inputNodeId}' for subworkflow-manager '${context.managerNodeId}'`,
-        );
-      }
-      continue;
-    }
-
     if (action.type === "replay-communication") {
       continue;
     }
 
     if (
-      action.type === "execute-optional-node" ||
-      action.type === "skip-optional-node"
+      action.type === "execute-optional-step" ||
+      action.type === "skip-optional-step"
     ) {
-      assertOptionalNodeDecisionScope(
+      assertOptionalStepDecisionScope(
         workflow,
         context,
-        action.nodeId,
+        action.stepId,
         action.type,
       );
       continue;
     }
 
-    const node = workflow.nodes.find((entry) => entry.id === action.nodeId);
+    const node = workflow.nodes.find((entry) => entry.id === action.stepId);
     if (node === undefined) {
       throw new Error(
-        `managerControl retry node '${action.nodeId}' does not exist`,
+        `managerControl retry step '${action.stepId}' does not exist`,
       );
     }
-    if (action.nodeId === context.managerNodeId) {
+    if (action.stepId === context.managerStepId) {
       throw new Error(
-        `managerControl retry node '${action.nodeId}' cannot target the manager node itself`,
+        `managerControl retry step '${action.stepId}' cannot target the manager itself`,
       );
     }
-    if (isRootManagerControlContext(workflow, context)) {
-      const ownedSubWorkflow = getOwnedSubWorkflowForNode(
-        workflow,
-        action.nodeId,
+    if (!isWorkflowManagerControlContext(workflow, context)) {
+      throw new Error(
+        `manager '${context.managerStepId}' does not have a recognized control scope`,
       );
-      if (ownedSubWorkflow !== undefined) {
-        throw new Error(
-          `managerControl retry node '${action.nodeId}' is inside sub-workflow '${ownedSubWorkflow.id}'; root manager must re-invoke that sub-workflow with start-sub-workflow instead`,
-        );
-      }
-    }
-    if (isSubworkflowManagerControlContext(context)) {
-      const ownedSubWorkflow = findOwnedSubWorkflow(
-        workflow,
-        context.managerNodeId,
-      );
-      if (ownedSubWorkflow === undefined) {
-        throw new Error(
-          `manager node '${context.managerNodeId}' does not own a sub-workflow`,
-        );
-      }
-      if (!ownedSubWorkflow.nodeIds.includes(action.nodeId)) {
-        throw new Error(
-          `managerControl retry node '${action.nodeId}' must belong to sub-workflow '${ownedSubWorkflow.id}' owned by '${context.managerNodeId}'`,
-        );
-      }
     }
   }
 
-  const startSubWorkflowIds = dedupe(
+  const retryStepIds = dedupe(
     actions
-      .filter(
-        (entry): entry is StartSubWorkflowAction =>
-          entry.type === "start-sub-workflow",
-      )
-      .map((entry) => entry.subWorkflowId),
-  );
-  const childInputNodeIds = dedupe(
-    actions
-      .filter(
-        (entry): entry is DeliverToChildInputAction =>
-          entry.type === "deliver-to-child-input",
-      )
-      .map((entry) => entry.inputNodeId),
-  );
-  const retryNodeIds = dedupe(
-    actions
-      .filter((entry): entry is RetryNodeAction => entry.type === "retry-node")
-      .map((entry) => entry.nodeId),
+      .filter((entry): entry is RetryStepAction => entry.type === "retry-step")
+      .map((entry) => entry.stepId),
   );
   const replayCommunicationIds = dedupe(
     actions
@@ -482,33 +286,29 @@ export function parseManagerControlActions(
       )
       .map((entry) => entry.communicationId),
   );
-  const executeOptionalNodeIds = dedupe(
+  const executeOptionalStepIds = dedupe(
     actions
       .filter(
-        (entry): entry is ExecuteOptionalNodeAction =>
-          entry.type === "execute-optional-node",
+        (entry): entry is ExecuteOptionalStepAction =>
+          entry.type === "execute-optional-step",
       )
-      .map((entry) => entry.nodeId),
+      .map((entry) => entry.stepId),
   );
-  const skipOptionalNodeIds = dedupe(
+  const skipOptionalStepIds = dedupe(
     actions
       .filter(
-        (entry): entry is SkipOptionalNodeAction =>
-          entry.type === "skip-optional-node",
+        (entry): entry is SkipOptionalStepAction =>
+          entry.type === "skip-optional-step",
       )
-      .map((entry) => entry.nodeId),
+      .map((entry) => entry.stepId),
   );
 
   return {
     actions,
-    startSubWorkflowIds,
-    childInputNodeIds,
-    retryNodeIds,
+    retryStepIds,
     replayCommunicationIds,
-    executeOptionalNodeIds,
-    skipOptionalNodeIds,
-    overridesRootSubWorkflowPlanning: true,
-    overridesChildInputPlanning: true,
+    executeOptionalStepIds,
+    skipOptionalStepIds,
   };
 }
 
@@ -529,14 +329,10 @@ export function parseManagerControlPayload(
   if (actionsRaw === undefined) {
     return {
       actions: [],
-      startSubWorkflowIds: [],
-      childInputNodeIds: [],
-      retryNodeIds: [],
+      retryStepIds: [],
       replayCommunicationIds: [],
-      executeOptionalNodeIds: [],
-      skipOptionalNodeIds: [],
-      overridesRootSubWorkflowPlanning: true,
-      overridesChildInputPlanning: true,
+      executeOptionalStepIds: [],
+      skipOptionalStepIds: [],
     };
   }
   if (!Array.isArray(actionsRaw)) {

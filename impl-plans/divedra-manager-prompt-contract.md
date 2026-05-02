@@ -1,13 +1,13 @@
 # Divedra Manager Prompt Contract Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-divedra-manager-prompt-contract.md
+**Design Reference**: design-docs/specs/architecture.md#prompt-and-input-assembly, design-docs/specs/notes.md, design-docs/specs/design-workflow-json.md
 **Created**: 2026-03-07
 **Last Updated**: 2026-03-07
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-divedra-manager-prompt-contract.md`
+**Source**: prompt-contract guidance is now consolidated into `design-docs/specs/architecture.md` and `design-docs/specs/notes.md`
 
 ### Summary
 
@@ -155,7 +155,7 @@ export function parseManagerControlPayload(
 **Tasks Completed**: Tightened nested sub-workflow contract enforcement, template/sample workflow updates, validation/runtime scope-boundary fixes
 **Tasks In Progress**: None
 **Blockers**: None
-**Notes**: Closed review gaps from the previous iteration by requiring `subWorkflow.managerNodeId`, enforcing `sub-manager` ownership for `deliver-to-child-input`, and updating the default/sample workflows to route parent-to-sub-workflow work through a real sub-manager mailbox boundary.
+**Notes**: Closed review gaps from the previous iteration by requiring `subWorkflow.managerRuntimeId`, enforcing `sub-manager` ownership for `deliver-to-child-input`, and updating the default/sample workflows to route parent-to-sub-workflow work through a real sub-manager mailbox boundary.
 
 ### Session: 2026-03-07 20:45
 **Tasks Completed**: Review follow-up for prompt context completeness
@@ -221,7 +221,7 @@ export function parseManagerControlPayload(
 **Tasks Completed**: Review follow-up for strict sub-workflow manager typing
 **Tasks In Progress**: None
 **Blockers**: None
-**Notes**: Closed a design/runtime mismatch where validation still accepted generic `manager` nodes as `subWorkflow.managerNodeId` even though the design requires dedicated `sub-manager` ownership. Removed stale optional-manager fallbacks from conversation/runtime routing and added a regression test for the stricter sub-manager contract.
+**Notes**: Closed a design/runtime mismatch where validation still accepted generic `manager` nodes as `subWorkflow.managerRuntimeId` even though the design requires dedicated `sub-manager` ownership. Removed stale optional-manager fallbacks from conversation/runtime routing and added a regression test for the stricter sub-manager contract.
 
 ### Session: 2026-03-07 16:05
 **Tasks Completed**: Review follow-up for workflow-level prompt metadata binding

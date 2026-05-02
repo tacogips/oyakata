@@ -23,20 +23,10 @@ export function toIntentSummary(
   switch (action.type) {
     case "planner-note":
       return { kind: "planner-note" };
-    case "start-sub-workflow":
+    case "retry-step":
       return {
-        kind: "start-sub-workflow",
-        targetId: action.subWorkflowId,
-      };
-    case "deliver-to-child-input":
-      return {
-        kind: "deliver-to-child-input",
-        targetId: action.inputNodeId,
-      };
-    case "retry-node":
-      return {
-        kind: "retry-node",
-        targetId: action.nodeId,
+        kind: "retry-step",
+        targetId: action.stepId,
       };
     case "replay-communication":
       return {
@@ -44,15 +34,15 @@ export function toIntentSummary(
         targetId: action.communicationId,
         ...(action.reason === undefined ? {} : { reason: action.reason }),
       };
-    case "execute-optional-node":
+    case "execute-optional-step":
       return {
-        kind: "execute-optional-node",
-        targetId: action.nodeId,
+        kind: "execute-optional-step",
+        targetId: action.stepId,
       };
-    case "skip-optional-node":
+    case "skip-optional-step":
       return {
-        kind: "skip-optional-node",
-        targetId: action.nodeId,
+        kind: "skip-optional-step",
+        targetId: action.stepId,
         ...(action.reason === undefined ? {} : { reason: action.reason }),
       };
   }
@@ -66,15 +56,6 @@ export function normalizeActionsForIdempotency(
 
 export function dedupe(values: readonly string[]): readonly string[] {
   return values.filter((value, index, all) => all.indexOf(value) === index);
-}
-
-export function findOwnedSubWorkflow(
-  workflow: WorkflowJson,
-  managerNodeId: string,
-) {
-  return workflow.subWorkflows.find(
-    (entry) => entry.managerNodeId === managerNodeId,
-  );
 }
 
 function findPendingOptionalNodeDecision(
@@ -96,21 +77,6 @@ function upsertPendingOptionalNodeDecision(
   ];
 }
 
-export function queueTargetNodeIdForStartSubWorkflow(args: {
-  readonly workflow: WorkflowJson;
-  readonly subWorkflowId: string;
-}): string {
-  const subWorkflow = args.workflow.subWorkflows.find(
-    (entry) => entry.id === args.subWorkflowId,
-  );
-  if (subWorkflow === undefined) {
-    throw new Error(`unknown sub-workflow '${args.subWorkflowId}'`);
-  }
-  return subWorkflow.managerNodeId === args.workflow.managerNodeId
-    ? subWorkflow.inputNodeId
-    : subWorkflow.managerNodeId;
-}
-
 export function isTerminalStatus(status: string): boolean {
   return (
     status === "completed" || status === "failed" || status === "cancelled"
@@ -120,35 +86,37 @@ export function isTerminalStatus(status: string): boolean {
 export function applyOptionalNodeDecision(input: {
   readonly session: WorkflowSessionState;
   readonly workflow: WorkflowJson;
-  readonly managerNodeId: string;
+  readonly managerStepId: string;
   readonly managerNodeExecId: string;
   readonly action: Extract<
     ManagerControlAction,
-    { readonly type: "execute-optional-node" | "skip-optional-node" }
+    { readonly type: "execute-optional-step" | "skip-optional-step" }
   >;
   readonly decidedAt: string;
 }): WorkflowSessionState {
+  const optionalTargetNoun =
+    input.workflow.steps !== undefined ? "step" : "node";
   const currentDecision = findPendingOptionalNodeDecision(
     input.session,
-    input.action.nodeId,
+    input.action.stepId,
   );
   if (currentDecision === undefined || currentDecision.status !== "pending") {
     throw new Error(
-      `invalid manager control at '${input.managerNodeId}': optional node '${input.action.nodeId}' is not currently pending`,
+      `invalid manager control at '${input.managerStepId}': optional ${optionalTargetNoun} '${input.action.stepId}' is not currently pending`,
     );
   }
-  if (currentDecision.owningManagerNodeId !== input.managerNodeId) {
+  if (currentDecision.owningManagerStepId !== input.managerStepId) {
     throw new Error(
-      `invalid manager control at '${input.managerNodeId}': optional node '${input.action.nodeId}' is owned by '${currentDecision.owningManagerNodeId}'`,
+      `invalid manager control at '${input.managerStepId}': optional ${optionalTargetNoun} '${input.action.stepId}' is owned by '${currentDecision.owningManagerStepId}'`,
     );
   }
 
   const nodeRef = input.workflow.nodes.find(
-    (entry) => entry.id === input.action.nodeId,
+    (entry) => entry.id === input.action.stepId,
   );
   if (nodeRef?.execution?.mode !== "optional") {
     throw new Error(
-      `invalid manager control at '${input.managerNodeId}': node '${input.action.nodeId}' is not optional`,
+      `invalid manager control at '${input.managerStepId}': ${optionalTargetNoun} '${input.action.stepId}' is not optional`,
     );
   }
 
@@ -159,8 +127,8 @@ export function applyOptionalNodeDecision(input: {
       {
         ...currentDecision,
         status:
-          input.action.type === "execute-optional-node" ? "execute" : "skip",
-        ...(input.action.type === "skip-optional-node" &&
+          input.action.type === "execute-optional-step" ? "execute" : "skip",
+        ...(input.action.type === "skip-optional-step" &&
         input.action.reason !== undefined
           ? { reason: input.action.reason }
           : {}),

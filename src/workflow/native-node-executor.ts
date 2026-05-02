@@ -15,6 +15,10 @@ import {
   DEFAULT_MAIL_GATEWAY_IMAGE,
   DEFAULT_X_GATEWAY_IMAGE,
 } from "./node-addons";
+import {
+  getSuperviserControlAddonProviderOperationId,
+  isSuperviserControlAddonName,
+} from "./types";
 import type {
   ChatReplyDispatcher,
   ChatReplyDispatchRequest,
@@ -29,10 +33,14 @@ import type {
   ResolvedChatReplyWorkerAddon,
   ResolvedXGatewayAddon,
   ResolvedXGatewayReadAddon,
+  ResolvedSuperviserControlAddon,
+  SuperviserControlAddonName,
   WorkflowNodeAddonEnvBinding,
   WorkflowDefaults,
 } from "./types";
 import { atomicWriteTextFile } from "../shared/fs";
+import { executeSuperviserControlNativeOperation } from "./superviser-control";
+import type { SuperviserRuntimeControl } from "./superviser-control";
 
 const X_GATEWAY_READ_BINARY = "x-gateway-reader";
 const X_GATEWAY_BINARY = "x-gateway";
@@ -62,6 +70,11 @@ export interface NativeNodeExecutionInput {
   readonly executionMailbox: NodeExecutionMailbox;
   readonly chatReplyDispatcher?: ChatReplyDispatcher;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Present when executing a phase-2 nested superviser workflow so
+   * {@link SuperviserControlAddonName} add-ons can manage the paired target run.
+   */
+  readonly superviserControl?: SuperviserRuntimeControl;
 }
 
 interface SpawnedProcessResult {
@@ -1439,6 +1452,33 @@ async function executeMailGatewayAddonNode(
   }
 }
 
+async function executeSuperviserControlAddonNode(
+  input: NativeNodeExecutionInput,
+  addon: ResolvedSuperviserControlAddon,
+): Promise<AdapterExecutionOutput> {
+  if (input.superviserControl === undefined) {
+    throw new AdapterExecutionError(
+      "policy_blocked",
+      `node '${input.nodeId}' add-on '${addon.name}' requires nested superviser runtime control (phase-2 --auto-improve); this add-on is not available in the current execution context`,
+    );
+  }
+  const result = await executeSuperviserControlNativeOperation({
+    addonName: addon.name,
+    arguments: input.arguments,
+    control: input.superviserControl,
+    nodeId: input.nodeId,
+  });
+  if (!result.ok) {
+    throw new AdapterExecutionError("provider_error", result.error);
+  }
+  return buildNativeOutput({
+    provider: `native-addon:superviser-control/${getSuperviserControlAddonProviderOperationId(addon.name)}`,
+    model: addon.name,
+    promptText: "superviser-control",
+    payload: { superviser: result.value },
+  });
+}
+
 async function executeAddonNode(
   input: NativeNodeExecutionInput,
   context: NativeNodeExecutionContext,
@@ -1448,6 +1488,12 @@ async function executeAddonNode(
     throw new AdapterExecutionError(
       "policy_blocked",
       `node '${input.nodeId}' does not declare a resolved add-on executor`,
+    );
+  }
+  if (isSuperviserControlAddonName(addon.name)) {
+    return await executeSuperviserControlAddonNode(
+      input,
+      addon as ResolvedSuperviserControlAddon,
     );
   }
   switch (addon.name) {

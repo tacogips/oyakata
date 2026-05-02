@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { createSessionState } from "./session";
-import { encodeProjectPathForDivedraScope } from "./paths";
 import {
   deleteSession,
   getSessionStoreRoot,
@@ -30,36 +29,33 @@ afterEach(async () => {
 });
 
 describe("session-store", () => {
-  test("uses ~/.divedra/project/<encoded>/divedra-artifact/sessions when unset", async () => {
+  test("uses ~/.divedra/artifacts/sessions when unset", async () => {
     const root = await makeTempDir();
     const resolved = getSessionStoreRoot({ cwd: root, env: {} });
     expect(resolved).toBe(
-      path.join(
-        os.homedir(),
-        ".divedra",
-        "project",
-        encodeProjectPathForDivedraScope(root),
-        "divedra-artifact",
-        "sessions",
-      ),
+      path.join(os.homedir(), ".divedra", "artifacts", "sessions"),
     );
   });
 
-  test("uses the nearest .divedra project root for default session-store scoping", async () => {
+  test("uses user-root artifacts for default session-store scoping", async () => {
     const root = await makeTempDir();
     const nestedCwd = path.join(root, "packages", "feature", "src");
     await mkdir(path.join(root, ".divedra"), { recursive: true });
     await mkdir(nestedCwd, { recursive: true });
     const resolved = getSessionStoreRoot({ cwd: nestedCwd, env: {} });
     expect(resolved).toBe(
-      path.join(
-        os.homedir(),
-        ".divedra",
-        "project",
-        encodeProjectPathForDivedraScope(root),
-        "divedra-artifact",
-        "sessions",
-      ),
+      path.join(os.homedir(), ".divedra", "artifacts", "sessions"),
+    );
+  });
+
+  test("uses DIVEDRA_USER_ROOT for default session-store scoping", async () => {
+    const root = await makeTempDir();
+    const resolved = getSessionStoreRoot({
+      cwd: root,
+      env: { DIVEDRA_USER_ROOT: "custom-user-root" },
+    });
+    expect(resolved).toBe(
+      path.join(root, "custom-user-root", "artifacts", "sessions"),
     );
   });
 
@@ -97,6 +93,49 @@ describe("session-store", () => {
     expect(loaded.value.queue[0]).toBe("manager");
     expect(loaded.value.pendingOptionalNodeDecisions).toEqual([]);
     expect(loaded.value.activeUserActions).toEqual([]);
+  });
+
+  test("save/load roundtrip preserves supervision state", async () => {
+    const root = await makeTempDir();
+    const session: ReturnType<typeof createSessionState> = {
+      ...createSessionState({
+        sessionId: "sess-superv01",
+        workflowName: "wf",
+        workflowId: "wf",
+        initialNodeId: "manager",
+        runtimeVariables: {},
+      }),
+      supervision: {
+        supervisionRunId: "sup-run-1",
+        targetWorkflowId: "wf",
+        superviserWorkflowId: "divedra-superviser",
+        status: "running",
+        attemptCount: 2,
+        workflowPatchCount: 0,
+        incidents: [
+          {
+            incidentId: "inc-1",
+            supervisedAttemptId: "att-1",
+            category: "stall",
+            summary: "no progress",
+            detectedAt: "2026-04-25T12:00:00.000Z",
+          },
+        ],
+      },
+    };
+
+    const save = await saveSession(session, { sessionStoreRoot: root });
+    expect(save.ok).toBe(true);
+
+    const loaded = await loadSession(session.sessionId, {
+      sessionStoreRoot: root,
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.supervision?.supervisionRunId).toBe("sup-run-1");
+    expect(loaded.value.supervision?.incidents[0]?.category).toBe("stall");
   });
 
   test("rejects invalid session id", async () => {

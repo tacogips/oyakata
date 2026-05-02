@@ -1,9 +1,11 @@
 # Workflow Web Editor Execution Implementation Plan
 
-**Status**: Completed
-**Design Reference**: design-docs/specs/design-workflow-web-editor.md#overview
+**Status**: Completed (historical; browser editor removed; see `impl-plans/completed/remove-web-ui.md`)
+
+**Design Reference**: `design-docs/specs/design-workflow-web-editor.md#overview` (design file removed with the web UI; use `design-docs/specs/architecture.md` and `design-docs/specs/command.md` for the current HTTP surface)
+
 **Created**: 2026-03-07
-**Last Updated**: 2026-03-15
+**Last Updated**: 2026-04-26
 
 ---
 

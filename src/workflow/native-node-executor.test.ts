@@ -11,6 +11,8 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { AdapterExecutionError } from "./adapter";
 import { executeNativeNode } from "./native-node-executor";
+import { ok } from "./result";
+import type { SuperviserRuntimeControl } from "./superviser-control";
 import type { ChatReplyDispatchRequest } from "./types";
 
 const tempDirs: string[] = [];
@@ -236,6 +238,147 @@ describe("executeNativeNode", () => {
         },
       ),
     ).rejects.toThrow(AdapterExecutionError);
+  });
+
+  test("routes nested superviser control add-ons through the native executor with a stable provider id", async () => {
+    const workflowDirectory = await makeTempDir();
+    const superviserControl: SuperviserRuntimeControl = {
+      auth: {
+        supervisionRunId: "sup-1",
+        targetSessionId: "target-session-1",
+      },
+      startTargetWorkflow: async (input) => {
+        expect(input).toEqual({
+          workflowId: "target-workflow",
+          runtimeVariables: { attempt: 2 },
+        });
+        return ok({
+          sessionId: "target-session-1",
+          status: "running",
+        });
+      },
+      getWorkflowStatus: async () => {
+        throw new Error("unexpected getWorkflowStatus call");
+      },
+      getWorkflowExecutionDetails: async () => {
+        throw new Error("unexpected getWorkflowExecutionDetails call");
+      },
+      rerunTargetWorkflow: async () => {
+        throw new Error("unexpected rerunTargetWorkflow call");
+      },
+      loadWorkflowDefinition: async () => {
+        throw new Error("unexpected loadWorkflowDefinition call");
+      },
+      saveWorkflowDefinition: async () => {
+        throw new Error("unexpected saveWorkflowDefinition call");
+      },
+    };
+
+    const output = await executeNativeNode(
+      {
+        workflowDirectory,
+        workflowWorkingDirectory: workflowDirectory,
+        artifactWorkflowRoot: path.join(workflowDirectory, "artifacts"),
+        workflowId: "superviser-wf",
+        workflowDescription: "nested superviser workflow",
+        workflowExecutionId: "sup-session-1",
+        nodeId: "start-target",
+        nodeExecId: "exec-1",
+        node: {
+          id: "start-target",
+          nodeType: "addon",
+          variables: {},
+          addon: {
+            name: "divedra/start-workflow",
+            version: "1",
+          },
+        },
+        workflowDefaults: {
+          maxLoopIterations: 3,
+          nodeTimeoutMs: 120000,
+        },
+        runtimeVariables: {},
+        mergedVariables: {},
+        arguments: {
+          supervisionRunId: "sup-1",
+          targetSessionId: "target-session-1",
+          workflowId: "target-workflow",
+          runtimeVariables: { attempt: 2 },
+        },
+        artifactDir: path.join(workflowDirectory, "artifacts", "start-target"),
+        executionMailbox: makeExecutionMailbox(),
+        superviserControl,
+      },
+      {
+        timeoutMs: 5_000,
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(output.provider).toBe(
+      "native-addon:superviser-control/start-workflow",
+    );
+    expect(output.model).toBe("divedra/start-workflow");
+    expect(output.payload).toEqual({
+      superviser: {
+        sessionId: "target-session-1",
+        status: "running",
+      },
+    });
+  });
+
+  test("rejects superviser control add-ons outside nested superviser execution", async () => {
+    const workflowDirectory = await makeTempDir();
+
+    await expect(
+      executeNativeNode(
+        {
+          workflowDirectory,
+          workflowWorkingDirectory: workflowDirectory,
+          artifactWorkflowRoot: path.join(workflowDirectory, "artifacts"),
+          workflowId: "superviser-wf",
+          workflowDescription: "nested superviser workflow",
+          workflowExecutionId: "sup-session-1",
+          nodeId: "status-target",
+          nodeExecId: "exec-1",
+          node: {
+            id: "status-target",
+            nodeType: "addon",
+            variables: {},
+            addon: {
+              name: "divedra/get-workflow-status",
+              version: "1",
+            },
+          },
+          workflowDefaults: {
+            maxLoopIterations: 3,
+            nodeTimeoutMs: 120000,
+          },
+          runtimeVariables: {},
+          mergedVariables: {},
+          arguments: {
+            supervisionRunId: "sup-1",
+            targetSessionId: "target-session-1",
+            sessionId: "target-session-1",
+          },
+          artifactDir: path.join(
+            workflowDirectory,
+            "artifacts",
+            "status-target",
+          ),
+          executionMailbox: makeExecutionMailbox(),
+        },
+        {
+          timeoutMs: 5_000,
+          signal: new AbortController().signal,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: "policy_blocked",
+      message: expect.stringContaining(
+        "requires nested superviser runtime control",
+      ),
+    } satisfies Partial<AdapterExecutionError>);
   });
 
   test("dispatches built-in chat reply add-on when a dispatcher is available", async () => {
@@ -1270,12 +1413,12 @@ describe("executeNativeNode", () => {
     await expectPayloadCwd(output.payload, nodeWorkingDirectory);
   });
 
-  test("keeps command.workingDirectory as a compatibility override", async () => {
+  test("honors command.workingDirectory when set on the native command", async () => {
     const workflowDirectory = await makeTempDir();
     const workflowWorkingDirectory = path.join(workflowDirectory, "workspace");
     const commandWorkingDirectory = path.join(
       workflowWorkingDirectory,
-      "legacy-worker",
+      "cmd-working-dir",
     );
     await mkdir(commandWorkingDirectory, { recursive: true });
     const scriptPath = await writeReportCwdScript(workflowDirectory);
@@ -1296,7 +1439,7 @@ describe("executeNativeNode", () => {
           variables: {},
           command: {
             scriptPath,
-            workingDirectory: "legacy-worker",
+            workingDirectory: "cmd-working-dir",
           },
         },
         workflowDefaults: {

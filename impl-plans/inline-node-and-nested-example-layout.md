@@ -1,7 +1,7 @@
 # Inline Node Payloads And Nested Example Layout Implementation Plan
 
 **Status**: Completed
-**Design Reference**: `design-docs/specs/design-simplified-workflow-json.md`, `impl-plans/simplified-workflow-json-transition-examples.md`
+**Design Reference**: `design-docs/specs/design-workflow-json.md`, `design-docs/specs/notes.md`, `impl-plans/simplified-workflow-json-transition-examples.md`
 **Created**: 2026-03-30
 **Last Updated**: 2026-03-30
 

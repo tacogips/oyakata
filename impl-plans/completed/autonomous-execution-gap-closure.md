@@ -1,7 +1,7 @@
 # Autonomous Execution Gap Closure Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-autonomous-execution-gap-closure.md
+**Design Reference**: design-docs/specs/architecture.md, design-docs/specs/notes.md
 **Created**: 2026-02-24
 **Last Updated**: 2026-02-24
 
@@ -9,7 +9,7 @@
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-autonomous-execution-gap-closure.md`
+**Source**: historical gap-closure direction now consolidated into `design-docs/specs/architecture.md` and `design-docs/specs/notes.md`
 
 ### Summary
 

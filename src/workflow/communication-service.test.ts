@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -10,8 +10,17 @@ import {
   createManagerSessionStore,
   hashManagerAuthToken,
 } from "./manager-session-store";
-import { createManagerMessageService } from "./manager-message-service";
-import { loadSession } from "./session-store";
+import {
+  mergeLoadOptionsForSessionMutableBundle,
+  loadWorkflowFromDisk,
+} from "./load";
+import { createManagerMessageId } from "./manager-message-service/idempotency";
+import {
+  prepareManagerMessageArtifacts,
+  persistManagerMessageCommunication,
+} from "./manager-message-service/artifacts";
+import { loadSession, saveSession } from "./session-store";
+import type { WorkflowSessionState } from "./session";
 
 const tempDirs: string[] = [];
 
@@ -87,133 +96,10 @@ async function createCompletedWorkflowFixture(root: string) {
   return { options, session: result.value.session };
 }
 
-async function createCompletedSubworkflowFixture(root: string) {
-  const workflowDir = path.join(root, "demo");
-  await mkdir(workflowDir, { recursive: true });
-  await writeFile(
-    path.join(workflowDir, "workflow.json"),
-    `${JSON.stringify(
-      {
-        workflowId: "demo",
-        description: "subworkflow communication fixture",
-        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-        prompts: {
-          divedraPromptTemplate: "Coordinate {{workflowId}}",
-          workerSystemPromptTemplate:
-            "Work only on the current node responsibility.",
-        },
-        managerNodeId: "divedra-manager",
-        subWorkflows: [
-          {
-            id: "main",
-            description: "Main sub-workflow",
-            managerNodeId: "main-divedra",
-            inputNodeId: "workflow-input",
-            outputNodeId: "workflow-output",
-            nodeIds: ["main-divedra", "workflow-input", "workflow-output"],
-            inputSources: [{ type: "human-input" }],
-            block: { type: "plain" },
-          },
-        ],
-        nodes: [
-          {
-            id: "divedra-manager",
-            kind: "root-manager",
-            nodeFile: "node-divedra-manager.json",
-          },
-          {
-            id: "main-divedra",
-            kind: "subworkflow-manager",
-            nodeFile: "node-main-divedra.json",
-          },
-          {
-            id: "workflow-input",
-            kind: "input",
-            nodeFile: "node-workflow-input.json",
-          },
-          {
-            id: "workflow-output",
-            kind: "output",
-            nodeFile: "node-workflow-output.json",
-          },
-        ],
-        edges: [
-          { from: "workflow-input", to: "workflow-output", when: "always" },
-        ],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-
-  const nodePayloads = {
-    "node-divedra-manager.json": {
-      id: "divedra-manager",
-      executionBackend: "claude-code-agent",
-      model: "claude-opus-4-1",
-      promptTemplate: "manager",
-      variables: {},
-    },
-    "node-main-divedra.json": {
-      id: "main-divedra",
-      executionBackend: "claude-code-agent",
-      model: "claude-opus-4-1",
-      promptTemplate: "sub manager",
-      variables: {},
-    },
-    "node-workflow-input.json": {
-      id: "workflow-input",
-      executionBackend: "codex-agent",
-      model: "gpt-5-nano",
-      promptTemplate: "input",
-      variables: {},
-    },
-    "node-workflow-output.json": {
-      id: "workflow-output",
-      executionBackend: "claude-code-agent",
-      model: "claude-opus-4-1",
-      promptTemplate: "output",
-      variables: {},
-    },
-  } as const;
-
-  await Promise.all(
-    Object.entries(nodePayloads).map(([fileName, payload]) =>
-      writeFile(
-        path.join(workflowDir, fileName),
-        `${JSON.stringify(payload, null, 2)}\n`,
-        "utf8",
-      ),
-    ),
-  );
-
-  const options = {
-    workflowRoot: root,
-    artifactRoot: path.join(root, "artifacts"),
-    rootDataDir: path.join(root, "data"),
-    cwd: root,
-  };
-  const result = await runWorkflow("demo", {
-    ...options,
-    runtimeVariables: {
-      humanInput: {
-        request: "start demo workflow",
-      },
-    },
-    mockScenario: makeDefaultTemplateScenario(),
-  });
-  expect(result.ok).toBe(true);
-  if (!result.ok) {
-    throw new Error(result.error.message);
-  }
-  return { options, session: result.value.session };
-}
-
 async function createManagerSession(
   root: string,
   workflowExecutionId: string,
-  managerNodeId = "divedra-manager",
+  managerStepId = "divedra-manager",
 ) {
   const store = createManagerSessionStore({
     cwd: root,
@@ -223,7 +109,7 @@ async function createManagerSession(
     managerSessionId: "mgrsess-000001",
     workflowId: "demo",
     workflowExecutionId,
-    managerNodeId,
+    managerStepId,
     managerNodeExecId: "exec-000001",
     status: "active",
     createdAt: "2026-03-15T00:00:00.000Z",
@@ -441,39 +327,59 @@ describe("communication-service", () => {
 
   test("replays a manager-message-originated communication", async () => {
     const root = await makeTempDir();
-    const { options, session } = await createCompletedSubworkflowFixture(root);
+    const { options, session } = await createCompletedWorkflowFixture(root);
     const managerStore = await createManagerSession(
       root,
       session.sessionId,
-      "main-divedra",
+      "divedra-manager",
     );
-    const managerMessageService = createManagerMessageService({
-      now: () => "2026-03-15T04:00:00.000Z",
-      managerSessionStore: managerStore,
-    });
     const service = createCommunicationService({
       now: () => "2026-03-15T04:05:00.000Z",
       idempotencyStore: managerStore,
     });
 
-    const sent = await managerMessageService.sendManagerMessage(
-      {
-        workflowId: "demo",
-        workflowExecutionId: session.sessionId,
-        managerSessionId: "mgrsess-000001",
-        message: "Deliver this updated brief.",
-        actions: [
-          { type: "deliver-to-child-input", inputNodeId: "workflow-input" },
-        ],
-      },
-      options,
+    const loadedWf = await loadWorkflowFromDisk(
+      "demo",
+      mergeLoadOptionsForSessionMutableBundle(options, session),
     );
-    expect(sent.accepted).toBe(true);
-    const sourceCommunicationId = sent.createdCommunicationIds[0];
-    expect(sourceCommunicationId).toBeDefined();
-    if (sourceCommunicationId === undefined) {
-      return;
+    if (!loadedWf.ok) {
+      throw new Error(loadedWf.error.message);
     }
+    const managerMessageId = createManagerMessageId();
+    const artifacts = await prepareManagerMessageArtifacts({
+      artifactWorkflowRoot: loadedWf.value.artifactWorkflowRoot,
+      workflowId: "demo",
+      workflowExecutionId: session.sessionId,
+      managerSessionId: "mgrsess-000001",
+      managerMessageId,
+      managerStepId: "divedra-manager",
+      managerNodeExecId: "exec-000001",
+      message: "Deliver this updated brief.",
+      attachments: [],
+      actions: [],
+    });
+    const communication = await persistManagerMessageCommunication({
+      artifactWorkflowRoot: loadedWf.value.artifactWorkflowRoot,
+      workflowId: "demo",
+      workflowExecutionId: session.sessionId,
+      communicationCounter: session.communicationCounter,
+      managerMessageId,
+      managerStepId: "divedra-manager",
+      managerNodeExecId: "exec-000001",
+      targetNodeId: "main-worker",
+      payloadRef: artifacts.payloadRef,
+      outputRaw: artifacts.outputRaw,
+      createdAt: "2026-03-15T04:00:00.000Z",
+    });
+    const seeded: WorkflowSessionState = {
+      ...session,
+      communications: [...session.communications, communication],
+      communicationCounter: session.communicationCounter + 1,
+    };
+    const saveResult = await saveSession(seeded, options);
+    expect(saveResult.ok).toBe(true);
+
+    const sourceCommunicationId = communication.communicationId;
 
     const replayed = await service.replayCommunication(
       {

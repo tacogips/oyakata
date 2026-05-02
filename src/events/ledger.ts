@@ -108,6 +108,18 @@ async function indexReceipt(
       ...(record.workflowExecutionId === undefined
         ? {}
         : { workflowExecutionId: record.workflowExecutionId }),
+      ...(record.supervisedRunId === undefined
+        ? {}
+        : { supervisedRunId: record.supervisedRunId }),
+      ...(record.supervisorExecutionId === undefined
+        ? {}
+        : { supervisorExecutionId: record.supervisorExecutionId }),
+      ...(record.supervisorConversationId === undefined
+        ? {}
+        : { supervisorConversationId: record.supervisorConversationId }),
+      ...(record.supervisorDecisionId === undefined
+        ? {}
+        : { supervisorDecisionId: record.supervisorDecisionId }),
       artifactDir,
       ...(record.error === undefined ? {} : { error: record.error }),
       receivedAt: record.receivedAt,
@@ -196,6 +208,10 @@ export async function updateEventReceipt(
     readonly artifactDir?: string;
     readonly status: EventReceiptStatus;
     readonly workflowExecutionId?: string;
+    readonly supervisedRunId?: string;
+    readonly supervisorExecutionId?: string;
+    readonly supervisorConversationId?: string;
+    readonly supervisorDecisionId?: string;
     readonly inputPayload?: unknown;
     readonly dispatchPayload?: unknown;
     readonly error?: string;
@@ -208,6 +224,18 @@ export async function updateEventReceipt(
     ...(input.workflowExecutionId === undefined
       ? {}
       : { workflowExecutionId: input.workflowExecutionId }),
+    ...(input.supervisedRunId === undefined
+      ? {}
+      : { supervisedRunId: input.supervisedRunId }),
+    ...(input.supervisorExecutionId === undefined
+      ? {}
+      : { supervisorExecutionId: input.supervisorExecutionId }),
+    ...(input.supervisorConversationId === undefined
+      ? {}
+      : { supervisorConversationId: input.supervisorConversationId }),
+    ...(input.supervisorDecisionId === undefined
+      ? {}
+      : { supervisorDecisionId: input.supervisorDecisionId }),
     ...(input.error === undefined ? {} : { error: input.error }),
     updatedAt: new Date().toISOString(),
   };

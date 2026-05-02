@@ -31,8 +31,8 @@ export interface CreateWorkflowTemplateOptions extends LoadOptions {
 interface TemplateNodeDefinition {
   readonly id: string;
   readonly role: "manager" | "worker";
-  readonly executionBackend: "claude-code-agent" | "codex-agent";
-  readonly model: string;
+  readonly executionBackend?: "claude-code-agent" | "codex-agent";
+  readonly model?: string;
   readonly prompt: string;
   readonly includeWorkflowId: boolean;
 }
@@ -43,16 +43,14 @@ interface TemplateDefinition {
     readonly divedraPromptTemplate?: string;
     readonly workerSystemPromptTemplate?: string;
   };
-  readonly managerNodeId?: string;
-  readonly entryNodeId: string;
+  readonly managerStepId?: string;
+  readonly entryStepId: string;
 }
 
 const MANAGED_TEMPLATE_NODE_DEFINITIONS = [
   {
     id: "divedra-manager",
     role: "manager",
-    executionBackend: "claude-code-agent",
-    model: "claude-opus-4-1",
     prompt: "Coordinate workflow execution for {{workflowId}}",
     includeWorkflowId: true,
   },
@@ -83,13 +81,24 @@ function templateNodeFileName(nodeId: string): string {
 
 function createTemplateWorkflowNode(definition: TemplateNodeDefinition): {
   readonly id: string;
-  readonly role: TemplateNodeDefinition["role"];
   readonly nodeFile: string;
 } {
   return {
     id: definition.id,
-    role: definition.role,
     nodeFile: templateNodeFileName(definition.id),
+  };
+}
+
+function createTemplateWorkflowStep(definition: TemplateNodeDefinition): {
+  readonly id: string;
+  readonly nodeId: string;
+  readonly role: TemplateNodeDefinition["role"];
+  readonly transitions?: readonly { readonly toStepId: string }[];
+} {
+  return {
+    id: definition.id,
+    nodeId: definition.id,
+    role: definition.role,
   };
 }
 
@@ -100,20 +109,25 @@ function createTemplateNodePayload(
   readonly fileName: string;
   readonly payload: {
     readonly id: string;
-    readonly executionBackend: TemplateNodeDefinition["executionBackend"];
-    readonly model: string;
     readonly promptTemplateFile: string;
     readonly variables: Readonly<Record<string, string>>;
+    readonly executionBackend?: Exclude<
+      TemplateNodeDefinition["executionBackend"],
+      undefined
+    >;
+    readonly model?: string;
   };
 } {
   return {
     fileName: templateNodeFileName(definition.id),
     payload: {
       id: definition.id,
-      executionBackend: definition.executionBackend,
-      model: definition.model,
       promptTemplateFile: `prompts/${definition.id}.md`,
       variables: definition.includeWorkflowId ? { workflowId } : {},
+      ...(definition.executionBackend === undefined
+        ? {}
+        : { executionBackend: definition.executionBackend }),
+      ...(definition.model === undefined ? {} : { model: definition.model }),
     },
   };
 }
@@ -139,7 +153,7 @@ function resolveTemplateDefinition(
         workerSystemPromptTemplate:
           "Work only on the assigned node task, use the provided workflow context, and return the business JSON payload requested by the node.",
       },
-      entryNodeId: workerNode.id,
+      entryStepId: workerNode.id,
     };
   }
 
@@ -152,8 +166,8 @@ function resolveTemplateDefinition(
       workerSystemPromptTemplate:
         "Work only on the assigned node task, use the provided workflow context, and return the business JSON payload requested by the node.",
     },
-    managerNodeId: managerNode.id,
-    entryNodeId: managerNode.id,
+    managerStepId: managerNode.id,
+    entryStepId: managerNode.id,
   };
 }
 
@@ -223,11 +237,17 @@ export async function createWorkflowTemplate(
       nodeTimeoutMs: 120000,
     },
     prompts: templateDefinition.workflowPrompts,
-    ...(templateDefinition.managerNodeId === undefined
+    ...(templateDefinition.managerStepId === undefined
       ? {}
-      : { managerNodeId: templateDefinition.managerNodeId }),
-    entryNodeId: templateDefinition.entryNodeId,
+      : { managerStepId: templateDefinition.managerStepId }),
+    entryStepId: templateDefinition.entryStepId,
     nodes: templateDefinition.nodes.map(createTemplateWorkflowNode),
+    steps: templateDefinition.nodes.map((definition, index, definitions) => ({
+      ...createTemplateWorkflowStep(definition),
+      ...(index + 1 < definitions.length
+        ? { transitions: [{ toStepId: definitions[index + 1]!.id }] }
+        : {}),
+    })),
   };
 
   const nodePayloads = templateDefinition.nodes.map((definition) =>

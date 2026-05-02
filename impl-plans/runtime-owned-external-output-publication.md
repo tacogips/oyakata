@@ -1,19 +1,19 @@
 # Runtime-Owned External Output Publication Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-runtime-owned-external-output-publication.md#Source Selection Rule
+**Design Reference**: design-docs/specs/architecture.md#output-ownership, design-docs/specs/notes.md
 **Created**: 2026-03-08
-**Last Updated**: 2026-03-08
+**Last Updated**: 2026-04-27 (helper name in doc: `isWorkflowOutputKindNode`, not structural "root scope")
 
 ---
 
 ## Design Document Reference
 
-**Source**: `design-docs/specs/design-runtime-owned-external-output-publication.md`
+**Source**: consolidated into `design-docs/specs/architecture.md` and `design-docs/specs/notes.md`
 
 ### Summary
 
-Harden external workflow-result publication so the runtime always publishes from the latest accepted root-scope `output` node artifact in the current `workflowExecutionId`.
+Harden external workflow-result publication so the runtime always publishes from the latest accepted `output` **kind** node execution (`nodes[].kind === "output"`, `isWorkflowOutputKindNode`) in the current `workflowExecutionId`. This is not the removed structural sub-workflow model; it is the per-workflow output node role.
 
 This work must preserve the existing runtime-owned mailbox boundary and explicitly reject any interpretation of "session final response" that would let a later manager turn or arbitrary last node execution override the publishable workflow result.
 
@@ -23,8 +23,8 @@ This work must preserve the existing runtime-owned mailbox boundary and explicit
 - make the external-output publication rule explicit in runtime code
 - centralize source selection for external publication behind a narrow helper
 - ensure publication reads from accepted node execution artifacts only
-- keep root `workflowOutput` runtime variable behavior aligned with the same root-output concept
-- add regression tests for manager-after-output, multiple root outputs, no root output, corrupted source artifacts, and publication-write failure cases
+- keep `workflowOutput` runtime variable behavior aligned with the same output-kind selection rule
+- add regression tests for manager-after-output, multiple output-kind successes, no eligible output, corrupted source artifacts, and publication-write failure cases
 
 **Excluded**:
 - new workflow configuration fields
@@ -43,7 +43,7 @@ The point is not to invent a new publication mechanism. The point is to make the
 
 - external output publication is runtime-owned
 - the publication source is artifact-based
-- only accepted root-scope `output` node executions are eligible
+- only accepted `output` kind node executions are eligible (`isWorkflowOutputKindNode`)
 - "last session response" is not an eligible source selector
 
 When reading existing code, treat any logic that depends on execution chronology without checking node kind/scope/status as suspicious.
@@ -64,7 +64,7 @@ interface ExternalOutputPublicationCandidate {
   readonly outputRef: OutputRef;
 }
 
-function isRootScopeOutputNode(workflow: WorkflowJson, nodeId: string): boolean;
+function isWorkflowOutputKindNode(workflow: WorkflowJson, nodeId: string): boolean;
 
 function findLatestPublishedWorkflowResult(
   workflow: WorkflowJson,
@@ -88,15 +88,15 @@ async function persistExternalMailboxOutputCommunication(input: {
 
 **Implementation instructions**:
 - Audit the existing external publication path and make sure there is exactly one source-selection helper used for external publication.
-- Keep source selection based on `session.nodeExecutions` ordering, filtered to `status === "succeeded"` and root-scope `output` nodes only.
+- Keep source selection based on `session.nodeExecutions` ordering, filtered to `status === "succeeded"` and node refs with kind `output` (via `isWorkflowOutputKindNode`) only.
 - Do not select based on the last executed node generically.
 - Do not select based on manager responses, mailbox timestamps, or raw provider responses.
 - Ensure publication payload is loaded from the selected execution artifact `output.json`, not from any in-memory "last response" shortcut.
 - If a helper already exists and already matches the design, keep the implementation minimal and focus on making the invariant harder to bypass.
 
 **Checklist**:
-- [x] External publication uses one explicit root-output source-selection helper
-- [x] Helper filters by root scope, node kind `output`, and `succeeded` status
+- [x] External publication uses one explicit output-kind source-selection helper
+- [x] Helper filters by node kind `output` (`isWorkflowOutputKindNode`) and `succeeded` status
 - [x] Publication payload is read from the selected execution artifact
 - [x] No fallback to arbitrary last session response remains
 
@@ -109,19 +109,17 @@ async function persistExternalMailboxOutputCommunication(input: {
 **Status**: COMPLETED
 
 ```ts
-function isRootScopeNode(workflow: WorkflowJson, nodeId: string): boolean;
-
-function isRootScopeOutputNode(workflow: WorkflowJson, nodeId: string): boolean;
+function isWorkflowOutputKindNode(workflow: WorkflowJson, nodeId: string): boolean;
 ```
 
 **Implementation instructions**:
-- Confirm that `session.runtimeVariables.workflowOutput` is written only from successful root-scope `output` node executions.
+- Confirm that `session.runtimeVariables.workflowOutput` is written only from successful `output` kind node executions.
 - Keep its meaning aligned with external publication semantics.
-- If there is duplicated root-output detection logic, collapse it so publication and `workflowOutput` use the same root-output predicate.
+- If there is duplicated output-kind detection logic, collapse it so publication and `workflowOutput` use the same predicate (`isWorkflowOutputKindNode`).
 
 **Checklist**:
-- [x] `workflowOutput` continues to reflect root-scope `output` node payloads only
-- [x] Root-output predicate is shared rather than re-implemented inconsistently
+- [x] `workflowOutput` continues to reflect `output` kind node payloads only
+- [x] Output-kind predicate is shared rather than re-implemented inconsistently
 
 ---
 
@@ -162,8 +160,7 @@ test("fails deterministically when external output publication cannot persist it
 
 ### 4. Design Consistency References
 
-#### `design-docs/specs/design-divedra-manager-prompt-contract.md`
-#### `design-docs/specs/design-runtime-owned-external-output-publication.md`
+#### `design-docs/specs/architecture.md`, `design-docs/specs/notes.md`
 
 **Status**: COMPLETED
 

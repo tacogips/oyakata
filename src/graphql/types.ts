@@ -1,4 +1,5 @@
 import type { MockNodeScenario } from "../workflow/adapter";
+import type { AutoImprovePolicyInput } from "../workflow/auto-improve-policy";
 import type { CreateWorkflowTemplateMode } from "../workflow/create";
 import type { WorkflowExecutionSummary } from "../shared/ui-contract";
 import type {
@@ -37,12 +38,29 @@ import type {
   NodeExecutionRecord,
   WorkflowSessionState,
 } from "../workflow/session";
-import type { ChatReplyDispatcher, LoadOptions } from "../workflow/types";
 import type {
-  NormalizedWorkflowBundle,
+  ChatReplyDispatcher,
+  LoadOptions,
+  ResolvedWorkflowSource,
   ValidationIssue,
+  WorkflowScopeSelector,
 } from "../workflow/types";
 import type { CommunicationService } from "../workflow/communication-service";
+import type { EventSupervisedRunRecord } from "../events/types";
+import type {
+  ManagedWorkflowRunRecord,
+  SupervisorDispatchDecisionRecord,
+  WorkflowSupervisorConversationRecord,
+} from "../events/supervisor-conversations";
+import type {
+  DispatchProposalValidationIssue,
+  SupervisorDispatchProposal,
+} from "../events/supervisor-dispatch-contract";
+import type {
+  WorkflowCatalogOverview,
+  WorkflowStatusOverview,
+  WorkflowOverviewStatus,
+} from "../workflow/overview";
 
 export interface GraphqlRequestContext
   extends LoadOptions,
@@ -51,7 +69,9 @@ export interface GraphqlRequestContext
   readonly managerSessionId?: string;
   readonly readOnly?: boolean;
   readonly fixedWorkflowName?: string;
+  readonly fixedResolvedWorkflowSource?: ResolvedWorkflowSource;
   readonly noExec?: boolean;
+  readonly eventRoot?: string;
   readonly eventReplyDispatcher?: ChatReplyDispatcher;
 }
 
@@ -83,6 +103,18 @@ export interface WorkflowExecutionsQueryInput {
   readonly afterWorkflowExecutionId?: string;
 }
 
+export interface WorkflowCatalogOverviewGraphqlInput {
+  readonly workflowScope?: WorkflowScopeSelector;
+  readonly status?: WorkflowOverviewStatus;
+  readonly limit?: number;
+}
+
+export interface WorkflowStatusOverviewGraphqlInput {
+  readonly workflowName: string;
+  readonly workflowScope?: WorkflowScopeSelector;
+  readonly limit?: number;
+}
+
 export interface NodeExecutionLookupInput {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
@@ -109,9 +141,13 @@ export interface WorkflowView extends WorkflowInspectionSummary {}
 
 export interface WorkflowDefinitionView extends WorkflowResponse {}
 
+export interface WorkflowSessionView extends WorkflowSessionState {
+  readonly currentStepId: string | null;
+}
+
 export interface WorkflowExecutionView {
   readonly workflowExecutionId: string;
-  readonly session: WorkflowSessionState;
+  readonly session: WorkflowSessionView;
   readonly nodeExecutions: readonly RuntimeNodeExecutionSummary[];
   readonly nodeLogs: readonly RuntimeNodeLogEntry[];
   readonly hookEvents: readonly RuntimeHookEventRecord[];
@@ -123,7 +159,7 @@ export interface WorkflowExecutionOverviewView {
   readonly workflowId: string;
   readonly workflowName: string;
   readonly status: WorkflowSessionState["status"];
-  readonly session: WorkflowSessionState;
+  readonly session: WorkflowSessionView;
   readonly nodes: readonly NodeExecutionView[];
   readonly communications: CommunicationConnection;
   readonly nodeLogs: readonly RuntimeNodeLogEntry[];
@@ -141,7 +177,10 @@ export interface NodeExecutionView {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
   readonly nodeId: string;
+  readonly stepId?: string;
+  readonly nodeRegistryId?: string;
   readonly nodeExecId: string;
+  readonly mailboxInstanceId?: string;
   readonly status: NodeExecutionRecord["status"];
   readonly startedAt: string;
   readonly endedAt: string;
@@ -151,6 +190,8 @@ export interface NodeExecutionView {
     readonly path: string;
     readonly message: string;
   }[];
+  readonly promptVariant?: string;
+  readonly timeoutMs?: number;
   readonly backendSessionId?: string;
   readonly backendSessionMode?: "new" | "reuse";
   readonly restartedFromNodeExecId?: string;
@@ -175,6 +216,8 @@ export interface ManagerSessionView {
 export interface ExecuteWorkflowInput {
   readonly workflowName: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly autoImprove?: AutoImprovePolicyInput;
+  readonly nestedSuperviser?: boolean;
   readonly workingDirectory?: string;
   readonly mockScenario?: MockNodeScenario;
   readonly async?: boolean;
@@ -196,7 +239,7 @@ export interface CreateWorkflowDefinitionInput {
 
 export interface SaveWorkflowDefinitionInput {
   readonly workflowName: string;
-  readonly bundle: NormalizedWorkflowBundle;
+  readonly bundle: GraphqlWorkflowBundleInput;
   readonly expectedRevision?: string;
 }
 
@@ -210,7 +253,12 @@ export interface SaveWorkflowDefinitionPayload
 
 export interface ValidateWorkflowDefinitionInput {
   readonly workflowName: string;
-  readonly bundle?: NormalizedWorkflowBundle;
+  readonly bundle?: GraphqlWorkflowBundleInput;
+}
+
+export interface GraphqlWorkflowBundleInput {
+  readonly workflow: unknown;
+  readonly nodePayloads: unknown;
 }
 
 export interface ValidateWorkflowDefinitionPayload extends ValidationResponse {}
@@ -225,6 +273,8 @@ export interface ExecuteWorkflowPayload {
 
 export interface ResumeWorkflowExecutionInput {
   readonly workflowExecutionId: string;
+  readonly autoImprove?: AutoImprovePolicyInput;
+  readonly nestedSuperviser?: boolean;
   readonly workingDirectory?: string;
   readonly dryRun?: boolean;
   readonly maxSteps?: number;
@@ -241,7 +291,8 @@ export interface ResumeWorkflowExecutionPayload {
 
 export interface RerunWorkflowExecutionInput {
   readonly workflowExecutionId: string;
-  readonly nodeId: string;
+  readonly stepId: string;
+  readonly autoImprove?: AutoImprovePolicyInput;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly workingDirectory?: string;
   readonly dryRun?: boolean;
@@ -254,7 +305,59 @@ export interface RerunWorkflowExecutionPayload {
   readonly workflowExecutionId: string;
   readonly sessionId: string;
   readonly status: WorkflowSessionState["status"];
+  readonly rerunFromStepId?: string;
   readonly exitCode: number;
+}
+
+export interface ContinueWorkflowExecutionInput {
+  readonly sourceWorkflowExecutionId: string;
+  readonly startStepId: string;
+  readonly afterStepRunId: string;
+  readonly autoImprove?: AutoImprovePolicyInput;
+  readonly nestedSuperviser?: boolean;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly workingDirectory?: string;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+  readonly mockScenario?: MockNodeScenario;
+}
+
+export interface ContinueWorkflowExecutionPayload {
+  readonly workflowExecutionId: string;
+  readonly sessionId: string;
+  readonly status: WorkflowSessionState["status"];
+  readonly exitCode: number;
+  readonly continuedAfterStepRunId: string;
+  readonly continuedStartStepId: string;
+}
+
+export interface WorkflowExecutionStepRunsQueryInput {
+  readonly workflowExecutionId: string;
+  readonly stepId?: string;
+  readonly status?: string;
+}
+
+export interface WorkflowExecutionStepRunView {
+  readonly workflowExecutionId: string;
+  readonly timelineOrdinal: number;
+  readonly executionOrdinal: number;
+  readonly stepRunId: string;
+  readonly stepId?: string;
+  readonly nodeRegistryId?: string;
+  readonly status: string;
+  readonly imported: boolean;
+  readonly sourceWorkflowExecutionId: string;
+  readonly startedAt: string;
+  readonly endedAt: string;
+}
+
+export interface WorkflowExecutionStepRunsPayload {
+  readonly workflowExecutionId: string;
+  readonly workflowId: string;
+  readonly workflowName: string;
+  readonly stepRuns: readonly WorkflowExecutionStepRunView[];
 }
 
 export interface CancelWorkflowExecutionInput {
@@ -268,6 +371,101 @@ export interface CancelWorkflowExecutionPayload {
   readonly status: WorkflowSessionState["status"];
 }
 
+export interface EventSupervisorCommandInput {
+  readonly commandId: string;
+  readonly sourceId: string;
+  readonly bindingId: string;
+  readonly correlationKey: string;
+  readonly action: string;
+  readonly targetWorkflowName: string;
+  readonly supervisedRunId?: string;
+  readonly targetWorkflowExecutionId?: string;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly reason?: string;
+  readonly receivedEventReceiptId: string;
+}
+
+export interface DispatchSupervisedWorkflowCommandInput {
+  readonly command: EventSupervisorCommandInput;
+  readonly binding: unknown;
+  readonly runtimeVariables?: Readonly<Record<string, unknown>>;
+  readonly mockScenario?: MockNodeScenario;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+}
+
+export interface SupervisedWorkflowGraphqlPayload {
+  readonly supervisedRun: EventSupervisedRunRecord;
+  readonly activeTargetStatus?: WorkflowSessionState["status"];
+}
+
+export interface SupervisedWorkflowLookupGraphqlInput {
+  readonly supervisedRunId?: string;
+  readonly sourceId?: string;
+  readonly bindingId?: string;
+  readonly correlationKey?: string;
+}
+
+export interface DispatchSupervisorChatGraphqlInput {
+  readonly sourceId: string;
+  readonly text: string;
+  readonly conversationId?: string;
+  readonly threadId?: string;
+  readonly eventId?: string;
+  readonly eventType?: string;
+  readonly provider?: string;
+  readonly idempotencyKey?: string;
+}
+
+export interface DispatchSupervisorChatResultView {
+  readonly receiptId: string;
+  readonly status: string;
+  readonly duplicate: boolean;
+  readonly bindingId?: string;
+  readonly workflowName?: string;
+  readonly workflowExecutionId?: string;
+  readonly supervisedRunId?: string;
+  readonly supervisorExecutionId?: string;
+  readonly error?: string;
+}
+
+export interface DispatchSupervisorChatPayload {
+  readonly results: readonly DispatchSupervisorChatResultView[];
+}
+
+export interface DispatchSupervisorConversationGraphqlInput {
+  readonly binding: unknown;
+  readonly event: unknown;
+  readonly supervisorProfileId: string;
+  readonly correlationKey: string;
+  readonly sourceMessageId: string;
+  readonly mockScenario?: MockNodeScenario;
+  readonly dryRun?: boolean;
+  readonly maxSteps?: number;
+  readonly maxLoopIterations?: number;
+  readonly defaultTimeoutMs?: number;
+}
+
+export interface DispatchSupervisorConversationPayload {
+  readonly conversation: WorkflowSupervisorConversationRecord;
+  readonly managedRuns: readonly ManagedWorkflowRunRecord[];
+  readonly decision: SupervisorDispatchDecisionRecord;
+  readonly proposal: SupervisorDispatchProposal;
+  readonly applied: boolean;
+  readonly validationIssues?: readonly DispatchProposalValidationIssue[];
+}
+
+export interface SupervisorDispatchConversationLookupGraphqlInput {
+  readonly supervisorConversationId: string;
+}
+
+export interface SupervisorDispatchConversationGraphqlPayload {
+  readonly conversation: WorkflowSupervisorConversationRecord;
+  readonly managedRuns: readonly ManagedWorkflowRunRecord[];
+}
+
 export interface SendManagerMessageInput {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
@@ -276,7 +474,6 @@ export interface SendManagerMessageInput {
   readonly attachments?: readonly DataDirFileRef[];
   readonly idempotencyKey?: string;
   readonly managerSessionId?: string;
-  readonly managerNodeId?: string;
   readonly managerNodeExecId?: string;
 }
 
@@ -337,10 +534,22 @@ export interface GraphqlQueryRoot {
     input: WorkflowExecutionOverviewLookupInput,
     context?: GraphqlRequestContext,
   ): Promise<WorkflowExecutionOverviewView | null>;
+  workflowExecutionStepRuns(
+    input: WorkflowExecutionStepRunsQueryInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowExecutionStepRunsPayload>;
   workflowExecutions(
     input: WorkflowExecutionsQueryInput,
     context?: GraphqlRequestContext,
   ): Promise<WorkflowExecutionConnection>;
+  workflowCatalogOverview(
+    input: WorkflowCatalogOverviewGraphqlInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowCatalogOverview>;
+  workflowStatusOverview(
+    input: WorkflowStatusOverviewGraphqlInput,
+    context?: GraphqlRequestContext,
+  ): Promise<WorkflowStatusOverview | null>;
   communications(
     input: CommunicationsQueryInput,
     context?: GraphqlRequestContext,
@@ -357,6 +566,14 @@ export interface GraphqlQueryRoot {
     input: ManagerSessionLookupInput,
     context?: GraphqlRequestContext,
   ): Promise<ManagerSessionView | null>;
+  supervisedWorkflowRun(
+    input: SupervisedWorkflowLookupGraphqlInput,
+    context?: GraphqlRequestContext,
+  ): Promise<SupervisedWorkflowGraphqlPayload>;
+  supervisorDispatchConversation(
+    input: SupervisorDispatchConversationLookupGraphqlInput,
+    context?: GraphqlRequestContext,
+  ): Promise<SupervisorDispatchConversationGraphqlPayload>;
 }
 
 export interface GraphqlMutationRoot {
@@ -384,6 +601,10 @@ export interface GraphqlMutationRoot {
     input: RerunWorkflowExecutionInput,
     context?: GraphqlRequestContext,
   ): Promise<RerunWorkflowExecutionPayload>;
+  continueWorkflowExecution(
+    input: ContinueWorkflowExecutionInput,
+    context?: GraphqlRequestContext,
+  ): Promise<ContinueWorkflowExecutionPayload>;
   sendManagerMessage(
     input: SendManagerMessageInput,
     context?: GraphqlRequestContext,
@@ -400,6 +621,18 @@ export interface GraphqlMutationRoot {
     input: CancelWorkflowExecutionInput,
     context?: GraphqlRequestContext,
   ): Promise<CancelWorkflowExecutionPayload>;
+  dispatchSupervisedWorkflowCommand(
+    input: DispatchSupervisedWorkflowCommandInput,
+    context?: GraphqlRequestContext,
+  ): Promise<SupervisedWorkflowGraphqlPayload>;
+  dispatchSupervisorChat(
+    input: DispatchSupervisorChatGraphqlInput,
+    context?: GraphqlRequestContext,
+  ): Promise<DispatchSupervisorChatPayload>;
+  dispatchSupervisorConversation(
+    input: DispatchSupervisorConversationGraphqlInput,
+    context?: GraphqlRequestContext,
+  ): Promise<DispatchSupervisorConversationPayload>;
 }
 
 export interface GraphqlSchema {

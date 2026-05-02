@@ -8,7 +8,11 @@ import {
   type NodeExecutionMailbox,
   type PromptCompositionUpstreamInput,
 } from "./node-execution-mailbox";
-import type { NodePayload, WorkflowJson, WorkflowNodeRef } from "./types";
+import {
+  type NodePayload,
+  type WorkflowJson,
+  type WorkflowNodeRef,
+} from "./types";
 
 export interface PromptCompositionInput {
   readonly workflow: WorkflowJson;
@@ -28,33 +32,11 @@ export interface ComposedExecutionPrompts {
   readonly promptText: string;
 }
 
-const DEFAULT_DIVEDRA_STRUCTURAL_SYSTEM_PROMPT = readFileSync(
-  new URL("./prompts/divedra-system-prompt.md", import.meta.url),
-  "utf8",
-).trim();
-
+/** Default manager system guidance (single path; structural alternate prompt removed). */
 const DEFAULT_DIVEDRA_ROLE_SYSTEM_PROMPT = readFileSync(
   new URL("./prompts/divedra-role-system-prompt.md", import.meta.url),
   "utf8",
 ).trim();
-
-function usesStructuralManagerCompatibility(
-  workflow: WorkflowJson,
-  nodeRef: WorkflowNodeRef,
-): boolean {
-  return (
-    nodeRef.kind === "subworkflow-manager" || workflow.subWorkflows.length > 0
-  );
-}
-
-function resolveDefaultManagerSystemPrompt(
-  workflow: WorkflowJson,
-  nodeRef: WorkflowNodeRef,
-): string {
-  return usesStructuralManagerCompatibility(workflow, nodeRef)
-    ? DEFAULT_DIVEDRA_STRUCTURAL_SYSTEM_PROMPT
-    : DEFAULT_DIVEDRA_ROLE_SYSTEM_PROMPT;
-}
 
 function buildPromptVariables(
   input: PromptCompositionInput,
@@ -71,12 +53,6 @@ function buildPromptVariables(
     args: input.assembledArguments,
     upstream: input.upstreamInputs.map((entry) => ({
       fromNodeId: entry.fromNodeId,
-      ...(entry.fromSubWorkflowId === undefined
-        ? {}
-        : { fromSubWorkflowId: entry.fromSubWorkflowId }),
-      ...(entry.toSubWorkflowId === undefined
-        ? {}
-        : { toSubWorkflowId: entry.toSubWorkflowId }),
       transitionWhen: entry.transitionWhen,
       communicationId: entry.communicationId,
       output: entry.output,
@@ -151,14 +127,7 @@ export function composeExecutionPrompts(input: {
         ).trim();
 
   const systemSections = isManagerNodeRef(input.promptComposition.nodeRef)
-    ? [
-        resolveDefaultManagerSystemPrompt(
-          input.promptComposition.workflow,
-          input.promptComposition.nodeRef,
-        ),
-        workflowPrompt,
-        nodeSystemPrompt,
-      ]
+    ? [DEFAULT_DIVEDRA_ROLE_SYSTEM_PROMPT, workflowPrompt, nodeSystemPrompt]
     : [workerSystemPrompt, nodeSystemPrompt];
 
   const promptSections = [sessionStartPrompt];

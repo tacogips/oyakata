@@ -128,30 +128,35 @@ function asInputMapping(value: unknown, label: string): EventInputMapping {
   );
 }
 
+function isSupervisorDispatchExecution(
+  execution: EventWorkflowExecutionPolicy | undefined,
+): boolean {
+  return execution?.mode === "supervisor-dispatch";
+}
+
 function asBinding(value: unknown, label: string): EventBinding {
   if (!isJsonObject(value)) {
     throw new Error(`${label} must contain a JSON object`);
   }
   const id = readOptionalString(value, "id");
   const sourceId = readOptionalString(value, "sourceId");
+  if (id === undefined || sourceId === undefined) {
+    throw new Error(`${label} must include non-empty id and sourceId`);
+  }
+  const execution = asExecutionPolicy(value["execution"]);
   const workflowName = readOptionalString(value, "workflowName");
-  if (
-    id === undefined ||
-    sourceId === undefined ||
-    workflowName === undefined
-  ) {
+  if (!isSupervisorDispatchExecution(execution) && workflowName === undefined) {
     throw new Error(
-      `${label} must include non-empty id, sourceId, and workflowName`,
+      `${label} must include non-empty workflowName unless execution.mode is supervisor-dispatch`,
     );
   }
   const match = value["match"];
   const enabled = readOptionalBoolean(value, "enabled");
-  const execution = asExecutionPolicy(value["execution"]);
   return {
     ...value,
     id,
     sourceId,
-    workflowName,
+    ...(workflowName === undefined ? {} : { workflowName }),
     inputMapping: asInputMapping(value["inputMapping"], label),
     ...(enabled === undefined ? {} : { enabled }),
     ...(isJsonObject(match) ? { match } : {}),

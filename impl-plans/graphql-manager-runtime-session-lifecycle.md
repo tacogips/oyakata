@@ -1,7 +1,7 @@
 # GraphQL Manager Runtime Session Lifecycle Implementation Plan
 
 **Status**: Completed
-**Design Reference**: design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md
+**Design Reference**: design-docs/specs/architecture.md, design-docs/specs/design-graphql-manager-control-plane.md
 **Created**: 2026-03-15
 **Last Updated**: 2026-03-15
 
@@ -16,8 +16,8 @@
 
 **Source**:
 
-- `design-docs/specs/design-graphql-manager-runtime-session-lifecycle.md`
 - `design-docs/specs/design-graphql-manager-control-plane.md`
+- `design-docs/specs/architecture.md`
 
 ### Summary
 
@@ -58,7 +58,7 @@ export interface AmbientManagerControlPlaneEnvironment {
   readonly DIVEDRA_MANAGER_SESSION_ID: string;
   readonly DIVEDRA_WORKFLOW_ID: string;
   readonly DIVEDRA_WORKFLOW_EXECUTION_ID: string;
-  readonly DIVEDRA_MANAGER_NODE_ID: string;
+  readonly DIVEDRA_MANAGER_RUNTIME_ID: string;
   readonly DIVEDRA_MANAGER_NODE_EXEC_ID: string;
 }
 
@@ -66,7 +66,7 @@ export function mintManagerAuthToken(): string;
 export function buildAmbientManagerControlPlaneEnvironment(input: {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
-  readonly managerNodeId: string;
+  readonly managerRuntimeId: string;
   readonly managerNodeExecId: string;
   readonly managerSessionId: string;
   readonly authToken: string;

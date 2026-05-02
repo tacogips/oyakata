@@ -23,10 +23,12 @@ bun run src/main.ts workflow inspect workflow-call-simple --workflow-root ./exam
 
 Expected stable inspection facts:
 
-- `managerNodeId` is `divedra-manager`
-- `counts.workflowCalls` is `1`
-- `workflowCallIds` contains `call-review`
-- `subWorkflows` remains omitted from the authored bundle
+- `managerStepId` is `divedra-manager`
+- `entryStepId` is `divedra-manager`
+- `stepIds` are `["divedra-manager", "draft-write", "apply-review"]`
+- `counts.crossWorkflowDispatches` is `1`
+- `crossWorkflowDispatchIds` contains `__cw:draft-write` (derived from the cross-workflow step transition)
+- the authored bundle does not include structural `subWorkflows` (validation rejects that field)
 
 ## Run
 
@@ -54,7 +56,7 @@ Expected stable run summary:
 
 Expected stable workflow-call facts:
 
-- the parent session records one communication with `transitionWhen = "workflow-call:call-review"`
+- the parent session records one communication with `transitionWhen = "workflow-call:__cw:draft-write"`
 - that communication targets `apply-review`
 - that communication payload references workflow id `workflow-call-review-target`
 

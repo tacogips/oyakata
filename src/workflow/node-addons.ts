@@ -1,3 +1,7 @@
+import {
+  describeSuperviserControlAddon,
+  isSuperviserControlAddonName,
+} from "./types";
 import type {
   AgentWorkerAddonConfig,
   CliAgentBackend,
@@ -12,8 +16,10 @@ import type {
   NodeAddonResolveResult,
   NodeOutputContract,
   NodePayload,
-  ResolvedWorkflowSource,
   ResolvedNodeAddon,
+  ResolvedSuperviserControlAddon,
+  ResolvedWorkflowSource,
+  SuperviserControlAddonName,
   ValidationIssue,
   WorkflowNodeAddonRef,
   XGatewayAddonConfig,
@@ -38,6 +44,7 @@ export const MAIL_GATEWAY_READ_ADDON_NAME = "divedra/mail-gateway-read";
 export const MAIL_GATEWAY_READ_ADDON_VERSION = "1";
 export const DEFAULT_MAIL_GATEWAY_IMAGE =
   "ghcr.io/tacogips/mail-gateway:latest";
+export const SUPERVISER_CONTROL_ADDON_VERSION = "1";
 
 const CHAT_REPLY_WORKER_OUTPUT: NodeOutputContract = {
   description:
@@ -143,6 +150,22 @@ const MAIL_GATEWAY_OUTPUT: NodeOutputContract = {
     additionalProperties: true,
     properties: {
       mailGateway: {
+        type: "object",
+        additionalProperties: true,
+      },
+    },
+  },
+};
+
+const SUPERVISER_CONTROL_ADDON_OUTPUT: NodeOutputContract = {
+  description:
+    "Nested superviser control-plane result (start/status/rerun/load/save) scoped to a supervision run (phase-2 auto-improve).",
+  jsonSchema: {
+    type: "object",
+    required: ["superviser"],
+    additionalProperties: true,
+    properties: {
+      superviser: {
         type: "object",
         additionalProperties: true,
       },
@@ -1126,10 +1149,122 @@ function resolveMailGatewayPayload(input: {
   return resolveGatewayPayload(input, MAIL_GATEWAY_DESCRIPTOR);
 }
 
+function resolveSuperviserControlPayload(input: {
+  readonly nodeId: string;
+  readonly addon: WorkflowNodeAddonRef;
+  readonly path: string;
+}): {
+  readonly payload?: NodePayload;
+  readonly issues: readonly ValidationIssue[];
+} {
+  if (!isSuperviserControlAddonName(input.addon.name)) {
+    return { issues: [] };
+  }
+  const name: SuperviserControlAddonName = input.addon.name;
+  const version = input.addon.version ?? SUPERVISER_CONTROL_ADDON_VERSION;
+  if (version !== SUPERVISER_CONTROL_ADDON_VERSION) {
+    return {
+      issues: [
+        makeIssue(
+          `${input.path}.version`,
+          `unsupported version '${version}' for ${name}`,
+        ),
+      ],
+    };
+  }
+  let argumentsTemplate: Readonly<Record<string, unknown>> | undefined;
+  let argumentBindings: NodePayload["argumentBindings"];
+  const cfg = input.addon.config;
+  if (cfg !== undefined) {
+    if (!isRecord(cfg)) {
+      return {
+        issues: [makeIssue(`${input.path}.config`, "must be an object")],
+      };
+    }
+    const allowed = new Set(["argumentsTemplate", "argumentBindings"]);
+    for (const key of Object.keys(cfg)) {
+      if (!allowed.has(key)) {
+        return {
+          issues: [
+            makeIssue(
+              `${input.path}.config.${key}`,
+              "only argumentsTemplate and argumentBindings are allowed for divedra superviser control add-ons",
+            ),
+          ],
+        };
+      }
+    }
+    const at = cfg["argumentsTemplate"];
+    if (at !== undefined) {
+      if (!isRecord(at)) {
+        return {
+          issues: [
+            makeIssue(
+              `${input.path}.config.argumentsTemplate`,
+              "must be an object",
+            ),
+          ],
+        };
+      }
+      argumentsTemplate = at;
+    }
+    const ab = cfg["argumentBindings"];
+    if (ab !== undefined) {
+      if (!Array.isArray(ab)) {
+        return {
+          issues: [
+            makeIssue(
+              `${input.path}.config.argumentBindings`,
+              "must be an array",
+            ),
+          ],
+        };
+      }
+      argumentBindings = ab as NodePayload["argumentBindings"];
+    }
+  }
+  if (input.addon.inputs !== undefined && !isRecord(input.addon.inputs)) {
+    return {
+      issues: [makeIssue(`${input.path}.inputs`, "must be an object")],
+    };
+  }
+  const unsupportedEnvIssues = rejectUnsupportedAddonEnv(
+    input.addon,
+    input.path,
+  );
+  if (unsupportedEnvIssues.length > 0) {
+    return { issues: unsupportedEnvIssues };
+  }
+  const addon: ResolvedSuperviserControlAddon = {
+    name,
+    version: SUPERVISER_CONTROL_ADDON_VERSION,
+  };
+  return {
+    payload: {
+      id: input.nodeId,
+      description: describeSuperviserControlAddon(name),
+      nodeType: "addon",
+      variables: input.addon.inputs ?? {},
+      addon,
+      output: SUPERVISER_CONTROL_ADDON_OUTPUT,
+      ...(argumentsTemplate === undefined ? {} : { argumentsTemplate }),
+      ...(argumentBindings === undefined ? {} : { argumentBindings }),
+    },
+    issues: [],
+  };
+}
+
 export function resolveBuiltinNodeAddonPayload(
   input: NodeAddonResolveInput,
 ): NodeAddonResolveResult {
   const version = input.addon.version ?? CHAT_REPLY_WORKER_ADDON_VERSION;
+  const superviserControlPayload = resolveSuperviserControlPayload(input);
+  if (
+    superviserControlPayload.payload !== undefined ||
+    superviserControlPayload.issues.length > 0
+  ) {
+    return superviserControlPayload;
+  }
   const agentWorkerPayload = resolveAgentWorkerPayload(input);
   if (
     agentWorkerPayload.payload !== undefined ||

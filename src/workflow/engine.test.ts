@@ -1,21 +1,29 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   AdapterExecutionError,
   DeterministicNodeAdapter,
+  type AdapterExecutionOutput,
   type MockNodeScenario,
   ScenarioNodeAdapter,
 } from "./adapter";
 import type { NodeAdapter } from "./adapter";
+import { createWorkflowTemplate } from "./create";
 import { runWorkflow } from "./engine";
 import { createManagerSessionStore } from "./manager-session-store";
-import { listRuntimeNodeLogs } from "./runtime-db";
+import { listRuntimeNodeExecutions, listRuntimeNodeLogs } from "./runtime-db";
+import { resolveCurrentStepId } from "./session";
 import { getSessionStoreRoot, loadSession, saveSession } from "./session-store";
+import { isSupervisionStallLastError } from "./superviser";
+import type { WorkflowJson, WorkflowTimeoutPolicy } from "./types";
 
 const tempDirs: string[] = [];
 const deterministicAdapter = new DeterministicNodeAdapter();
+
+/** Shared workflow-load options for engine test fixtures. */
+const workflowLoadOpts = {} as const;
 
 class OptionalDecisionAdapter implements NodeAdapter {
   managerCalls = 0;
@@ -37,7 +45,7 @@ class OptionalDecisionAdapter implements NodeAdapter {
           this.managerCalls >= 2
             ? {
                 managerControl: {
-                  actions: [{ type: "skip-optional-node", nodeId: "step-1" }],
+                  actions: [{ type: "skip-optional-step", stepId: "step-1" }],
                 },
               }
             : {},
@@ -513,6 +521,30 @@ class OutputContractRetryPromptCaptureAdapter implements NodeAdapter {
   }
 }
 
+class TimeoutCaptureAdapter implements NodeAdapter {
+  readonly timeouts: Array<{
+    readonly nodeId: string;
+    readonly timeoutMs: number;
+  }> = [];
+
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+    context: Parameters<NodeAdapter["execute"]>[1],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    this.timeouts.push({ nodeId: input.nodeId, timeoutMs: context.timeoutMs });
+    return {
+      provider: "timeout-capture-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
 class DescriptionOnlyRetryPromptCaptureAdapter implements NodeAdapter {
   prompts: string[] = [];
 
@@ -602,6 +634,93 @@ class ReusableSessionAdapter implements NodeAdapter {
       completionPassed: true,
       when: { always: true },
       payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
+class StepAddressedInheritedSessionAdapter implements NodeAdapter {
+  readonly calls: Array<{
+    readonly nodeId: string;
+    readonly backendSession?: {
+      readonly mode: "new" | "reuse";
+      readonly sessionId?: string;
+    };
+  }> = [];
+
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    this.calls.push({
+      nodeId: input.nodeId,
+      ...(input.backendSession === undefined
+        ? {}
+        : { backendSession: input.backendSession }),
+    });
+
+    const sessionId = input.backendSession?.sessionId ?? "shared-session-1";
+    const reused =
+      input.backendSession?.mode === "reuse" &&
+      input.backendSession.sessionId === "shared-session-1";
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {
+        nodeId: input.nodeId,
+        reused,
+      },
+      backendSession: {
+        sessionId,
+      },
+    };
+  }
+}
+
+class RotatingInheritedSessionAdapter implements NodeAdapter {
+  readonly calls: Array<{
+    readonly nodeId: string;
+    readonly backendSession?: {
+      readonly mode: "new" | "reuse";
+      readonly sessionId?: string;
+    };
+  }> = [];
+
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    this.calls.push({
+      nodeId: input.nodeId,
+      ...(input.backendSession === undefined
+        ? {}
+        : { backendSession: input.backendSession }),
+    });
+
+    const nextSessionId =
+      input.nodeId === "step-a"
+        ? "shared-session-1"
+        : input.nodeId === "step-b"
+          ? "shared-session-2"
+          : "shared-session-3";
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {
+        nodeId: input.nodeId,
+      },
+      backendSession: {
+        sessionId: nextSessionId,
+      },
     };
   }
 }
@@ -771,6 +890,40 @@ async function writeJson(filePath: string, payload: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+async function loadWorkflowFixture(
+  root: string,
+  workflowName: string,
+): Promise<WorkflowJson> {
+  const workflowRaw = await readFile(
+    path.join(root, workflowName, "workflow.json"),
+    "utf8",
+  );
+  return JSON.parse(workflowRaw) as unknown as WorkflowJson;
+}
+
+async function saveWorkflowFixture(
+  root: string,
+  workflowName: string,
+  workflow: WorkflowJson,
+): Promise<void> {
+  await writeJson(path.join(root, workflowName, "workflow.json"), workflow);
+}
+
+async function setWorkflowTimeoutPolicy(
+  root: string,
+  workflowName: string,
+  timeoutPolicy: WorkflowTimeoutPolicy,
+): Promise<void> {
+  const workflow = await loadWorkflowFixture(root, workflowName);
+  await saveWorkflowFixture(root, workflowName, {
+    ...workflow,
+    defaults: {
+      ...workflow.defaults,
+      timeoutPolicy,
+    },
+  });
+}
+
 afterEach(async () => {
   await Promise.all(
     tempDirs
@@ -787,70 +940,76 @@ async function createWorkflowFixture(
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
-  const nodes = withLoop
-    ? [
-        {
-          id: "divedra-manager",
-          kind: "root-manager",
-          nodeFile: "node-divedra-manager.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "step-1",
-          kind: "loop-judge",
-          nodeFile: "node-step-1.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "done",
-          kind: "output",
-          nodeFile: "node-done.json",
-          completion: { type: "none" },
-        },
-      ]
-    : [
-        {
-          id: "divedra-manager",
-          kind: "root-manager",
-          nodeFile: "node-divedra-manager.json",
-          completion: { type: "none" },
-        },
-        {
-          id: "step-1",
-          kind: "task",
-          nodeFile: "node-step-1.json",
-          completion: { type: "none" },
-        },
-      ];
-
-  const edges = withLoop
-    ? [
-        { from: "divedra-manager", to: "step-1", when: "always" },
-        { from: "step-1", to: "step-1", when: "continue_round" },
-        { from: "step-1", to: "done", when: "loop_exit" },
-      ]
-    : [{ from: "divedra-manager", to: "step-1", when: "always" }];
-
-  await writeJson(path.join(workflowDir, "workflow.json"), {
-    workflowId: workflowName,
-    description: "fixture",
-    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
-    nodes,
-    edges,
-    loops: withLoop
-      ? [
+  const workflowJson = withLoop
+    ? {
+        workflowId: workflowName,
+        description: "fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        managerStepId: "divedra-manager",
+        entryStepId: "divedra-manager",
+        nodes: [
           {
-            id: "main-loop",
-            judgeNodeId: "step-1",
-            continueWhen: "continue_round",
-            exitWhen: "loop_exit",
+            id: "divedra-manager",
+            nodeFile: "node-divedra-manager.json",
           },
-        ]
-      : [],
-    branching: { mode: "fan-out" },
-  });
+          {
+            id: "step-1",
+            kind: "loop-judge" as const,
+            nodeFile: "node-step-1.json",
+            repeat: { while: "continue_round" },
+          },
+          {
+            id: "done",
+            kind: "output" as const,
+            nodeFile: "node-done.json",
+          },
+        ],
+        steps: [
+          {
+            id: "divedra-manager",
+            nodeId: "divedra-manager",
+            role: "manager" as const,
+            transitions: [{ toStepId: "step-1" }],
+          },
+          {
+            id: "step-1",
+            nodeId: "step-1",
+            transitions: [
+              { toStepId: "step-1", label: "continue_round" },
+              { toStepId: "done", label: "!(continue_round)" },
+            ],
+          },
+          { id: "done", nodeId: "done" },
+        ],
+      }
+    : {
+        workflowId: workflowName,
+        description: "fixture",
+        defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+        managerStepId: "divedra-manager",
+        entryStepId: "divedra-manager",
+        nodes: [
+          {
+            id: "divedra-manager",
+            nodeFile: "node-divedra-manager.json",
+          },
+          {
+            id: "step-1",
+            nodeFile: "node-step-1.json",
+          },
+        ],
+        steps: [
+          {
+            id: "divedra-manager",
+            nodeId: "divedra-manager",
+            role: "manager" as const,
+            transitions: [{ toStepId: "step-1" }],
+          },
+          { id: "step-1", nodeId: "step-1" },
+        ],
+      };
+
+  await writeJson(path.join(workflowDir, "workflow.json"), workflowJson);
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
     id: "divedra-manager",
@@ -888,25 +1047,21 @@ async function createManagerlessWorkflowFixture(
 
   await writeJson(path.join(workflowDir, "workflow.json"), {
     workflowId: workflowName,
-    description: "managerless fixture",
+    description: "managerless step-addressed linear fixture (no manager step)",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    entryNodeId: "step-1",
+    entryStepId: "step-1",
     nodes: [
+      { id: "step-1", nodeFile: "node-step-1.json" },
+      { id: "step-2", nodeFile: "node-step-2.json" },
+    ],
+    steps: [
       {
         id: "step-1",
-        role: "worker",
-        nodeFile: "node-step-1.json",
-        completion: { type: "none" },
+        nodeId: "step-1",
+        transitions: [{ toStepId: "step-2" }],
       },
-      {
-        id: "step-2",
-        role: "worker",
-        nodeFile: "node-step-2.json",
-        completion: { type: "none" },
-      },
+      { id: "step-2", nodeId: "step-2" },
     ],
-    edges: [{ from: "step-1", to: "step-2", when: "always" }],
-    branching: { mode: "fan-out" },
   });
 
   await writeJson(path.join(workflowDir, "node-step-1.json"), {
@@ -926,6 +1081,58 @@ async function createManagerlessWorkflowFixture(
   });
 }
 
+async function createStepAddressedSupervisionRerunFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed supervision rerun fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "step-a",
+    nodes: [
+      {
+        id: "manager-node",
+        nodeFile: "nodes/node-manager.json",
+      },
+      {
+        id: "worker-node",
+        nodeFile: "nodes/node-worker.json",
+      },
+    ],
+    steps: [
+      {
+        id: "step-a",
+        nodeId: "manager-node",
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "worker-node",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "nodes", "node-manager.json"), {
+    id: "manager-node",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "manage",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "nodes", "node-worker.json"), {
+    id: "worker-node",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "work",
+    variables: {},
+  });
+}
+
 async function createRoleManagedWorkflowFixture(
   root: string,
   workflowName: string,
@@ -937,23 +1144,31 @@ async function createRoleManagedWorkflowFixture(
     workflowId: workflowName,
     description: "role-managed fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        role: "worker",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "step-1", when: "always" }],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1", label: "always" }],
+      },
+      {
+        id: "step-1",
+        nodeId: "step-1",
+        role: "worker",
+      },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -976,39 +1191,172 @@ async function createRoleManagedWorkflowFixture(
 async function createWorkflowCallFixture(
   root: string,
   workflowName: string,
+  calleeStartStepId = "reviewer",
 ): Promise<void> {
   const workflowDir = path.join(root, workflowName);
   await mkdir(workflowDir, { recursive: true });
 
   await writeJson(path.join(workflowDir, "workflow.json"), {
     workflowId: workflowName,
-    description: "workflow call fixture",
+    description: "step-addressed workflow call fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    entryNodeId: "writer",
-    workflowCalls: [
-      {
-        id: "call-review",
-        workflowId: "review-flow",
-        callerNodeId: "writer",
-        resultNodeId: "review-result",
-      },
-    ],
+    entryStepId: "writer",
     nodes: [
       {
         id: "writer",
-        role: "worker",
         nodeFile: "node-writer.json",
-        completion: { type: "none" },
       },
       {
         id: "review-result",
-        role: "worker",
         nodeFile: "node-review-result.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "writer",
+        nodeId: "writer",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review-flow",
+            toStepId: calleeStartStepId,
+            resumeStepId: "review-result",
+          },
+        ],
+      },
+      {
+        id: "review-result",
+        nodeId: "review-result",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer.json"), {
+    id: "writer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-review-result.json"), {
+    id: "review-result",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review result",
+    variables: {},
+  });
+}
+
+async function createWorkflowCallStepIdMismatchFixture(
+  root: string,
+  workflowName: string,
+  calleeStartStepId = "reviewer-step",
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed workflow call fixture with step/node mismatch",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "writer-step",
+    nodes: [
+      {
+        id: "writer-node",
+        nodeFile: "node-writer-node.json",
+      },
+      {
+        id: "review-result-node",
+        nodeFile: "node-review-result-node.json",
+      },
+    ],
+    steps: [
+      {
+        id: "writer-step",
+        nodeId: "writer-node",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review-flow",
+            toStepId: calleeStartStepId,
+            resumeStepId: "review-result-step",
+          },
+        ],
+      },
+      {
+        id: "review-result-step",
+        nodeId: "review-result-node",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer-node.json"), {
+    id: "writer-node",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-review-result-node.json"), {
+    id: "review-result-node",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review result",
+    variables: {},
+  });
+}
+
+/**
+ * Like {@link createWorkflowCallFixture} but the workflow call is conditioned with
+ * `when: "need_review"`. Deterministic adapter output does not satisfy it, so the
+ * callee is never run (see `executeCrossWorkflowDispatchesForNode` gating by `entry.when`).
+ */
+async function createWhenGatedWorkflowCallFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed workflow call fixture (when-gated)",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "writer",
+    nodes: [
+      {
+        id: "writer",
+        nodeFile: "node-writer.json",
+      },
+      {
+        id: "review-result",
+        nodeFile: "node-review-result.json",
+      },
+    ],
+    steps: [
+      {
+        id: "writer",
+        nodeId: "writer",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review-flow",
+            toStepId: "reviewer",
+            resumeStepId: "review-result",
+            label: "need_review",
+          },
+        ],
+      },
+      {
+        id: "review-result",
+        nodeId: "review-result",
+        role: "worker",
+      },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-writer.json"), {
@@ -1037,25 +1385,16 @@ async function createWorkflowCallCalleeFixture(
 
   await writeJson(path.join(workflowDir, "workflow.json"), {
     workflowId: workflowName,
-    description: "workflow call callee fixture",
+    description: "step-addressed workflow call callee fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    entryNodeId: "reviewer",
+    entryStepId: "reviewer",
     nodes: [
       {
         id: "reviewer",
-        role: "worker",
         nodeFile: "node-reviewer.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "done",
-        kind: "output",
-        nodeFile: "node-done.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "reviewer", to: "done", when: "always" }],
-    branching: { mode: "fan-out" },
+    steps: [{ id: "reviewer", nodeId: "reviewer", role: "worker" }],
   });
 
   await writeJson(path.join(workflowDir, "node-reviewer.json"), {
@@ -1065,12 +1404,37 @@ async function createWorkflowCallCalleeFixture(
     promptTemplate: "review",
     variables: {},
   });
+}
 
-  await writeJson(path.join(workflowDir, "node-done.json"), {
-    id: "done",
+async function createWorkflowCallCalleeStepIdMismatchFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description:
+      "step-addressed workflow call callee fixture with step/node mismatch",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "reviewer-step",
+    nodes: [
+      {
+        id: "reviewer-node",
+        nodeFile: "node-reviewer-node.json",
+      },
+    ],
+    steps: [
+      { id: "reviewer-step", nodeId: "reviewer-node", role: "worker" },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-reviewer-node.json"), {
+    id: "reviewer-node",
     executionBackend: "codex-agent",
     model: "gpt-5-nano",
-    promptTemplate: "done",
+    promptTemplate: "review",
     variables: {},
   });
 }
@@ -1084,25 +1448,34 @@ async function createManagedWorkflowCallCalleeWithoutOutputFixture(
 
   await writeJson(path.join(workflowDir, "workflow.json"), {
     workflowId: workflowName,
-    description: "managed workflow call callee without published output",
+    description:
+      "step-addressed managed workflow call callee without published output",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        role: "manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "reviewer",
-        role: "worker",
         nodeFile: "node-reviewer.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "reviewer", when: "always" }],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "reviewer" }],
+      },
+      {
+        id: "reviewer",
+        nodeId: "reviewer",
+        role: "worker",
+      },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1122,6 +1495,108 @@ async function createManagedWorkflowCallCalleeWithoutOutputFixture(
   });
 }
 
+/**
+ * Callee lives under `root/<directoryName>/` while `workflow.json` authors
+ * `workflowId: <workflowId>` (directory name may differ). Matches the
+ * step-addressed cross-workflow validation/runtime resolution contract.
+ */
+async function createStepAddressedCalleeWithMismatchedDirectoryName(
+  root: string,
+  directoryName: string,
+  workflowId: string,
+): Promise<void> {
+  const workflowDir = path.join(root, directoryName);
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId,
+    description: "worker-only callee (dir name != workflowId)",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "reviewer",
+    nodes: [{ id: "reviewer", nodeFile: "nodes/node-reviewer.json" }],
+    steps: [{ id: "reviewer", nodeId: "reviewer", role: "worker" }],
+  });
+
+  await writeJson(path.join(workflowDir, "nodes", "node-reviewer.json"), {
+    id: "reviewer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "Review workflowCall.input and return concise JSON.",
+    variables: {},
+  });
+}
+
+async function createStepAddressedCallerCrossWorkflowToCalleeId(
+  root: string,
+  workflowName: string,
+  calleeWorkflowId: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description:
+      "managed caller: cross-workflow transition by callee workflowId",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
+    nodes: [
+      { id: "divedra-manager", nodeFile: "nodes/node-divedra-manager.json" },
+      { id: "draft-write", nodeFile: "nodes/node-draft-write.json" },
+      { id: "apply-review", nodeFile: "nodes/node-apply-review.json" },
+    ],
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "draft-write" }],
+      },
+      {
+        id: "draft-write",
+        nodeId: "draft-write",
+        transitions: [
+          {
+            toWorkflowId: calleeWorkflowId,
+            toStepId: "reviewer",
+            resumeStepId: "apply-review",
+          },
+        ],
+      },
+      { id: "apply-review", nodeId: "apply-review" },
+    ],
+  });
+
+  await writeJson(
+    path.join(workflowDir, "nodes", "node-divedra-manager.json"),
+    {
+      id: "divedra-manager",
+      executionBackend: "claude-code-agent",
+      model: "claude-haiku-4-5",
+      promptTemplate:
+        "Coordinate and run draft-write before the workflow call.",
+      variables: {},
+    },
+  );
+
+  await writeJson(path.join(workflowDir, "nodes", "node-draft-write.json"), {
+    id: "draft-write",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "Produce caller payload for the review workflow.",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "nodes", "node-apply-review.json"), {
+    id: "apply-review",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "Apply the workflow-call review result.",
+    variables: {},
+  });
+}
+
 async function createOptionalExecutionFixture(
   root: string,
   workflowName: string,
@@ -1133,20 +1608,16 @@ async function createOptionalExecutionFixture(
     workflowId: workflowName,
     description: "optional fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        kind: "task",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
         execution: {
           mode: "optional",
           decisionBy: "owning-manager",
@@ -1156,15 +1627,22 @@ async function createOptionalExecutionFixture(
         id: "done",
         kind: "output",
         nodeFile: "node-done.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "step-1", when: "always" },
-      { from: "step-1", to: "done", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1" }],
+      },
+      {
+        id: "step-1",
+        nodeId: "step-1",
+        transitions: [{ toStepId: "done" }],
+      },
+      { id: "done", nodeId: "done" },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1201,25 +1679,27 @@ async function createUserActionFixture(
     workflowId: workflowName,
     description: "user action fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "approval",
-        kind: "task",
         nodeFile: "node-approval.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "approval", when: "always" }],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "approval" }],
+      },
+      { id: "approval", nodeId: "approval" },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1253,42 +1733,49 @@ async function createNodeSessionReuseFixture(
     workflowId: workflowName,
     description: "node session reuse fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-a",
-        kind: "task",
         nodeFile: "node-step-a.json",
-        completion: { type: "none" },
       },
       {
         id: "step-b",
-        kind: "task",
         nodeFile: "node-step-b.json",
-        completion: { type: "none" },
       },
       {
         id: "step-c",
-        kind: "task",
         nodeFile: "node-step-c.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "step-a", when: "always" },
-      { from: "step-a", to: "step-b", when: "always" },
-      { from: "step-b", to: "step-c", when: "go_c" },
-      { from: "step-c", to: "step-b", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-a" }],
+      },
+      {
+        id: "step-a",
+        nodeId: "step-a",
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "step-b",
+        transitions: [{ toStepId: "step-c", label: "go_c" }],
+      },
+      {
+        id: "step-c",
+        nodeId: "step-c",
+        transitions: [{ toStepId: "step-b" }],
+      },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1324,147 +1811,121 @@ async function createNodeSessionReuseFixture(
   });
 }
 
-async function createSubWorkflowRuntimeFixture(
+async function createStepAddressedInheritedSessionReuseFixture(
   root: string,
   workflowName: string,
 ): Promise<void> {
   const workflowDir = path.join(root, workflowName);
-  await mkdir(workflowDir, { recursive: true });
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
 
   await writeJson(path.join(workflowDir, "workflow.json"), {
     workflowId: workflowName,
-    description: "sub-workflow fixture",
+    description: "step-addressed inherited session reuse fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [
-      {
-        id: "sw-a",
-        description: "A",
-        managerNodeId: "a-manager",
-        inputNodeId: "a-input",
-        outputNodeId: "a-output",
-        nodeIds: ["a-manager", "a-input", "a-output"],
-        inputSources: [{ type: "human-input" }],
-      },
-      {
-        id: "sw-b",
-        description: "B",
-        managerNodeId: "b-manager",
-        inputNodeId: "b-input",
-        outputNodeId: "b-output",
-        nodeIds: ["b-manager", "b-input", "b-output"],
-        inputSources: [{ type: "sub-workflow-output", subWorkflowId: "sw-a" }],
-      },
-    ],
-    subWorkflowConversations: [
-      {
-        id: "conv-1",
-        participants: ["sw-a", "sw-b"],
-        maxTurns: 3,
-        stopWhen: "done",
-      },
-    ],
+    entryStepId: "step-a",
     nodes: [
       {
-        id: "divedra-manager",
-        kind: "root-manager",
-        nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "a-manager",
-        kind: "subworkflow-manager",
-        nodeFile: "node-a-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "a-input",
-        kind: "input",
-        nodeFile: "node-a-input.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "a-output",
-        kind: "output",
-        nodeFile: "node-a-output.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "b-manager",
-        kind: "subworkflow-manager",
-        nodeFile: "node-b-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "b-input",
-        kind: "input",
-        nodeFile: "node-b-input.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "b-output",
-        kind: "output",
-        nodeFile: "node-b-output.json",
-        completion: { type: "none" },
+        id: "writer-node",
+        nodeFile: "nodes/node-writer.json",
       },
     ],
-    edges: [
-      { from: "a-input", to: "a-output", when: "always" },
-      { from: "a-output", to: "divedra-manager", when: "always" },
-      { from: "b-input", to: "b-output", when: "always" },
-      { from: "b-output", to: "divedra-manager", when: "always" },
+    steps: [
+      {
+        id: "step-a",
+        nodeId: "writer-node",
+        sessionPolicy: {
+          mode: "reuse",
+        },
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "writer-node",
+        promptVariant: "review",
+        sessionPolicy: {
+          mode: "reuse",
+          inheritFromStepId: "step-a",
+        },
+      },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
-  await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
-    id: "divedra-manager",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "manager",
+  await writeJson(path.join(workflowDir, "nodes", "node-writer.json"), {
+    id: "writer-node",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "implement",
+    promptVariants: {
+      review: {
+        promptTemplate: "review",
+      },
+    },
     variables: {},
   });
-  await writeJson(path.join(workflowDir, "node-a-manager.json"), {
-    id: "a-manager",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "a-manager",
-    variables: {},
+}
+
+async function createRotatingInheritedSessionReuseFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(path.join(workflowDir, "nodes"), { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed inherited session lineage fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "step-a",
+    nodes: [
+      {
+        id: "writer-node",
+        nodeFile: "nodes/node-writer.json",
+      },
+    ],
+    steps: [
+      {
+        id: "step-a",
+        nodeId: "writer-node",
+        sessionPolicy: {
+          mode: "reuse",
+        },
+        transitions: [{ toStepId: "step-b" }],
+      },
+      {
+        id: "step-b",
+        nodeId: "writer-node",
+        promptVariant: "review",
+        sessionPolicy: {
+          mode: "reuse",
+          inheritFromStepId: "step-a",
+        },
+        transitions: [{ toStepId: "step-c" }],
+      },
+      {
+        id: "step-c",
+        nodeId: "writer-node",
+        promptVariant: "polish",
+        sessionPolicy: {
+          mode: "reuse",
+          inheritFromStepId: "step-a",
+        },
+      },
+    ],
   });
-  await writeJson(path.join(workflowDir, "node-a-input.json"), {
-    id: "a-input",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "a-input",
-    variables: {},
-  });
-  await writeJson(path.join(workflowDir, "node-a-output.json"), {
-    id: "a-output",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "a-output",
-    variables: {},
-  });
-  await writeJson(path.join(workflowDir, "node-b-manager.json"), {
-    id: "b-manager",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "b-manager",
-    variables: {},
-  });
-  await writeJson(path.join(workflowDir, "node-b-input.json"), {
-    id: "b-input",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "b-input",
-    variables: {},
-  });
-  await writeJson(path.join(workflowDir, "node-b-output.json"), {
-    id: "b-output",
-    executionBackend: "codex-agent",
-    model: "gpt-5-nano",
-    promptTemplate: "b-output",
+
+  await writeJson(path.join(workflowDir, "nodes", "node-writer.json"), {
+    id: "writer-node",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "implement",
+    promptVariants: {
+      review: {
+        promptTemplate: "review",
+      },
+      polish: {
+        promptTemplate: "polish",
+      },
+    },
     variables: {},
   });
 }
@@ -1480,28 +1941,32 @@ async function createManagerAfterOutputFixture(
     workflowId: workflowName,
     description: "manager-after-output fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "workflow-output",
         kind: "output",
         nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "workflow-output", when: "needs_output" },
-      { from: "workflow-output", to: "divedra-manager", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "workflow-output", label: "needs_output" }],
+      },
+      {
+        id: "workflow-output",
+        nodeId: "workflow-output",
+        transitions: [{ toStepId: "divedra-manager" }],
+      },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -1531,25 +1996,28 @@ async function createSingleRootOutputFixture(
     workflowId: workflowName,
     description: "single-root-output fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "workflow-output",
         kind: "output",
         nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "workflow-output", when: "always" }],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "workflow-output" }],
+      },
+      { id: "workflow-output", nodeId: "workflow-output" },
+    ],
   });
 
   for (const nodeId of ["divedra-manager", "workflow-output"]) {
@@ -1574,34 +2042,38 @@ async function createMultipleRootOutputsFixture(
     workflowId: workflowName,
     description: "multiple-root-outputs fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "first-output",
         kind: "output",
         nodeFile: "node-first-output.json",
-        completion: { type: "none" },
       },
       {
         id: "second-output",
         kind: "output",
         nodeFile: "node-second-output.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "first-output", when: "always" },
-      { from: "first-output", to: "second-output", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "first-output" }],
+      },
+      {
+        id: "first-output",
+        nodeId: "first-output",
+        transitions: [{ toStepId: "second-output" }],
+      },
+      { id: "second-output", nodeId: "second-output" },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
   for (const nodeId of ["divedra-manager", "first-output", "second-output"]) {
@@ -1626,34 +2098,37 @@ async function createRootOutputThenTaskFixture(
     workflowId: workflowName,
     description: "root-output-then-task fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [],
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "workflow-output",
         kind: "output",
         nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
       },
       {
         id: "final-task",
-        kind: "task",
         nodeFile: "node-final-task.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [
-      { from: "divedra-manager", to: "workflow-output", when: "always" },
-      { from: "workflow-output", to: "final-task", when: "always" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "workflow-output" }],
+      },
+      {
+        id: "workflow-output",
+        nodeId: "workflow-output",
+        transitions: [{ toStepId: "final-task" }],
+      },
+      { id: "final-task", nodeId: "final-task" },
     ],
-    loops: [],
-    branching: { mode: "fan-out" },
   });
 
   for (const nodeId of ["divedra-manager", "workflow-output", "final-task"]) {
@@ -1667,95 +2142,15 @@ async function createRootOutputThenTaskFixture(
   }
 }
 
-async function createWorkflowOutputDrivenSubWorkflowFixture(
-  root: string,
-  workflowName: string,
-): Promise<void> {
-  const workflowDir = path.join(root, workflowName);
-  await mkdir(workflowDir, { recursive: true });
-
-  await writeJson(path.join(workflowDir, "workflow.json"), {
-    workflowId: workflowName,
-    description: "workflow-output source fixture",
-    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
-    subWorkflows: [
-      {
-        id: "review-sw",
-        description: "Review after root output",
-        managerNodeId: "review-manager",
-        inputNodeId: "review-input",
-        outputNodeId: "review-output",
-        nodeIds: ["review-manager", "review-input", "review-output"],
-        inputSources: [{ type: "workflow-output", workflowId: workflowName }],
-      },
-    ],
-    nodes: [
-      {
-        id: "divedra-manager",
-        kind: "root-manager",
-        nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "workflow-output",
-        kind: "output",
-        nodeFile: "node-workflow-output.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "review-manager",
-        kind: "subworkflow-manager",
-        nodeFile: "node-review-manager.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "review-input",
-        kind: "input",
-        nodeFile: "node-review-input.json",
-        completion: { type: "none" },
-      },
-      {
-        id: "review-output",
-        kind: "output",
-        nodeFile: "node-review-output.json",
-        completion: { type: "none" },
-      },
-    ],
-    edges: [
-      { from: "divedra-manager", to: "workflow-output", when: "needs_output" },
-      { from: "workflow-output", to: "divedra-manager", when: "always" },
-      { from: "review-input", to: "review-output", when: "always" },
-    ],
-    loops: [],
-    branching: { mode: "fan-out" },
-  });
-
-  for (const nodeId of [
-    "divedra-manager",
-    "workflow-output",
-    "review-manager",
-    "review-input",
-    "review-output",
-  ]) {
-    await writeJson(path.join(workflowDir, `node-${nodeId}.json`), {
-      id: nodeId,
-      executionBackend: "codex-agent",
-      model: "gpt-5-nano",
-      promptTemplate: nodeId,
-      variables: {},
-    });
-  }
-}
-
 describe("runWorkflow", () => {
-  test("executes manager-less workflows from entryNodeId", async () => {
+  test("executes manager-less workflows from entryStepId", async () => {
     const root = await makeTempDir();
     await createManagerlessWorkflowFixture(root, "managerless");
 
     const result = await runWorkflow(
       "managerless",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -1776,7 +2171,987 @@ describe("runWorkflow", () => {
     ).toEqual(["step-1", "step-2"]);
   });
 
-  test("executes authored workflowCalls and delivers child workflow results", async () => {
+  test("seeds supervision state when autoImprove is set on a new run", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const sup = result.value.session.supervision;
+    expect(sup).toBeDefined();
+    expect(sup?.targetWorkflowId).toBe("managerless");
+    expect(sup?.superviserWorkflowId).toBe("divedra-default-superviser");
+    expect(sup?.status).toBe("succeeded");
+    expect(sup?.policy?.superviserWorkflowId).toBe(
+      "divedra-default-superviser",
+    );
+    expect(sup?.policy?.monitorIntervalMs).toBe(1500);
+    expect(sup?.incidents).toEqual([]);
+    expect(sup?.remediations).toEqual([]);
+    const artifactRoot = path.join(root, "artifacts");
+    const expectedCopy = path.join(
+      artifactRoot,
+      "supervision",
+      sup?.supervisionRunId ?? "missing",
+      "mutable",
+      "managerless",
+    );
+    expect(sup?.mutableWorkflowDir).toBe(expectedCopy);
+    const { stat: statAsync } = await import("node:fs/promises");
+    const st = await statAsync(expectedCopy);
+    expect(st.isDirectory()).toBe(true);
+    const wf = await readFile(path.join(expectedCopy, "workflow.json"), "utf8");
+    expect(wf).toContain("managerless");
+  });
+
+  test("auto-improve supervision loop retries after terminal failure and ends with status succeeded", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    class FailOncePerProcessAdapter implements NodeAdapter {
+      #failed = false;
+      readonly #inner = new DeterministicNodeAdapter();
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+        context: Parameters<NodeAdapter["execute"]>[1],
+      ) {
+        if (!this.#failed) {
+          this.#failed = true;
+          throw new Error("intentional first-attempt failure for supervision");
+        }
+        return this.#inner.execute(input, context);
+      }
+    }
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 3,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      new FailOncePerProcessAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const sup = result.value.session.supervision;
+    expect(sup?.status).toBe("succeeded");
+    expect(sup?.incidents).toHaveLength(1);
+    expect(sup?.incidents[0]?.category).toBe("failure");
+    expect(sup?.remediations?.map((r) => r.action)).toEqual(["rerun-workflow"]);
+    expect(sup?.attemptCount).toBe(2);
+  });
+
+  test("nestedSuperviserDriver runs default-superviser bundle and completes a one-step target", async () => {
+    const artifactRoot = path.join(await makeTempDir(), "artifacts");
+    const sessionStoreRoot = await makeTempDir();
+    const examplesRoot = path.resolve(process.cwd(), "examples");
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 25,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 5,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "worker-only-single-step",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: examplesRoot,
+        artifactRoot,
+        sessionStoreRoot,
+        autoImprove: policy,
+        nestedSuperviserDriver: true,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+    const sup = result.value.session.supervision;
+    expect(sup?.superviserWorkflowId).toBe("divedra-default-superviser");
+    expect(sup?.nestedSuperviserSessionId).toBeDefined();
+    expect(sup?.status).toBe("succeeded");
+  });
+
+  test("nestedSuperviserDriver resume starts a new nested round when the superviser session completed but the target is still max-steps paused", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.resolve(process.cwd(), "examples");
+    await createManagerlessWorkflowFixture(root, "managerless");
+    await cp(
+      path.join(examplesRoot, "default-superviser"),
+      path.join(root, "default-superviser"),
+      { recursive: true },
+    );
+    const artifactRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 25,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 5,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot,
+        sessionStoreRoot,
+        runtimeVariables: { topic: "t" },
+        autoImprove: policy,
+        nestedSuperviserDriver: true,
+        maxSteps: 1,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.session.status).toBe("paused");
+    const nestedId0 =
+      first.value.session.supervision?.nestedSuperviserSessionId;
+    expect(nestedId0).toBeDefined();
+
+    const second = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot,
+        sessionStoreRoot,
+        runtimeVariables: { topic: "t" },
+        resumeSessionId: first.value.session.sessionId,
+        autoImprove: policy,
+        nestedSuperviserDriver: true,
+      },
+      deterministicAdapter,
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) {
+      return;
+    }
+    expect(second.value.session.status).toBe("completed");
+    const nestedId1 =
+      second.value.session.supervision?.nestedSuperviserSessionId;
+    expect(nestedId1).toBeDefined();
+    expect(nestedId1).not.toBe(nestedId0);
+  });
+
+  test("auto-improve records patch-workflow and patch-revisions when the same error repeats, then succeeds", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const errMsg = "repeated same error for patch escalation";
+    class FailTwiceThenSucceed implements NodeAdapter {
+      n = 0;
+      readonly #inner = new DeterministicNodeAdapter();
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+        context: Parameters<NodeAdapter["execute"]>[1],
+      ) {
+        this.n += 1;
+        if (this.n <= 2) {
+          throw new Error(errMsg);
+        }
+        return this.#inner.execute(input, context);
+      }
+    }
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 5,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      new FailTwiceThenSucceed(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const sup = result.value.session.supervision;
+    expect(sup?.status).toBe("succeeded");
+    expect(sup?.remediations?.map((r) => r.action)).toEqual([
+      "rerun-workflow",
+      "patch-workflow",
+    ]);
+    expect(sup?.workflowPatchCount).toBe(1);
+    const failureIncidents = (sup?.incidents ?? []).filter(
+      (i) => i.category === "failure",
+    );
+    expect(failureIncidents.length).toBe(2);
+    const revPath = path.join(
+      root,
+      "artifacts",
+      "supervision",
+      sup?.supervisionRunId ?? "missing",
+      "patch-revisions.json",
+    );
+    const pr = await readFile(revPath, "utf8");
+    expect(pr).toContain("patchRevisionId");
+    expect(sup?.attemptCount).toBe(3);
+  });
+
+  test("auto-improve supervision stops with budget-exhausted when attempts exceed maxSupervisedAttempts", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    class FailAlwaysAdapter implements NodeAdapter {
+      async execute(
+        _input: Parameters<NodeAdapter["execute"]>[0],
+        _context: Parameters<NodeAdapter["execute"]>[1],
+      ): Promise<AdapterExecutionOutput> {
+        throw new Error("persistent failure for supervision budget test");
+      }
+    }
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 2,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      new FailAlwaysAdapter(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.sessionId).toBeDefined();
+    const loaded = await loadSession(result.error.sessionId!, {
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    const terminal = loaded.value;
+    expect(terminal.supervision?.status).toBe("stopped");
+    const incidents = terminal.supervision?.incidents ?? [];
+    expect(incidents.some((i) => i.category === "budget-exhausted")).toBe(true);
+    const failures = incidents.filter((i) => i.category === "failure");
+    expect(failures.length).toBe(2);
+    expect(failures.every((i) => i.summary.length > 0)).toBe(true);
+    expect(terminal.supervision?.remediations?.at(-1)?.action).toBe(
+      "stop-supervision",
+    );
+  });
+
+  test("auto-improve with maxSupervisedAttempts 1 records the terminal failure and budget-exhausted", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    class FailAlwaysAdapter implements NodeAdapter {
+      async execute(
+        _input: Parameters<NodeAdapter["execute"]>[0],
+        _context: Parameters<NodeAdapter["execute"]>[1],
+      ): Promise<AdapterExecutionOutput> {
+        throw new Error("only attempt fails");
+      }
+    }
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 1,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      new FailAlwaysAdapter(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    const loaded = await loadSession(result.error.sessionId!, {
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    const incidents = loaded.value.supervision?.incidents ?? [];
+    expect(incidents.map((i) => i.category)).toEqual([
+      "failure",
+      "budget-exhausted",
+    ]);
+  });
+
+  test("fails a supervised run with a stall when the adapter does not make session progress in time", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    class HangForeverAdapter implements NodeAdapter {
+      async execute(
+        _input: Parameters<NodeAdapter["execute"]>[0],
+        _context: Parameters<NodeAdapter["execute"]>[1],
+      ): Promise<AdapterExecutionOutput> {
+        await new Promise<never>(() => {});
+        throw new Error("unreachable");
+      }
+    }
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 25,
+      stallTimeoutMs: 500,
+      maxSupervisedAttempts: 2,
+      maxWorkflowPatches: 1,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+        supervisionLoopExecution: true,
+      },
+      new HangForeverAdapter(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.sessionId).toBeDefined();
+    const loaded = await loadSession(result.error.sessionId!, {
+      sessionStoreRoot: path.join(root, "sessions"),
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    const msg = loaded.value.lastError ?? result.error.message;
+    expect(
+      isSupervisionStallLastError(msg) ||
+        isSupervisionStallLastError(result.error.message),
+    ).toBe(true);
+  });
+
+  test("preserves supervision state on rerun when autoImprove and source session were supervised", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    const firstSup = first.value.session.supervision;
+    expect(firstSup).toBeDefined();
+    if (firstSup === undefined) {
+      return;
+    }
+    const rerun = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "step-1",
+      },
+      deterministicAdapter,
+    );
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+    const next = rerun.value.session.supervision;
+    expect(next).toBeDefined();
+    expect(next?.supervisionRunId).toBe(firstSup.supervisionRunId);
+    const expectedDir = firstSup.mutableWorkflowDir;
+    expect(expectedDir).toBeDefined();
+    if (expectedDir === undefined) {
+      return;
+    }
+    expect(next?.mutableWorkflowDir).toBe(expectedDir);
+  });
+
+  test("keeps the auto-improve retry loop active on resume", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-supervision-resume-loop",
+        maxSteps: 1,
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.exitCode).toBe(4);
+
+    class FailOncePerResume implements NodeAdapter {
+      #failed = false;
+      readonly #inner = new DeterministicNodeAdapter();
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+        context: Parameters<NodeAdapter["execute"]>[1],
+      ) {
+        if (!this.#failed) {
+          this.#failed = true;
+          throw new Error("resume attempt fails once before supervision rerun");
+        }
+        return this.#inner.execute(input, context);
+      }
+    }
+
+    const resumed = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        resumeSessionId: first.value.session.sessionId,
+        autoImprove: policy,
+      },
+      new FailOncePerResume(),
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) {
+      return;
+    }
+    expect(resumed.value.exitCode).toBe(0);
+    expect(resumed.value.session.supervision?.status).toBe("succeeded");
+    expect(resumed.value.session.supervision?.attemptCount).toBe(2);
+    expect(resumed.value.session.supervision?.incidents).toHaveLength(1);
+    // Failure occurs on a non-entry step after resume; supervision targets that step.
+    expect(
+      resumed.value.session.supervision?.remediations?.map((r) => r.action),
+    ).toEqual(["rerun-step"]);
+  });
+
+  test("keeps the auto-improve retry loop active on supervised rerun", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+
+    const first = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    class FailOncePerRerun implements NodeAdapter {
+      #failed = false;
+      readonly #inner = new DeterministicNodeAdapter();
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+        context: Parameters<NodeAdapter["execute"]>[1],
+      ) {
+        if (!this.#failed) {
+          this.#failed = true;
+          throw new Error("rerun attempt fails once before supervision retry");
+        }
+        return this.#inner.execute(input, context);
+      }
+    }
+
+    const rerun = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "managerless" },
+        autoImprove: policy,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "step-1",
+      },
+      new FailOncePerRerun(),
+    );
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+    expect(rerun.value.exitCode).toBe(0);
+    expect(rerun.value.session.supervision?.status).toBe("succeeded");
+    expect(rerun.value.session.supervision?.attemptCount).toBe(2);
+    expect(rerun.value.session.supervision?.incidents).toHaveLength(1);
+    expect(
+      rerun.value.session.supervision?.remediations?.map((r) => r.action),
+    ).toEqual(["rerun-workflow"]);
+  });
+
+  test("clears stale rerun targets before the next supervised attempt", async () => {
+    const root = await makeTempDir();
+    await createStepAddressedSupervisionRerunFixture(root, "step-addressed");
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+      allowTargetedRerun: false,
+    };
+
+    const first = await runWorkflow(
+      "step-addressed",
+      {
+        ...options,
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    class FailWorkerOnceThenSucceed implements NodeAdapter {
+      #failedWorker = false;
+
+      async execute(
+        input: Parameters<NodeAdapter["execute"]>[0],
+      ): Promise<AdapterExecutionOutput> {
+        if (input.nodeId === "step-b" && !this.#failedWorker) {
+          this.#failedWorker = true;
+          throw new Error("first supervised rerun attempt fails on worker");
+        }
+
+        return {
+          provider: "test-adapter",
+          model: input.node.model,
+          promptText: input.promptText,
+          completionPassed: true,
+          when: { always: true },
+          payload: { nodeId: input.nodeId },
+        };
+      }
+    }
+
+    const rerun = await runWorkflow(
+      "step-addressed",
+      {
+        ...options,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "step-b",
+        autoImprove: policy,
+      },
+      new FailWorkerOnceThenSucceed(),
+    );
+
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+    expect(rerun.value.exitCode).toBe(0);
+    expect(
+      rerun.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["step-a", "step-b"]);
+    expect(
+      rerun.value.session.supervision?.remediations?.map((r) => r.action),
+    ).toEqual(["rerun-workflow"]);
+  });
+
+  test("rejects invalid auto-improve policies before workflow execution starts", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        autoImprove: {
+          enabled: true,
+          monitorIntervalMs: 0,
+          stallTimeoutMs: 90_000,
+          maxSupervisedAttempts: 4,
+          maxWorkflowPatches: 2,
+          workflowMutationMode: "execution-copy",
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain(
+      "invalid autoImprove policy: monitorIntervalMs must be a positive integer",
+    );
+  });
+
+  test("rejects a stall timeout shorter than the monitor interval before workflow execution starts", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+
+    const result = await runWorkflow(
+      "managerless",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        autoImprove: {
+          enabled: true,
+          monitorIntervalMs: 5000,
+          stallTimeoutMs: 4999,
+          maxSupervisedAttempts: 4,
+          maxWorkflowPatches: 2,
+          workflowMutationMode: "execution-copy",
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.message).toContain(
+      "invalid autoImprove policy: stallTimeoutMs must be greater than or equal to monitorIntervalMs",
+    );
+  });
+
+  test("rejects autoImprove on rerun when the source session has no supervision state", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless");
+    const baseOpts = {
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      runtimeVariables: { topic: "managerless" },
+    };
+    const first = await runWorkflow(
+      "managerless",
+      baseOpts,
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+    const rerun = await runWorkflow(
+      "managerless",
+      {
+        ...baseOpts,
+        autoImprove: policy,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "step-1",
+      },
+      deterministicAdapter,
+    );
+    expect(rerun.ok).toBe(false);
+    if (rerun.ok) {
+      return;
+    }
+    expect(rerun.error.message).toContain("supervision state");
+  });
+
+  test("updates supervision policy on resume when autoImprove is set and persists before paused early return", async () => {
+    const root = await makeTempDir();
+    const workflowName = "user-action-pause";
+    await createUserActionFixture(root, workflowName);
+
+    const policyA = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+    const policyB = {
+      ...policyA,
+      monitorIntervalMs: 9999,
+      superviserWorkflowId: "divedra/custom-superviser",
+    };
+
+    const first = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-user-action-supervision-resume",
+        autoImprove: policyA,
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.value.session.supervision?.policy?.monitorIntervalMs).toBe(
+      1500,
+    );
+
+    const resumed = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        resumeSessionId: first.value.session.sessionId,
+        autoImprove: policyB,
+      },
+      deterministicAdapter,
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) {
+      return;
+    }
+    expect(resumed.value.exitCode).toBe(4);
+    expect(resumed.value.session.supervision?.policy?.monitorIntervalMs).toBe(
+      9999,
+    );
+    expect(
+      resumed.value.session.supervision?.policy?.superviserWorkflowId,
+    ).toBe("divedra/custom-superviser");
+    expect(resumed.value.session.supervision?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
+
+    const loaded = await loadSession(first.value.session.sessionId, {
+      workflowRoot: root,
+      sessionStoreRoot: path.join(root, "sessions"),
+      artifactRoot: path.join(root, "artifacts"),
+    });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.supervision?.policy?.monitorIntervalMs).toBe(9999);
+    expect(loaded.value.supervision?.policy?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
+    expect(loaded.value.supervision?.superviserWorkflowId).toBe(
+      "divedra/custom-superviser",
+    );
+  });
+
+  test("rejects autoImprove on resume when the session has no supervision state", async () => {
+    const root = await makeTempDir();
+    const workflowName = "user-action-pause";
+    await createUserActionFixture(root, workflowName);
+
+    const first = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        sessionId: "sess-no-supervision",
+      },
+      deterministicAdapter,
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    const policy = {
+      enabled: true as const,
+      monitorIntervalMs: 1500,
+      stallTimeoutMs: 90_000,
+      maxSupervisedAttempts: 4,
+      maxWorkflowPatches: 2,
+      workflowMutationMode: "execution-copy" as const,
+    };
+    const resumed = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        resumeSessionId: first.value.session.sessionId,
+        autoImprove: policy,
+      },
+      deterministicAdapter,
+    );
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) {
+      return;
+    }
+    expect(resumed.error.message).toContain("supervision state");
+    expect(resumed.error.sessionId).toBe(first.value.session.sessionId);
+  });
+
+  test("executes step-addressed cross-workflow transitions and delivers callee workflow results", async () => {
     const root = await makeTempDir();
     await createWorkflowCallFixture(root, "workflow-call-fixture");
     await createWorkflowCallCalleeFixture(root, "review-flow");
@@ -1784,6 +3159,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "workflow-call-fixture",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -1801,13 +3177,150 @@ describe("runWorkflow", () => {
       result.value.session.nodeExecutions.map((entry) => entry.nodeId),
     ).toEqual(["writer", "review-result"]);
     const workflowCallCommunication = result.value.session.communications.find(
-      (entry) => entry.transitionWhen === "workflow-call:call-review",
+      (entry) => entry.transitionWhen === "workflow-call:__cw:writer",
     );
     expect(workflowCallCommunication).toBeDefined();
     expect(workflowCallCommunication?.toNodeId).toBe("review-result");
     expect(workflowCallCommunication?.payloadRef.workflowId).toBe(
       "review-flow",
     );
+
+    const writerExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "writer",
+    );
+    expect(writerExecution).toBeDefined();
+    const crossWfArtifactPath = path.join(
+      root,
+      "artifacts",
+      "workflow-call-fixture",
+      "executions",
+      result.value.session.sessionId,
+      "nodes",
+      "writer",
+      writerExecution!.nodeExecId,
+      "workflow-calls",
+      "__cw:writer.json",
+    );
+    const crossWfParsed = JSON.parse(
+      await readFile(crossWfArtifactPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(crossWfParsed["calleeWorkflowId"]).toBe("review-flow");
+    expect(crossWfParsed["crossWorkflowDispatchId"]).toBe("__cw:writer");
+    expect(crossWfParsed["workflowId"]).toBeUndefined();
+    expect(crossWfParsed["workflowCallId"]).toBeUndefined();
+    expect(crossWfParsed["callerStepId"]).toBe("writer");
+    expect(crossWfParsed["resumeStepId"]).toBe("review-result");
+    expect(crossWfParsed["callerNodeExecId"]).toBeDefined();
+    expect(crossWfParsed["calleeSessionId"]).toBeDefined();
+    expect(crossWfParsed["callerNodeId"]).toBeUndefined();
+    expect(crossWfParsed["resultNodeId"]).toBeUndefined();
+    expect(crossWfParsed["parentNodeExecId"]).toBeUndefined();
+    expect(crossWfParsed["childWorkflowId"]).toBeUndefined();
+    expect(crossWfParsed["childSessionId"]).toBeUndefined();
+  });
+
+  test("skips a cross-workflow dispatch when `when` does not match caller output (gated by evaluateBranch)", async () => {
+    const root = await makeTempDir();
+    await createWhenGatedWorkflowCallFixture(root, "workflow-call-when-skip");
+    await createWorkflowCallCalleeFixture(root, "review-flow");
+
+    const result = await runWorkflow(
+      "workflow-call-when-skip",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.exitCode).toBe(0);
+    expect(
+      result.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["writer"]);
+    expect(
+      result.value.session.communications.some((entry) =>
+        entry.transitionWhen.startsWith("workflow-call:"),
+      ),
+    ).toBe(false);
+  });
+
+  test("keeps workflowCall callerNodeId on the node-registry id when the caller step id differs", async () => {
+    const root = await makeTempDir();
+    const sessionStoreRoot = path.join(root, "sessions");
+    await createWorkflowCallStepIdMismatchFixture(
+      root,
+      "workflow-call-step-id-mismatch",
+    );
+    await createWorkflowCallCalleeStepIdMismatchFixture(root, "review-flow");
+
+    const result = await runWorkflow(
+      "workflow-call-step-id-mismatch",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(
+      result.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["writer-step", "review-result-step"]);
+
+    const writerExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "writer-step",
+    );
+    expect(writerExecution).toBeDefined();
+    const crossWfArtifactPath = path.join(
+      root,
+      "artifacts",
+      "workflow-call-step-id-mismatch",
+      "executions",
+      result.value.session.sessionId,
+      "nodes",
+      "writer-step",
+      writerExecution!.nodeExecId,
+      "workflow-calls",
+      "__cw:writer-step.json",
+    );
+    const crossWfParsed = JSON.parse(
+      await readFile(crossWfArtifactPath, "utf8"),
+    ) as Record<string, unknown>;
+    expect(crossWfParsed["callerStepId"]).toBe("writer-step");
+    expect(crossWfParsed["resumeStepId"]).toBe("review-result-step");
+
+    const calleeSessionId = crossWfParsed["calleeSessionId"];
+    expect(typeof calleeSessionId).toBe("string");
+    if (typeof calleeSessionId !== "string") {
+      return;
+    }
+
+    const calleeSession = await loadSession(calleeSessionId, {
+      sessionStoreRoot,
+    });
+    expect(calleeSession.ok).toBe(true);
+    if (!calleeSession.ok) {
+      return;
+    }
+
+    const workflowCall = calleeSession.value.runtimeVariables[
+      "workflowCall"
+    ] as Record<string, unknown>;
+    expect(workflowCall["callerNodeId"]).toBe("writer-node");
+    expect(workflowCall["callerStepId"]).toBe("writer-step");
   });
 
   test("fails early when workflow-call targets are missing", async () => {
@@ -1815,6 +3328,7 @@ describe("runWorkflow", () => {
     await createWorkflowCallFixture(root, "workflow-call-fixture");
 
     const result = await runWorkflow("workflow-call-fixture", {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -1825,14 +3339,16 @@ describe("runWorkflow", () => {
       return;
     }
 
-    expect(result.error.message).toContain("workflow runtime readiness failed");
-    expect(result.error.message).toContain("workflow-call targets");
-    expect(result.error.message).toContain("review-flow");
+    expect(result.error.message).toContain("workflow validation failed");
   });
 
   test("fails workflow-call result delivery when a managed callee has no published output", async () => {
     const root = await makeTempDir();
-    await createWorkflowCallFixture(root, "workflow-call-fixture");
+    await createWorkflowCallFixture(
+      root,
+      "workflow-call-fixture",
+      "divedra-manager",
+    );
     await createManagedWorkflowCallCalleeWithoutOutputFixture(
       root,
       "review-flow",
@@ -1841,6 +3357,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "workflow-call-fixture",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -1853,7 +3370,9 @@ describe("runWorkflow", () => {
       return;
     }
 
-    expect(result.error.message).toContain("workflow-call 'call-review'");
+    expect(result.error.message).toContain(
+      "cross-workflow dispatch '__cw:writer'",
+    );
     expect(result.error.message).toContain(
       "completed without a result execution for 'review-result'",
     );
@@ -1889,11 +3408,95 @@ describe("runWorkflow", () => {
       result.value.session.nodeExecutions.map((entry) => entry.nodeId),
     ).toEqual(["divedra-manager", "draft-write", "apply-review"]);
     const workflowCallCommunication = result.value.session.communications.find(
-      (entry) => entry.transitionWhen === "workflow-call:call-review",
+      (entry) => entry.transitionWhen === "workflow-call:__cw:draft-write",
     );
     expect(workflowCallCommunication?.toNodeId).toBe("apply-review");
     expect(workflowCallCommunication?.payloadRef.workflowId).toBe(
       "workflow-call-review-target",
+    );
+  });
+
+  test("step-addressed cross-workflow call loads callee by authored workflowId when bundle directory name differs", async () => {
+    const root = await makeTempDir();
+    const calleeDir = "callee-bundle-directory";
+    const calleeWorkflowId = "callee-logical-workflow-id";
+    await createStepAddressedCalleeWithMismatchedDirectoryName(
+      root,
+      calleeDir,
+      calleeWorkflowId,
+    );
+    const callerName = "cross-wf-caller-by-id";
+    await createStepAddressedCallerCrossWorkflowToCalleeId(
+      root,
+      callerName,
+      calleeWorkflowId,
+    );
+
+    const scenario: MockNodeScenario = {
+      "divedra-manager": {
+        provider: "scenario-mock",
+        model: "claude-haiku-4-5",
+        when: { always: true },
+        payload: {
+          stage: "dispatch",
+          callPolicy: "workflow-call-review",
+        },
+      },
+      "draft-write": {
+        provider: "scenario-mock",
+        model: "gpt-5-nano",
+        when: { always: true },
+        payload: {
+          draft: "Cross-id workflow-call draft.",
+          status: "ready-for-review",
+        },
+      },
+      reviewer: {
+        provider: "scenario-mock",
+        model: "gpt-5-nano",
+        when: { always: true },
+        payload: {
+          reviewStatus: "approved",
+          reviewSummary: "Callee resolved by workflowId.",
+        },
+      },
+      "apply-review": {
+        provider: "scenario-mock",
+        model: "gpt-5-nano",
+        when: { always: true },
+        payload: {
+          summary: "Applied review from callee.",
+          reviewTargetWorkflowId: calleeWorkflowId,
+        },
+      },
+    };
+
+    const result = await runWorkflow(
+      callerName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new ScenarioNodeAdapter(scenario),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.exitCode).toBe(0);
+    expect(
+      result.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["divedra-manager", "draft-write", "apply-review"]);
+    const workflowCallCommunication = result.value.session.communications.find(
+      (entry) => entry.transitionWhen === "workflow-call:__cw:draft-write",
+    );
+    expect(workflowCallCommunication).toBeDefined();
+    expect(workflowCallCommunication?.toNodeId).toBe("apply-review");
+    expect(workflowCallCommunication?.payloadRef.workflowId).toBe(
+      calleeWorkflowId,
     );
   });
 
@@ -1904,6 +3507,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "linear",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2103,6 +3707,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2114,7 +3719,7 @@ describe("runWorkflow", () => {
           {
             payload: {
               managerControl: {
-                actions: [{ type: "execute-optional-node", nodeId: "step-1" }],
+                actions: [{ type: "execute-optional-step", stepId: "step-1" }],
               },
             },
           },
@@ -2164,6 +3769,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2218,6 +3824,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2231,8 +3838,8 @@ describe("runWorkflow", () => {
               managerControl: {
                 actions: [
                   {
-                    type: "skip-optional-node",
-                    nodeId: "step-1",
+                    type: "skip-optional-step",
+                    stepId: "step-1",
                     reason: "already satisfied by upstream evidence",
                   },
                 ],
@@ -2276,6 +3883,7 @@ describe("runWorkflow", () => {
     const first = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2329,6 +3937,7 @@ describe("runWorkflow", () => {
     const resumed = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2367,6 +3976,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
       },
@@ -2377,7 +3987,7 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    expect(result.error.message).toContain("adapter failure at 'step-1'");
+    expect(result.error.message).toContain("adapter failure for step 'step-1'");
   });
 
   test("reuses a node-local backend session across repeated executions in one workflow run", async () => {
@@ -2388,6 +3998,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "node-session-reuse",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2429,6 +4040,7 @@ describe("runWorkflow", () => {
     const first = await runWorkflow(
       "node-session-resume",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2450,6 +4062,7 @@ describe("runWorkflow", () => {
     const resumed = await runWorkflow(
       "node-session-resume",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2477,6 +4090,225 @@ describe("runWorkflow", () => {
     ).toBe("backend-b-1");
   });
 
+  test("reuses a prior step backend session when a step inherits from step.sessionPolicy.inheritFromStepId", async () => {
+    const root = await makeTempDir();
+    await createStepAddressedInheritedSessionReuseFixture(
+      root,
+      "step-addressed-inherit-session",
+    );
+    const adapter = new StepAddressedInheritedSessionAdapter();
+
+    const result = await runWorkflow(
+      "step-addressed-inherit-session",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.calls).toEqual([
+      {
+        nodeId: "step-a",
+        backendSession: { mode: "new" },
+      },
+      {
+        nodeId: "step-b",
+        backendSession: {
+          mode: "reuse",
+          sessionId: "shared-session-1",
+        },
+      },
+    ]);
+    expect(
+      result.value.session.nodeBackendSessions?.["step-a"]?.sessionId,
+    ).toBe("shared-session-1");
+    expect(
+      result.value.session.nodeBackendSessions?.["step-b"]?.sessionId,
+    ).toBe("shared-session-1");
+  });
+
+  test("persists step-addressed execution metadata for shared-node workflow runs", async () => {
+    const root = await makeTempDir();
+    const artifactRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const rootDataDir = path.join(root, "data");
+    await createStepAddressedInheritedSessionReuseFixture(
+      root,
+      "step-addressed-execution-metadata",
+    );
+    const adapter = new StepAddressedInheritedSessionAdapter();
+
+    const result = await runWorkflow(
+      "step-addressed-execution-metadata",
+      {
+        workflowRoot: root,
+        artifactRoot,
+        sessionStoreRoot,
+        rootDataDir,
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.session.nodeExecutions).toMatchObject([
+      {
+        nodeId: "step-a",
+        stepId: "step-a",
+        nodeRegistryId: "writer-node",
+        nodeExecId: "exec-000001",
+        mailboxInstanceId: "exec-000001",
+        timeoutMs: 120000,
+      },
+      {
+        nodeId: "step-b",
+        stepId: "step-b",
+        nodeRegistryId: "writer-node",
+        nodeExecId: "exec-000002",
+        mailboxInstanceId: "exec-000002",
+        promptVariant: "review",
+        timeoutMs: 120000,
+      },
+    ]);
+    expect(resolveCurrentStepId(result.value.session)).toBe("step-b");
+
+    const runtimeExecutions = await listRuntimeNodeExecutions(
+      result.value.session.sessionId,
+      {
+        artifactRoot,
+        rootDataDir,
+      },
+    );
+    expect(runtimeExecutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "step-a",
+          stepId: "step-a",
+          nodeRegistryId: "writer-node",
+          mailboxInstanceId: "exec-000001",
+          promptVariant: null,
+          timeoutMs: 120000,
+        }),
+        expect.objectContaining({
+          nodeId: "step-b",
+          stepId: "step-b",
+          nodeRegistryId: "writer-node",
+          mailboxInstanceId: "exec-000002",
+          promptVariant: "review",
+          timeoutMs: 120000,
+        }),
+      ]),
+    );
+
+    const [stepAExecution, stepBExecution] =
+      result.value.session.nodeExecutions;
+    expect(stepAExecution).toBeDefined();
+    expect(stepBExecution).toBeDefined();
+    if (stepAExecution === undefined || stepBExecution === undefined) {
+      return;
+    }
+
+    const stepAHandoff = JSON.parse(
+      await readFile(
+        path.join(stepAExecution.artifactDir, "handoff.json"),
+        "utf8",
+      ),
+    ) as {
+      outputRef: {
+        outputStepId?: string;
+        nodeRegistryId?: string;
+        mailboxInstanceId?: string;
+      };
+    };
+    const stepBHandoff = JSON.parse(
+      await readFile(
+        path.join(stepBExecution.artifactDir, "handoff.json"),
+        "utf8",
+      ),
+    ) as {
+      outputRef: {
+        outputStepId?: string;
+        nodeRegistryId?: string;
+        mailboxInstanceId?: string;
+      };
+    };
+    expect(stepAHandoff.outputRef).toMatchObject({
+      outputStepId: "step-a",
+      nodeRegistryId: "writer-node",
+      mailboxInstanceId: "exec-000001",
+    });
+    expect(stepBHandoff.outputRef).toMatchObject({
+      outputStepId: "step-b",
+      nodeRegistryId: "writer-node",
+      mailboxInstanceId: "exec-000002",
+    });
+  });
+
+  test("keeps inherited-session provenance when later steps rotate the backend session id", async () => {
+    const root = await makeTempDir();
+    await createRotatingInheritedSessionReuseFixture(
+      root,
+      "step-addressed-rotating-inherit-session",
+    );
+    const adapter = new RotatingInheritedSessionAdapter();
+
+    const result = await runWorkflow(
+      "step-addressed-rotating-inherit-session",
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.calls).toEqual([
+      {
+        nodeId: "step-a",
+        backendSession: { mode: "new" },
+      },
+      {
+        nodeId: "step-b",
+        backendSession: {
+          mode: "reuse",
+          sessionId: "shared-session-1",
+        },
+      },
+      {
+        nodeId: "step-c",
+        backendSession: {
+          mode: "reuse",
+          sessionId: "shared-session-2",
+        },
+      },
+    ]);
+    expect(result.value.session.nodeBackendSessions?.["step-b"]).toMatchObject({
+      sourceStepId: "step-a",
+      lastStepId: "step-b",
+      sessionId: "shared-session-2",
+    });
+    expect(result.value.session.nodeBackendSessions?.["step-c"]).toMatchObject({
+      sourceStepId: "step-a",
+      lastStepId: "step-c",
+      sessionId: "shared-session-3",
+    });
+  });
+
   test("forwards explicit new session policy without persisting a reusable backend session", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "explicit-new-session-policy", false);
@@ -2499,6 +4331,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "explicit-new-session-policy",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2551,6 +4384,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "manager-session-failure",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2596,6 +4430,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         rootDataDir: path.join(root, "data"),
@@ -2616,7 +4451,7 @@ describe("runWorkflow", () => {
       DIVEDRA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
       DIVEDRA_WORKFLOW_ID: workflowName,
       DIVEDRA_WORKFLOW_EXECUTION_ID: result.value.session.sessionId,
-      DIVEDRA_MANAGER_NODE_ID: "divedra-manager",
+      DIVEDRA_MANAGER_STEP_ID: "divedra-manager",
       DIVEDRA_MANAGER_NODE_EXEC_ID: "exec-000001",
     });
     expect(adapter.calls[1]?.nodeId).toBe("step-1");
@@ -2649,7 +4484,7 @@ describe("runWorkflow", () => {
     ).toBeNull();
   });
 
-  test("treats role-authored managers as manager-node executions for ambient GraphQL context", async () => {
+  test("treats manager-role steps as manager-node executions for ambient GraphQL context", async () => {
     const root = await makeTempDir();
     const workflowName = "role-manager-session-runtime";
     await createRoleManagedWorkflowFixture(root, workflowName);
@@ -2658,6 +4493,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         rootDataDir: path.join(root, "data"),
@@ -2678,7 +4514,7 @@ describe("runWorkflow", () => {
       DIVEDRA_MANAGER_SESSION_ID: "mgrsess-exec-000001",
       DIVEDRA_WORKFLOW_ID: workflowName,
       DIVEDRA_WORKFLOW_EXECUTION_ID: result.value.session.sessionId,
-      DIVEDRA_MANAGER_NODE_ID: "divedra-manager",
+      DIVEDRA_MANAGER_STEP_ID: "divedra-manager",
       DIVEDRA_MANAGER_NODE_EXEC_ID: "exec-000001",
     });
     expect(adapter.calls[1]?.nodeId).toBe("step-1");
@@ -2691,6 +4527,7 @@ describe("runWorkflow", () => {
     await createWorkflowFixture(root, workflowName, false);
 
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -2706,7 +4543,7 @@ describe("runWorkflow", () => {
       managerSessionId: "mgrsess-exec-000001",
       workflowId: workflowName,
       workflowExecutionId: "sess-manager-mixed-control-mode",
-      managerNodeId: "divedra-manager",
+      managerStepId: "divedra-manager",
       managerNodeExecId: "exec-000001",
       status: "active",
       createdAt: "2026-03-15T00:00:00.000Z",
@@ -2723,7 +4560,7 @@ describe("runWorkflow", () => {
         "divedra-manager": {
           payload: {
             managerControl: {
-              actions: [{ type: "retry-node", nodeId: "step-1" }],
+              actions: [{ type: "retry-step", stepId: "step-1" }],
             },
           },
         },
@@ -2752,6 +4589,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "root-mailbox-input",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2853,6 +4691,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "root-human-input-text",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2912,6 +4751,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "root-mailbox-output",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -2981,6 +4821,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "root-output-publication",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3038,6 +4879,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "multiple-root-outputs",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3100,6 +4942,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "root-output-then-task",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3165,6 +5008,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "no-root-output-publication",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3190,77 +5034,6 @@ describe("runWorkflow", () => {
     ).toBeUndefined();
   });
 
-  test("enables workflow-output input sources after a root output node succeeds", async () => {
-    const root = await makeTempDir();
-    await createWorkflowOutputDrivenSubWorkflowFixture(
-      root,
-      "workflow-output-source",
-    );
-
-    const result = await runWorkflow(
-      "workflow-output-source",
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": [
-          {
-            provider: "scenario-mock",
-            when: { needs_output: true },
-            payload: { phase: "plan" },
-          },
-          { provider: "scenario-mock", when: {}, payload: { phase: "assess" } },
-        ],
-        "workflow-output": {
-          provider: "scenario-mock",
-          when: { always: true },
-          payload: { final: "root-output" },
-        },
-        "review-manager": {
-          provider: "scenario-mock",
-          when: { always: true },
-          payload: { stage: "review-dispatch" },
-        },
-        "review-input": {
-          provider: "scenario-mock",
-          when: { always: true },
-          payload: { stage: "review-input" },
-        },
-        "review-output": {
-          provider: "scenario-mock",
-          when: { always: true },
-          payload: { stage: "review-output" },
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    expect(result.value.session.runtimeVariables["workflowOutput"]).toEqual({
-      final: "root-output",
-    });
-    expect(
-      result.value.session.nodeExecutions.some(
-        (entry) => entry.nodeId === "review-manager",
-      ),
-    ).toBe(true);
-    expect(
-      result.value.session.nodeExecutions.some(
-        (entry) => entry.nodeId === "review-input",
-      ),
-    ).toBe(true);
-    expect(
-      result.value.session.nodeExecutions.some(
-        (entry) => entry.nodeId === "review-output",
-      ),
-    ).toBe(true);
-  });
-
   test("composes manager and worker prompts with workflow-level orchestration context", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "prompt-composition", false);
@@ -3279,6 +5052,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "prompt-composition",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3331,10 +5105,10 @@ describe("runWorkflow", () => {
     expect(managerInput.promptText).toContain("Given data:");
     expect(managerInput.promptText).toContain("Manager control payload:");
     expect(managerInput.promptText).toContain(
-      '"type":"retry-node","nodeId":"<node-id>"',
+      '"type":"retry-step","stepId":"<step-id>"',
     );
     expect(managerInput.promptText).toContain(
-      "Explicit `workflowCalls` run automatically from authored caller nodes",
+      "run automatically from the caller step",
     );
     expect(managerInput.promptText).not.toContain(
       '"type":"start-sub-workflow"',
@@ -3386,6 +5160,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "assembled-input",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3421,6 +5196,94 @@ describe("runWorkflow", () => {
     });
   });
 
+  test("history-linked continuation merges imported upstream outputs for the next step", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "hist-continue-chain");
+
+    await writeJson(
+      path.join(root, "hist-continue-chain", "node-step-2.json"),
+      {
+        id: "step-2",
+        executionBackend: "claude-code-agent",
+        model: "claude-opus-4-1",
+        promptTemplate: "consume upstream",
+        variables: {},
+        argumentsTemplate: { upstreamNode: "" },
+        argumentBindings: [
+          {
+            targetPath: "upstreamNode",
+            source: "node-output",
+            sourceRef: "step-1",
+            sourcePath: "output.payload.nodeId",
+            required: true,
+          },
+        ],
+      },
+    );
+
+    const opts = {
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      runtimeVariables: { topic: "B" },
+    };
+
+    const sourceRun = await runWorkflow(
+      "hist-continue-chain",
+      { ...opts, maxSteps: 1 },
+      deterministicAdapter,
+    );
+    expect(sourceRun.ok).toBe(true);
+    if (!sourceRun.ok) {
+      return;
+    }
+    expect(sourceRun.value.session.status).toBe("paused");
+    const step1Exec = sourceRun.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(step1Exec).toBeDefined();
+    if (step1Exec === undefined) {
+      return;
+    }
+
+    const continued = await runWorkflow(
+      "hist-continue-chain",
+      {
+        ...opts,
+        continueFromWorkflowExecutionId: sourceRun.value.session.sessionId,
+        continueAfterStepRunId: step1Exec.nodeExecId,
+        continueStartStepId: "step-2",
+      },
+      deterministicAdapter,
+    );
+    expect(continued.ok).toBe(true);
+    if (!continued.ok) {
+      return;
+    }
+    expect(continued.value.session.historyImports?.length).toBeGreaterThan(0);
+    expect(continued.value.session.nodeExecutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ nodeId: "step-2", status: "succeeded" }),
+      ]),
+    );
+    const step2Exec = continued.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-2",
+    );
+    expect(step2Exec).toBeDefined();
+    if (step2Exec === undefined) {
+      return;
+    }
+    const inputRaw = await readFile(
+      path.join(step2Exec.artifactDir, "input.json"),
+      "utf8",
+    );
+    const inputJson = JSON.parse(inputRaw) as {
+      arguments: { upstreamNode: string } | null;
+    };
+    expect(inputJson.arguments).toEqual({ upstreamNode: "step-1" });
+  });
+
   test("retries invalid node payloads until output schema validation succeeds", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-retry", false);
@@ -3451,6 +5314,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3548,6 +5412,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-session-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3612,6 +5477,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-scenario-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3682,6 +5548,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-file-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3762,6 +5629,7 @@ describe("runWorkflow", () => {
     const firstRun = await runWorkflow(
       "output-contract-stale-candidate",
       {
+        ...workflowLoadOpts,
         cwd: root,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -3774,6 +5642,7 @@ describe("runWorkflow", () => {
     const secondRun = await runWorkflow(
       "output-contract-stale-candidate",
       {
+        ...workflowLoadOpts,
         cwd: root,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
@@ -3841,6 +5710,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-description-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3921,6 +5791,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-description-retry-text",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -3969,6 +5840,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-fail",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4059,6 +5931,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-invalid-output-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4143,6 +6016,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-invalid-output-fail",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4218,6 +6092,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-provider-fail-after-retry",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4308,6 +6183,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-prompt",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4401,6 +6277,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-request-artifacts",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4520,6 +6397,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-boundary",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4584,6 +6462,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-compact-feedback",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4639,6 +6518,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-file-path",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4688,6 +6568,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "non-contract-candidate-file-failure",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4737,6 +6618,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "non-contract-no-output-attempt-artifacts",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4802,6 +6684,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "file-output-ready",
       {
+        ...workflowLoadOpts,
         workflowRoot,
         artifactRoot,
       },
@@ -4859,6 +6742,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "output-contract-staging-path",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -4922,6 +6806,7 @@ describe("runWorkflow", () => {
     const successResult = await runWorkflow(
       "output-contract-cleanup-success",
       {
+        ...workflowLoadOpts,
         workflowRoot: successRoot,
         artifactRoot: path.join(successRoot, "artifacts"),
         sessionStoreRoot: path.join(successRoot, "sessions"),
@@ -4972,6 +6857,7 @@ describe("runWorkflow", () => {
     const failureResult = await runWorkflow(
       "output-contract-cleanup-failure",
       {
+        ...workflowLoadOpts,
         workflowRoot: failureRoot,
         artifactRoot: path.join(failureRoot, "artifacts"),
         sessionStoreRoot: path.join(failureRoot, "sessions"),
@@ -5012,6 +6898,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "missing-required-binding",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -5033,6 +6920,7 @@ describe("runWorkflow", () => {
     await createWorkflowFixture(root, workflowName, false);
 
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5091,6 +6979,7 @@ describe("runWorkflow", () => {
     await createSingleRootOutputFixture(root, workflowName);
 
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5193,6 +7082,7 @@ describe("runWorkflow", () => {
     await createSingleRootOutputFixture(root, workflowName);
 
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5287,6 +7177,7 @@ describe("runWorkflow", () => {
     await createSingleRootOutputFixture(root, workflowName);
 
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5361,6 +7252,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -5403,6 +7295,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       workflowName,
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot,
         sessionStoreRoot,
@@ -5437,6 +7330,7 @@ describe("runWorkflow", () => {
     await createWorkflowFixture(root, "looped", true);
 
     const result = await runWorkflow("looped", {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5454,7 +7348,7 @@ describe("runWorkflow", () => {
       return;
     }
     expect(result.value.session.status).toBe("completed");
-    expect(result.value.session.loopIterationCounts?.["main-loop"]).toBe(2);
+    expect(result.value.session.loopIterationCounts?.["repeat-step-1"]).toBe(2);
     const stepExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "step-1",
     );
@@ -5483,6 +7377,7 @@ describe("runWorkflow", () => {
     await createWorkflowFixture(root, "dry-run", false);
 
     const result = await runWorkflow("dry-run", {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5531,6 +7426,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "restart-success",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -5556,6 +7452,350 @@ describe("runWorkflow", () => {
     expect(stepExecutions[1]?.status).toBe("succeeded");
   });
 
+  test("applies authored retry timeout policy when runtime restartOnStuck is unset", async () => {
+    const root = await makeTempDir();
+    const workflowName = "authored-timeout-retry-success";
+    await createWorkflowFixture(root, workflowName, false);
+    await setWorkflowTimeoutPolicy(root, workflowName, {
+      onTimeout: "retry-same-step",
+      maxRetries: 1,
+    });
+
+    let firstStepAttempt = true;
+    const flakyAdapter: NodeAdapter = {
+      async execute(input) {
+        if (input.nodeId === "step-1" && firstStepAttempt) {
+          firstStepAttempt = false;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return {
+          provider: "test-adapter",
+          model: input.node.model,
+          promptText: "ok",
+          completionPassed: true,
+          when: { always: true },
+          payload: { nodeId: input.nodeId },
+        };
+      },
+    };
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        defaultTimeoutMs: 10,
+        stuckRestartBackoffMs: 0,
+      },
+      flakyAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.session.status).toBe("completed");
+    expect((result.value.session.restartEvents ?? []).length).toBe(1);
+    expect((result.value.session.restartCounts ?? {})["step-1"]).toBe(1);
+    const stepExecutions = result.value.session.nodeExecutions.filter(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(stepExecutions).toHaveLength(2);
+    expect(stepExecutions[0]?.status).toBe("timed_out");
+    expect(stepExecutions[1]?.status).toBe("succeeded");
+  });
+
+  test("defaultTimeoutMs does not override authored step-local or node timeouts", async () => {
+    const root = await makeTempDir();
+    const workflowName = "step-addressed-step-timeout-precedence";
+    await createStepAddressedInheritedSessionReuseFixture(root, workflowName);
+
+    const workflow = await loadWorkflowFixture(root, workflowName);
+    await saveWorkflowFixture(root, workflowName, {
+      ...workflow,
+      defaults: {
+        ...workflow.defaults,
+        nodeTimeoutMs: 120,
+      },
+      steps: (workflow.steps ?? []).map((step) =>
+        step.id === "step-a"
+          ? {
+              ...step,
+              timeoutMs: 15,
+            }
+          : step,
+      ),
+    });
+
+    const nodePath = path.join(root, workflowName, "nodes", "node-writer.json");
+    const node = JSON.parse(await readFile(nodePath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await writeJson(nodePath, {
+      ...node,
+      timeoutMs: 40,
+    });
+
+    const adapter = new TimeoutCaptureAdapter();
+    const result = await runWorkflow(
+      workflowName,
+      {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        defaultTimeoutMs: 5,
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.timeouts).toEqual([
+      { nodeId: "step-a", timeoutMs: 15 },
+      { nodeId: "step-b", timeoutMs: 40 },
+    ]);
+  });
+
+  test("retry timeout increments still apply when base timeout comes from defaultTimeoutMs", async () => {
+    const root = await makeTempDir();
+    const workflowName = "step-addressed-default-timeout-retry-increment";
+    const sessionId = "sess-step-addressed-default-timeout-retry-increment";
+    await createStepAddressedInheritedSessionReuseFixture(root, workflowName);
+
+    const workflow = await loadWorkflowFixture(root, workflowName);
+    await saveWorkflowFixture(root, workflowName, {
+      ...workflow,
+      defaults: {
+        ...workflow.defaults,
+        nodeTimeoutMs: 120,
+        timeoutPolicy: {
+          onTimeout: "retry-same-step",
+          maxRetries: 1,
+          retryTimeoutIncrementMs: 50,
+        },
+      },
+    });
+
+    const stuckAdapter: NodeAdapter = {
+      async execute(input) {
+        if (input.nodeId === "step-a") {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return {
+          provider: "test-adapter",
+          model: input.node.model,
+          promptText: input.promptText,
+          completionPassed: true,
+          when: { always: true },
+          payload: { nodeId: input.nodeId },
+        };
+      },
+    };
+
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId,
+        defaultTimeoutMs: 10,
+        stuckRestartBackoffMs: 0,
+      },
+      stuckAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const completedSession = await loadSession(sessionId, options);
+    expect(completedSession.ok).toBe(true);
+    if (!completedSession.ok) {
+      return;
+    }
+
+    expect(completedSession.value.status).toBe("completed");
+    const stepExecutions = completedSession.value.nodeExecutions.filter(
+      (entry) => entry.stepId === "step-a",
+    );
+    expect(stepExecutions).toHaveLength(2);
+    expect(stepExecutions[0]?.timeoutMs).toBe(10);
+    expect(stepExecutions[0]?.status).toBe("timed_out");
+    expect(stepExecutions[1]?.timeoutMs).toBe(60);
+    expect(stepExecutions[1]?.status).toBe("succeeded");
+  });
+
+  test("explicit restartOnStuck false disables authored retry timeout policy", async () => {
+    const root = await makeTempDir();
+    const workflowName = "authored-timeout-retry-disabled";
+    const sessionId = "sess-authored-timeout-retry-disabled";
+    await createWorkflowFixture(root, workflowName, false);
+    await setWorkflowTimeoutPolicy(root, workflowName, {
+      onTimeout: "retry-same-step",
+      maxRetries: 3,
+    });
+
+    const stuckAdapter: NodeAdapter = {
+      async execute(input) {
+        if (input.nodeId === "step-1") {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return {
+          provider: "test-adapter",
+          model: input.node.model,
+          promptText: "late",
+          completionPassed: true,
+          when: { always: true },
+          payload: { nodeId: input.nodeId },
+        };
+      },
+    };
+
+    const options = {
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId,
+        defaultTimeoutMs: 10,
+        restartOnStuck: false,
+        stuckRestartBackoffMs: 0,
+      },
+      stuckAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.exitCode).toBe(6);
+
+    const failedSession = await loadSession(sessionId, options);
+    expect(failedSession.ok).toBe(true);
+    if (!failedSession.ok) {
+      return;
+    }
+
+    expect(failedSession.value.status).toBe("failed");
+    expect(failedSession.value.restartEvents ?? []).toEqual([]);
+    const stepExecutions = failedSession.value.nodeExecutions.filter(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(stepExecutions).toHaveLength(1);
+    expect(stepExecutions[0]?.status).toBe("timed_out");
+  });
+
+  test("explicit restartOnStuck false disables authored jump timeout policy", async () => {
+    const root = await makeTempDir();
+    const workflowName = "authored-timeout-jump-disabled";
+    const sessionId = "sess-authored-timeout-jump-disabled";
+    await createWorkflowFixture(root, workflowName, false);
+    const workflow = await loadWorkflowFixture(root, workflowName);
+    await saveWorkflowFixture(root, workflowName, {
+      ...workflow,
+      defaults: {
+        ...workflow.defaults,
+        timeoutPolicy: {
+          onTimeout: "jump-to-step",
+          jumpStepId: "step-2",
+        },
+      },
+      nodes: [
+        ...workflow.nodes,
+        {
+          id: "step-2",
+          nodeFile: "node-step-2.json",
+        },
+      ],
+      steps: [
+        ...workflow.steps,
+        {
+          id: "step-2",
+          nodeId: "step-2",
+        },
+      ],
+    });
+    await writeJson(path.join(root, workflowName, "node-step-2.json"), {
+      id: "step-2",
+      executionBackend: "claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "step 2",
+      variables: {},
+    });
+
+    const stuckAdapter: NodeAdapter = {
+      async execute(input) {
+        if (input.nodeId === "step-1") {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return {
+          provider: "test-adapter",
+          model: input.node.model,
+          promptText: "ok",
+          completionPassed: true,
+          when: { always: true },
+          payload: { nodeId: input.nodeId },
+        };
+      },
+    };
+
+    const options = {
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...options,
+        sessionId,
+        defaultTimeoutMs: 10,
+        restartOnStuck: false,
+        stuckRestartBackoffMs: 0,
+      },
+      stuckAdapter,
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.exitCode).toBe(6);
+
+    const failedSession = await loadSession(sessionId, options);
+    expect(failedSession.ok).toBe(true);
+    if (!failedSession.ok) {
+      return;
+    }
+
+    expect(failedSession.value.status).toBe("failed");
+    expect(
+      failedSession.value.nodeExecutions.some(
+        (entry) => entry.nodeId === "step-2",
+      ),
+    ).toBe(false);
+  });
+
   test("fails with timeout when stuck restart budget is exhausted", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "restart-fail", false);
@@ -5578,6 +7818,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "restart-fail",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -5625,6 +7866,7 @@ describe("runWorkflow", () => {
     const result = await runWorkflow(
       "policy-blocked",
       {
+        ...workflowLoadOpts,
         workflowRoot: root,
         artifactRoot: path.join(root, "artifacts"),
         sessionStoreRoot: path.join(root, "sessions"),
@@ -5643,6 +7885,7 @@ describe("runWorkflow", () => {
     await createWorkflowFixture(root, "scenario", false);
 
     const result = await runWorkflow("scenario", {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5684,50 +7927,89 @@ describe("runWorkflow", () => {
     expect(outputJson.payload.stage).toBe("test-review");
   });
 
-  test("supports mock-scenario execution for command and container nodes", async () => {
+  test("supports mock-scenario fallback for scaffolded code-manager starters without explicit manager scenario entries", async () => {
     const root = await makeTempDir();
-    const exampleWorkflowRoot = path.join(process.cwd(), "examples");
-    const scenarioRaw = await readFile(
-      path.join(
-        exampleWorkflowRoot,
-        "first-four-arithmetic-pipeline",
-        "mock-scenario.json",
-      ),
-      "utf8",
-    );
-    const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
+    const created = await createWorkflowTemplate("scenario-template", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
 
-    const result = await runWorkflow("first-four-arithmetic-pipeline", {
-      workflowRoot: exampleWorkflowRoot,
+    const result = await runWorkflow("scenario-template", {
+      workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
-      mockScenario: scenario,
+      mockScenario: {},
+      maxSteps: 1,
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) {
       return;
     }
-    expect(result.value.session.status).toBe("completed");
-    const outputExec = result.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "divide-output",
+
+    expect(result.value.exitCode).toBe(4);
+    expect(result.value.session.status).toBe("paused");
+    expect(result.value.session.nodeExecutions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "divedra-manager",
+          status: "succeeded",
+        }),
+      ]),
     );
-    expect(outputExec).toBeDefined();
-    if (outputExec === undefined) {
-      return;
-    }
-    const outputRaw = await readFile(
-      path.join(outputExec.artifactDir, "output.json"),
-      "utf8",
-    );
-    const outputJson = JSON.parse(outputRaw) as {
-      payload: { finalResult: number; summary: string };
-      provider: string;
-    };
-    expect(outputJson.provider).toBe("scenario-mock");
-    expect(outputJson.payload.finalResult).toBe(45);
-    expect(outputJson.payload.summary).toContain("45");
   });
+
+  test(
+    "supports mock-scenario execution for command and container nodes",
+    async () => {
+      const root = await makeTempDir();
+      const exampleWorkflowRoot = path.join(process.cwd(), "examples");
+      const scenarioRaw = await readFile(
+        path.join(
+          exampleWorkflowRoot,
+          "first-four-arithmetic-pipeline",
+          "mock-scenario.json",
+        ),
+        "utf8",
+      );
+      const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
+
+      const result = await runWorkflow("first-four-arithmetic-pipeline", {
+        workflowRoot: exampleWorkflowRoot,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        mockScenario: scenario,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) {
+        return;
+      }
+      expect(result.value.session.status).toBe("completed");
+      const outputExec = result.value.session.nodeExecutions.find(
+        (entry) => entry.nodeId === "divide-output",
+      );
+      expect(outputExec).toBeDefined();
+      if (outputExec === undefined) {
+        return;
+      }
+      const outputRaw = await readFile(
+        path.join(outputExec.artifactDir, "output.json"),
+        "utf8",
+      );
+      const outputJson = JSON.parse(outputRaw) as {
+        payload: { finalResult: number; summary: string };
+        provider: string;
+      };
+      expect(outputJson.provider).toBe("scenario-mock");
+      expect(outputJson.payload.finalResult).toBe(45);
+      expect(outputJson.payload.summary).toContain("45");
+    },
+    120_000,
+  );
 
   test("persists native command stdout in runtime node logs", async () => {
     const root = await makeTempDir();
@@ -5739,17 +8021,14 @@ describe("runWorkflow", () => {
       workflowId: workflowName,
       description: "command stdout log fixture",
       defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-      entryNodeId: "command-worker",
+      entryStepId: "command-worker",
       nodes: [
         {
           id: "command-worker",
-          kind: "task",
           nodeFile: "node-command-worker.json",
-          completion: { type: "none" },
         },
       ],
-      edges: [],
-      branching: { mode: "fan-out" },
+      steps: [{ id: "command-worker", nodeId: "command-worker" }],
     });
     await writeJson(path.join(workflowDir, "node-command-worker.json"), {
       id: "command-worker",
@@ -5773,6 +8052,7 @@ describe("runWorkflow", () => {
       { encoding: "utf8", mode: 0o755 },
     );
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5824,17 +8104,14 @@ describe("runWorkflow", () => {
       workflowId: workflowName,
       description: "command timeout log fixture",
       defaults: { maxLoopIterations: 3, nodeTimeoutMs: 50 },
-      entryNodeId: "command-worker",
+      entryStepId: "command-worker",
       nodes: [
         {
           id: "command-worker",
-          kind: "task",
           nodeFile: "node-command-worker.json",
-          completion: { type: "none" },
         },
       ],
-      edges: [],
-      branching: { mode: "fan-out" },
+      steps: [{ id: "command-worker", nodeId: "command-worker" }],
     });
     await writeJson(path.join(workflowDir, "node-command-worker.json"), {
       id: "command-worker",
@@ -5857,6 +8134,7 @@ describe("runWorkflow", () => {
     );
     const sessionId = "sess-command-timeout-log";
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5884,6 +8162,7 @@ describe("runWorkflow", () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "rerun", false);
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5900,7 +8179,7 @@ describe("runWorkflow", () => {
       {
         ...options,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-1",
+        rerunFromStepId: "step-1",
       },
       deterministicAdapter,
     );
@@ -5917,10 +8196,87 @@ describe("runWorkflow", () => {
     expect(rerun.value.session.startedAt.length).toBeGreaterThan(0);
   });
 
+  test("accepts rerunFromStepId as alias when rerunning from a prior session", async () => {
+    const root = await makeTempDir();
+    await createWorkflowFixture(root, "rerun", false);
+    const options = {
+      ...workflowLoadOpts,
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const first = await runWorkflow("rerun", options, deterministicAdapter);
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    const rerun = await runWorkflow(
+      "rerun",
+      {
+        ...options,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "step-1",
+      },
+      deterministicAdapter,
+    );
+    expect(rerun.ok).toBe(true);
+    if (!rerun.ok) {
+      return;
+    }
+
+    expect(rerun.value.session.sessionId).not.toBe(
+      first.value.session.sessionId,
+    );
+    expect(rerun.value.session.nodeExecutions).toHaveLength(1);
+    expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-1");
+  });
+
+  test("reports step-oriented rerun validation errors for step-addressed workflows", async () => {
+    const root = await makeTempDir();
+    await createStepAddressedInheritedSessionReuseFixture(
+      root,
+      "rerun-step-addressed-error",
+    );
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+    };
+
+    const first = await runWorkflow(
+      "rerun-step-addressed-error",
+      options,
+      new ReusableSessionAdapter(),
+    );
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+
+    const rerun = await runWorkflow(
+      "rerun-step-addressed-error",
+      {
+        ...options,
+        rerunFromSessionId: first.value.session.sessionId,
+        rerunFromStepId: "missing-step",
+      },
+      new ReusableSessionAdapter(),
+    );
+    expect(rerun.ok).toBe(false);
+    if (rerun.ok) {
+      return;
+    }
+
+    expect(rerun.error.message).toBe("unknown rerun step 'missing-step'");
+  });
+
   test("does not inherit reusable node backend sessions into a rerun session", async () => {
     const root = await makeTempDir();
     await createNodeSessionReuseFixture(root, "rerun-node-session-reuse");
     const options = {
+      ...workflowLoadOpts,
       workflowRoot: root,
       artifactRoot: path.join(root, "artifacts"),
       sessionStoreRoot: path.join(root, "sessions"),
@@ -5946,7 +8302,7 @@ describe("runWorkflow", () => {
       {
         ...options,
         rerunFromSessionId: first.value.session.sessionId,
-        rerunFromNodeId: "step-b",
+        rerunFromStepId: "step-b",
       },
       rerunAdapter,
     );
@@ -5968,703 +8324,5 @@ describe("runWorkflow", () => {
       first.value.session.sessionId,
     );
     expect(rerun.value.session.nodeExecutions[0]?.nodeId).toBe("step-b");
-  });
-
-  test("manager schedules sub-workflow inputs based on inputSources dependencies", async () => {
-    const root = await makeTempDir();
-    await createSubWorkflowRuntimeFixture(root, "subworkflow-runtime");
-
-    const result = await runWorkflow(
-      "subworkflow-runtime",
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        runtimeVariables: {
-          humanInput: { topic: "demo" },
-        },
-      },
-      deterministicAdapter,
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.value.session.status).toBe("completed");
-
-    const executionOrder = result.value.session.nodeExecutions.map(
-      (entry) => entry.nodeId,
-    );
-    expect(executionOrder.indexOf("a-manager")).toBeGreaterThan(
-      executionOrder.indexOf("divedra-manager"),
-    );
-    expect(executionOrder.indexOf("a-input")).toBeGreaterThan(
-      executionOrder.indexOf("a-manager"),
-    );
-    expect(executionOrder.indexOf("a-output")).toBeGreaterThan(
-      executionOrder.indexOf("a-input"),
-    );
-    expect(executionOrder.indexOf("b-manager")).toBeGreaterThan(
-      executionOrder.indexOf("a-output"),
-    );
-    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(
-      executionOrder.indexOf("a-output"),
-    );
-    expect(executionOrder.indexOf("b-input")).toBeGreaterThan(
-      executionOrder.indexOf("b-manager"),
-    );
-    expect(executionOrder.indexOf("b-output")).toBeGreaterThan(
-      executionOrder.indexOf("b-input"),
-    );
-    expect(
-      (result.value.session.conversationTurns ?? []).length,
-    ).toBeGreaterThan(0);
-    expect(result.value.session.conversationTurns?.[0]?.fromSubWorkflowId).toBe(
-      "sw-a",
-    );
-    expect(result.value.session.conversationTurns?.[0]?.toSubWorkflowId).toBe(
-      "sw-b",
-    );
-    expect(
-      result.value.session.conversationTurns?.[0]?.communicationId,
-    ).toMatch(/^comm-\d{6}$/);
-
-    const bInputExec = result.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "b-input",
-    );
-    expect(bInputExec).toBeDefined();
-    if (bInputExec === undefined) {
-      return;
-    }
-    const bInputRaw = await readFile(
-      path.join(bInputExec.artifactDir, "input.json"),
-      "utf8",
-    );
-    const bInputJson = JSON.parse(bInputRaw) as {
-      upstreamOutputRefs: readonly {
-        subWorkflowId?: string;
-        outputNodeId: string;
-      }[];
-      upstreamCommunications: readonly string[];
-    };
-    expect(
-      bInputJson.upstreamOutputRefs.some(
-        (entry) => entry.subWorkflowId === "sw-b",
-      ),
-    ).toBe(true);
-    expect(
-      bInputJson.upstreamOutputRefs.some(
-        (entry) => entry.outputNodeId === "b-manager",
-      ),
-    ).toBe(true);
-    expect(bInputJson.upstreamCommunications.length).toBeGreaterThan(0);
-
-    const aOutputExec = result.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "a-output",
-    );
-    expect(aOutputExec).toBeDefined();
-    if (aOutputExec === undefined) {
-      return;
-    }
-    const aOutputHandoffRaw = await readFile(
-      path.join(aOutputExec.artifactDir, "handoff.json"),
-      "utf8",
-    );
-    const aOutputHandoffJson = JSON.parse(aOutputHandoffRaw) as {
-      outputRef: { subWorkflowId?: string };
-    };
-    expect(aOutputHandoffJson.outputRef.subWorkflowId).toBe("sw-a");
-
-    const aOutputCommitMessage = await readFile(
-      path.join(aOutputExec.artifactDir, "commit-message.txt"),
-      "utf8",
-    );
-    expect(aOutputCommitMessage).toContain("Subworkflow-ID: sw-a");
-
-    const conversationCommunication = result.value.session.communications.find(
-      (entry) => entry.deliveryKind === "conversation-turn",
-    );
-    expect(conversationCommunication).toBeDefined();
-    expect(conversationCommunication?.fromSubWorkflowId).toBe("sw-a");
-    expect(conversationCommunication?.toSubWorkflowId).toBe("sw-b");
-    expect(conversationCommunication?.payloadRef.outputNodeId).toBe("a-output");
-
-    const parentToSubWorkflowCommunication =
-      result.value.session.communications.find(
-        (entry) =>
-          entry.routingScope === "parent-to-sub-workflow" &&
-          entry.toNodeId === "a-manager",
-      );
-    expect(parentToSubWorkflowCommunication).toBeDefined();
-    if (parentToSubWorkflowCommunication === undefined) {
-      return;
-    }
-
-    const childEdgeCommunication = result.value.session.communications.find(
-      (entry) =>
-        entry.fromNodeId === "a-input" && entry.toNodeId === "a-output",
-    );
-    expect(childEdgeCommunication).toBeDefined();
-    if (childEdgeCommunication === undefined) {
-      return;
-    }
-
-    const childReceiptRaw = await readFile(
-      path.join(
-        childEdgeCommunication.artifactDir,
-        "attempts",
-        childEdgeCommunication.activeDeliveryAttemptId ?? "attempt-000001",
-        "receipt.json",
-      ),
-      "utf8",
-    );
-    const childReceiptJson = JSON.parse(childReceiptRaw) as {
-      deliveredByNodeId: string;
-    };
-    expect(childReceiptJson.deliveredByNodeId).toBe("a-manager");
-
-    const rootReceiptRaw = await readFile(
-      path.join(
-        parentToSubWorkflowCommunication.artifactDir,
-        "attempts",
-        parentToSubWorkflowCommunication.activeDeliveryAttemptId ??
-          "attempt-000001",
-        "receipt.json",
-      ),
-      "utf8",
-    );
-    const rootReceiptJson = JSON.parse(rootReceiptRaw) as {
-      deliveredByNodeId: string;
-    };
-    expect(rootReceiptJson.deliveredByNodeId).toBe("divedra-manager");
-
-    const childToRootCommunication = result.value.session.communications.find(
-      (entry) =>
-        entry.fromNodeId === "a-output" && entry.toNodeId === "divedra-manager",
-    );
-    expect(childToRootCommunication).toBeDefined();
-    expect(childToRootCommunication?.routingScope).toBe("cross-sub-workflow");
-    expect(childToRootCommunication?.fromSubWorkflowId).toBe("sw-a");
-  });
-
-  test("does not duplicate a sub-workflow manager handoff when a normal edge already targets that manager", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-dedup-manager-handoff";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const workflowPath = path.join(root, workflowName, "workflow.json");
-    const workflowRaw = await readFile(workflowPath, "utf8");
-    const workflowJson = JSON.parse(workflowRaw) as {
-      edges: Array<{ from: string; to: string; when: string }>;
-    };
-    workflowJson.edges.unshift({
-      from: "divedra-manager",
-      to: "a-manager",
-      when: "always",
-    });
-    await writeJson(workflowPath, workflowJson);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        maxSteps: 1,
-        runtimeVariables: {
-          humanInput: { topic: "demo" },
-        },
-      },
-      deterministicAdapter,
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-    expect(result.value.session.status).toBe("paused");
-
-    const rootToAManagerCommunications =
-      result.value.session.communications.filter(
-        (entry) =>
-          entry.fromNodeId === "divedra-manager" &&
-          entry.toNodeId === "a-manager",
-      );
-
-    expect(rootToAManagerCommunications).toHaveLength(1);
-    expect(rootToAManagerCommunications[0]?.routingScope).toBe(
-      "parent-to-sub-workflow",
-    );
-    expect(rootToAManagerCommunications[0]?.toSubWorkflowId).toBe("sw-a");
-  });
-
-  test("fails deterministically when a conversation sender output artifact is corrupted", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-corrupt-conversation";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const options = {
-      workflowRoot: root,
-      artifactRoot: path.join(root, "artifacts"),
-      sessionStoreRoot: path.join(root, "sessions"),
-    };
-
-    const paused = await runWorkflow(
-      workflowName,
-      {
-        ...options,
-        sessionId: "sess-corrupt-conversation",
-        runtimeVariables: {
-          humanInput: { topic: "demo" },
-        },
-        maxSteps: 4,
-      },
-      deterministicAdapter,
-    );
-    expect(paused.ok).toBe(true);
-    if (!paused.ok) {
-      return;
-    }
-    expect(paused.value.session.status).toBe("paused");
-
-    const senderExec = paused.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "a-output",
-    );
-    expect(senderExec).toBeDefined();
-    if (senderExec === undefined) {
-      return;
-    }
-    await writeFile(
-      path.join(senderExec.artifactDir, "output.json"),
-      '"corrupted"\n',
-      "utf8",
-    );
-
-    const resumed = await runWorkflow(
-      workflowName,
-      {
-        ...options,
-        resumeSessionId: paused.value.session.sessionId,
-      },
-      deterministicAdapter,
-    );
-
-    expect(resumed.ok).toBe(false);
-    if (!resumed.ok) {
-      expect(resumed.error.exitCode).toBe(1);
-      expect(resumed.error.message).toContain(
-        "failed to resolve upstream communication",
-      );
-      expect(resumed.error.message).toContain("comm-");
-      expect(resumed.error.message).toContain("divedra-manager");
-      expect(resumed.error.message).toContain("a-output");
-    }
-  });
-
-  test("replays multi-turn sub-workflow conversations through manager mailboxes", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-multi-turn-conversation";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-multi-turn-conversation",
-        runtimeVariables: { humanInput: { topic: "ping-pong" } },
-      },
-      deterministicAdapter,
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const conversationTurns = result.value.session.conversationTurns ?? [];
-    expect(conversationTurns).toHaveLength(3);
-    expect(
-      conversationTurns.map(
-        (entry) => `${entry.fromSubWorkflowId}->${entry.toSubWorkflowId}`,
-      ),
-    ).toEqual(["sw-a->sw-b", "sw-b->sw-a", "sw-a->sw-b"]);
-
-    const aInputExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "a-input",
-    );
-    const bInputExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "b-input",
-    );
-    expect(aInputExecutions).toHaveLength(2);
-    expect(bInputExecutions).toHaveLength(2);
-  });
-
-  test("subworkflow-manager forwards its own output to the child input", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-manager-forwarding";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-    await writeJson(path.join(root, workflowName, "node-b-input.json"), {
-      id: "b-input",
-      executionBackend: "codex-agent",
-      model: "gpt-5-nano",
-      promptTemplate: "b-input",
-      variables: {},
-      argumentsTemplate: { routed: { marker: "" } },
-      argumentBindings: [
-        {
-          targetPath: "routed.marker",
-          source: "node-output",
-          sourceRef: "b-manager",
-          sourcePath: "output.payload.marker",
-          required: true,
-        },
-      ],
-    });
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-manager-forwarding",
-        runtimeVariables: { humanInput: { topic: "ping-pong" } },
-      },
-      new ScenarioNodeAdapter({
-        "a-output": { payload: { marker: "from-a-output" } },
-        "b-manager": {
-          payload: {
-            marker: "from-b-manager",
-            managerControl: {
-              actions: [
-                { type: "deliver-to-child-input", inputNodeId: "b-input" },
-              ],
-            },
-          },
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const bInputExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "b-input",
-    );
-    expect(bInputExecutions.length).toBeGreaterThan(0);
-    const firstBInputExecution = bInputExecutions[0];
-    expect(firstBInputExecution).toBeDefined();
-    if (firstBInputExecution === undefined) {
-      return;
-    }
-
-    const inputRaw = await readFile(
-      path.join(firstBInputExecution.artifactDir, "input.json"),
-      "utf8",
-    );
-    const inputJson = JSON.parse(inputRaw) as {
-      arguments: { routed: { marker: string } };
-    };
-    expect(inputJson.arguments.routed.marker).toBe("from-b-manager");
-  });
-
-  test("subworkflow-manager can suppress default child-input forwarding with explicit empty managerControl actions", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-manager-no-forward";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-manager-no-forward",
-        runtimeVariables: { humanInput: { topic: "ping-pong" } },
-      },
-      new ScenarioNodeAdapter({
-        "b-manager": {
-          payload: {
-            managerControl: {
-              actions: [],
-            },
-          },
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const bInputExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "b-input",
-    );
-    expect(bInputExecutions).toHaveLength(0);
-  });
-
-  test("root manager can explicitly start a sub-workflow through managerControl", async () => {
-    const root = await makeTempDir();
-    const workflowName = "root-manager-explicit-start";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-explicit-start",
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": [
-          {
-            payload: {
-              managerControl: {
-                actions: [
-                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-                ],
-              },
-            },
-          },
-          { payload: {} },
-        ],
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const aManagerExecution = result.value.session.nodeExecutions.find(
-      (entry) => entry.nodeId === "a-manager",
-    );
-    expect(aManagerExecution).toBeDefined();
-
-    const startCommunication = result.value.session.communications.find(
-      (entry) =>
-        entry.fromNodeId === "divedra-manager" &&
-        entry.toNodeId === "a-manager" &&
-        entry.transitionWhen === "sub-workflow-start:sw-a",
-    );
-    expect(startCommunication).toBeDefined();
-  });
-
-  test("root manager can re-invoke the same sub-workflow through repeated explicit start actions", async () => {
-    const root = await makeTempDir();
-    const workflowName = "root-manager-explicit-rerun";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-explicit-rerun",
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": [
-          {
-            payload: {
-              managerControl: {
-                actions: [
-                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-                ],
-              },
-            },
-          },
-          {
-            payload: {
-              managerControl: {
-                actions: [
-                  { type: "start-sub-workflow", subWorkflowId: "sw-a" },
-                ],
-              },
-            },
-          },
-          {
-            payload: {
-              managerControl: {
-                actions: [],
-              },
-            },
-          },
-        ],
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const aManagerExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "a-manager",
-    );
-    expect(aManagerExecutions.length).toBeGreaterThanOrEqual(2);
-
-    const repeatedStartCommunications =
-      result.value.session.communications.filter(
-        (entry) =>
-          entry.fromNodeId === "divedra-manager" &&
-          entry.toNodeId === "a-manager" &&
-          entry.transitionWhen === "sub-workflow-start:sw-a",
-      );
-    expect(repeatedStartCommunications).toHaveLength(2);
-  });
-
-  test("rejects root-manager retry-node actions that target internal sub-workflow nodes", async () => {
-    const root = await makeTempDir();
-    const workflowName = "root-manager-invalid-internal-retry";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-invalid-internal-retry",
-      },
-      new ScenarioNodeAdapter({
-        "divedra-manager": {
-          payload: {
-            managerControl: {
-              actions: [{ type: "retry-node", nodeId: "a-input" }],
-            },
-          },
-        },
-      }),
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-
-    expect(result.error.exitCode).toBe(5);
-    expect(result.error.message).toContain(
-      "must re-invoke that sub-workflow with start-sub-workflow instead",
-    );
-  });
-
-  test("exposes conversation routing metadata in transcript bindings", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-transcript-metadata";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-    await writeJson(path.join(root, workflowName, "node-b-manager.json"), {
-      id: "b-manager",
-      executionBackend: "codex-agent",
-      model: "gpt-5-nano",
-      promptTemplate: "b-manager",
-      variables: {},
-      argumentsTemplate: {},
-      argumentBindings: [
-        {
-          targetPath: "transcript",
-          source: "conversation-transcript",
-        },
-      ],
-    });
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-transcript-metadata",
-        runtimeVariables: { humanInput: { topic: "ping-pong" } },
-      },
-      deterministicAdapter,
-    );
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      return;
-    }
-
-    const bManagerExecutions = result.value.session.nodeExecutions.filter(
-      (entry) => entry.nodeId === "b-manager",
-    );
-    expect(bManagerExecutions.length).toBeGreaterThan(0);
-    const bManagerExec = bManagerExecutions[0];
-    expect(bManagerExec).toBeDefined();
-    if (bManagerExec === undefined) {
-      return;
-    }
-
-    const inputRaw = await readFile(
-      path.join(bManagerExec.artifactDir, "input.json"),
-      "utf8",
-    );
-    const inputJson = JSON.parse(inputRaw) as {
-      arguments: {
-        transcript: readonly {
-          fromManagerNodeId: string;
-          toManagerNodeId: string;
-          communicationId: string;
-        }[];
-      };
-    };
-
-    expect(inputJson.arguments.transcript.length).toBeGreaterThan(0);
-    expect(inputJson.arguments.transcript[0]?.fromManagerNodeId).toBe(
-      "a-manager",
-    );
-    expect(inputJson.arguments.transcript[0]?.toManagerNodeId).toBe(
-      "b-manager",
-    );
-    expect(inputJson.arguments.transcript[0]?.communicationId).toMatch(
-      /^comm-\d{6}$/,
-    );
-  });
-
-  test("rejects a sub-workflow that attempts to reuse the root manager", async () => {
-    const root = await makeTempDir();
-    const workflowName = "subworkflow-root-manager-conversation";
-    await createSubWorkflowRuntimeFixture(root, workflowName);
-
-    const workflowPath = path.join(root, workflowName, "workflow.json");
-    const workflowJson = JSON.parse(await readFile(workflowPath, "utf8")) as {
-      subWorkflows: Array<Record<string, unknown>>;
-      nodes: Array<{ id: string }>;
-    };
-    workflowJson.subWorkflows[1] = {
-      ...workflowJson.subWorkflows[1],
-      managerNodeId: undefined,
-      nodeIds: ["b-input", "b-output"],
-    };
-    workflowJson.nodes = workflowJson.nodes.filter(
-      (node) => node.id !== "b-manager",
-    );
-    await writeJson(workflowPath, workflowJson);
-
-    const result = await runWorkflow(
-      workflowName,
-      {
-        workflowRoot: root,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        sessionId: "sess-root-manager-conversation",
-        runtimeVariables: { humanInput: { topic: "ping-pong" } },
-      },
-      deterministicAdapter,
-    );
-
-    expect(result.ok).toBe(false);
-    if (result.ok) {
-      return;
-    }
-    expect(result.error.exitCode).toBe(2);
-    expect(result.error.message).toContain("workflow validation failed");
   });
 });

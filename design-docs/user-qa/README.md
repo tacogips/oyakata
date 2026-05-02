@@ -15,10 +15,9 @@ Store questions, pending decisions, and items awaiting user approval.
 
 ## Current Items
 
-- [qa-example.md](./qa-example.md) - Example: Database Selection (template example)
-- [qa-event-listener-workflow-trigger.md](./qa-event-listener-workflow-trigger.md) - Pending product and architecture decisions for external event listener workflow triggers
-- [qa-user-action-open-decisions.md](./qa-user-action-open-decisions.md) - Pending first-iteration product decisions for `user-action` nodes and optional-node skip behavior
-- [pending-example.md](./pending-example.md) - Example: CLI Output Format (template example)
+- `qa-event-supervisor-control.md`: public naming, default restart limit,
+  chat command structure, multi-run correlation, and cancellation propagation
+  decisions for event-driven workflow supervisor control.
 
 ## Adding New Items
 

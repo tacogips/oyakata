@@ -35,24 +35,27 @@ async function createWorkflowFixture(
     workflowId,
     description: "fixture",
     defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
-    managerNodeId: "divedra-manager",
+    managerStepId: "divedra-manager",
+    entryStepId: "divedra-manager",
     nodes: [
       {
         id: "divedra-manager",
-        kind: "root-manager",
         nodeFile: "node-divedra-manager.json",
-        completion: { type: "none" },
       },
       {
         id: "step-1",
-        kind: "task",
         nodeFile: "node-step-1.json",
-        completion: { type: "none" },
       },
     ],
-    edges: [{ from: "divedra-manager", to: "step-1", when: "always" }],
-    loops: [],
-    branching: { mode: "fan-out" },
+    steps: [
+      {
+        id: "divedra-manager",
+        nodeId: "divedra-manager",
+        role: "manager",
+        transitions: [{ toStepId: "step-1" }],
+      },
+      { id: "step-1", nodeId: "step-1" },
+    ],
   });
 
   await writeJson(path.join(workflowDir, "node-divedra-manager.json"), {
@@ -199,7 +202,7 @@ describe("deleteWorkflowHistory", () => {
       managerSessionId: "mgrsess-alpha-orphan",
       workflowId: "alpha-id",
       workflowExecutionId: "sess-alpha-orphan",
-      managerNodeId: "divedra-manager",
+      managerStepId: "divedra-manager",
       managerNodeExecId: "exec-alpha-orphan",
       status: "completed",
       createdAt: "2026-03-30T00:00:00.000Z",

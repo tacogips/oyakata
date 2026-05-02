@@ -1,5 +1,6 @@
 import { isJsonObject, type JsonObject } from "../shared/json";
 import { isEventBindingEnabled } from "./config";
+import { resolveEventMailboxBridgePolicy } from "./mailbox-bridge-policy";
 import type {
   EventBinding,
   EventSourceConfig,
@@ -98,7 +99,7 @@ function renderTemplateValue(
   return value;
 }
 
-function buildEventRuntimeMetadata(
+export function buildEventRuntimeMetadata(
   event: ExternalEventEnvelope,
 ): EventRuntimeMetadata {
   return {
@@ -142,11 +143,14 @@ export function mapEventToWorkflowInput(
     ? workflowInput
     : { value: workflowInput };
   const eventMetadata = buildEventRuntimeMetadata(event);
+  const mailboxPolicy = resolveEventMailboxBridgePolicy(binding);
   return {
     workflowInput: normalizedWorkflowInput,
     runtimeVariables: {
       workflowInput: normalizedWorkflowInput,
       event: eventMetadata,
+      eventBindingId: binding.id,
+      eventMailboxBridgePolicy: mailboxPolicy,
       ...(shouldMirrorToHumanInput(binding, source)
         ? { humanInput: normalizedWorkflowInput }
         : {}),

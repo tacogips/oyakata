@@ -28,19 +28,7 @@ A workflow bundle contains:
 
 ### `WorkflowJson`
 
-Current fields:
-
-- `workflowId`
-- `description`
-- `defaults`
-- optional `prompts`
-- `managerNodeId`
-- `subWorkflows`
-- optional `subWorkflowConversations`
-- `nodes`
-- `edges`
-- optional `loops`
-- `branching`
+Authoring and normalized shapes are defined in `src/workflow/types.ts` (`AuthoredWorkflowJson`, `WorkflowJson`). On-disk `workflow.json` must be **step-addressed**: `entryStepId`, `nodes` (registry), `steps`, and optional `managerStepId`. Top-level authored graph or compatibility keys such as `edges`, `loops`, `branching`, `workflowCalls`, `subWorkflows`, `entryNodeId`, `managerNodeId`, and `managerRuntimeId` are **rejected** by validation through the shared authored boundary contract in `src/workflow/authored-workflow.ts` (with compatibility re-exports in `src/workflow/validate.ts`). The normalized `WorkflowJson` never carries those keys. Local routing for the engine is derived from `steps[].transitions` via `getStructuralEdges(...)`; repeat metadata on nodes yields loop rules via `getStructuralLoops(...)`. Runners and inspection surfaces use `resolveWorkflowManagerStepId` / `resolveWorkflowEntryRuntimeId` on that normalized model.
 
 ### `WorkflowDefaults`
 
@@ -65,21 +53,12 @@ Current `NodeKind`:
 - `task`
 - `branch-judge`
 - `loop-judge`
-- `root-manager`
-- `subworkflow-manager`
 - `input`
 - `output`
 
-### `SubWorkflowRef`
+### Structural sub-workflows (removed from the type surface)
 
-- `id`
-- `description`
-- `managerNodeId`
-- `inputNodeId`
-- `outputNodeId`
-- `nodeIds`
-- `inputSources`
-- optional `block`
+The legacy structural `subWorkflows` graph (`SubWorkflowRef`, nested input sources, and block metadata) is no longer modeled in `src/workflow/types.ts`. Disk bundles that still declare `workflow.subWorkflows` fail validation; tests that need a stand-in shape define local fixture types instead of importing shared types.
 
 ### `SubWorkflowConversation`
 
@@ -173,6 +152,26 @@ Normalization behavior:
 - transition-era prompt/backend/sub-workflow aliases are rejected; legacy manager kinds are also rejected
 - `workflow.json.nodes[]` order is canonical and requires no separate visualization file
 
+## Runtime Readiness Model
+
+`WorkflowRuntimeReadiness` reports execution prerequisites for inspection,
+GraphQL, and direct-step guards.
+
+`WorkflowRuntimeRequirement` fields:
+
+- `id`
+- `kind`
+- `label`
+- `status`
+- `detail`
+- `sourceStepIds`
+
+`sourceStepIds` uses the workflow's canonical execution addresses (step ids /
+normalized runtime node ids), not node-registry ids from `workflow.json.nodes[]`.
+Readiness selection filters, such as direct-step preflight checks, should use
+the same step-id address space so shared node-registry payloads can be
+attributed and probed per authored step.
+
 ## Session Model
 
 `WorkflowSessionState` is the central persisted runtime model.
@@ -213,9 +212,10 @@ Current fields:
 
 The queue is:
 
-- initialized with the root manager node id
+- initialized with the callable entry step id (`managerStepId` when present,
+  otherwise `entryStepId`)
 - rebuilt after each execution pass
-- deduplicated by node id
+- deduplicated by queued step id
 - persisted to the session store after every step
 
 The queue is the authoritative scheduler state for `workflow run`.
@@ -312,8 +312,6 @@ Fields:
 - `communicationId`
 - `fromNodeId`
 - `toNodeId`
-- optional `fromSubWorkflowId`
-- optional `toSubWorkflowId`
 - `routingScope`
 - `sourceNodeExecId`
 - `payloadRef`
@@ -335,10 +333,10 @@ Fields:
 
 ### Routing Scopes
 
-- `parent-to-sub-workflow`
-- `cross-sub-workflow`
-- `intra-sub-workflow`
-- `external-mailbox`
+- `intra-workflow` — node-to-node (or step-to-step) delivery within the same workflow execution artifact root
+- `external-mailbox` — human input / published workflow output and other boundary I/O
+
+On load, `normalizeSessionState` runs each communication’s `routingScope` through `normalizeCommunicationRoutingScope`: only `external-mailbox` is kept; any other persisted string is coerced to `intra-workflow` (including obsolete labels from older builds).
 
 ### Delivery Kinds
 
@@ -370,7 +368,6 @@ Fields:
 - optional `kind: "node-output"`
 - `workflowExecutionId`
 - `workflowId`
-- optional `subWorkflowId`
 - `outputNodeId`
 - `nodeExecId`
 - `artifactDir`
@@ -383,15 +380,13 @@ The runtime uses `OutputRef` to point at canonical published node output artifac
 
 - `conversationId`
 - `turnIndex`
-- `fromSubWorkflowId`
-- `toSubWorkflowId`
-- `fromManagerNodeId`
-- `toManagerNodeId`
+- `fromManagerRuntimeId`
+- `toManagerRuntimeId`
 - `communicationId`
 - `outputRef`
 - `sentAt`
 
-This model tracks cross-sub-workflow conversation routing after manager-node execution.
+This model tracks manager-to-manager conversation turns using the same communication and `OutputRef` identity fields as edge deliveries.
 
 ## Runtime Variables
 
@@ -463,16 +458,16 @@ SQLite stores query-oriented copies of node execution data such as:
 
 This DB is intentionally secondary to the filesystem artifact contract.
 
-## Current Validation and Compatibility Rules
+## Current validation rules
 
 Important current rules:
 
 - node ids must match the repository's slug-like id pattern
-- `workflow.managerNodeId` must point at the root manager
-- sub-workflow boundaries must be internally consistent and non-overlapping
-- branch/loop block semantics are validated against edges and loops
+- step-addressed bundles require a non-empty `steps` list, `entryStepId` referencing an existing step, and a non-empty `nodes` registry; optional `managerStepId` must reference a step whose role is `manager` (or the single manager-role step is inferred when exactly one exists)
+- transitions are validated against declared steps; cross-workflow transitions carry `toWorkflowId` / optional `resumeStepId` per `design-workflow-json.md`
+- repeat/loop semantics on registry nodes are validated; derived loop rules exist only on the normalized model, not as authored top-level `loops`
 - `output` contracts reject unsupported fields
-- `kind: "root-manager"` and `kind: "subworkflow-manager"` are the canonical manager roles
+- structural `subworkflow-manager` kind strings are rejected
 
 Important current absences:
 

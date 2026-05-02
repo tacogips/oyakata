@@ -59,7 +59,7 @@ node roles, `nodeType`, output contracts, or the runtime-owned mailbox model.
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
   },
-  "entryNodeId": "answer",
+  "entryStepId": "step-answer",
   "nodes": [
     {
       "id": "answer",
@@ -81,6 +81,20 @@ node roles, `nodeType`, output contracts, or the runtime-owned mailbox model.
         }
       }
     }
+  ],
+  "steps": [
+    {
+      "id": "step-answer",
+      "nodeId": "answer",
+      "role": "worker",
+      "transitions": [{ "toStepId": "step-reply" }]
+    },
+    {
+      "id": "step-reply",
+      "nodeId": "reply",
+      "role": "worker",
+      "transitions": []
+    }
   ]
 }
 ```
@@ -91,8 +105,8 @@ Rules:
 - `addon` may be a string shorthand for the latest compatible built-in major
   version, but saved workflows should use the object form with an explicit
   `version`
-- add-on nodes still participate in normal node ordering, edges, loops,
-  completion rules, and role validation
+- add-on nodes still participate in normal node ordering, step transitions,
+  repeat metadata on registry nodes, completion rules, and role validation
 - add-on nodes must declare `role: "worker"` unless a future add-on descriptor
   explicitly allows manager resolution; inferred worker role from `kind`,
   `control`, or `repeat` is not sufficient for add-on authoring
