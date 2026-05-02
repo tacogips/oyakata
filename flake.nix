@@ -51,13 +51,20 @@
             invocation_cwd="$PWD"
             source_dir="${self}"
             cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/divedra/nix"
-            runtime_root="$cache_root/$(basename "$source_dir")"
+            source_key="''${source_dir##*/}"
+            runtime_root="$cache_root/$source_key"
             runtime_src="$runtime_root/src"
             ready_file="$runtime_root/.bun-ready"
+            source_file="$runtime_root/.source-path"
+
+            cached_source=""
+            if [ -f "$source_file" ]; then
+              IFS= read -r cached_source < "$source_file" || cached_source=""
+            fi
 
             mkdir -p "$cache_root"
 
-            if [ ! -f "$ready_file" ]; then
+            if [ ! -f "$ready_file" ] || [ "$cached_source" != "$source_dir" ]; then
               if [ -d "$runtime_root" ]; then
                 chmod -R u+w "$runtime_root" 2>/dev/null || true
               fi
@@ -69,6 +76,7 @@
                 cd "$runtime_src"
                 bun install --frozen-lockfile
               )
+              printf '%s\n' "$source_dir" > "$source_file"
               touch "$ready_file"
             fi
 

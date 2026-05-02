@@ -117,9 +117,14 @@ nix profile install github:tacogips/divedra
 ```
 
 The flake `default` package is a lightweight `divedra` wrapper that bootstraps a
-writable Bun workspace under `~/.cache/divedra/nix/` on first launch. The full
-tool bundle remains available as `.#dev-tools`, and `nix develop` still provides
-the full development environment.
+writable Bun workspace under `~/.cache/divedra/nix/<nix-source-key>/` on first
+launch. The cache is keyed to the exact Nix source path and is refreshed before
+reuse if the source path does not match the cached marker. The wrapper executes
+the cached Bun entrypoint from the directory where `divedra` was invoked, so
+project-local `.divedra/` discovery and default artifact placement match direct
+`bun run src/main.ts ...` execution. The full tool bundle remains available as
+`.#dev-tools`, and `nix develop` still provides the full development
+environment.
 
 CLI note:
 
