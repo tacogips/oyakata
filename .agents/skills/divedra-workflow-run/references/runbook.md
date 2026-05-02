@@ -16,6 +16,11 @@ List from scoped lookup:
 divedra workflow list
 ```
 
+The human table labels each row as `project scope`, `user scope`, or
+`direct root`. If the same workflow name exists in both project and user scope,
+the command emits a warning on stderr; bare-name commands select project scope
+unless you pass `--scope user`.
+
 Useful filters:
 
 ```bash

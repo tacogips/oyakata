@@ -774,6 +774,161 @@ describe("runCli", () => {
     expect(missingCode).toBe(2);
   });
 
+  test("workflow list labels scoped rows and warns on project user duplicates", async () => {
+    const root = await makeTempDir();
+    const projectRoot = path.join(root, "workspace", ".divedra");
+    const userRoot = path.join(root, "home", ".divedra");
+
+    for (const workflowRoot of [
+      path.join(projectRoot, "workflows"),
+      path.join(userRoot, "workflows"),
+    ]) {
+      const created = await createWorkflowTemplate("dup", { workflowRoot });
+      expect(created.ok).toBe(true);
+    }
+
+    const listCapture = createIoCapture();
+    const listCode = await runCli(
+      [
+        "workflow",
+        "list",
+        "--project-root",
+        projectRoot,
+        "--user-root",
+        userRoot,
+      ],
+      listCapture.io,
+    );
+    expect(listCode).toBe(0);
+    const listText = listCapture.stdout.join("\n");
+    expect(listText).toContain("project scope");
+    expect(listText).toContain("user scope");
+    expect(listCapture.stderr.join("\n")).toContain(
+      "warning: workflow 'dup' exists in both project scope and user scope",
+    );
+
+    const listJsonCapture = createIoCapture();
+    const listJsonCode = await runCli(
+      [
+        "workflow",
+        "list",
+        "--project-root",
+        projectRoot,
+        "--user-root",
+        userRoot,
+        "--output",
+        "json",
+      ],
+      listJsonCapture.io,
+    );
+    expect(listJsonCode).toBe(0);
+    const listJsonPayload = JSON.parse(listJsonCapture.stdout.join("\n")) as {
+      workflows: ReadonlyArray<{ workflowName: string; sourceScope: string }>;
+    };
+    expect(
+      listJsonPayload.workflows
+        .filter((row) => row.workflowName === "dup")
+        .map((row) => row.sourceScope)
+        .sort(),
+    ).toEqual(["project", "user"]);
+    expect(listJsonCapture.stderr.join("\n")).toContain(
+      "warning: workflow 'dup' exists in both project scope and user scope",
+    );
+
+    const limitedCapture = createIoCapture();
+    const limitedCode = await runCli(
+      [
+        "workflow",
+        "list",
+        "--project-root",
+        projectRoot,
+        "--user-root",
+        userRoot,
+        "--limit",
+        "1",
+      ],
+      limitedCapture.io,
+    );
+    expect(limitedCode).toBe(0);
+    expect(limitedCapture.stdout.join("\n")).toContain("project scope");
+    expect(limitedCapture.stdout.join("\n")).not.toContain("user scope");
+    expect(limitedCapture.stderr.join("\n")).toContain(
+      "warning: workflow 'dup' exists in both project scope and user scope",
+    );
+  });
+
+  test("remote workflow list warns from unfiltered catalog sources", async () => {
+    const capture = createIoCapture();
+    let requestedBody: Readonly<Record<string, unknown>> | undefined;
+
+    const code = await runCli(
+      [
+        "workflow",
+        "list",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--limit",
+        "1",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (_input, init) => {
+          requestedBody = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          return createJsonResponse({
+            data: {
+              workflowCatalogOverview: {
+                workflows: [
+                  {
+                    workflowName: "dup",
+                    sourceScope: "project",
+                    workflowDirectory: "/project/.divedra/workflows/dup",
+                    description: "project duplicate",
+                    aggregateStatus: "never-run",
+                    activeExecutionCount: 0,
+                    latestExecution: null,
+                  },
+                ],
+              },
+              workflowCatalogWarningSources: {
+                workflows: [
+                  { workflowName: "dup", sourceScope: "project" },
+                  { workflowName: "dup", sourceScope: "user" },
+                ],
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requestedBody).toMatchObject({
+      variables: { limit: 1 },
+    });
+    expect(String(requestedBody?.["query"])).toContain(
+      "workflowCatalogWarningSources",
+    );
+    const payload = JSON.parse(capture.stdout.join("\n")) as {
+      workflows: readonly { sourceScope: string }[];
+    };
+    expect(payload.workflows).toEqual([
+      expect.objectContaining({ sourceScope: "project" }),
+    ]);
+    expect(capture.stderr.join("\n")).toContain(
+      "warning: workflow 'dup' exists in both project scope and user scope",
+    );
+  });
+
   test("workflow validate and inspect report scoped local add-on sources", async () => {
     await withLegacyWorkflowAuthorshipForCli(async () => {
       const root = await makeTempDir();

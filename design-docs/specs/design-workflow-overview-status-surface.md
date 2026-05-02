@@ -181,10 +181,15 @@ Behavior:
 
 - resolves workflows through the same scoped catalog as other workflow commands
 - shows duplicate names as separate rows when they come from different scopes
-- prints the resolved source scope in every row
+- prints the resolved source scope in every human row using explicit labels such
+  as `project scope`, `user scope`, or `direct root`
+- emits a warning when the same workflow name exists in both project and user
+  scope, because bare-name commands resolve the project-scoped workflow first
+- bases project/user duplicate warnings on the scoped catalog, not on the
+  status-filtered or limit-truncated visible rows
 - uses source scope and workflow directory to keep rows distinct
 - in direct `--workflow-root` mode, lists only workflows in that root and labels
-  their source scope as `direct`
+  their human source scope as `direct root`
 - does not call detail queries for node logs, communication payloads, hook
   events, or reply dispatches
 
@@ -330,6 +335,9 @@ CLI `--output json` should map directly to the summary GraphQL shape. JSON
 output must include `sourceScope` and `workflowDirectory` so automation can
 distinguish duplicate workflow names without parsing human text.
 
+Duplicate project/user scope warnings are emitted on stderr so JSON stdout stays
+parseable.
+
 ### Explicit Detail Separation
 
 The new overview queries are for humans and lightweight dashboards.
@@ -356,7 +364,9 @@ Workflow list resolution must follow the existing scoped catalog behavior:
 - direct workflow root when explicitly supplied
 
 Unlike bare-name command resolution, the human list must show duplicate names as
-separate entries so shadowing is visible.
+separate entries so shadowing is visible. The CLI must also emit a warning for
+project/user name collisions to make the shadowing risk visible even when the
+operator is not reading every row.
 
 List identity:
 

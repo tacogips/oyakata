@@ -29,6 +29,7 @@ import { callStep, type CallStepInput } from "./workflow/call-step";
 import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
 import {
+  listWorkflowCatalogSources,
   resolveWorkflowSource,
   withResolvedWorkflowSourceOptions,
 } from "./workflow/catalog";
@@ -1818,6 +1819,25 @@ function workflowOverviewRowFromGraphqlJson(
   };
 }
 
+function workflowOverviewWarningSourceFromGraphqlJson(
+  value: unknown,
+  label: string,
+): {
+  readonly workflowName: string;
+  readonly sourceScope: WorkflowSourceScope;
+} {
+  const row = requireObjectField(value, label);
+  return {
+    workflowName: requireStringField(
+      row["workflowName"],
+      `${label}.workflowName`,
+    ),
+    sourceScope: assertWorkflowOverviewSourceScope(
+      requireStringField(row["sourceScope"], `${label}.sourceScope`),
+    ),
+  };
+}
+
 function workflowStatusOverviewFromGraphqlJson(
   value: unknown,
   label: string,
@@ -1870,6 +1890,12 @@ const WORKFLOW_CATALOG_OVERVIEW_GQL = `
           startedAt
           endedAt
         }
+      }
+    }
+    workflowCatalogWarningSources: workflowCatalogOverview(workflowScope: $workflowScope) {
+      workflows {
+        workflowName
+        sourceScope
       }
     }
   }
@@ -1941,7 +1967,7 @@ function renderWorkflowOverviewTableLines(
     lines.push(
       [
         row.workflowName,
-        row.sourceScope,
+        workflowOverviewSourceScopeLabel(row.sourceScope),
         row.workflowDirectory,
         row.aggregateStatus,
         String(row.activeExecutionCount),
@@ -1952,6 +1978,73 @@ function renderWorkflowOverviewTableLines(
     );
   }
   return lines;
+}
+
+function workflowOverviewSourceScopeLabel(scope: WorkflowSourceScope): string {
+  switch (scope) {
+    case "project":
+      return "project scope";
+    case "user":
+      return "user scope";
+    case "direct":
+      return "direct root";
+  }
+}
+
+function workflowOverviewDuplicateWarningLines(
+  sources: readonly {
+    readonly workflowName: string;
+    readonly sourceScope: WorkflowSourceScope;
+  }[],
+): string[] {
+  const scopedNames = new Map<string, Set<WorkflowSourceScope>>();
+  for (const source of sources) {
+    if (source.sourceScope === "direct") {
+      continue;
+    }
+    const scopes = scopedNames.get(source.workflowName) ?? new Set();
+    scopes.add(source.sourceScope);
+    scopedNames.set(source.workflowName, scopes);
+  }
+
+  const duplicateNames = [...scopedNames.entries()]
+    .filter(([, scopes]) => scopes.has("project") && scopes.has("user"))
+    .map(([workflowName]) => workflowName)
+    .sort((left, right) => left.localeCompare(right));
+
+  return duplicateNames.map(
+    (workflowName) =>
+      `warning: workflow '${workflowName}' exists in both project scope and user scope; bare-name commands use project scope unless --scope user is specified`,
+  );
+}
+
+function emitWorkflowOverviewWarnings(
+  io: CliIo,
+  sources: readonly {
+    readonly workflowName: string;
+    readonly sourceScope: WorkflowSourceScope;
+  }[],
+): void {
+  for (const line of workflowOverviewDuplicateWarningLines(sources)) {
+    io.stderr(line);
+  }
+}
+
+async function emitLocalWorkflowCatalogWarnings(
+  io: CliIo,
+  options: LoadOptions,
+): Promise<void> {
+  const sources = await listWorkflowCatalogSources(options);
+  if (!sources.ok) {
+    return;
+  }
+  emitWorkflowOverviewWarnings(
+    io,
+    sources.value.map((source) => ({
+      workflowName: source.workflowName,
+      sourceScope: source.scope,
+    })),
+  );
 }
 
 function renderWorkflowStatusOverviewLines(
@@ -2724,20 +2817,31 @@ export async function runCli(
             data["workflowCatalogOverview"],
             "workflowCatalogOverview",
           );
+          const rowsRaw = requireArrayField(catalog["workflows"], "workflows");
+          const rows: WorkflowOverviewRow[] = rowsRaw.map((entry, index) =>
+            workflowOverviewRowFromGraphqlJson(
+              entry,
+              `workflows[${String(index)}]`,
+            ),
+          );
+          const warningCatalog = requireObjectField(
+            data["workflowCatalogWarningSources"],
+            "workflowCatalogWarningSources",
+          );
+          const warningRowsRaw = requireArrayField(
+            warningCatalog["workflows"],
+            "workflowCatalogWarningSources.workflows",
+          );
+          const warningSources = warningRowsRaw.map((entry, index) =>
+            workflowOverviewWarningSourceFromGraphqlJson(
+              entry,
+              `workflowCatalogWarningSources.workflows[${String(index)}]`,
+            ),
+          );
+          emitWorkflowOverviewWarnings(io, warningSources);
           if (parsed.options.output === "json") {
             emitJson(io, catalog);
           } else {
-            const rowsRaw = requireArrayField(
-              catalog["workflows"],
-              "workflows",
-            );
-            const rows: WorkflowOverviewRow[] = rowsRaw.map(
-              (entry, index) =>
-                workflowOverviewRowFromGraphqlJson(
-                  entry,
-                  `workflows[${String(index)}]`,
-                ),
-            );
             for (const line of renderWorkflowOverviewTableLines(rows)) {
               io.stdout(line);
             }
@@ -2766,6 +2870,7 @@ export async function runCli(
         io.stderr(built.error.message);
         return 1;
       }
+      await emitLocalWorkflowCatalogWarnings(io, sharedOptions);
       if (parsed.options.output === "json") {
         emitJson(io, built.value);
       } else {
