@@ -5,6 +5,13 @@ This document defines the authored workflow bundle format. It is the authoritati
 Supporting design:
 `design-docs/specs/design-workflow-steps-and-node-reuse.md`.
 
+Implementation references:
+
+- `src/workflow/types.ts` for authored and normalized workflow types
+- `src/workflow/validate.ts` for validation, defaults, and normalization
+- `src/workflow/authored-workflow.ts` for rejected legacy top-level fields
+- `src/workflow/node-addons.ts` for built-in add-on names and versions
+
 ## Overview
 
 A workflow bundle is a directory containing:
@@ -43,6 +50,7 @@ Notes:
 - `workflow.json.steps[]` order is canonical for editor presentation, while step transitions define legal routing.
 - runtime execution artifacts are written outside the workflow-definition directory under the configured artifact root.
 - the workflow keeps an explicit reusable node registry in `workflow.json.nodes[]`; node files are not inferred by filename convention.
+- inline and file-backed steps are both valid; managed templates often use inline steps while larger workflows may keep step definitions under `steps/`.
 - worker-only workflows are valid and omit `managerStepId`.
 
 ## `node-{id}.json`
@@ -71,6 +79,7 @@ Authored shape:
   "workflowId": "example",
   "description": "Example workflow definition showing the authored top-level fields.",
   "defaults": {
+    "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000,
     "timeoutPolicy": {
       "onTimeout": "fail"
@@ -91,11 +100,13 @@ Authored shape:
   "steps": [
     {
       "id": "manager",
-      "stepFile": "steps/step-manager.json"
+      "nodeId": "manager-runtime",
+      "role": "manager",
+      "transitions": [{ "toStepId": "implement" }]
     },
     {
       "id": "implement",
-      "stepFile": "steps/step-implement.json"
+      "nodeId": "coder"
     }
   ]
 }
@@ -108,6 +119,7 @@ Minimal worker-only authored shape:
   "workflowId": "worker-only-example",
   "description": "One worker starts directly from an explicit entry step.",
   "defaults": {
+    "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000
   },
   "entryStepId": "main-worker",
@@ -139,8 +151,12 @@ Required:
 Optional:
 
 - `description: string`
-- `managerStepId`
+- `managerStepId: string`
+- `prompts.divedraPromptTemplate: string`
+- `prompts.workerSystemPromptTemplate: string`
+- `defaults.maxLoopIterations` (defaults to the runtime default when omitted)
 - `defaults.timeoutPolicy`
+- `defaults.containerRuntime` (defaults to the runtime container runner default when omitted)
 
 Validation rules:
 
@@ -148,8 +164,13 @@ Validation rules:
 - when provided, `description` must be a non-empty string
 - `entryStepId` must resolve to an authored step
 - `managerStepId`, when present, must resolve to an authored step
+- at most one step may declare `role: "manager"`
+- if `managerStepId` is omitted and exactly one step declares `role: "manager"`, the validator infers that step as the manager step
 - every step must reference a node registry entry through `nodeId`
+- `nodes[]` must contain at least one node registry entry
 - `steps[]` must be non-empty
+- node registry ids must be unique
+- step ids must be unique
 - dedicated legacy top-level fields are rejected by key set: step-addressed bundles use `REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS` in `src/workflow/authored-workflow.ts` (includes `managerRuntimeId`, `managerNodeId`, `entryNodeId`, `subWorkflows`, `workflowCalls`, `subWorkflowConversations`, `edges`, `loops`, and `branching`). `src/workflow/validate.ts` re-exports those constants for compatibility
 - dedicated legacy top-level field lists, rejection strings, canonical issue construction, and save-time authored-boundary stripping are centralized in `src/workflow/authored-workflow.ts`; validation re-exports those constants from `src/workflow/validate.ts` for compatibility
 - the save path may strip only normalized in-memory `hasManagerNode` and redundant node `kind` fields from workflow input before writing; it does not strip `managerRuntimeId`, `managerNodeId`, `entryNodeId`, `subWorkflows`, or other disallowed keys (validation rejects them, same as for on-disk `workflow.json`)
@@ -174,9 +195,20 @@ Older documents mentioned those concepts, but they are not current authored fiel
 - `nodeFile: string` when the node uses a workflow-local payload
 - optional `addon` when the node uses a built-in, scoped local, or
   host-provided add-on payload
-  Validation rules:
+- optional `execution` for registry-level required/optional scheduling policy
+- optional `kind` for graph semantics such as `task`, `branch-judge`,
+  `loop-judge`, `input`, or `output`
+- optional `repeat` for loop policy (`while`, optional `restartAt`, optional
+  `maxIterations`)
+
+Validation rules:
 
 - a node reference must provide exactly one of `nodeFile` or `addon`
+- `id` must match `^[a-z0-9][a-z0-9-]{1,63}$`
+- only `id`, `nodeFile`, `addon`, `execution`, `kind`, and `repeat` are accepted on authored node registry entries
+- `execution.mode`, when present, must be `required` or `optional`
+- `execution.decisionBy`, when present, must be `owning-manager`
+- `repeat.while` is required when `repeat` is present; `repeat.maxIterations`, when present, must be a positive integer
 - `divedra/*` `addon` references are resolved from the built-in node add-on
   catalog into an effective node payload during load/validation
 - non-`divedra/` add-on references may resolve from scoped local add-on roots
@@ -266,10 +298,10 @@ Detailed design:
 
 `workflow.json.steps[]` entries declare the executable addresses of the workflow.
 
-Each step entry provides exactly one of:
+Each step entry is authored in exactly one of two forms:
 
-- `stepFile`
-- inline step fields in `workflow.json`
+- file-backed: `id` plus `stepFile`
+- inline: `id`, `nodeId`, and any optional inline step fields in `workflow.json`
 
 File-backed example:
 
@@ -298,10 +330,10 @@ Inline example:
 }
 ```
 
-Required:
+Required after step-file resolution:
 
 - `id: string`
-- exactly one of `stepFile: string` or inline `nodeId: string`
+- `nodeId: string`
 
 Optional inline step fields:
 
@@ -315,10 +347,13 @@ Optional inline step fields:
 Validation rules:
 
 - `id` values are unique within the workflow
-- exactly one of `stepFile` or inline `nodeId` authoring is allowed for a given step entry
+- a file-backed authored step contains `id` and `stepFile`; an inline authored step contains `id`, `nodeId`, and optional inline fields
+- only `id`, `stepFile`, `nodeId`, `description`, `role`, `promptVariant`, `timeoutMs`, `sessionPolicy`, and `transitions` are accepted on authored step entries
+- when `stepFile` is used in source authoring, the inline step fields `nodeId`, `description`, `role`, `promptVariant`, `timeoutMs`, `sessionPolicy`, and `transitions` must not be authored on the same entry; loading resolves the file into a complete step before validation
 - when `stepFile` is used, the loaded step definition must resolve to the same `id`
 - `nodeId` must resolve through `workflow.json.nodes[]`
 - when `role` is omitted, the step named by `managerStepId` is treated as the manager execution site and all other steps default to worker execution sites
+- manager-role steps must reference file-backed nodes; add-on-backed registry entries are worker-only
 - `transitions[]` target step ids, not node ids
 - `sessionPolicy.inheritFromStepId`, when present, must reference an authored step in the same workflow
 - step-local `timeoutMs`, prompt, and session settings override node defaults for that step usage site only
@@ -340,6 +375,7 @@ Rules:
 - when `toWorkflowId` is present, the transition targets another workflow using the same execution-address contract as any other step call
 - when `toWorkflowId` is present, `resumeStepId` must name a step in the **current** workflow to queue after the callee workflow completes (same handoff role historically associated with removed top-level `workflowCalls[].resultNodeId` authoring)
 - `resumeStepId` must be omitted for local in-workflow transitions (`toWorkflowId` absent)
+- a step may have at most one cross-workflow transition
 - cross-workflow transitions must target the callee workflow's callable entry step, which is normally its `managerStepId`, or `entryStepId` for a worker-only workflow
 - transitions always target steps, never raw node ids
 - optional `label` uses the same expression grammar as the `when` field on step-derived routing edges (`getStructuralEdges` in `src/workflow/types.ts` maps omitted `label` to `always`). For cross-workflow transitions, omitted `label` means the derived cross-workflow dispatch is unconditional. When set, `label` gates both local transition selection and cross-workflow dispatch matching. Step-authored cross-workflow transitions are **not** copied onto `workflow.workflowCalls` during normalization; the engine and inspection surfaces derive the effective dispatch list (deterministic ids `__cw:<callerStepId>`) from `steps[]`
@@ -392,7 +428,10 @@ Required:
 
 Optional:
 
+- `description`
 - `nodeType`
+- `managerType`
+- `workingDirectory`
 - `executionBackend`
 - `model`
 - `sessionPolicy`
@@ -402,9 +441,11 @@ Optional:
 - `promptTemplateFile`
 - `sessionStartPromptTemplate`
 - `sessionStartPromptTemplateFile`
+- `promptVariants`
 - `command`
 - `container`
 - `durability`
+- `userAction`
 - `argumentsTemplate`
 - `argumentBindings`
 - `templateEngine`
@@ -414,6 +455,12 @@ Optional:
 Important rules:
 
 - omitted `nodeType` defaults to `agent`
+- `agent` nodes require `executionBackend`, `model`, and `promptTemplate` unless a manager code-path default is explicitly allowed by the loader
+- manager-role nodes must stay on the agent execution path; `command`,
+  `container`, `user-action`, and runtime-owned `addon` payloads are worker
+  execution paths
+- `managerType` is valid only for manager-role nodes; worker steps must not
+  reference payloads that declare `managerType`
 - `systemPromptTemplateFile` is resolved into `systemPromptTemplate` during load
 - `promptTemplateFile` is resolved into `promptTemplate` during load
 - `sessionStartPromptTemplateFile` is resolved into `sessionStartPromptTemplate` during load
@@ -426,10 +473,17 @@ Current supported authored values:
 - `agent`
 - `command`
 - `container`
+- `user-action`
 
 Current execution reality:
 
-- `agent`, `command`, and `container` nodes run in `runWorkflow()`
+- `agent`, `command`, `container`, and `user-action` nodes are accepted by the validator
+- in full workflow execution, `user-action` nodes persist a request artifact,
+  mark the session `paused`, and wait for external/user input rather than
+  running an agent, command, or container
+- direct step execution rejects `user-action` nodes; they require the full
+  workflow session lifecycle
+- `nodeType: "addon"` is runtime-owned and must not be authored in node payload files; author add-ons through `workflow.json.nodes[].addon`
 
 ### `executionBackend`
 
@@ -441,6 +495,43 @@ Current backend values:
 - `official/anthropic-sdk`
 
 `model` is backend-specific model naming. It is required for executable `agent` nodes.
+
+For `agent` nodes, `model` must be a provider or backend-specific model name. Do not put CLI-wrapper identifiers such as `codex-agent`, `claude-code-agent`, `tacogips/codex-agent`, or `tacogips/claude-code-agent` in `model`.
+
+### `userAction`
+
+`userAction` is required when `nodeType` is `user-action` and invalid for other node types.
+
+Rules:
+
+- `messageToolIds` is required and must contain at least one tool id
+- `notificationToolIds`, when present, is additive and does not replace
+  `messageToolIds`
+- `messageToolIds` and `notificationToolIds` entries must be non-empty strings
+- only `messageToolIds`, `notificationToolIds`, `replyPolicy`,
+  `allowStructuredReply`, and `allowFreeTextReply` are accepted on
+  `userAction`
+- `allowStructuredReply` and `allowFreeTextReply`, when present, must be
+  booleans
+- `promptTemplate` or `promptTemplateFile` must describe the user-facing action request
+- `model`, `executionBackend`, `sessionPolicy`, `command`, `container`, and `durability` must be omitted
+- `variables` remains required, as with other node payloads
+
+Shape:
+
+```json
+{
+  "messageToolIds": ["chat"],
+  "notificationToolIds": ["desktop"],
+  "replyPolicy": "first-valid-reply-wins",
+  "allowStructuredReply": true,
+  "allowFreeTextReply": true
+}
+```
+
+Supported values:
+
+- `replyPolicy: "first-valid-reply-wins"`
 
 ### `sessionPolicy`
 
