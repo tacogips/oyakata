@@ -21,7 +21,7 @@
         pkgs = import nixpkgs { inherit system; };
         pkgs-unstable = import nixpkgs-unstable { inherit system; };
 
-        devPackages = with pkgs; [
+        baseDevPackages = with pkgs; [
           # Bun runtime
           pkgs-unstable.bun
 
@@ -44,7 +44,7 @@
 
         divedraCli = pkgs.writeShellApplication {
           name = "divedra";
-          runtimeInputs = devPackages;
+          runtimeInputs = baseDevPackages;
           text = ''
             set -euo pipefail
 
@@ -91,6 +91,8 @@
             platforms = pkgs.lib.platforms.unix;
           };
         };
+
+        devPackages = baseDevPackages ++ [ divedraCli ];
 
       in
       {

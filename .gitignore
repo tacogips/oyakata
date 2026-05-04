@@ -53,8 +53,10 @@ impl-plans/.progress.lock
 .private*/
 
 # divedra runtime artifacts and session store (default paths)
-.divedra/
-.divedra/**
+.divedra/artifacts/
+.divedra/artifacts/**
+.divedra/logs/
+.divedra/logs/**
 .divedra-data/
 .divedra-data/**
 .divedra-opt/
