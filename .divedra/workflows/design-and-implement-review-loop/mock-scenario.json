@@ -375,7 +375,27 @@
       }
     }
   ],
-  "step8-commit-message": {
+  "step8-docs-refresh": {
+    "provider": "scenario-mock",
+    "model": "gpt-5.5",
+    "when": {
+      "always": true
+    },
+    "payload": {
+      "workflowMode": "issue-resolution",
+      "documentationFiles": [
+        "README.md",
+        ".agents/skills/divedra-impl-workflow/SKILL.md"
+      ],
+      "userFacingSurfaces": [
+        "README.md",
+        ".agents/skills/divedra-impl-workflow/SKILL.md"
+      ],
+      "documentationSummary": "Refreshed the README and the exposed workflow skill documentation so they match the accepted implementation behavior before commit generation.",
+      "residualRisks": []
+    }
+  },
+  "step9-commit-message": {
     "provider": "scenario-mock",
     "model": "gpt-5.5",
     "when": {
@@ -389,13 +409,15 @@
         "design-docs/user-qa/qa-review-finding-retention.md",
         "impl-plans/active/workflow-review-findings.md",
         "src/workflow/review-findings.ts",
-        "src/workflow/review-findings.test.ts"
+        "src/workflow/review-findings.test.ts",
+        "README.md",
+        ".agents/skills/divedra-impl-workflow/SKILL.md"
       ],
-      "changeSummary": "Accepted implementation, design, and plan updates for persisted workflow review findings across reruns.",
+      "changeSummary": "Accepted implementation, design, plan, and user-facing documentation updates for persisted workflow review findings across reruns.",
       "residualRisks": []
     }
   },
-  "step9-commit-push": {
+  "step10-commit-push": {
     "provider": "scenario-mock",
     "model": "command/commit-and-push",
     "when": {
@@ -432,12 +454,19 @@
       "changedFiles": [
         "src/workflow/review-findings.ts",
         "src/workflow/review-findings.test.ts",
-        "impl-plans/active/workflow-review-findings.md"
+        "impl-plans/active/workflow-review-findings.md",
+        "README.md",
+        ".agents/skills/divedra-impl-workflow/SKILL.md"
       ],
       "designReviewSummary": "Design accepted after the unresolved retention decision was moved into user QA.",
       "implPlanReviewSummary": "Implementation plan accepted after explicit persistence migration and regression verification tasks were added.",
       "implementationSummary": "Step 6 implemented the approved plan, addressed Step 7 feedback, and updated implementation-plan progress.",
       "implementationReviewSummary": "Implementation accepted with no remaining high or mid findings.",
+      "documentationFiles": [
+        "README.md",
+        ".agents/skills/divedra-impl-workflow/SKILL.md"
+      ],
+      "documentationSummary": "Step 8 refreshed the README and the user-facing workflow skill so they match the accepted implementation behavior before commit generation.",
       "commitMessage": "feat: persist workflow review findings across reruns",
       "commitHash": "abc123def4567890abc123def4567890abc123de",
       "pushedRemote": "origin",

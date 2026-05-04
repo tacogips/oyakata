@@ -30,8 +30,8 @@ Expected stable run summary:
   "status": "completed",
   "workflowName": "design-and-implement-review-loop",
   "workflowId": "design-and-implement-review-loop",
-  "nodeExecutions": 17,
-  "transitions": 16,
+  "nodeExecutions": 18,
+  "transitions": 17,
   "exitCode": 0
 }
 ```
@@ -56,12 +56,19 @@ Expected final output payload:
   "changedFiles": [
     "src/workflow/review-findings.ts",
     "src/workflow/review-findings.test.ts",
-    "impl-plans/active/workflow-review-findings.md"
+    "impl-plans/active/workflow-review-findings.md",
+    "README.md",
+    ".agents/skills/divedra-impl-workflow/SKILL.md"
   ],
   "designReviewSummary": "Design accepted after the unresolved retention decision was moved into user QA.",
   "implPlanReviewSummary": "Implementation plan accepted after explicit persistence migration and regression verification tasks were added.",
   "implementationSummary": "Step 6 implemented the approved plan, addressed Step 7 feedback, and updated implementation-plan progress.",
   "implementationReviewSummary": "Implementation accepted with no remaining high or mid findings.",
+  "documentationFiles": [
+    "README.md",
+    ".agents/skills/divedra-impl-workflow/SKILL.md"
+  ],
+  "documentationSummary": "Step 8 refreshed the README and the user-facing workflow skill so they match the accepted implementation behavior before commit generation.",
   "commitMessage": "feat: persist workflow review findings across reruns",
   "commitHash": "abc123def4567890abc123def4567890abc123de",
   "pushedRemote": "origin",

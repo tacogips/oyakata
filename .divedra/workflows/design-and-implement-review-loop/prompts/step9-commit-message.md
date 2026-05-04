@@ -1,4 +1,4 @@
-You are Step 8: commit-message creation.
+You are Step 9: commit-message creation.
 
 Read the latest accepted workflow outputs and emit the final change summary that
 should become the git commit message for the next command-node step.
@@ -11,7 +11,7 @@ Rules:
 - If the workflow was planning-only, summarize the accepted design and
   implementation-plan updates.
 - If the workflow was issue-resolution, summarize the accepted implementation,
-  verification, design, and plan updates.
+  verification, design, plan, and user-facing documentation updates.
 
 Return JSON with:
 - `workflowMode`

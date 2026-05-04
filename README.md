@@ -505,3 +505,9 @@ bun run format:check
 
 Runtime is Bun, and the project is written in strict TypeScript. Optional shell
 tooling is provided through Nix flakes and direnv.
+
+The repository-local `design-and-implement-review-loop` workflow refreshes
+user-facing docs after implementation review acceptance and before commit/push.
+Its required targets are `README.md` and
+`.agents/skills/divedra-impl-workflow/SKILL.md` so shipped behavior and the
+LLM-facing workflow skill stay aligned.
