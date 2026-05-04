@@ -1,113 +1,40 @@
 # divedra
 
-`divedra` is a TypeScript/Bun workflow runtime for cooperative multi-agent execution.
+`divedra` is a TypeScript/Bun workflow runner for cooperative multi-agent work.
+It lets you define reusable workflows, choose the right workflow by purpose, run
+them locally or through a GraphQL control plane, and inspect execution progress
+afterward.
 
-The current codebase provides:
+## What You Can Do
 
-- file-based workflow definitions under scoped `.divedra/workflows` directories or another configured workflow definition directory
-- a queue-driven workflow engine with persisted sessions and runtime artifacts
-- agent backends for `codex-agent`, `claude-code-agent`, `official/openai-sdk`, and `official/anthropic-sdk`
-- a local GraphQL control plane served by Bun
+- Store reusable workflow bundles in a user catalog (`~/.divedra/workflows`), a project catalog (`<project>/.divedra/workflows`), or an explicit workflow definition directory.
+- Discover available workflows and their callable contracts before running them.
+- Run workflows using agent backends such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, and `official/anthropic-sdk`.
+- Run deterministic mock scenarios for demos, tests, and documentation without real agent calls.
+- Monitor, resume, rerun, continue, export, and inspect workflow executions.
+- Use supervised execution with `--auto-improve` when retries, stall detection, and recovery are useful.
+- Start a local GraphQL control plane for remote execution and manager/control-plane operations.
+- Receive external events, replay event receipts, and inspect reply dispatch records.
+- Install shell hooks/snippets for Claude Code, Codex, and Gemini.
 
-## Active Design Direction
+## Install
 
-The current implementation remains the source of truth for shipped behavior, but the active design work in `design-docs/specs/` now targets:
-
-- step-addressed workflows (`workflow.json.steps[]`) with a reusable node registry in `workflow.json.nodes[]`
-- jump-driven routing via validated `next.stepId` rather than dedicated branch/loop authoring
-- deterministic `code` manager behavior as the default manager mode
-- explicit same-session continuation for different steps that intentionally reuse one node
-- cross-workflow handoffs authored only as `steps[].transitions` with `toWorkflowId` / `resumeStepId`; validation rejects top-level `workflow.workflowCalls`; the runtime derives deterministic dispatch ids (`__cw:<callerStepId>`) and invokes the callee using the same callable entry contract as direct `call-step` execution (typically the callee manager step, or `entryStepId` for worker-only bundles)
-- supervised `--auto-improve` execution (engine outer loop, persisted incidents/remediations, and patch audit; optional phase-2 nested `superviser` workflow with `--nested-superviser`; see `design-docs/specs/architecture.md` and `impl-plans/completed/auto-improve-superviser-workflow-phase-2.md`)
-
-Those design documents describe the intended next schema and runtime direction; they are not a claim that every item is already implemented in `src/`.
-
-## What Is Implemented Today
-
-The source of truth is the implementation under `src/workflow/`, `src/cli.ts`,
-`src/graphql/`, and `src/server/`.
-
-Current runtime behavior:
-
-- step-addressed bundles (`workflow.json.steps[]` + reusable `workflow.json.nodes[]`) are the authored workflow model for create, validate, inspect, load, and save
-- workflows persist session state, node execution artifacts, communications, and runtime indexes
-- manager nodes run inside the queue-based engine rather than replacing it with a pure external orchestrator
-- authored workflows may use role-based steps (`manager` / `worker`) and may omit a manager when `entryStepId` is explicit
-- manager-less workflows execute today, and the runtime treats `entryStepId` as the effective manager/entry anchor when `managerStepId` is omitted
-- `call-step` is the supported direct-call surface for local debugging and step-addressed execution control
-- cross-workflow execution is derived from step transitions only: validation **rejects** top-level `workflow.workflowCalls` on every load/save path, and the engine projects deterministic runtime dispatch rows (`id` `__cw:<callerStepId>`) from `steps[].transitions` with `toWorkflowId` / `resumeStepId`
-- node-local `repeat` remains supported and synthesizes loop semantics from the normalized runtime node list
-- `user-action` nodes are supported and pause execution until an external reply resolves the action
-
-Current execution support by node type:
-
-- `agent`: implemented
-- `user-action`: implemented as a pause-and-resume runtime state
-- `command`: implemented
-- `container`: implemented
-- `addon`: implemented for built-in runtime-provided worker add-ons and
-  host-provided third-party addon definitions or resolvers
-
-Cross-workflow runtime (not an authored `workflow.json` field):
-
-- Step transitions with `toWorkflowId` / `resumeStepId` drive cross-workflow execution. The runtime exposes the handoff to callees through `runtimeVariables.workflowCall` (stable template key; name is historical): caller payload as `workflowCall.input`, and optional result delivery through a runtime-owned `workflow-call:<dispatch-id>` communication (prefix historical).
-
-Additional node registry features:
-
-- `nodes[].addon`: worker add-on references that resolve to effective node
-  payloads while save/edit surfaces preserve the authored add-on reference.
-  Current built-ins include `divedra/chat-reply-worker`,
-  `divedra/codex-worker`, `divedra/claude-code-worker`,
-  `divedra/x-gateway-read`, `divedra/x-gateway`,
-  `divedra/mail-gateway-read`, and `divedra/mail-gateway`. Non-`divedra/`
-  add-ons require explicit host-provided add-on definitions or resolver
-  functions; workflow loading does not fetch packages or registry metadata.
-  Add-on registration helpers and resolver-facing types are exported from the
-  package root for host applications and third-party add-on packages. Add-on
-  definitions may resolve synchronously or asynchronously when loaded through
-  the normal disk/execution path.
-
-## Quick Start
-
-Install dependencies:
+Install dependencies for local development:
 
 ```bash
 bun install
 ```
 
-Validate an example workflow:
+Run commands from source:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples
+bun run src/main.ts <command>
 ```
 
-Inspect the normalized workflow summary:
+Run directly from the Nix flake on Linux or Darwin:
 
 ```bash
-bun run src/main.ts workflow inspect claude-divedra-codex-coding \
-  --workflow-definition-dir ./examples \
-  --output json
-```
-
-Run a workflow with the bundled deterministic mock scenario:
-
-```bash
-bun run src/main.ts workflow run claude-divedra-codex-coding \
-  --workflow-definition-dir ./examples \
-  --mock-scenario ./examples/claude-divedra-codex-coding/mock-scenario.json \
-  --output json
-```
-
-Start the local GraphQL control plane:
-
-```bash
-bun run src/main.ts serve
-```
-
-Run `divedra` directly from the flake on Linux or Darwin:
-
-```bash
-nix run github:tacogips/divedra -- --help
+nix run github:tacogips/divedra -- workflow list
 ```
 
 Install the flake package into your user profile:
@@ -116,128 +43,207 @@ Install the flake package into your user profile:
 nix profile install github:tacogips/divedra
 ```
 
-The flake `default` package is a lightweight `divedra` wrapper that bootstraps a
-writable Bun workspace under `~/.cache/divedra/nix/<nix-source-key>/` on first
-launch. The cache is keyed to the exact Nix source path and is refreshed before
-reuse if the source path does not match the cached marker. The wrapper executes
-the cached Bun entrypoint from the directory where `divedra` was invoked, so
-project-local `.divedra/` discovery and default artifact placement match direct
-`bun run src/main.ts ...` execution. The full tool bundle remains available as
-`.#dev-tools`, and `nix develop` still provides the full development
-environment.
+The flake package provides a `divedra` wrapper. Development still uses `nix
+develop` or direnv when you want the full local toolchain.
 
-CLI note:
+## Workflow Locations
 
-- use the direct form `bun run src/main.ts workflow ...`
+By default, divedra looks for workflow bundles in scoped catalogs:
 
-## CLI Surface
+- User catalog: `~/.divedra/workflows/<workflow-name>/workflow.json`
+- Project catalog: `<project>/.divedra/workflows/<workflow-name>/workflow.json`
 
-Primary commands implemented in `src/cli.ts`:
+For examples, tests, or one-off runs, bypass scoped lookup with:
 
-- `workflow create <name>`
-- `workflow validate <name>`
-- `workflow inspect <name>`
-- `workflow usage [name]`
-- `workflow run <name>`
-- `session status <session-id>`
-- `session progress <session-id>`
-- `session resume <session-id>`
-- `session rerun <session-id> <step-id>`
-- `session export <session-id>`
-- `session logs <session-id>`
-- `serve [workflow-name]`
-- `gql <graphql-document>`
-- `call-step <workflow-id> <workflow-run-id> <step-id>`
-- `hook [--vendor claude-code|codex]`
-- `events validate`
-- `events emit <source-id> --event-file <path>`
-- `events serve`
-- `events list [--source <id>] [--status <status>] [--limit <n>]`
-- `events replay <receipt-id>`
+```bash
+--workflow-definition-dir ./examples
+```
 
-`workflow create <name>` scaffolds a role-based starter with a code-manager default manager node and a `codex-agent` worker node. The generated `workflow.json` prefers the authored-minimal surface and omits compatibility/default fields such as empty `subWorkflows`, synthesized `edges`, default `branching`, and node-level `completion: { "type": "none" }` unless they are needed. Pass `--worker-only` to scaffold a manager-less starter whose authored entry step points at `main-worker`.
+This option points at a directory containing workflow bundle directories. It
+does not control where logs, sessions, artifacts, or attachments are stored.
 
-`call-step` is the direct-call surface during the step-addressed cutover. It accepts targeted continuation controls such as `--prompt-variant <name>`, `--continue-session`, `--timeout-ms <ms>`, and `--resume-step-exec <id>` so a reusable node can be revisited through a specific step with invocation-local overrides.
+## Workflow Discovery
 
-`serve` starts the local Bun HTTP server. The current server surface exposes GraphQL and health checks only.
+Use `workflow usage` when an LLM or automation needs to decide which workflow to
+call. With no workflow name, it emits the full workflow catalog with each
+workflow's purpose, callable step, callable role, input/output summary, and
+compact step overview.
 
-`events` commands load external event source configuration from
-`.divedra-events` next to the workflow root, or from `--event-root`. `events
-emit` injects fixture payloads for local testing, `events serve` starts
-listener adapters, `events list` reads persisted receipt records from the
-runtime database, and `events replay` re-dispatches a stored normalized event
-with replay-specific event and dedupe identifiers. Event dispatch commands can
-use `--mock-scenario <path>` to execute local workflows deterministically
-without a GraphQL endpoint or real agent backend transports. Set
-`DIVEDRA_EVENTS_READ_ONLY=true` or pass `--read-only` to validate and persist
-event receipts without dispatching workflow execution. `events replay` also
-accepts `--dry-run` and `--reason <text>` for operator verification and receipt
-audit metadata.
+```bash
+bun run src/main.ts workflow usage --workflow-definition-dir ./examples --output json
+```
 
-Useful options:
+Use `workflow list` for a human-facing catalog overview:
 
-- `--workflow-definition-dir`
-- `--artifact-root`
-- `--session-store`
-- `--worker-only`
-- `--variables <path>`
-- `--mock-scenario <path>`
-- `--output json`
-- `--format text|json|jsonl` for `session logs`
+```bash
+bun run src/main.ts workflow list --workflow-definition-dir ./examples
+```
 
-`workflow inspect` surfaces step and node-registry identity fields plus
-`crossWorkflowDispatchIds` and `counts.crossWorkflowDispatches` (derived from
-`steps[].transitions`, not from authored `workflow.workflowCalls`).
+Use `workflow status` for recent execution status for one workflow:
 
-`workflow usage` is the AI-facing discovery surface. It lists workflow purpose,
-the compact authored step overview, and the callable input/output contract
-derived from the workflow manager step or, for worker-only bundles, the entry
-step.
+```bash
+bun run src/main.ts workflow status <workflow-name> --workflow-definition-dir ./examples
+```
 
-- `--dry-run`
-- `--max-steps <n>`
-- `--max-loop-iterations <n>`
-- `--default-timeout-ms <ms>`
-- `--timeout-ms <ms>` for `call-step`
-- `--prompt-variant <name>` for `call-step`
-- `--continue-session` for `call-step`
-- `--resume-step-exec <id>` for `call-step` (prior execution record id)
+Use `workflow inspect <workflow-name>` only after you have selected a workflow
+and need deeper per-workflow detail:
 
-Remote execution support:
+```bash
+bun run src/main.ts workflow inspect <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --output json
+```
 
-- `workflow run`, `session resume`, and `session rerun` can target a remote control plane with `--endpoint`
-- `call-step`, `session export`, and `session logs` are local-only today
-- `--mock-scenario` is local-only and cannot be combined with `--endpoint`
+## Run A Workflow
+
+Create a starter workflow in the selected catalog:
+
+```bash
+bun run src/main.ts workflow create <workflow-name>
+```
+
+Create a manager-less starter workflow:
+
+```bash
+bun run src/main.ts workflow create <workflow-name> --worker-only
+```
+
+Validate before running:
+
+```bash
+bun run src/main.ts workflow validate <workflow-name> --workflow-definition-dir ./examples
+```
+
+Run with JSON output:
+
+```bash
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --output json
+```
+
+Run with runtime variables:
+
+```bash
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --variables ./variables.json \
+  --output json
+```
+
+Run with a deterministic mock scenario:
+
+```bash
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --mock-scenario ./examples/<workflow-name>/mock-scenario.json \
+  --output json
+```
+
+Run with supervised recovery:
+
+```bash
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --auto-improve \
+  --nested-supervisor \
+  --max-supervised-attempts 3 \
+  --workflow-mutation-mode execution-copy \
+  --output json
+```
+
+Use plain `workflow run` for quick checks. Use `--auto-improve` for longer or
+more important work where retry, stall detection, and remediation are desired.
+
+## Session Operations
+
+After a workflow starts, keep the returned `sessionId` / workflow execution id.
+
+Check status:
+
+```bash
+bun run src/main.ts session status <session-id> --output json
+```
+
+Show progress:
+
+```bash
+bun run src/main.ts session progress <session-id>
+```
+
+Read logs:
+
+```bash
+bun run src/main.ts session logs <session-id> --format text
+```
+
+Resume a paused or resumable execution:
+
+```bash
+bun run src/main.ts session resume <session-id>
+```
+
+Rerun from a step without importing prior step artifacts:
+
+```bash
+bun run src/main.ts session rerun <session-id> <step-id>
+```
+
+List merged step-run history:
+
+```bash
+bun run src/main.ts session step-runs <session-id>
+```
+
+Continue from a concrete prior step-run boundary:
+
+```bash
+bun run src/main.ts session continue <session-id> \
+  --start-step <step-id> \
+  --after-step-run <step-run-id>
+```
+
+Export an execution:
+
+```bash
+bun run src/main.ts session export <session-id> --file session-export.json
+```
+
+## Direct Step Calls
+
+Use `call-step` for local debugging or direct step-addressed integration:
+
+```bash
+bun run src/main.ts call-step <workflow-id> <workflow-run-id> <step-id> \
+  --message-file ./message.json \
+  --output json
+```
+
+Useful `call-step` options:
+
+- `--message-json <json>`
+- `--message-file <path>`
+- `--prompt-variant <name>`
+- `--continue-session`
+- `--timeout-ms <ms>`
+- `--resume-step-exec <id>`
 
 ## GraphQL Control Plane
 
-`serve` exposes:
+Start the local server:
 
-- `POST /graphql`
-- `GET /healthz`
+```bash
+bun run src/main.ts serve --workflow-definition-dir ./examples
+```
 
 Defaults:
 
-- host: `127.0.0.1`
-- port: `43173`
-- default GraphQL endpoint: `http://127.0.0.1:43173/graphql`
+- Host: `127.0.0.1`
+- Port: `43173`
+- GraphQL endpoint: `http://127.0.0.1:43173/graphql`
+- Health check: `GET /healthz`
 
-The GraphQL schema currently includes:
-
-- workflow-definition queries and mutations
-- `createWorkflowDefinition` accepts the same starter template split as the CLI: the default managed starter or `templateMode: WORKER_ONLY`
-- workflow execution queries
-- execution mutations for run, resume, rerun, and cancel
-- communication replay/retry operations
-- manager-session and manager-message operations
-
-Transport details:
-
-- bearer auth is read from the `Authorization` header
-- manager session scope is forwarded via `X-Divedra-Manager-Session-Id`
-- HTTP requests do not inherit ambient manager auth from the server process environment
-
-Example:
+Run a GraphQL query from the CLI:
 
 ```bash
 bun run src/main.ts gql '
@@ -247,285 +253,202 @@ bun run src/main.ts gql '
 '
 ```
 
-## Workflow Bundle Layout
+Run a workflow through a remote endpoint:
 
-Workflow definition bundles live under `<workflow-definition-dir>/<workflow-name>/`.
-
-Typical layout:
-
-```text
-.divedra/
-  my-workflow/
-    workflow.json
-    nodes/
-      node-divedra-manager.json
-      node-main-worker.json
-    prompts/
-      divedra-manager.md
-      main-worker.md
-    workflows/
-      review/
-        nodes/
-          node-review-manager.json
+```bash
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --endpoint http://127.0.0.1:43173/graphql \
+  --output json
 ```
 
-Current file roles:
+Remote-capable CLI operations include `workflow list`, `workflow status`,
+`workflow run`, `session resume`, and `session rerun`. Local-only operations
+include `call-step`, `session continue`, `session step-runs`, `session export`,
+and `session logs`.
 
-- `workflow.json`: canonical workflow structure, control-flow definition, and the step graph (`steps[]` transitions); legacy bundles may still imply control flow via ordered `nodes[]` and synthesized edges
-- `nodes/node-{id}.json`: default location for per-node payloads
-- `workflows/*/nodes/node-{id}.json`: optional grouped-lane or nested authoring layout
-- `prompts/*.md`: prompt bodies referenced by `promptTemplateFile`, `systemPromptTemplateFile`, or `sessionStartPromptTemplateFile`
+## Events
 
-Node payload paths are resolved relative to the top-level workflow directory, so nested payloads can still reuse shared prompt files or other workflow-local assets.
+Event commands load source configuration from `.divedra-events` next to the
+workflow root, or from `--event-root`.
 
-## `workflow.json`
+Validate event configuration:
 
-Primary top-level authored fields in step-addressed bundles include:
+```bash
+bun run src/main.ts events validate --event-root ./examples/event-sources
+```
 
-- `workflowId`
-- `description`
-- `defaults`
-- `prompts`
-- `managerStepId`
-- `entryStepId`
-- `nodes`
-- `steps`
+Emit a fixture event:
 
-Validation **rejects** top-level compatibility keys (do not author them), including:
+```bash
+bun run src/main.ts events emit <source-id> \
+  --event-root ./examples/event-sources \
+  --event-file ./examples/event-sources/payloads/chat-message.json
+```
 
-- `managerNodeId`, `entryNodeId`
-- `workflowCalls`, `branching`
-- `subWorkflows`, `subWorkflowConversations`
-- on step-addressed bundles, also `edges` and `loops` at the workflow level
+Start listener adapters:
 
-Cross-workflow execution is expressed only through **step-addressed** `steps[].transitions` with `toWorkflowId` and `resumeStepId` (runtime projects these as synthetic call rows; they are not authored as `workflowCalls`).
+```bash
+bun run src/main.ts events serve --event-root ./examples/event-sources
+```
 
-Relevant current behavior:
+List and replay receipts:
 
-- if `steps[]` is authored, `nodes[]` is a reusable registry rather than execution order
-- if exactly one manager-role step exists, `managerStepId` may be inferred (step-addressed bundles)
-- if no manager exists, `entryStepId` remains required and also acts as the effective manager/entry runtime id
-- structural sub-workflow authoring (`subWorkflows` / `subWorkflowConversations`) is **removed**; use step graphs and step transitions for cross-workflow calls
-- inline node payload authoring is supported through `workflow.nodes[].node` when `nodeFile` is omitted
-- `workflowId` is the runtime namespace key for artifacts and session storage, so it must be filesystem-safe
+```bash
+bun run src/main.ts events list --event-root ./examples/event-sources
+```
 
-Step-addressed authored bundles use `entryStepId`, optional `managerStepId`, reusable `workflow.json.nodes[]`, and executable `workflow.json.steps[]`.
+```bash
+bun run src/main.ts events replay <receipt-id> --event-root ./examples/event-sources
+```
 
-Important node-level fields in `workflow.json.nodes[]`:
+Inspect reply dispatch records for a workflow execution:
 
-- `id`
-- `nodeFile`
-- `addon`
+```bash
+bun run src/main.ts events replies <workflow-execution-id>
+```
 
-Important step-level fields in `workflow.json.steps[]`:
+Set `DIVEDRA_EVENTS_READ_ONLY=true` or pass `--read-only` to validate and
+persist event receipts without dispatching workflow execution.
 
-- `id`
-- `nodeId`
-- `role`
-- `control`
-- `transitions`
-- `promptVariant`
-- `timeoutMs`
-- `sessionPolicy`
+## Hooks
 
-Role-based authoring note:
+Run a hook receiver:
 
-- `role` is the authored direction of travel at the step layer: `manager` or `worker`
-- reusable node registry entries remain payload references; execution semantics live on steps
+```bash
+bun run src/main.ts hook --vendor claude-code
+```
 
-## Node Payloads
+Print an install snippet:
 
-Current node payload fields include:
+```bash
+bun run src/main.ts hook snippet --vendor codex
+```
 
-- `id`
-- `description`
-- `nodeType`
-- `executionBackend`
-- `model`
-- `sessionPolicy`
-- `systemPromptTemplate` or `systemPromptTemplateFile`
-- `promptTemplate` or `promptTemplateFile`
-- `sessionStartPromptTemplate` or `sessionStartPromptTemplateFile`
-- `variables`
-- `argumentsTemplate`
-- `argumentBindings`
-- `command`
-- `container`
-- `durability`
-- `userAction`
-- `timeoutMs`
-- `output`
+Supported vendors:
 
-Important current behavior:
+- `claude-code`
+- `codex`
+- `gemini`
 
-- `promptTemplateFile`, `systemPromptTemplateFile`, and `sessionStartPromptTemplateFile` are resolved and loaded during workflow load
-- `sessionPolicy.mode: "reuse"` lets compatible agent backends continue the same backend session across repeated executions
-- output contracts let the runtime validate business JSON before publishing canonical artifacts and downstream mailbox messages
-- `user-action` nodes write user-action request artifacts and pause the workflow until resolution
-- optional nodes are scheduler-managed and managers may explicitly execute or skip them through `managerControl` decisions
+## Common Options
 
-## Runtime Model
+- `--workflow-definition-dir <path>`: directory containing workflow bundles.
+- `--scope auto|project|user`: choose scoped catalog lookup.
+- `--user-root <path>`: override the user scope root.
+- `--project-root <path>`: override the project scope root.
+- `--addon-root <path>`: use a direct add-on root override.
+- `--worker-only`: create a manager-less starter workflow.
+- `--artifact-root <path>`: override execution artifact storage.
+- `--session-store <path>`: override session JSON storage.
+- `--working-directory <path>`: run workflow work relative to a specific directory.
+- `--variables <path>`: load runtime variables from a JSON object file.
+- `--mock-scenario <path>`: use deterministic mock backend responses.
+- `--output json`: emit structured output.
+- `--dry-run`: plan/check without normal execution where supported.
+- `--max-steps <n>`: cap workflow execution steps.
+- `--max-loop-iterations <n>`: cap loop iterations.
+- `--default-timeout-ms <ms>`: override default node timeout.
 
-The workflow engine in `src/workflow/engine.ts` currently does the following:
+## Runtime Data
 
-1. Loads and normalizes the workflow bundle from disk.
-2. Creates or resumes a persisted session.
-3. Seeds the execution queue from the resolved workflow entry node.
-4. Assembles mailbox-backed input and prompt text for each node execution.
-5. Persists `input.json` before execution.
-6. Executes the node with timeout handling and optional backend session reuse.
-7. Validates output contracts before runtime-owned publication.
-8. Persists node execution artifacts and indexes runtime data in SQLite on a best-effort basis.
-9. Publishes downstream communications, advances step-addressed execution targets, runs cross-workflow dispatches derived from step transitions when due, and rebuilds the queue.
-10. Marks the workflow completed when the queue drains, or paused/failed/cancelled as needed.
+Default runtime data lives under:
 
-## Runtime Storage
+```text
+~/.divedra/artifacts/
+```
 
-Workflow definitions default to scoped catalog lookup. User-scoped definitions
-live under `~/.divedra/workflows`; project-scoped definitions live under
-`<project>/.divedra/workflows` when a project `.divedra` directory is
-discovered. `--workflow-definition-dir` bypasses scoped lookup and points
-directly at the directory containing workflow definition bundles.
+By default this root contains:
 
-Root runtime data resolves from, in order:
+- `workflow/`: execution artifacts
+- `sessions/`: persisted session JSON files
+- `files/`: attachments
+- `divedra.db`: runtime index database
+
+Relocate storage with:
 
 - `DIVEDRA_ARTIFACT_DIR`
-- otherwise `~/.divedra/artifacts/`
-
-By default, the root data directory contributes these locations:
-
-- `workflow/` for execution artifacts
-- `sessions/` for persisted session JSON files
-- `files/` for attachments
-- `divedra.db` for runtime indexes
-
-These can be relocated independently with:
-
 - `DIVEDRA_ARTIFACT_ROOT`
 - `DIVEDRA_SESSION_STORE`
 - `DIVEDRA_ATTACHMENT_ROOT`
 - `DIVEDRA_RUNTIME_DB`
 
-Additional environment variables used by the current codebase include:
+Workflow and server environment variables:
 
 - `DIVEDRA_WORKFLOW_DEFINITION_DIR`
-- `DIVEDRA_ARTIFACT_ROOT`
-- `DIVEDRA_SESSION_STORE`
-- `DIVEDRA_ATTACHMENT_ROOT`
-- `DIVEDRA_RUNTIME_DB`
+- `DIVEDRA_WORKFLOW_SCOPE`
+- `DIVEDRA_USER_ROOT`
+- `DIVEDRA_PROJECT_ROOT`
+- `DIVEDRA_ADDON_ROOT`
 - `DIVEDRA_SERVE_HOST`
 - `DIVEDRA_SERVE_PORT`
 - `DIVEDRA_GRAPHQL_ENDPOINT`
 - `DIVEDRA_MANAGER_AUTH_TOKEN`
 - `DIVEDRA_MANAGER_SESSION_ID`
+- `DIVEDRA_EVENT_ROOT`
+- `DIVEDRA_EVENTS_READ_ONLY`
 
 ## Example Workflows
 
-The current example bundles live under `examples/`. See `examples/README.md` for the full catalog.
+Reference workflow bundles live under `examples/`. See
+`examples/README.md` for the full catalog.
 
-Available examples:
+Recommended starting points:
 
-- `chat-reply-webhook`
-- `worker-only-single-step`
-- `workflow-call-simple`
-- `workflow-call-review-target`
-- `claude-divedra-codex-coding`
-- `claude-divedra-claude-worker`
-- `same-node-session-echo`
-- `subworkflow-chained-simple` (historical name; now a step-addressed grouped-lane example without structural `subWorkflows`)
-- `node-combinations-showcase`
-- `first-four-arithmetic-pipeline`
-- `codex-codex-euthanasia-debate` (step-addressed multi-round debate demo)
-
-Recommended starting point:
-
-- `claude-divedra-codex-coding` shows the preferred mixed-backend split in the step-addressed authored shape, with manager nodes on `claude-code-agent` and implementation work on `codex-agent`
-
-Workflow-call reference:
-
-- `workflow-call-simple` shows a step-addressed managed parent that invokes a worker-only sibling workflow through a cross-workflow step transition (`toWorkflowId` + `resumeStepId`); the engine uses the same cross-workflow dispatch path (deterministic id `__cw:<callerStepId>`) without merging authored call records into the normalized bundle
-- `subworkflow-chained-simple` is kept as a historical-name grouped-lane reference; it now uses explicit step-addressed transitions and does not author structural `subWorkflows`
-
-Examples that exercise the full node surface:
-
-- `node-combinations-showcase`
-- `first-four-arithmetic-pipeline`
-
-Those bundles exercise authored `command` and `container` nodes directly and can also be run with deterministic mock scenarios.
+- `worker-only-single-step`: minimal manager-less workflow.
+- `claude-divedra-codex-coding`: mixed backend workflow with coordination on Claude Code and coding work on Codex.
+- `workflow-call-simple`: parent workflow that calls a worker-only review workflow.
+- `node-combinations-showcase`: examples for command, container, and foreach-style workflow lanes.
+- `supervised-mock-retry`: deterministic example for `--auto-improve` retry behavior.
+- `chat-reply-webhook`: event-driven chat reply workflow using the built-in reply worker add-on.
 
 ## Library API
 
-The package root (`import ... from "divedra"`) resolves to the library entry
-implemented by `src/lib.ts`. The CLI entry remains available in source form via
-`bun run src/main.ts ...` and as the build subpath `divedra/cli`.
+The package root (`import ... from "divedra"`) exposes programmatic workflow
+execution and inspection helpers.
 
-Primary package-root exports:
+Common entry points:
 
-- `inspectWorkflow()`
+- `createWorkflowExecutionClient()`
 - `executeWorkflow()`
 - `resumeWorkflow()`
 - `rerunWorkflow()`
-- `getSession()`
-- `listSessions()`
+- `continueWorkflowFromHistory()`
 - `getRuntimeSessionView()`
 - `callWorkflowStep()`
-- `createWorkflowExecutionClient()`
-- `createNodeAddonPayloadResolver()`
-- `createNodeAddonRegistry()`
-- `createAsyncNodeAddonPayloadResolver()`
-- `createAsyncNodeAddonRegistry()`
-- `NodeAddonDefinition`
-- `AsyncNodeAddonPayloadResolver`
-- `NodeAddonPayloadResolver`
-- `NodeAddonResolveInput`
-- `NodeAddonResolveResult`
-- `WorkflowNodeAddonRef`
-- `NodePayload`
-- `ValidationIssue`
-- `runCli()`
-- `startServe()`
-- `handleApiRequest()`
-- `handleGraphqlRequest()`
-- `executeGraphqlDocument()`
-- `createGraphqlSchema()`
+- `inspectWorkflow()`
+- `inspectWorkflowUsage()`
+- `listWorkflowUsage()`
 - `executeGraphqlRequest()`
-- `loadWorkflowFromDisk()`
-- `deriveWorkflowVisualization()`
-- `createCommunicationService()`
-- `createManagerSessionStore()`
-- `createManagerMessageService()`
+- `createGraphqlSchema()`
 
-Minimal example:
+Minimal local example:
 
 ```ts
 import { executeWorkflow, getRuntimeSessionView } from "divedra";
 
 const run = await executeWorkflow({
-  workflowName: "claude-divedra-codex-coding",
+  workflowName: "worker-only-single-step",
   workflowRoot: "./examples",
   env: process.env,
   runtimeVariables: {
     humanInput: {
-      request: "Implement the requested change",
+      request: "Run this workflow",
     },
   },
 });
 
 const runtime = await getRuntimeSessionView(run.sessionId, {
-  cwd: process.cwd(),
   env: process.env,
 });
 
-console.log(
-  runtime.session.status,
-  runtime.nodeExecutions.length,
-  runtime.nodeLogs.length,
-);
+console.log(runtime.session.status);
 ```
 
-## Development
+Use `createWorkflowExecutionClient()` when the same integration should work
+locally or through a GraphQL endpoint.
 
-Common commands:
+## Development Commands
 
 ```bash
 bun run build
@@ -534,10 +457,5 @@ bun run typecheck
 bun run format:check
 ```
 
-Environment notes:
-
-- runtime: Bun
-- language: TypeScript with strict configuration
-- optional shell tooling: Nix flakes + direnv
-
-Design references and implementation notes live under `design-docs/` and `impl-plans/`.
+Runtime is Bun, and the project is written in strict TypeScript. Optional shell
+tooling is provided through Nix flakes and direnv.
