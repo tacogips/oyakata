@@ -62,7 +62,7 @@ Examples:
 - keep project-authored workflows and add-ons isolated from user-authored
   workflows and add-ons
 - make project and user scope subdirectories identical
-- keep existing direct `--workflow-root <path>` behavior for examples and
+- keep existing direct `--workflow-definition-dir <path>` behavior for examples and
   automation
 - allow `~/.divedra` and project `.divedra` paths to be changed through CLI
   arguments, environment variables, and config
@@ -171,24 +171,24 @@ User scope root resolution order:
 4. `~/.divedra`
 
 The user workflow root is always `<userScopeRoot>/workflows` unless the caller
-uses the lower-level direct workflow-root override.
+uses the lower-level direct workflow definition directory override.
 
 The user add-on root is always `<userScopeRoot>/addons` unless the caller uses
 an explicit add-on-root override.
 
-### Direct Workflow Root Compatibility
+### Direct Workflow Definition Directory
 
-`--workflow-root` and `DIVEDRA_WORKFLOW_ROOT` continue to mean "the direct
-directory containing workflow bundle directories." They bypass project/user
-scope catalog lookup and preserve existing usage such as:
+`--workflow-definition-dir` and `DIVEDRA_WORKFLOW_DEFINITION_DIR` mean "the
+direct directory containing workflow bundle directories." They bypass
+project/user scope catalog lookup and support usage such as:
 
 ```bash
-divedra workflow validate demo --workflow-root ./examples
+divedra workflow validate demo --workflow-definition-dir ./examples
 ```
 
-Direct workflow-root mode should continue to use explicit artifact/session
-overrides when supplied. Without explicit runtime roots, it may use the current
-project-scoped default data-root behavior for backward compatibility.
+Direct workflow definition directory mode should use explicit artifact/session
+overrides when supplied. Without explicit runtime roots, it uses the standard
+runtime data root defaults.
 
 ## Workflow Lookup
 
@@ -252,7 +252,7 @@ This order allows project-local add-ons to specialize shared user workflows by
 exact `(name, version)` while preserving existing host resolver integration as
 the final extension point. During scoped catalog loading, an explicit direct
 add-on root override is a prepended candidate, not an exclusive source. Direct
-workflow-root compatibility mode does not infer scoped add-on roots; callers
+direct workflow definition directory mode does not infer scoped add-on roots; callers
 must supply an explicit add-on root override or host resolver functions when
 direct workflow bundles reference local add-ons.
 
@@ -279,7 +279,7 @@ Rules:
   and write back to the same scope unless the caller explicitly requests a
   different destination.
 
-`--workflow-root` keeps its existing exact behavior for writes and bypasses
+`--workflow-definition-dir` keeps its existing exact behavior for writes and bypasses
 scope selection.
 
 ## Runtime Root Defaults
@@ -299,7 +299,7 @@ Therefore a user workflow run from any project records its default history under
 the user scope root. A project workflow records its default history under the
 project scope root.
 
-Direct `--workflow-root` and other non-scoped runtime entrypoints do not have an
+Direct `--workflow-definition-dir` and other non-scoped runtime entrypoints do not have an
 owning project/user workflow scope. They should default to the user runtime data
 root instead of creating a separate per-cwd artifact namespace:
 
@@ -406,7 +406,7 @@ New environment variables:
 | `DIVEDRA_CONFIG`         | Overrides the bootstrap config path.                                                  |
 
 Existing variables keep their current meaning. In particular,
-`DIVEDRA_WORKFLOW_ROOT` remains a direct workflow root override and should not
+`DIVEDRA_WORKFLOW_DEFINITION_DIR` remains a direct workflow root override and should not
 be reinterpreted as a scope root.
 
 Invalid `--scope` or `DIVEDRA_WORKFLOW_SCOPE` values are command errors. They
@@ -419,11 +419,11 @@ paths must also return or throw an explicit invalid-scope error instead of
 enumerating another scope.
 
 `DIVEDRA_ADDON_ROOT` is intentionally a direct root override, parallel to
-`DIVEDRA_WORKFLOW_ROOT`. It should point at a directory containing
+`DIVEDRA_WORKFLOW_DEFINITION_DIR`. It should point at a directory containing
 `<namespace>/<addon-name>/<version>/addon.json`, not at a scope root. During
 scoped catalog loading it is prepended to add-on candidates and does not
 suppress project/user fallback on a miss. When the host resolves workflows via
-a direct `DIVEDRA_WORKFLOW_ROOT` (bypassing scoped catalog roots), that same
+a direct `DIVEDRA_WORKFLOW_DEFINITION_DIR` (bypassing scoped catalog roots), that same
 override is the only filesystem add-on root unless the host also supplies
 resolver functions.
 
@@ -464,22 +464,22 @@ Example shape (illustrative; real bundles use full step-addressed `workflow.json
 }
 ```
 
-## Backward Compatibility
+## Project Layout Migration
 
 The existing project layout places workflow bundles directly under `.divedra/`.
 The new canonical project layout places them under `.divedra/workflows/`.
 
-Compatibility rules:
+Migration rules:
 
-- `--workflow-root <path>` continues to load `<path>/<name>/workflow.json`.
+- `--workflow-definition-dir <path>` continues to load `<path>/<name>/workflow.json`.
 - when a discovered project `.divedra/workflows` exists, it is the project
   workflow root.
 - when `.divedra/workflows` is absent but `.divedra/<name>/workflow.json`
   exists, the loader may treat `.divedra` as a legacy direct project workflow
   root and emit a migration warning.
 - new `workflow create` writes only the canonical scoped layout unless
-  `--workflow-root` is supplied.
-- examples remain supported through `--workflow-root ./examples` and do not
+  `--workflow-definition-dir` is supplied.
+- examples remain supported through `--workflow-definition-dir ./examples` and do not
   need to adopt the scoped layout.
 
 ## Security And Safety
@@ -523,7 +523,7 @@ knows about scope ordering and defaults.
 
 First implementation boundary:
 
-- keep `loadWorkflowFromDisk(name, { workflowRoot })` as the direct workflow-root
+- keep `loadWorkflowFromDisk(name, { workflowRoot })` as the direct workflow-definition-dir
   API used by compatibility paths and focused tests
 - add a catalog-aware load path for CLI/TUI/server surfaces that want
   project/user lookup
@@ -544,7 +544,7 @@ First implementation boundary:
 
 ## Migration Plan
 
-1. Add scoped path resolution and tests without changing `--workflow-root`.
+1. Add scoped path resolution and tests for `--workflow-definition-dir`.
 2. Change CLI/TUI default workflow lookup to catalog lookup.
 3. Change `workflow create` to write scoped canonical layout.
 4. Add scoped add-on root resolution and manifest-based local add-on loading.

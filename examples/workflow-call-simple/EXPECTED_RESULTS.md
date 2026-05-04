@@ -8,7 +8,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate workflow-call-simple --workflow-root ./examples
+bun run src/main.ts workflow validate workflow-call-simple --workflow-definition-dir ./examples
 ```
 
 Expected result: the workflow is valid.
@@ -18,7 +18,7 @@ Expected result: the workflow is valid.
 Command:
 
 ```bash
-bun run src/main.ts workflow inspect workflow-call-simple --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect workflow-call-simple --workflow-definition-dir ./examples --output json
 ```
 
 Expected stable inspection facts:
@@ -36,7 +36,7 @@ Command:
 
 ```bash
 bun run src/main.ts workflow run workflow-call-simple \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/workflow-call-simple/mock-scenario.json \
   --output json
 ```

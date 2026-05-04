@@ -28,7 +28,7 @@ The runtime validates the authored bundle, resolves prompt files into effective 
 Typical managed layout:
 
 ```text
-<workflow-root>/
+<workflow-definition-dir>/
   <workflow-name>/
     workflow.json
     steps/
@@ -44,7 +44,7 @@ Typical managed layout:
 
 Notes:
 
-- in scoped workflow lookup, `<workflow-root>` is `<scope-root>/workflows`;
+- in scoped workflow lookup, `<workflow-definition-dir>` is `<scope-root>/workflows`;
   user scope defaults to `~/.divedra/workflows` and project scope defaults to
   `<project>/.divedra/workflows`
 - `workflow.json.steps[]` order is canonical for editor presentation, while step transitions define legal routing.

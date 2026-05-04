@@ -327,6 +327,11 @@ export interface NodeOutputContract {
   readonly maxValidationAttempts?: number;
 }
 
+export interface NodeInputContract {
+  readonly description?: string;
+  readonly jsonSchema?: JsonObject;
+}
+
 export type NodeType =
   | "agent"
   | "command"
@@ -675,6 +680,7 @@ export interface NodePayload {
   readonly argumentBindings?: readonly ArgumentBinding[];
   readonly templateEngine?: string;
   readonly timeoutMs?: number;
+  readonly input?: NodeInputContract;
   readonly output?: NodeOutputContract;
 }
 

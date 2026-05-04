@@ -81,7 +81,7 @@ Current compatibility-removal sequence (see
 
 ### Workflow Definition Boundary
 
-Workflow definitions live under `<workflow-root>/<workflow-name>/` and are composed from:
+Workflow definitions live under `<workflow-definition-dir>/<workflow-name>/` and are composed from:
 
 - `workflow.json`
 - optional `steps/step-*.json` files when steps are file-backed
@@ -109,7 +109,7 @@ The scoped model defines:
 - log root: `<scope-root>/logs`
 
 Project scope is searched before user scope for bare workflow names, while
-`--workflow-root` and `DIVEDRA_WORKFLOW_ROOT` remain direct workflow-root
+`--workflow-definition-dir` and `DIVEDRA_WORKFLOW_DEFINITION_DIR` remain direct workflow-definition-dir
 overrides for examples and automation. Scope resolution is implemented in
 `src/workflow/catalog.ts`.
 
@@ -123,7 +123,7 @@ The runtime persists three distinct forms of state:
 
 In scoped catalog mode, `{rootDataDir}` defaults to the owning workflow scope's
 `<scope-root>/artifacts`.
-For direct workflow-root and other non-scoped runtime entrypoints, the default
+For direct workflow-definition-dir and other non-scoped runtime entrypoints, the default
 `{rootDataDir}` is `<user-root>/artifacts`.
 
 File artifacts remain the authoritative source for execution payloads. SQLite is a best-effort index for CLI and GraphQL inspection queries.
@@ -150,7 +150,7 @@ Rules:
   surfaces
 - the operator-facing status view is workflow-level aggregate state, not a dump
   of raw runtime artifacts
-- direct workflow-root mode is labeled as source scope `direct`; scoped catalog
+- direct workflow-definition-dir mode is labeled as source scope `direct`; scoped catalog
   mode uses `project` and `user`
 - aggregate workflow status reuses runtime statuses and adds only `never-run`
   for workflows without executions

@@ -4,7 +4,7 @@
 
 The current codebase provides:
 
-- file-based workflow definitions under `.divedra/` or another configured workflow root
+- file-based workflow definitions under scoped `.divedra/workflows` directories or another configured workflow definition directory
 - a queue-driven workflow engine with persisted sessions and runtime artifacts
 - agent backends for `codex-agent`, `claude-code-agent`, `official/openai-sdk`, and `official/anthropic-sdk`
 - a local GraphQL control plane served by Bun
@@ -78,14 +78,14 @@ bun install
 Validate an example workflow:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-root ./examples
+bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples
 ```
 
 Inspect the normalized workflow summary:
 
 ```bash
 bun run src/main.ts workflow inspect claude-divedra-codex-coding \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --output json
 ```
 
@@ -93,7 +93,7 @@ Run a workflow with the bundled deterministic mock scenario:
 
 ```bash
 bun run src/main.ts workflow run claude-divedra-codex-coding \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/claude-divedra-codex-coding/mock-scenario.json \
   --output json
 ```
@@ -137,6 +137,7 @@ Primary commands implemented in `src/cli.ts`:
 - `workflow create <name>`
 - `workflow validate <name>`
 - `workflow inspect <name>`
+- `workflow usage [name]`
 - `workflow run <name>`
 - `session status <session-id>`
 - `session progress <session-id>`
@@ -175,7 +176,7 @@ audit metadata.
 
 Useful options:
 
-- `--workflow-root`
+- `--workflow-definition-dir`
 - `--artifact-root`
 - `--session-store`
 - `--worker-only`
@@ -187,6 +188,11 @@ Useful options:
 `workflow inspect` surfaces step and node-registry identity fields plus
 `crossWorkflowDispatchIds` and `counts.crossWorkflowDispatches` (derived from
 `steps[].transitions`, not from authored `workflow.workflowCalls`).
+
+`workflow usage` is the AI-facing discovery surface. It lists workflow purpose,
+the compact authored step overview, and the callable input/output contract
+derived from the workflow manager step or, for worker-only bundles, the entry
+step.
 
 - `--dry-run`
 - `--max-steps <n>`
@@ -243,7 +249,7 @@ bun run src/main.ts gql '
 
 ## Workflow Bundle Layout
 
-Workflows live under `<workflow-root>/<workflow-name>/`.
+Workflow definition bundles live under `<workflow-definition-dir>/<workflow-name>/`.
 
 Typical layout:
 
@@ -375,14 +381,16 @@ The workflow engine in `src/workflow/engine.ts` currently does the following:
 
 ## Runtime Storage
 
-Workflow definitions default to `.divedra/` under the nearest ancestor that
-already contains a `.divedra` directory. If no ancestor matches, the current
-working directory is treated as the project root.
+Workflow definitions default to scoped catalog lookup. User-scoped definitions
+live under `~/.divedra/workflows`; project-scoped definitions live under
+`<project>/.divedra/workflows` when a project `.divedra` directory is
+discovered. `--workflow-definition-dir` bypasses scoped lookup and points
+directly at the directory containing workflow definition bundles.
 
 Root runtime data resolves from, in order:
 
 - `DIVEDRA_ARTIFACT_DIR`
-- otherwise `~/.divedra/project/<encoded-project-root>/divedra-artifact/`
+- otherwise `~/.divedra/artifacts/`
 
 By default, the root data directory contributes these locations:
 
@@ -400,7 +408,7 @@ These can be relocated independently with:
 
 Additional environment variables used by the current codebase include:
 
-- `DIVEDRA_WORKFLOW_ROOT`
+- `DIVEDRA_WORKFLOW_DEFINITION_DIR`
 - `DIVEDRA_ARTIFACT_ROOT`
 - `DIVEDRA_SESSION_STORE`
 - `DIVEDRA_ATTACHMENT_ROOT`

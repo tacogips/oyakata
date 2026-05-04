@@ -13,7 +13,9 @@ import {
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "divedra-paths-test-"));
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "divedra-paths-test-"),
+  );
   tempDirs.push(directory);
   return directory;
 }
@@ -62,6 +64,30 @@ describe("runtime storage paths", () => {
     expect(roots.artifactRoot).toBe(path.join(rootDataDir, "workflow"));
     expect(roots.attachmentRoot).toBe(path.join(rootDataDir, "files"));
   });
+
+  test("uses DIVEDRA_WORKFLOW_DEFINITION_DIR as the direct workflow definition directory", async () => {
+    const cwd = await makeTempDir();
+    const roots = resolveEffectiveRoots({
+      cwd,
+      env: {
+        DIVEDRA_WORKFLOW_DEFINITION_DIR: "definitions",
+      },
+    });
+
+    expect(roots.workflowRoot).toBe(path.join(cwd, "definitions"));
+  });
+
+  test("ignores the removed DIVEDRA_WORKFLOW_ROOT environment variable", async () => {
+    const cwd = await makeTempDir();
+    const roots = resolveEffectiveRoots({
+      cwd,
+      env: {
+        DIVEDRA_WORKFLOW_ROOT: "legacy-root",
+      },
+    });
+
+    expect(roots.workflowRoot).toBe(path.join(cwd, ".divedra"));
+  });
 });
 
 describe("supervision path helpers", () => {
@@ -89,9 +115,7 @@ describe("supervision path helpers", () => {
     const sup = "sup-0123456789abcdef";
     const wf = "my-workflow";
     const resolved = resolveSupervisionMutableWorkflowDirectory(root, sup, wf);
-    expect(resolved).toBe(
-      path.join(root, "supervision", sup, "mutable", wf),
-    );
+    expect(resolved).toBe(path.join(root, "supervision", sup, "mutable", wf));
 
     expect(
       resolveSupervisionMutableWorkflowDirectory(root, "bad", wf),

@@ -23,7 +23,7 @@ event source with an outbound reply endpoint.
 
 - [x] Add worker-only workflow using an authored add-on node
 - [x] Add expected-results notes
-- [x] Keep the workflow valid under `--workflow-root ./examples`
+- [x] Keep the workflow valid under `--workflow-definition-dir ./examples`
 
 ### 2. Event Fixtures
 

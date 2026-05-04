@@ -11,6 +11,7 @@ Use this skill for developer-facing references and integrations. For end-user CL
 
 ## Choose The Integration Surface
 
+- Use `workflow usage --output json` from the CLI when a tool-using LLM needs to choose among workflows by purpose, compact step overview, and callable contract.
 - Use `createWorkflowExecutionClient()` when code should work locally or remotely with the same shape. If `endpoint` is present, it uses GraphQL; otherwise it uses the local library path.
 - Use direct library functions such as `inspectWorkflow()`, `executeWorkflow()`, `resumeWorkflow()`, `rerunWorkflow()`, and `getRuntimeSessionView()` for in-process Node/Bun integration.
 - Use `executeGraphqlRequest()` for low-level GraphQL HTTP calls.
@@ -132,6 +133,12 @@ if (response.errors?.length) {
 ```
 
 ## GraphQL CLI Pattern
+
+Workflow discovery before execution:
+
+```bash
+divedra workflow usage --workflow-definition-dir ./examples --output json
+```
 
 ```bash
 divedra gql 'query { workflows(input: {}) }'

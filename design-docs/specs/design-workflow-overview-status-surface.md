@@ -188,7 +188,7 @@ Behavior:
 - bases project/user duplicate warnings on the scoped catalog, not on the
   status-filtered or limit-truncated visible rows
 - uses source scope and workflow directory to keep rows distinct
-- in direct `--workflow-root` mode, lists only workflows in that root and labels
+- in direct `--workflow-definition-dir` mode, lists only workflows in that root and labels
   their human source scope as `direct root`
 - does not call detail queries for node logs, communication payloads, hook
   events, or reply dispatches
@@ -215,7 +215,7 @@ Behavior:
 - resolves the workflow through the same scope rules as `workflow run`
 - follows project-before-user resolution for bare names in `auto` scope
 - supports explicit `--scope project|user` to inspect a shadowed workflow
-- in direct `--workflow-root` mode, resolves only within that root and labels
+- in direct `--workflow-definition-dir` mode, resolves only within that root and labels
   source scope as `direct`
 - prints the resolved source scope and workflow directory
 - shows workflow-level aggregate status plus a short recent execution list
@@ -289,7 +289,7 @@ Inputs should mirror CLI selection:
 - optional aggregate status filter for catalog listing
 - optional limit for catalog rows or recent executions
 
-Direct workflow-root behavior is a server/runtime option rather than a GraphQL
+Direct workflow-definition-dir behavior is a server/runtime option rather than a GraphQL
 scope value. When the server is started with a direct workflow root, summary
 queries should label returned rows as `direct`.
 
@@ -380,7 +380,7 @@ When the browser view or CLI status command targets one workflow:
 
 - bare-name selection follows the existing resolution order
 - explicit scope selection narrows the lookup
-- direct workflow-root mode bypasses project/user scope lookup
+- direct workflow-definition-dir mode bypasses project/user scope lookup
 - the rendered result always prints the resolved source scope
 
 ### Fixed Workflow Serve Mode

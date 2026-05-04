@@ -19,7 +19,7 @@ This bundle documents the **supervisor-dispatch** example layout shipped across
 
 ```bash
 divedra events validate \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events
 ```
 
@@ -29,7 +29,7 @@ Direct answer (resolver mock only):
 
 ```bash
 divedra events emit example-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-supervisor-dispatch.json \
@@ -44,7 +44,7 @@ emit as a duplicate within `dedupeWindowMs`.
 
 ```bash
 divedra events emit example-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-supervisor-dispatch-start-managed.json \
@@ -55,10 +55,10 @@ divedra events emit example-webhook \
 Use a live GraphQL endpoint when you want real backends instead of mocks:
 
 ```bash
-divedra serve --workflow-root ./examples
+divedra serve --workflow-definition-dir ./examples
 # another shell:
 divedra events emit example-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-supervisor-dispatch.json \

@@ -53,7 +53,7 @@ async function resolveWorkflowContextForGraphql(
 - [x] Resolve workflow list through `listWorkflowCatalogSources`
 - [x] Resolve inspected definitions through `loadWorkflowFromCatalog`
 - [x] Preserve fixed-workflow access checks
-- [x] Preserve direct workflow-root compatibility
+- [x] Preserve direct workflow-definition-dir compatibility
 
 ### 2. GraphQL Mutations
 
@@ -83,6 +83,7 @@ async function executeWorkflowMutation(
 ### 3. Regression Coverage
 
 #### src/graphql/schema.test.ts
+
 #### src/workflow/catalog.ts
 
 **Status**: COMPLETED
@@ -103,19 +104,19 @@ test("resolves scoped user workflows through GraphQL schema operations", async (
 
 ## Module Status
 
-| Module                  | File Path                  | Status    | Tests   |
-| ----------------------- | -------------------------- | --------- | ------- |
-| GraphQL catalog helpers | `src/graphql/schema.ts`    | COMPLETED | Passing |
-| GraphQL mutations       | `src/graphql/schema.ts`    | COMPLETED | Passing |
+| Module                  | File Path                                               | Status    | Tests   |
+| ----------------------- | ------------------------------------------------------- | --------- | ------- |
+| GraphQL catalog helpers | `src/graphql/schema.ts`                                 | COMPLETED | Passing |
+| GraphQL mutations       | `src/graphql/schema.ts`                                 | COMPLETED | Passing |
 | Regression coverage     | `src/graphql/schema.test.ts`, `src/workflow/catalog.ts` | COMPLETED | Passing |
 
 ## Dependencies
 
-| Feature                         | Depends On                       | Status    |
-| ------------------------------- | -------------------------------- | --------- |
-| GraphQL scoped catalog support  | Scoped workflow runtime follow-up | Available |
-| TUI grouped workflow selection  | GraphQL scoped catalog support   | BLOCKED   |
-| Local add-on manifests          | GraphQL scoped catalog support   | BLOCKED   |
+| Feature                        | Depends On                        | Status    |
+| ------------------------------ | --------------------------------- | --------- |
+| GraphQL scoped catalog support | Scoped workflow runtime follow-up | Available |
+| TUI grouped workflow selection | GraphQL scoped catalog support    | BLOCKED   |
+| Local add-on manifests         | GraphQL scoped catalog support    | BLOCKED   |
 
 ## Completion Criteria
 

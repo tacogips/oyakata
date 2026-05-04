@@ -10,8 +10,13 @@ import {
 } from "./runtime-readiness";
 import { collectWorkflowRevisionNodeFiles } from "./revision";
 import {
+  getNormalizedNodePayload,
   type SupervisionSummary,
   type LoadOptions,
+  type NodeInputContract,
+  type NodeOutputContract,
+  type NodeRole,
+  type NormalizedWorkflowBundle,
 } from "./types";
 import type { WorkflowSessionState } from "./session";
 export interface WorkflowInspectionCounts {
@@ -19,6 +24,19 @@ export interface WorkflowInspectionCounts {
   readonly nodeRegistry: number;
   /** Count of step-derived cross-workflow dispatches (not authored `workflowCalls`). */
   readonly crossWorkflowDispatches: number;
+}
+
+export interface WorkflowCallableContractSummary {
+  readonly stepId: string;
+  readonly role: NodeRole;
+  readonly input?: NodeInputContract;
+  readonly output?: NodeOutputContract;
+}
+
+export interface WorkflowStepSummary {
+  readonly stepId: string;
+  readonly role: NodeRole;
+  readonly description?: string;
 }
 
 export interface WorkflowInspectionSummary {
@@ -40,7 +58,36 @@ export interface WorkflowInspectionSummary {
   readonly workflowDirectory: string;
   readonly artifactWorkflowRoot: string;
   readonly addonSources: readonly WorkflowAddonSourceSummary[];
+  readonly callable: WorkflowCallableContractSummary;
+  readonly steps: readonly WorkflowStepSummary[];
   readonly runtime: WorkflowRuntimeReadiness;
+}
+
+export function deriveWorkflowCallableContractSummary(
+  bundle: Pick<NormalizedWorkflowBundle, "workflow" | "nodePayloads">,
+): WorkflowCallableContractSummary {
+  const workflow = bundle.workflow;
+  const stepId = workflow.managerStepId ?? workflow.entryStepId;
+  const step = workflow.steps.find((entry) => entry.id === stepId);
+  const payload = getNormalizedNodePayload(bundle, stepId);
+  return {
+    stepId,
+    role:
+      step?.role ?? (workflow.managerStepId === stepId ? "manager" : "worker"),
+    ...(payload?.input === undefined ? {} : { input: payload.input }),
+    ...(payload?.output === undefined ? {} : { output: payload.output }),
+  };
+}
+
+export function deriveWorkflowStepSummaries(
+  workflow: Pick<NormalizedWorkflowBundle["workflow"], "managerStepId" | "steps">,
+): readonly WorkflowStepSummary[] {
+  return workflow.steps.map((step) => ({
+    stepId: step.id,
+    role:
+      step.role ?? (workflow.managerStepId === step.id ? "manager" : "worker"),
+    ...(step.description === undefined ? {} : { description: step.description }),
+  }));
 }
 
 export async function buildInspectionSummary(
@@ -85,6 +132,8 @@ export async function buildInspectionSummary(
       options,
       ...(loaded.source === undefined ? {} : { workflowSource: loaded.source }),
     }),
+    callable: deriveWorkflowCallableContractSummary(loaded.bundle),
+    steps: deriveWorkflowStepSummaries(workflow),
     runtime: await inspectWorkflowRuntimeReadiness(loaded.bundle, options),
   };
 }

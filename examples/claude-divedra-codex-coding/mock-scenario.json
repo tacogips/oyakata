@@ -58,8 +58,8 @@
         "Provide a deterministic mock scenario"
       ],
       "verificationCommands": [
-        "bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-root ./examples",
-        "bun run src/main.ts workflow inspect claude-divedra-codex-coding --workflow-root ./examples --output json"
+        "bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples",
+        "bun run src/main.ts workflow inspect claude-divedra-codex-coding --workflow-definition-dir ./examples --output json"
       ]
     }
   },
@@ -76,10 +76,7 @@
         "examples/claude-divedra-codex-coding/node-implement.json"
       ],
       "summary": "Created a mixed-backend reference workflow with claude-code managers and a codex implementation node.",
-      "verification": [
-        "workflow validate",
-        "workflow inspect"
-      ],
+      "verification": ["workflow validate", "workflow inspect"],
       "risks": []
     }
   },

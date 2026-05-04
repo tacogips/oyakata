@@ -304,7 +304,7 @@ library inspection. Added focused CLI, GraphQL, and library regression tests.
 **Tasks Completed**: Review follow-up for TASK-001, TASK-003, and TASK-005.
 **Tasks In Progress**: None.
 **Blockers**: None.
-**Notes**: Fixed direct workflow-root compatibility so scoped local add-on roots
+**Notes**: Fixed direct workflow-definition-dir compatibility so scoped local add-on roots
 are not inferred unless a direct add-on root override is supplied. Preserved
 explicit `required: true` add-on env bindings, deduplicated built-in gateway
 add-on config normalization, and added regression coverage for the direct-root
@@ -317,7 +317,7 @@ add-on isolation path.
 **Blockers**: None.
 **Notes**: Aligned implementation with the documented add-on lookup order by
 making direct add-on root overrides prepend scoped candidates during catalog
-loads instead of replacing them. Kept direct workflow-root compatibility
+loads instead of replacing them. Kept direct workflow-definition-dir compatibility
 isolated to explicit add-on roots or host resolvers, removed a gateway
 normalization type assertion, and added regression coverage for direct-root
 fallback and direct-mode isolation.

@@ -8,7 +8,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate same-node-session-echo --workflow-root ./examples
+bun run src/main.ts workflow validate same-node-session-echo --workflow-definition-dir ./examples
 ```
 
 Expected result: the workflow is valid.
@@ -19,7 +19,7 @@ Command:
 
 ```bash
 bun run src/main.ts workflow run same-node-session-echo \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/same-node-session-echo/mock-scenario.json \
   --output json
 ```

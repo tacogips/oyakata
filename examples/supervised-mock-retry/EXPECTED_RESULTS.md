@@ -7,7 +7,7 @@ Deterministic checks for the bundled mock scenario. Ignore `sessionId`, timestam
 Command:
 
 ```bash
-bun run src/main.ts workflow validate supervised-mock-retry --workflow-root ./examples
+bun run src/main.ts workflow validate supervised-mock-retry --workflow-definition-dir ./examples
 ```
 
 Expected: workflow validates as a step-addressed bundle.
@@ -18,7 +18,7 @@ Command:
 
 ```bash
 bun run src/main.ts workflow run supervised-mock-retry \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/supervised-mock-retry/mock-scenario.json \
   --output json
 ```
@@ -31,7 +31,7 @@ Command:
 
 ```bash
 bun run src/main.ts workflow run supervised-mock-retry \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/supervised-mock-retry/mock-scenario.json \
   --auto-improve \
   --max-supervised-attempts 3 \

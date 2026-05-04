@@ -63,6 +63,12 @@ import {
   type WorkflowOverviewRow,
   type WorkflowStatusOverview,
 } from "./workflow/overview";
+import {
+  buildWorkflowUsageCatalog,
+  buildWorkflowUsageSummary,
+  type WorkflowUsageCatalog,
+  type WorkflowUsageSummary,
+} from "./workflow/usage";
 import type {
   AutoImprovePolicy,
   LoadOptions,
@@ -350,6 +356,13 @@ function parseWorkflowScopeOption(
     : undefined;
 }
 
+function parseWorkflowDefinitionDirectoryOption(
+  flagName: string,
+  value: string | undefined,
+): { readonly value?: string; readonly error?: string } {
+  return parseRequiredStringOption(flagName, value);
+}
+
 function parseReplyDispatchStatus(
   value: string | undefined,
 ): RuntimeEventReplyDispatchStatus | undefined {
@@ -494,15 +507,24 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     };
 
     switch (token) {
-      case "--workflow-root": {
-        const parsedString = parseRequiredStringOption(token, readNext());
-        if (parsedString.error !== undefined) {
-          parseError = parsedString.error;
-          break;
+      case "--workflow-definition-dir":
+        {
+          const parsedString = parseWorkflowDefinitionDirectoryOption(
+            token,
+            readNext(),
+          );
+          if (parsedString.error !== undefined) {
+            parseError = parsedString.error;
+            break;
+          }
+          workflowRoot = parsedString.value;
         }
-        workflowRoot = parsedString.value;
         break;
-      }
+      case "--workflow-root":
+        readNext();
+        parseError =
+          "--workflow-root has been removed; use --workflow-definition-dir";
+        break;
       case "--scope":
         {
           const rawScope = readNext();
@@ -1033,9 +1055,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(continuationAfterStepRunId === undefined
         ? {}
         : { continuationAfterStepRunId }),
-      ...(stepRunsFilterStepId === undefined
-        ? {}
-        : { stepRunsFilterStepId }),
+      ...(stepRunsFilterStepId === undefined ? {} : { stepRunsFilterStepId }),
     },
     ...(parseError === undefined ? {} : { error: parseError }),
   };
@@ -1044,7 +1064,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
 function printHelp(io: CliIo): void {
   io.stdout("Usage:");
   io.stdout(
-    "  divedra cli workflow <create|validate|inspect|list|status|run> <name?> [options]",
+    "  divedra cli workflow <create|validate|inspect|usage|list|status|run> <name?> [options]",
   );
   io.stdout(
     "  divedra session <status|progress|resume|continue|rerun|export|logs|step-runs> <workflow-execution-id> [positional-args] [options]",
@@ -1078,7 +1098,10 @@ function printHelp(io: CliIo): void {
   io.stdout("");
   io.stdout("Workflow scope options:");
   io.stdout(
-    "  --workflow-root <path>  Use a direct workflow root and bypass scoped lookup",
+    "  --workflow-definition-dir <path>  Directory containing <workflow-name>/workflow.json bundles; bypasses scoped lookup",
+  );
+  io.stdout(
+    "                                  Does not control logs, sessions, or artifacts",
   );
   io.stdout("  --scope <scope>         Select auto, project, or user scope");
   io.stdout("  --user-root <path>      Override the user scope root");
@@ -1097,6 +1120,11 @@ function printHelp(io: CliIo): void {
   );
   io.stdout(
     "  use --output json here for payloads). Elsewhere --output stays text vs json.",
+  );
+  io.stdout("");
+  io.stdout("Workflow discovery (usage):");
+  io.stdout(
+    "  workflow usage [name]  Show workflow purpose, compact step overview, and callable manager/entry input/output contracts",
   );
   io.stdout("");
   io.stdout("Session options:");
@@ -1332,9 +1360,7 @@ async function buildWorkflowExecutionExport(
     workflowName: loaded.value.workflowName,
     status: loaded.value.status,
     exportedAt: new Date().toISOString(),
-    ...(continuationMetadata === undefined
-      ? {}
-      : { continuationMetadata }),
+    ...(continuationMetadata === undefined ? {} : { continuationMetadata }),
     session: loaded.value,
     nodeExecutions,
     nodeLogs,
@@ -1589,7 +1615,9 @@ function rejectUnsupportedRemoteMockScenario(
   return true;
 }
 
-function parseStepRunExecutionStatusFilter(raw: string | undefined):
+function parseStepRunExecutionStatusFilter(
+  raw: string | undefined,
+):
   | { ok: true; value: NodeExecutionRecord["status"] | undefined }
   | { ok: false; error: string } {
   if (raw === undefined) {
@@ -1757,7 +1785,10 @@ function workflowExecutionCompactSummaryFromGraphql(
       o["workflowName"],
       `${label}.workflowName`,
     ),
-    status: requireStringField(o["status"], `${label}.status`) as WorkflowExecutionCompactSummary["status"],
+    status: requireStringField(
+      o["status"],
+      `${label}.status`,
+    ) as WorkflowExecutionCompactSummary["status"],
     currentNodeId:
       o["currentNodeId"] === null || o["currentNodeId"] === undefined
         ? null
@@ -2073,7 +2104,7 @@ function renderWorkflowStatusOverviewLines(
     const stepLabel =
       active.currentStepId !== undefined && active.currentStepId !== null
         ? active.currentStepId
-        : active.currentNodeId ?? "-";
+        : (active.currentNodeId ?? "-");
     lines.push(
       `newestActiveExecution: ${active.workflowExecutionId} ${active.status} currentStepOrNode=${stepLabel}`,
     );
@@ -2091,6 +2122,77 @@ function renderWorkflowStatusOverviewLines(
         `  - ${e.workflowExecutionId} ${e.status} ${e.startedAt}${step}`,
       );
     }
+  }
+  return lines;
+}
+
+function summarizeWorkflowContractForText(
+  contract:
+    | { readonly description?: string; readonly jsonSchema?: unknown }
+    | undefined,
+): string {
+  if (contract === undefined) {
+    return "-";
+  }
+  if (contract.description !== undefined) {
+    return contract.description;
+  }
+  if (contract.jsonSchema !== undefined) {
+    return JSON.stringify(contract.jsonSchema);
+  }
+  return "-";
+}
+
+function renderWorkflowUsageSummaryLines(
+  summary: WorkflowUsageSummary,
+): string[] {
+  const lines = [
+    `workflowName: ${summary.workflowName}`,
+    `workflowId: ${summary.workflowId}`,
+  ];
+  if (summary.source !== undefined) {
+    lines.push(
+      `source: ${summary.source.scope} ${summary.source.workflowDirectory}`,
+    );
+  }
+  lines.push(`description: ${summary.description}`);
+  lines.push(`callableStepId: ${summary.callable.stepId}`);
+  lines.push(`callableRole: ${summary.callable.role}`);
+  lines.push(
+    `input: ${summarizeWorkflowContractForText(summary.callable.input)}`,
+  );
+  lines.push(
+    `output: ${summarizeWorkflowContractForText(summary.callable.output)}`,
+  );
+  lines.push("steps:");
+  if (summary.steps.length === 0) {
+    lines.push("  (none)");
+  } else {
+    for (const step of summary.steps) {
+      const description =
+        step.description === undefined || step.description.length === 0
+          ? "-"
+          : step.description;
+      lines.push(
+        `  - ${step.stepId} role=${step.role} description=${description}`,
+      );
+    }
+  }
+  return lines;
+}
+
+function renderWorkflowUsageCatalogLines(
+  catalog: WorkflowUsageCatalog,
+): string[] {
+  const lines: string[] = [];
+  for (const [index, workflow] of catalog.workflows.entries()) {
+    if (index > 0) {
+      lines.push("");
+    }
+    lines.push(...renderWorkflowUsageSummaryLines(workflow));
+  }
+  if (catalog.workflows.length === 0) {
+    lines.push("(no workflows)");
   }
   return lines;
 }
@@ -2776,7 +2878,7 @@ export async function runCli(
   }
   if (
     target === undefined &&
-    !(scope === "workflow" && command === "list")
+    !(scope === "workflow" && (command === "list" || command === "usage"))
   ) {
     io.stderr("scope, command, and target are required");
     printHelp(io);
@@ -2979,6 +3081,74 @@ export async function runCli(
       return 0;
     }
 
+    if (command === "usage") {
+      if (graphqlCliTransport !== null) {
+        io.stderr(
+          "workflow usage currently supports local catalog inspection only; omit --endpoint",
+        );
+        return 2;
+      }
+      if (target === undefined) {
+        const built = await buildWorkflowUsageCatalog(
+          {
+            ...(parsed.options.workflowScope === undefined
+              ? {}
+              : { workflowScope: parsed.options.workflowScope }),
+          },
+          sharedOptions,
+        );
+        if (!built.ok) {
+          const code = built.error.code;
+          if (code === "INVALID_SCOPE") {
+            io.stderr(built.error.message);
+            return 2;
+          }
+          io.stderr(built.error.message);
+          return 1;
+        }
+        await emitLocalWorkflowCatalogWarnings(io, sharedOptions);
+        if (parsed.options.output === "json") {
+          emitJson(io, built.value);
+        } else {
+          for (const line of renderWorkflowUsageCatalogLines(built.value)) {
+            io.stdout(line);
+          }
+        }
+        return 0;
+      }
+
+      const built = await buildWorkflowUsageSummary(
+        {
+          workflowName: target,
+          ...(parsed.options.workflowScope === undefined
+            ? {}
+            : { workflowScope: parsed.options.workflowScope }),
+        },
+        sharedOptions,
+      );
+      if (!built.ok) {
+        const code = built.error.code;
+        if (
+          code === "NOT_FOUND" ||
+          code === "INVALID_WORKFLOW_NAME" ||
+          code === "INVALID_SCOPE"
+        ) {
+          io.stderr(built.error.message);
+          return 2;
+        }
+        io.stderr(built.error.message);
+        return 1;
+      }
+      if (parsed.options.output === "json") {
+        emitJson(io, built.value);
+      } else {
+        for (const line of renderWorkflowUsageSummaryLines(built.value)) {
+          io.stdout(line);
+        }
+      }
+      return 0;
+    }
+
     if (command === "create") {
       const created = await createWorkflowTemplate(target!, {
         ...sharedOptions,
@@ -3109,6 +3279,24 @@ export async function runCli(
         io.stdout(
           `defaults: maxLoopIterations=${summary.defaults.maxLoopIterations}, nodeTimeoutMs=${summary.defaults.nodeTimeoutMs}`,
         );
+        io.stdout(`callableStepId: ${summary.callable.stepId}`);
+        io.stdout(`callableRole: ${summary.callable.role}`);
+        io.stdout(
+          `callableInput: ${summarizeWorkflowContractForText(summary.callable.input)}`,
+        );
+        io.stdout(
+          `callableOutput: ${summarizeWorkflowContractForText(summary.callable.output)}`,
+        );
+        io.stdout("steps:");
+        if (summary.steps.length === 0) {
+          io.stdout("  (none)");
+        } else {
+          for (const step of summary.steps) {
+            io.stdout(
+              `  - ${step.stepId} role=${step.role} description=${step.description ?? "-"}`,
+            );
+          }
+        }
         io.stdout(`runtimeReady: ${summary.runtime.ready ? "yes" : "no"}`);
         for (const requirement of summary.runtime.requirements) {
           io.stdout(
@@ -3566,7 +3754,9 @@ export async function runCli(
         } else {
           io.stdout(`sourceWorkflowExecutionId: ${target!}`);
           io.stdout(`continued session: ${result.sessionId}`);
-          io.stdout(`continuedAfterStepRunId: ${result.continuedAfterStepRunId}`);
+          io.stdout(
+            `continuedAfterStepRunId: ${result.continuedAfterStepRunId}`,
+          );
           io.stdout(`continuedStartStepId: ${result.continuedStartStepId}`);
           io.stdout(`status: ${result.status}`);
         }
@@ -3828,8 +4018,7 @@ export async function runCli(
 
       const logs = await listRuntimeNodeLogs(target!, sharedOptions);
       const formatBase = parsed.options.format ?? parsed.options.output;
-      const format =
-        formatBase === "table" ? "text" : formatBase;
+      const format = formatBase === "table" ? "text" : formatBase;
       const serialized = serializeRuntimeNodeLogs(logs, format);
 
       if (parsed.options.filePath !== undefined) {

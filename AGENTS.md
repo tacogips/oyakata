@@ -143,7 +143,7 @@ Agent cooperation is defined by a JSON-managed `workflow` model. A workflow can 
 - Repetition (loop control)
 - Node timeout control (global default + per-node override)
 
-Workflow storage is directory-based under `<workflow-root>/<workflow-name>/` and uses:
+Workflow storage is directory-based under `<workflow-definition-dir>/<workflow-name>/` and uses:
 
 - `workflow.json` (purpose via `description`, graph/control-flow, global defaults, and node ordering)
 - `nodes/node-{id}.json` (runtime node payload: `executionBackend`, `model`, `promptTemplate` or `promptTemplateFile`, `variables`, optional `timeoutMs`)
@@ -168,7 +168,7 @@ Workflow storage is directory-based under `<workflow-root>/<workflow-name>/` and
 ├── .envrc             # direnv configuration
 ├── AGENTS.md          # Agent operation and workflow rules
 ├── README.md          # Project overview and workflow model summary
-├── examples/          # Reference workflows runnable with --workflow-root ./examples
+├── examples/          # Reference workflows runnable with --workflow-definition-dir ./examples
 ├── design-docs/       # Architecture and command design docs
 ├── impl-plans/        # Implementation plans and progress tracking
 ├── scripts/           # Build and test helper scripts
@@ -189,7 +189,7 @@ Workflow storage is directory-based under `<workflow-root>/<workflow-name>/` and
 ## Examples Directory
 
 - `examples/` stores reference workflow bundles that should remain directly
-  usable with `--workflow-root ./examples`.
+  usable with `--workflow-definition-dir ./examples`.
 - Keep example bundles aligned with the canonical workflow file set:
   `workflow.json` and `nodes/node-{id}.json`.
 - Prefer examples that demonstrate the recommended backend split:

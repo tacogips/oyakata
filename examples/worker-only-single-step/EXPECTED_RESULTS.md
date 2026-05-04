@@ -8,7 +8,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate worker-only-single-step --workflow-root ./examples
+bun run src/main.ts workflow validate worker-only-single-step --workflow-definition-dir ./examples
 ```
 
 Expected result: the workflow is valid.
@@ -18,7 +18,7 @@ Expected result: the workflow is valid.
 Command:
 
 ```bash
-bun run src/main.ts workflow inspect worker-only-single-step --workflow-root ./examples --output json
+bun run src/main.ts workflow inspect worker-only-single-step --workflow-definition-dir ./examples --output json
 ```
 
 Expected stable inspection facts:
@@ -33,7 +33,7 @@ Command:
 
 ```bash
 bun run src/main.ts workflow run worker-only-single-step \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/worker-only-single-step/mock-scenario.json \
   --output json
 ```

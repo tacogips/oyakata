@@ -48,6 +48,7 @@ import {
   type JsonObject,
   type LoadOptions,
   type NodeAddonPayloadResolver,
+  type NodeInputContract,
   type NodeOutputContract,
   type NodeDurability,
   type NodeExecutionBackend,
@@ -2684,6 +2685,11 @@ function normalizeNodePayload(input: {
     `${path}.output`,
     issues,
   );
+  const inputContract = normalizeNodeInputContract(
+    payload["input"],
+    `${path}.input`,
+    issues,
+  );
 
   if (nodeType === "command" && command === undefined) {
     issues.push(
@@ -2840,6 +2846,7 @@ function normalizeNodePayload(input: {
     ...(argumentBindings === undefined ? {} : { argumentBindings }),
     ...(templateEngine === undefined ? {} : { templateEngine }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(inputContract === undefined ? {} : { input: inputContract }),
     ...(outputContract === undefined ? {} : { output: outputContract }),
   };
 }
@@ -3183,6 +3190,104 @@ function normalizeNodeOutputContract(
     ...(description === undefined ? {} : { description }),
     ...(jsonSchema === undefined ? {} : { jsonSchema }),
     ...(maxValidationAttempts === undefined ? {} : { maxValidationAttempts }),
+  };
+}
+
+function normalizeNodeInputContract(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): NodeInputContract | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object"));
+    return undefined;
+  }
+
+  const allowedKeys = new Set(["description", "jsonSchema"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.${key}`,
+          "uses an unsupported input contract field",
+        ),
+      );
+    }
+  }
+
+  const hasDescriptionKey = Object.hasOwn(value, "description");
+  const hasJsonSchemaKey = Object.hasOwn(value, "jsonSchema");
+
+  const descriptionRaw = value["description"];
+  const description =
+    typeof descriptionRaw === "string" && descriptionRaw.trim().length > 0
+      ? descriptionRaw
+      : undefined;
+  if (descriptionRaw !== undefined && typeof descriptionRaw !== "string") {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.description`,
+        "must be a string when provided",
+      ),
+    );
+  } else if (typeof descriptionRaw === "string" && description === undefined) {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.description`,
+        "must be a non-empty string when provided",
+      ),
+    );
+  }
+
+  const jsonSchemaRaw = value["jsonSchema"];
+  let jsonSchema: JsonObject | undefined;
+  if (jsonSchemaRaw !== undefined) {
+    if (!isRecord(jsonSchemaRaw)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.jsonSchema`,
+          "must be an object when provided",
+        ),
+      );
+    } else {
+      const schemaIssues = validateJsonSchemaDefinition(
+        jsonSchemaRaw as JsonObject,
+      );
+      schemaIssues.forEach((entry) => {
+        issues.push(
+          makeIssue(
+            "error",
+            `${path}.jsonSchema${entry.path === "$schema" ? "" : entry.path.slice("$schema".length)}`,
+            entry.message,
+          ),
+        );
+      });
+      if (schemaIssues.length === 0) {
+        jsonSchema = jsonSchemaRaw as JsonObject;
+      }
+    }
+  }
+
+  if (!hasDescriptionKey && !hasJsonSchemaKey) {
+    issues.push(
+      makeIssue(
+        "error",
+        path,
+        "must define input.description and/or input.jsonSchema when provided",
+      ),
+    );
+  }
+
+  return {
+    ...(description === undefined ? {} : { description }),
+    ...(jsonSchema === undefined ? {} : { jsonSchema }),
   };
 }
 

@@ -13,8 +13,8 @@
 
 ### Summary
 
-Implement project/user scoped workflow lookup while preserving direct
-`--workflow-root` compatibility for examples and automation.
+Implement project/user scoped workflow lookup while supporting direct
+`--workflow-definition-dir` mode for examples and automation.
 
 ### Scope
 
@@ -59,7 +59,7 @@ interface WorkflowCatalogOptions extends LoadOptions {
 **Checklist**:
 
 - [x] Define scope selector/source types
-- [x] Resolve direct workflow-root compatibility mode
+- [x] Resolve direct workflow-definition-dir mode
 - [x] Resolve project/user catalog candidates
 - [x] Resolve create destinations
 - [x] Produce scoped runtime defaults for loaded workflows
@@ -149,9 +149,9 @@ interface ParsedOptions {
 
 - [x] Scoped catalog resolves project workflows before user workflows
 - [x] `--scope user` and `--scope project` select only that scope
-- [x] `--workflow-root` and `DIVEDRA_WORKFLOW_ROOT` remain direct roots
+- [x] `--workflow-definition-dir` and `DIVEDRA_WORKFLOW_DEFINITION_DIR` are direct definition directory overrides
 - [x] `workflow create` writes to canonical scoped layout by default
-- [x] Existing example commands with `--workflow-root ./examples` still work
+- [x] Existing example commands with `--workflow-definition-dir ./examples` still work
 - [x] Type checking passes
 - [x] Focused tests pass
 

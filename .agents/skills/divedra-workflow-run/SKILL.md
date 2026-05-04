@@ -13,7 +13,8 @@ Use this skill for operating existing divedra workflows. For creating or editing
 
 Identify what the user wants:
 
-- Find workflows: use `workflow list` or `workflow status`.
+- Find workflows for human overview: use `workflow list` or `workflow status`.
+- Choose a workflow for AI/tool use: use `workflow usage --output json` first.
 - Check a workflow before running: use `workflow validate` and optionally `workflow inspect`.
 - Run locally: use `workflow run`; for important or long-running work, prefer supervised execution with `--auto-improve`.
 - Run deterministically without real agents: add `--mock-scenario`.
@@ -41,27 +42,46 @@ When divedra is installed, prefer:
 divedra <command>
 ```
 
-Use `--workflow-root <path>` when the workflow directory is not coming from scoped project/user lookup. In this repository, examples use `--workflow-root ./examples`.
+Use `--workflow-definition-dir <path>` when the workflow definition bundles are not coming from scoped project/user lookup. This option points at a directory containing `<workflow-name>/workflow.json` bundles; it does not control logs, sessions, or artifacts. In this repository, examples use `--workflow-definition-dir ./examples`.
 
 ## Standard Run Sequence
 
+For LLM-driven workflow selection, start here:
+
 ```bash
-bun run src/main.ts workflow list --workflow-root ./examples
+bun run src/main.ts workflow usage --workflow-definition-dir ./examples --output json
+```
+
+Read each workflow's:
+
+- `description`
+- `callable.stepId`
+- `callable.role`
+- `callable.input`
+- `callable.output`
+- `steps`
+
+Choose the workflow whose purpose and callable contract match the user's task.
+Use `steps` only as a compact stage overview; use `workflow inspect` when
+structural debugging detail is needed.
+
+```bash
+bun run src/main.ts workflow list --workflow-definition-dir ./examples
 ```
 
 ```bash
-bun run src/main.ts workflow validate <workflow-name> --workflow-root ./examples
+bun run src/main.ts workflow validate <workflow-name> --workflow-definition-dir ./examples
 ```
 
 ```bash
 bun run src/main.ts workflow inspect <workflow-name> \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --output json
 ```
 
 ```bash
 bun run src/main.ts workflow run <workflow-name> \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --output json
 ```
 
@@ -69,7 +89,7 @@ Recommended supervised execution:
 
 ```bash
 bun run src/main.ts workflow run <workflow-name> \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --auto-improve \
   --nested-supervisor \
   --max-supervised-attempts 3 \
@@ -83,7 +103,7 @@ For deterministic local testing:
 
 ```bash
 bun run src/main.ts workflow run <workflow-name> \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/<workflow-name>/mock-scenario.json \
   --output json
 ```
@@ -129,6 +149,7 @@ bun run src/main.ts session continue <session-id> \
 ## User-Safe Defaults
 
 - Validate before running unless the user explicitly asks to skip validation.
+- For AI-guided workflow selection, prefer `workflow usage --output json` before `workflow run`.
 - Prefer supervised execution with `--auto-improve --nested-supervisor` for real work where failure recovery matters.
 - Prefer `--output json` when the result will be parsed, saved, or compared.
 - Prefer `--mock-scenario` for demos, tests, and docs because it avoids real backend calls.
@@ -142,14 +163,14 @@ bun run src/main.ts session continue <session-id> \
 Start the local control plane:
 
 ```bash
-bun run src/main.ts serve --workflow-root ./examples
+bun run src/main.ts serve --workflow-definition-dir ./examples
 ```
 
 Then target it:
 
 ```bash
 bun run src/main.ts workflow run <workflow-name> \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --endpoint http://127.0.0.1:43173/graphql \
   --output json
 ```
@@ -158,7 +179,8 @@ Remote-capable operations include `workflow run`, `session resume`, and `session
 
 ## Troubleshooting
 
-- If a workflow is not found, check `--workflow-root`, `DIVEDRA_WORKFLOW_ROOT`, and scope lookup.
+- If a workflow is not found, check `--workflow-definition-dir`, `DIVEDRA_WORKFLOW_DEFINITION_DIR`, and scope lookup.
+- If an AI cannot tell how to call a workflow, run `workflow usage --output json` and inspect the description, compact `steps`, and callable input/output contract.
 - If validation fails, fix the workflow bundle before running; do not bypass schema errors for normal usage.
 - If a run fails, inspect `session status`, `session progress`, and `session logs`.
 - If backend calls should not happen, rerun with `--mock-scenario` or `--dry-run` when appropriate.

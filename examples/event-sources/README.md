@@ -6,7 +6,7 @@ Use them with the existing example workflow root.
 Validate the source and binding configuration:
 
 ```bash
-divedra events validate --workflow-root ./examples --event-root ./examples/event-sources/.divedra-events
+divedra events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events
 ```
 
 For a deterministic no-server run, emit the fixture through the existing
@@ -15,7 +15,7 @@ server or real agent backend:
 
 ```bash
 divedra events emit example-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-message.json \
@@ -36,7 +36,7 @@ pass its in-process reply dispatcher into the workflow:
 ```bash
 DIVEDRA_EXAMPLE_REPLY_ENDPOINT=http://127.0.0.1:43175/reply \
 divedra events emit example-reply-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-reply-message.json \
@@ -47,7 +47,7 @@ Start a workflow control-plane endpoint in another shell when you want fixture
 events to dispatch real workflow executions:
 
 ```bash
-divedra serve --workflow-root ./examples
+divedra serve --workflow-definition-dir ./examples
 ```
 
 Emit the chat-shaped webhook fixture. Use an explicit artifact root so receipt
@@ -55,7 +55,7 @@ inspection and replay commands read the same runtime database:
 
 ```bash
 divedra events emit example-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-message.json \
@@ -86,7 +86,7 @@ Replay a stored receipt by replacing `<receipt-id>` with the id returned by
 
 ```bash
 divedra events replay <receipt-id> \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --endpoint http://127.0.0.1:43173/graphql \
@@ -100,7 +100,7 @@ without running agent-backed nodes.
 The S3 fixture is metadata-only and does not require object-store credentials.
 It can be emitted with `events emit incoming-docs --event-file
 ./examples/event-sources/payloads/s3-object-created.json` using the same
-`--workflow-root`, `--event-root`, `--artifact-root`, and `--endpoint` pattern
+`--workflow-definition-dir`, `--event-root`, `--artifact-root`, and `--endpoint` pattern
 shown above.
 
 ## Supervised lifecycle control (chat-shaped webhook)
@@ -118,14 +118,14 @@ text is treated as `input` (see `defaultAction`).
 Validate including this binding:
 
 ```bash
-divedra events validate --workflow-root ./examples --event-root ./examples/event-sources/.divedra-events
+divedra events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events
 ```
 
 Emit a `start` command against the mock scenario (no live agents):
 
 ```bash
 divedra events emit example-webhook \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --event-root ./examples/event-sources/.divedra-events \
   --artifact-root ./tmp/event-source-demo/workflow-artifacts \
   --event-file ./examples/event-sources/payloads/chat-supervised-start.json \

@@ -28,7 +28,7 @@ in that directory).
 
 ```bash
 bun run src/main.ts workflow run supervised-mock-retry \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/supervised-mock-retry/mock-scenario.json \
   --auto-improve \
   --max-supervised-attempts 3 \

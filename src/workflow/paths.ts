@@ -113,10 +113,16 @@ export function resolveEffectiveRoots(
   const cwd = options.cwd ?? process.cwd();
   const projectRoot = resolveNearestWorkflowProjectRoot(cwd);
   const rootDataDir = resolveRootDataDir(options);
+  const envWorkflowDefinitionDir = env["DIVEDRA_WORKFLOW_DEFINITION_DIR"];
+  const workflowDefinitionDir =
+    envWorkflowDefinitionDir !== undefined &&
+    envWorkflowDefinitionDir.length > 0
+      ? envWorkflowDefinitionDir
+      : undefined;
 
   const workflowRoot =
     options.workflowRoot ??
-    env["DIVEDRA_WORKFLOW_ROOT"] ??
+    workflowDefinitionDir ??
     path.join(projectRoot, DEFAULT_WORKFLOW_ROOT);
   const artifactRoot =
     options.artifactRoot ??

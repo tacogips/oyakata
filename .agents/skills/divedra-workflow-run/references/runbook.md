@@ -7,7 +7,7 @@ This runbook is for users operating existing divedra workflow bundles.
 List workflows from a direct root:
 
 ```bash
-divedra workflow list --workflow-root ./examples
+divedra workflow list --workflow-definition-dir ./examples
 ```
 
 List from scoped lookup:
@@ -30,7 +30,7 @@ divedra workflow list --status running --limit 10 --output json
 Show one workflow overview:
 
 ```bash
-divedra workflow status <workflow-name> --workflow-root <root>
+divedra workflow status <workflow-name> --workflow-definition-dir <dir>
 ```
 
 ## Validate And Inspect
@@ -38,13 +38,13 @@ divedra workflow status <workflow-name> --workflow-root <root>
 Validate structure and semantic constraints:
 
 ```bash
-divedra workflow validate <workflow-name> --workflow-root <root>
+divedra workflow validate <workflow-name> --workflow-definition-dir <dir>
 ```
 
 Inspect normalized structure:
 
 ```bash
-divedra workflow inspect <workflow-name> --workflow-root <root> --output json
+divedra workflow inspect <workflow-name> --workflow-definition-dir <dir> --output json
 ```
 
 `workflow inspect` shows step and node-registry identity fields and derived cross-workflow dispatch metadata from `steps[].transitions`.
@@ -54,14 +54,14 @@ divedra workflow inspect <workflow-name> --workflow-root <root> --output json
 Basic local run:
 
 ```bash
-divedra workflow run <workflow-name> --workflow-root <root> --output json
+divedra workflow run <workflow-name> --workflow-definition-dir <dir> --output json
 ```
 
 Recommended supervised run:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --auto-improve \
   --nested-supervisor \
   --max-supervised-attempts 3 \
@@ -75,8 +75,8 @@ Run with a deterministic mock scenario:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
-  --mock-scenario <root>/<workflow-name>/mock-scenario.json \
+  --workflow-definition-dir <dir> \
+  --mock-scenario <dir>/<workflow-name>/mock-scenario.json \
   --output json
 ```
 
@@ -84,7 +84,7 @@ Run with hard caps:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --max-steps 20 \
   --default-timeout-ms 120000 \
   --output json
@@ -94,7 +94,7 @@ Dry run:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --dry-run \
   --output json
 ```
@@ -166,7 +166,7 @@ to a concrete step-run boundary.
 Start server:
 
 ```bash
-divedra serve --workflow-root <root>
+divedra serve --workflow-definition-dir <dir>
 ```
 
 Default endpoint:
@@ -191,7 +191,7 @@ Endpoint-backed execution:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --endpoint http://127.0.0.1:43173/graphql \
   --output json
 ```
@@ -235,7 +235,7 @@ Run with engine-owned supervision:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --auto-improve \
   --max-supervised-attempts 3 \
   --output json
@@ -245,7 +245,7 @@ Optional nested supervisor:
 
 ```bash
 divedra workflow run <workflow-name> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --auto-improve \
   --nested-supervisor \
   --output json
@@ -272,23 +272,23 @@ Recommended defaults:
 Validate event config:
 
 ```bash
-divedra events validate --workflow-root <root> --event-root <event-root>
+divedra events validate --workflow-definition-dir <dir> --event-root <event-root>
 ```
 
 Emit a fixture event:
 
 ```bash
 divedra events emit <source-id> \
-  --workflow-root <root> \
+  --workflow-definition-dir <dir> \
   --event-root <event-root> \
   --event-file payload.json \
-  --mock-scenario <root>/<workflow-name>/mock-scenario.json
+  --mock-scenario <dir>/<workflow-name>/mock-scenario.json
 ```
 
 Start event listeners:
 
 ```bash
-divedra events serve --workflow-root <root> --event-root <event-root>
+divedra events serve --workflow-definition-dir <dir> --event-root <event-root>
 ```
 
 Inspect receipts:
@@ -307,7 +307,7 @@ divedra events replay <receipt-id> --reason "operator retry"
 
 Important options:
 
-- `--workflow-root`: direct workflow definition root.
+- `--workflow-definition-dir`: direct directory containing workflow definition bundles; does not control logs, sessions, or artifacts.
 - `--scope project|user`: scoped lookup selector when no direct root is supplied.
 - `--artifact-root`: workflow execution artifact tree.
 - `--session-store`: persisted session state root.
@@ -316,7 +316,7 @@ Important options:
 
 Important environment variables:
 
-- `DIVEDRA_WORKFLOW_ROOT`
+- `DIVEDRA_WORKFLOW_DEFINITION_DIR`
 - `DIVEDRA_WORKFLOW_SCOPE`
 - `DIVEDRA_ARTIFACT_ROOT`
 - `DIVEDRA_SESSION_STORE`
@@ -327,8 +327,8 @@ Important environment variables:
 
 Resolution priority for workflow definitions:
 
-1. `--workflow-root`
-2. `DIVEDRA_WORKFLOW_ROOT`
+1. `--workflow-definition-dir`
+2. `DIVEDRA_WORKFLOW_DEFINITION_DIR`
 3. `--scope` or `DIVEDRA_WORKFLOW_SCOPE`
 4. scoped project/user catalog lookup
 
@@ -336,8 +336,8 @@ Resolution priority for workflow definitions:
 
 Workflow not found:
 
-- Confirm the workflow directory is `<workflow-root>/<workflow-name>/workflow.json`.
-- Pass `--workflow-root` explicitly.
+- Confirm the workflow directory is `<workflow-definition-dir>/<workflow-name>/workflow.json`.
+- Pass `--workflow-definition-dir` explicitly.
 - Check project/user scope shadowing with `workflow list`.
 
 Validation fails:

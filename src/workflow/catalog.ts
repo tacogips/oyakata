@@ -130,7 +130,12 @@ function resolveDirectWorkflowRootOverride(
   options: LoadOptions,
 ): string | undefined {
   const env = options.env ?? process.env;
-  const directRoot = options.workflowRoot ?? env["DIVEDRA_WORKFLOW_ROOT"];
+  const envDefinitionDir = env["DIVEDRA_WORKFLOW_DEFINITION_DIR"];
+  const workflowDefinitionDir =
+    envDefinitionDir !== undefined && envDefinitionDir.length > 0
+      ? envDefinitionDir
+      : undefined;
+  const directRoot = options.workflowRoot ?? workflowDefinitionDir;
   if (directRoot === undefined || directRoot.length === 0) {
     return undefined;
   }

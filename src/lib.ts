@@ -17,6 +17,12 @@ import {
   getSupervisionSummary,
   type WorkflowInspectionSummary,
 } from "./workflow/inspect";
+import {
+  buildWorkflowUsageCatalog,
+  buildWorkflowUsageSummary,
+  type WorkflowUsageCatalog,
+  type WorkflowUsageSummary,
+} from "./workflow/usage";
 import { loadWorkflowFromCatalog } from "./workflow/load";
 import { withResolvedWorkflowSourceOptions } from "./workflow/catalog";
 import {
@@ -531,6 +537,27 @@ export async function inspectWorkflow(
   return await buildInspectionSummary(loaded.value, inspectionOptions);
 }
 
+export async function inspectWorkflowUsage(
+  workflowName: string,
+  options: DivedraOptions = {},
+): Promise<WorkflowUsageSummary> {
+  const usage = await buildWorkflowUsageSummary({ workflowName }, options);
+  if (!usage.ok) {
+    throw new Error(usage.error.message);
+  }
+  return usage.value;
+}
+
+export async function listWorkflowUsage(
+  options: DivedraOptions = {},
+): Promise<WorkflowUsageCatalog> {
+  const usage = await buildWorkflowUsageCatalog({}, options);
+  if (!usage.ok) {
+    throw new Error(usage.error.message);
+  }
+  return usage.value;
+}
+
 export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
   readonly sessionId: string;
   readonly status: WorkflowSessionState["status"];
@@ -795,7 +822,9 @@ export async function continueWorkflowFromHistory(
       ? {}
       : { defaultTimeoutMs: input.defaultTimeoutMs }),
     ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
-    ...(input.autoImprove === undefined ? {} : { autoImprove: input.autoImprove }),
+    ...(input.autoImprove === undefined
+      ? {}
+      : { autoImprove: input.autoImprove }),
     ...(input.nestedSuperviserDriver === true
       ? { nestedSuperviserDriver: true as const }
       : {}),
@@ -840,10 +869,7 @@ export async function listMergedWorkflowExecutionStepRuns(
     throw new Error(loaded.error.message);
   }
   const root = normalizeSessionState(loaded.value);
-  const snapshotsResult = await loadContinuationRelatedSnapshots(
-    [root],
-    input,
-  );
+  const snapshotsResult = await loadContinuationRelatedSnapshots([root], input);
   if (!snapshotsResult.ok) {
     throw new Error(snapshotsResult.error);
   }
@@ -910,9 +936,11 @@ export async function listMergedWorkflowExecutionStepRuns(
   };
 }
 
-export async function cancelWorkflowExecution(input: {
-  readonly workflowExecutionId: string;
-} & DivedraOptions): Promise<{
+export async function cancelWorkflowExecution(
+  input: {
+    readonly workflowExecutionId: string;
+  } & DivedraOptions,
+): Promise<{
   readonly accepted: boolean;
   readonly workflowExecutionId: string;
   readonly sessionId: string;
@@ -1217,3 +1245,7 @@ export type {
   WorkflowInspectionCounts,
   WorkflowInspectionSummary,
 } from "./workflow/inspect";
+export type {
+  WorkflowUsageCatalog,
+  WorkflowUsageSummary,
+} from "./workflow/usage";

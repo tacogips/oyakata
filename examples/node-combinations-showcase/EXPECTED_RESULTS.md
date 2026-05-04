@@ -8,7 +8,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate node-combinations-showcase --workflow-root ./examples
+bun run src/main.ts workflow validate node-combinations-showcase --workflow-definition-dir ./examples
 ```
 
 Expected result: the workflow is valid.
@@ -19,7 +19,7 @@ Command:
 
 ```bash
 bun run src/main.ts workflow run node-combinations-showcase \
-  --workflow-root ./examples \
+  --workflow-definition-dir ./examples \
   --mock-scenario ./examples/node-combinations-showcase/mock-scenario.json \
   --output json
 ```

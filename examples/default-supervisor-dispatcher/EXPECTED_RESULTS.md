@@ -2,7 +2,7 @@
 
 ## Configuration validation
 
-`divedra events validate --workflow-root ./examples --event-root ./examples/event-sources/.divedra-events`
+`divedra events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events`
 must exit successfully with no errors for:
 
 - supervisor profile `default-chat-dispatcher`

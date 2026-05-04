@@ -84,7 +84,7 @@ Nodes may be referenced by many steps in the same workflow.
 Target layout:
 
 ```text
-<workflow-root>/<workflow-name>/
+<workflow-definition-dir>/<workflow-name>/
   workflow.json
   steps/
     step-plan.json
