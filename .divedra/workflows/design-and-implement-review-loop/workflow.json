@@ -58,6 +58,7 @@
     },
     {
       "id": "workflow-output",
+      "kind": "output",
       "nodeFile": "nodes/node-workflow-output.json"
     }
   ],
