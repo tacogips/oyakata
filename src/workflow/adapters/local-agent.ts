@@ -1,5 +1,6 @@
 import {
   AdapterExecutionError,
+  normalizeOutputContractEnvelope,
   parseJsonObjectCandidate,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -113,25 +114,47 @@ export function buildLocalAdapterOutput(
     readonly promptText: string;
     readonly responseText: string;
     readonly backendSessionId?: string;
+    readonly llmMessages?: AdapterExecutionOutput["llmMessages"];
   },
 ): AdapterExecutionOutput {
-  const payload =
-    input.output === undefined
-      ? normalizeTextBusinessPayload(options.responseText)
-      : parseJsonObjectCandidate(
-          options.responseText,
-          `${options.provider} adapter`,
-        );
+  if (input.output === undefined) {
+    return {
+      provider: options.provider,
+      model: input.node.model,
+      promptText: options.promptText,
+      completionPassed: true,
+      when: ALWAYS_TRUE_WHEN,
+      payload: normalizeTextBusinessPayload(options.responseText),
+      ...(options.backendSessionId === undefined
+        ? {}
+        : { backendSession: { sessionId: options.backendSessionId } }),
+      ...(options.llmMessages === undefined
+        ? {}
+        : { llmMessages: options.llmMessages }),
+    };
+  }
+
+  const parsedPayload = parseJsonObjectCandidate(
+    options.responseText,
+    `${options.provider} adapter`,
+  );
+  const normalizedPayload = normalizeOutputContractEnvelope(
+    parsedPayload,
+    `${options.provider} adapter output`,
+  );
 
   return {
     provider: options.provider,
     model: input.node.model,
     promptText: options.promptText,
-    completionPassed: true,
-    when: ALWAYS_TRUE_WHEN,
-    payload,
+    completionPassed: normalizedPayload.completionPassed,
+    when: normalizedPayload.when,
+    payload: normalizedPayload.payload,
     ...(options.backendSessionId === undefined
       ? {}
       : { backendSession: { sessionId: options.backendSessionId } }),
+    ...(options.llmMessages === undefined
+      ? {}
+      : { llmMessages: options.llmMessages }),
   };
 }

@@ -159,6 +159,15 @@ describe("CodexAgentAdapter", () => {
     expect(output.promptText).toBe("system\n\nhello");
     expect(output.payload).toEqual({ text: "local codex reply" });
     expect(output.backendSession?.sessionId).toBe("codex-session-1");
+    expect(output.llmMessages).toEqual([
+      expect.objectContaining({
+        ordinal: 1,
+        eventType: "assistant.snapshot",
+        role: "assistant",
+        contentText: "local codex reply",
+        backendSessionId: "codex-session-1",
+      }),
+    ]);
     expect(fixture.startSession).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "system\n\nhello",

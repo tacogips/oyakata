@@ -13,6 +13,8 @@ import {
 import {
   saveEventReplyDispatchToRuntimeDb,
   saveHookEventToRuntimeDb,
+  saveNodeExecutionToRuntimeDb,
+  type RuntimeLlmSessionMessageRecord,
 } from "../workflow/runtime-db";
 import { createSessionState } from "../workflow/session";
 import { saveSession } from "../workflow/session-store";
@@ -26,7 +28,7 @@ import * as dispatchResolver from "../events/supervisor-llm-resolver";
 import type { EventBinding } from "../events/types";
 import { atomicWriteJsonFile as writeJson } from "../shared/fs";
 import { withResolvedWorkflowSourceOptions } from "../workflow/catalog";
-import { createGraphqlSchema } from "./schema";
+import { createGraphqlSchema, selectGraphqlLlmSessionMessages } from "./schema";
 import type { GraphqlRequestContext } from "./types";
 
 function cloneJson<T>(value: T): T {
@@ -394,6 +396,74 @@ async function createManagerSession(
 }
 
 describe("createGraphqlSchema", () => {
+  test("selects LLM session messages with default latest, enum order, and limit", () => {
+    const makeMessage = (
+      id: number,
+      nodeExecId: string,
+      contentText: string,
+    ): RuntimeLlmSessionMessageRecord => ({
+      id,
+      sessionId: "sess-selection",
+      nodeExecId,
+      nodeId: "worker",
+      provider: "codex-agent",
+      model: "gpt-5.5",
+      backendSessionId: "backend-selection",
+      ordinal: id,
+      role: "assistant",
+      eventType: "assistant.snapshot",
+      contentText,
+      rawMessageJson: null,
+      at: `2026-05-04T00:00:0${id}.000Z`,
+    });
+    const messages = [
+      makeMessage(1, "exec-1", "first"),
+      makeMessage(2, "exec-1", "second"),
+      makeMessage(3, "exec-2", "third"),
+    ];
+
+    expect(
+      selectGraphqlLlmSessionMessages(messages).map(
+        (message) => message.contentText,
+      ),
+    ).toEqual(["third"]);
+    expect(
+      selectGraphqlLlmSessionMessages(messages, {
+        order: "ASC",
+        limit: 2,
+      }).map((message) => message.contentText),
+    ).toEqual(["first", "second"]);
+    expect(
+      selectGraphqlLlmSessionMessages(messages, {
+        order: "DESC",
+        limit: 2,
+      }).map((message) => message.contentText),
+    ).toEqual(["third", "second"]);
+    expect(
+      selectGraphqlLlmSessionMessages(messages, {
+        limit: null,
+      }).map((message) => message.contentText),
+    ).toEqual(["third"]);
+    expect(
+      selectGraphqlLlmSessionMessages(messages, {
+        order: "ASC",
+        limit: null,
+      }).map((message) => message.contentText),
+    ).toEqual(["first"]);
+    expect(
+      selectGraphqlLlmSessionMessages(messages, {
+        order: "ASC",
+        limit: 0,
+      }),
+    ).toEqual([]);
+    expect(
+      selectGraphqlLlmSessionMessages(
+        messages.filter((message) => message.nodeExecId === "exec-1"),
+        { order: "ASC", limit: 2 },
+      ).map((message) => message.contentText),
+    ).toEqual(["first", "second"]);
+  });
+
   test("workflowExecution.session exposes supervision when stored on the session", async () => {
     const root = await makeTempDir();
     const sessionRoot = path.join(root, "sessions");
@@ -1027,22 +1097,24 @@ describe("createGraphqlSchema", () => {
     );
     expect(saved.ok).toBe(true);
 
-    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow").mockResolvedValue({
-      ok: true,
-      value: {
-        session: {
-          ...createSessionState({
-            sessionId: "sess-schema-continue-hist-2",
-            workflowName: "demo",
-            workflowId: "demo",
-            initialNodeId: "step-2",
-            runtimeVariables: {},
-          }),
-          status: "completed" as const,
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-continue-hist-2",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "step-2",
+              runtimeVariables: {},
+            }),
+            status: "completed" as const,
+          },
+          exitCode: 0,
         },
-        exitCode: 0,
-      },
-    });
+      });
 
     const schema = createGraphqlSchema();
     const payload = await schema.mutation.continueWorkflowExecution(
@@ -1716,6 +1788,55 @@ describe("createGraphqlSchema", () => {
       },
       options,
     );
+    const messageNodeExecution = session.nodeExecutions.find(
+      (execution) => execution.status === "succeeded",
+    );
+    expect(messageNodeExecution).toBeDefined();
+    if (messageNodeExecution === undefined) {
+      return;
+    }
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId: session.sessionId,
+        nodeId: messageNodeExecution.nodeId,
+        ...(messageNodeExecution.stepId === undefined
+          ? {}
+          : { stepId: messageNodeExecution.stepId }),
+        ...(messageNodeExecution.nodeRegistryId === undefined
+          ? {}
+          : { nodeRegistryId: messageNodeExecution.nodeRegistryId }),
+        nodeExecId: messageNodeExecution.nodeExecId,
+        executionOrdinal: messageNodeExecution.executionOrdinal ?? 1,
+        ...(messageNodeExecution.mailboxInstanceId === undefined
+          ? {}
+          : { mailboxInstanceId: messageNodeExecution.mailboxInstanceId }),
+        status: messageNodeExecution.status,
+        artifactDir: messageNodeExecution.artifactDir,
+        startedAt: messageNodeExecution.startedAt,
+        endedAt: messageNodeExecution.endedAt,
+        inputJson: await readFile(
+          path.join(messageNodeExecution.artifactDir, "input.json"),
+          "utf8",
+        ),
+        outputJson: await readFile(
+          path.join(messageNodeExecution.artifactDir, "output.json"),
+          "utf8",
+        ),
+        inputHash: "sha256:test-input",
+        outputHash: "sha256:test-output",
+        llmMessages: [
+          {
+            ordinal: 1,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "schema message",
+            backendSessionId: "backend-schema",
+            rawMessageJson: '{"type":"assistant.snapshot"}',
+          },
+        ],
+      },
+      options,
+    );
 
     const overview = await schema.query.workflowExecutionOverview(
       {
@@ -1733,6 +1854,8 @@ describe("createGraphqlSchema", () => {
     expect(overview?.nodes.length).toBe(session.nodeExecutions.length);
     expect(overview?.communications.totalCount).toBeGreaterThan(0);
     expect(overview?.nodeLogs.length).toBeGreaterThan(0);
+    expect(overview?.llmMessages).toHaveLength(1);
+    expect(overview?.llmMessages[0]?.contentText).toBe("schema message");
     expect(overview?.hookEvents).toHaveLength(1);
     expect(overview?.hookEvents[0]?.agentSessionId).toBe(
       "agent-session-schema",
@@ -1744,6 +1867,12 @@ describe("createGraphqlSchema", () => {
 
     const nodeWithOutput = overview?.nodes.find((node) => node.output !== null);
     expect(nodeWithOutput?.output).toContain("stage");
+    const nodeWithMessage = overview?.nodes.find(
+      (node) => node.nodeExecId === messageNodeExecution.nodeExecId,
+    );
+    expect(nodeWithMessage?.llmMessages[0]?.backendSessionId).toBe(
+      "backend-schema",
+    );
 
     const communicationWithSnapshot = overview?.communications.items.find(
       (item) =>

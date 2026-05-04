@@ -8,9 +8,11 @@ import {
 } from "../shared/fs";
 import {
   buildAdapterDivedraHookContext,
+  normalizeOutputContractEnvelope,
   ScenarioNodeAdapter,
   type AdapterAmbientManagerContext,
   type AdapterExecutionOutput,
+  type AdapterLlmSessionMessage,
   type AdapterProcessLog,
   type MockNodeScenario,
   type NodeAdapter,
@@ -3238,6 +3240,7 @@ async function runWorkflowInternal(
       let outputValidationErrors: readonly JsonSchemaValidationError[] = [];
       let outputAttemptCount = 1;
       let processLogs: readonly AdapterProcessLog[] = [];
+      let llmMessages: readonly AdapterLlmSessionMessage[] = [];
 
       if (options.dryRun === true) {
         outputPayload = {
@@ -3501,6 +3504,10 @@ async function runWorkflowInternal(
               ...processLogs,
               ...(execution.value.processLogs ?? []),
             ];
+            llmMessages = [
+              ...llmMessages,
+              ...(execution.value.llmMessages ?? []),
+            ];
             if (execution.value.backendSession?.sessionId !== undefined) {
               backendSession = {
                 mode: "reuse",
@@ -3583,8 +3590,55 @@ async function runWorkflowInternal(
               break;
             }
 
+            let normalizedContractPayload: ReturnType<
+              typeof normalizeOutputContractEnvelope
+            >;
+            try {
+              normalizedContractPayload = normalizeOutputContractEnvelope(
+                candidateResult.value,
+                "node output candidate",
+                {
+                  completionPassed: execution.value.completionPassed,
+                  when: execution.value.when,
+                },
+              );
+            } catch (error: unknown) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : "invalid output contract envelope";
+              outputValidationErrors = [{ path: "$", message }];
+              if (validationPath !== undefined) {
+                await writeJsonFile(validationPath, {
+                  valid: false,
+                  errors: outputValidationErrors,
+                  rejectedAt: nowIso(),
+                });
+              }
+
+              if (outputAttempt < maxOutputAttempts) {
+                continue;
+              }
+
+              nodeStatus = "failed";
+              finalizedOutput = {
+                provider: execution.value.provider,
+                model: execution.value.model,
+                promptText: effectivePromptText,
+                completionPassed: false,
+                when: {},
+                payload: {},
+                error: "output_validation_failed",
+                validationErrors: outputValidationErrors,
+              };
+              break;
+            }
+
             if (candidateArtifactPath !== undefined) {
-              await writeJsonFile(candidateArtifactPath, candidateResult.value);
+              await writeJsonFile(
+                candidateArtifactPath,
+                normalizedContractPayload.payload,
+              );
             }
             const schema = executionNodePayload.output?.jsonSchema;
             const validationErrors =
@@ -3592,7 +3646,7 @@ async function runWorkflowInternal(
                 ? []
                 : validateJsonValueAgainstSchema({
                     schema: schema as JsonObject,
-                    value: candidateResult.value,
+                    value: normalizedContractPayload.payload,
                   });
             outputValidationErrors = validationErrors;
             if (validationPath !== undefined) {
@@ -3607,9 +3661,9 @@ async function runWorkflowInternal(
                 provider: execution.value.provider,
                 model: execution.value.model,
                 promptText: effectivePromptText,
-                completionPassed: execution.value.completionPassed,
-                when: execution.value.when,
-                payload: candidateResult.value,
+                completionPassed: normalizedContractPayload.completionPassed,
+                when: normalizedContractPayload.when,
+                payload: normalizedContractPayload.payload,
               };
               break;
             }
@@ -4205,6 +4259,7 @@ async function runWorkflowInternal(
             ...(previousNodeExecId === undefined
               ? {}
               : { restartedFromNodeExecId: previousNodeExecId }),
+            ...(llmMessages.length === 0 ? {} : { llmMessages }),
             inputJson,
             outputJson,
             inputHash: `sha256:${inputHash}`,

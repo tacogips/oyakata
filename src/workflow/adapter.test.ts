@@ -55,9 +55,72 @@ describe("parseJsonObjectCandidate", () => {
     ).toEqual({ summary: "ok" });
   });
 
+  test("accepts a fenced json object with surrounding prose", () => {
+    expect(
+      parseJsonObjectCandidate(
+        'Here is the JSON:\n```json\n{"summary":"ok"}\n```\nDone.',
+        "test source",
+      ),
+    ).toEqual({ summary: "ok" });
+  });
+
+  test("accepts the first balanced json object in prose", () => {
+    expect(
+      parseJsonObjectCandidate(
+        'I will continue with {"summary":"ok","nested":{"value":1}} now.',
+        "test source",
+      ),
+    ).toEqual({ summary: "ok", nested: { value: 1 } });
+  });
+
+  test("accepts a balanced json object at the start with trailing prose", () => {
+    expect(
+      parseJsonObjectCandidate(
+        '{"summary":"ok","count":2}\nAdditional notes.',
+        "test source",
+      ),
+    ).toEqual({ summary: "ok", count: 2 });
+  });
+
+  test("ignores braces inside json strings while extracting prose objects", () => {
+    expect(
+      parseJsonObjectCandidate(
+        'Wrapped {"summary":"{not depth}","quote":"escaped \\" { brace"} done.',
+        "test source",
+      ),
+    ).toEqual({ summary: "{not depth}", quote: 'escaped " { brace' });
+  });
+
+  test("skips balanced prose braces before the first valid json object", () => {
+    expect(
+      parseJsonObjectCandidate(
+        'Ignore {not json} and use {"summary":"ok"} instead.',
+        "test source",
+      ),
+    ).toEqual({ summary: "ok" });
+  });
+
   test("rejects non-object json responses", () => {
     expect(() =>
       parseJsonObjectCandidate("[1,2,3]", "test source"),
+    ).toThrowError(AdapterExecutionError);
+  });
+
+  test("rejects valid array responses that contain objects", () => {
+    expect(() =>
+      parseJsonObjectCandidate('[{"summary":"ok"}]', "test source"),
+    ).toThrowError(AdapterExecutionError);
+  });
+
+  test("rejects scalar json responses", () => {
+    expect(() => parseJsonObjectCandidate('"ok"', "test source")).toThrowError(
+      AdapterExecutionError,
+    );
+  });
+
+  test("rejects unbalanced object text", () => {
+    expect(() =>
+      parseJsonObjectCandidate('prefix {"summary":"ok"', "test source"),
     ).toThrowError(AdapterExecutionError);
   });
 });

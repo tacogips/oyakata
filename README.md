@@ -5,6 +5,24 @@ It lets you define reusable workflows, choose the right workflow by purpose, run
 them locally or through a GraphQL control plane, and inspect execution progress
 afterward.
 
+```mermaid
+flowchart TD
+  catalog["Workflow catalog<br/>~/.divedra/workflows, project .divedra/workflows, or --workflow-definition-dir"]
+  choose["Choose workflow<br/>workflow usage / workflow list"]
+  run["Start execution<br/>workflow run or GraphQL executeWorkflow"]
+  session["Workflow execution session<br/>sessionId / workflowExecutionId"]
+  steps["Workflow steps<br/>manager and worker steps"]
+  nodes["Node execution<br/>agent, command, container, user-action, or add-on"]
+  backend["Backend or external action<br/>Codex, Claude Code, OpenAI, Anthropic, shell, container, user reply"]
+  artifacts["Runtime data<br/>artifacts, logs, messages, attachments"]
+  inspect["Operate session<br/>status, progress, logs, resume, rerun, continue, export"]
+
+  catalog --> choose --> run --> session --> steps --> nodes --> backend
+  backend --> artifacts
+  artifacts --> inspect
+  inspect -->|resume / rerun / continue| session
+```
+
 ## What You Can Do
 
 - Store reusable workflow bundles in a user catalog (`~/.divedra/workflows`), a project catalog (`<project>/.divedra/workflows`), or an explicit workflow definition directory.
@@ -127,6 +145,21 @@ Run with runtime variables:
 ```bash
 bun run src/main.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
+  --variables '{"hours":48}' \
+  --output json
+```
+
+File-based runtime variables are also supported with explicit `@file` and the
+historical bare file path form:
+
+```bash
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --variables @./variables.json \
+  --output json
+
+bun run src/main.ts workflow run <workflow-name> \
+  --workflow-definition-dir ./examples \
   --variables ./variables.json \
   --output json
 ```
@@ -176,6 +209,18 @@ Read logs:
 ```bash
 bun run src/main.ts session logs <session-id> --format text
 ```
+
+Inspect health and stall evidence:
+
+```bash
+bun run src/main.ts session health <session-id> --stall-timeout-ms 120000
+```
+
+Use `--output json` for the full bounded report. `--live` keeps unsupported
+local liveness checks explicit as unknown or not-proven. LLM session history is
+omitted by default; add `--include-llm-messages --llm-limit <n>` only when
+conversation content is safe to display. Remote `--endpoint` health support is
+deferred.
 
 Resume a paused or resumable execution:
 
@@ -342,7 +387,8 @@ Supported vendors:
 - `--artifact-root <path>`: override execution artifact storage.
 - `--session-store <path>`: override session JSON storage.
 - `--working-directory <path>`: run workflow work relative to a specific directory.
-- `--variables <path>`: load runtime variables from a JSON object file.
+- `--variables <json|@file|file>`: load runtime variables from an inline JSON
+  object, explicit `@file`, or a JSON object file path.
 - `--mock-scenario <path>`: use deterministic mock backend responses.
 - `--output json`: emit structured output.
 - `--dry-run`: plan/check without normal execution where supported.

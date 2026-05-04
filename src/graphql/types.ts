@@ -29,6 +29,7 @@ import type {
 } from "../workflow/manager-session-store";
 import type {
   RuntimeEventReplyDispatchRecord,
+  RuntimeLlmSessionMessageRecord,
   RuntimeNodeExecutionSummary,
   RuntimeHookEventRecord,
   RuntimeNodeLogEntry,
@@ -83,8 +84,16 @@ export interface WorkflowDefinitionLookupInput {
   readonly workflowName: string;
 }
 
+export type LlmSessionMessageOrder = "ASC" | "DESC";
+
+export interface LlmSessionMessagesSelectionInput {
+  readonly order?: LlmSessionMessageOrder | null;
+  readonly limit?: number | null;
+}
+
 export interface WorkflowExecutionLookupInput {
   readonly workflowExecutionId: string;
+  readonly llmMessages?: LlmSessionMessagesSelectionInput;
 }
 
 export interface WorkflowExecutionOverviewLookupInput {
@@ -92,6 +101,7 @@ export interface WorkflowExecutionOverviewLookupInput {
   readonly recentLogLimit?: number;
   readonly firstCommunications?: number;
   readonly afterCommunicationId?: string;
+  readonly llmMessages?: LlmSessionMessagesSelectionInput;
 }
 
 export type WorkflowDefinitionsView = WorkflowListResponse["workflows"];
@@ -121,6 +131,7 @@ export interface NodeExecutionLookupInput {
   readonly nodeId: string;
   readonly nodeExecId: string;
   readonly recentLogLimit?: number;
+  readonly llmMessages?: LlmSessionMessagesSelectionInput;
 }
 
 export interface ManagerSessionLookupInput {
@@ -150,6 +161,7 @@ export interface WorkflowExecutionView {
   readonly session: WorkflowSessionView;
   readonly nodeExecutions: readonly RuntimeNodeExecutionSummary[];
   readonly nodeLogs: readonly RuntimeNodeLogEntry[];
+  readonly llmMessages: readonly RuntimeLlmSessionMessageRecord[];
   readonly hookEvents: readonly RuntimeHookEventRecord[];
   readonly replyDispatches: readonly RuntimeEventReplyDispatchRecord[];
 }
@@ -163,6 +175,7 @@ export interface WorkflowExecutionOverviewView {
   readonly nodes: readonly NodeExecutionView[];
   readonly communications: CommunicationConnection;
   readonly nodeLogs: readonly RuntimeNodeLogEntry[];
+  readonly llmMessages: readonly RuntimeLlmSessionMessageRecord[];
   readonly hookEvents: readonly RuntimeHookEventRecord[];
   readonly replyDispatches: readonly RuntimeEventReplyDispatchRecord[];
 }
@@ -200,6 +213,7 @@ export interface NodeExecutionView {
   readonly meta: string | null;
   readonly terminalMessage: string | null;
   readonly recentLogs: readonly RuntimeNodeLogEntry[];
+  readonly llmMessages: readonly RuntimeLlmSessionMessageRecord[];
 }
 
 export interface CommunicationConnection {

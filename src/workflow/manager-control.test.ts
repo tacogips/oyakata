@@ -55,13 +55,19 @@ describe("parseManagerControlPayload", () => {
     ).toBeNull();
   });
 
+  test("returns null when managerControl is explicitly null", () => {
+    expect(
+      parseManagerControlPayload({ managerControl: null }, makeWorkflow(), {
+        managerStepId: "manager-step",
+      }),
+    ).toBeNull();
+  });
+
   test("returns empty action groups when managerControl.actions is omitted", () => {
     expect(
-      parseManagerControlPayload(
-        { managerControl: {} },
-        makeWorkflow(),
-        { managerStepId: "manager-step" },
-      ),
+      parseManagerControlPayload({ managerControl: {} }, makeWorkflow(), {
+        managerStepId: "manager-step",
+      }),
     ).toEqual({
       actions: [],
       retryStepIds: [],
@@ -69,6 +75,24 @@ describe("parseManagerControlPayload", () => {
       executeOptionalStepIds: [],
       skipOptionalStepIds: [],
     });
+  });
+
+  test("rejects non-null non-object managerControl", () => {
+    expect(() =>
+      parseManagerControlPayload({ managerControl: "none" }, makeWorkflow(), {
+        managerStepId: "manager-step",
+      }),
+    ).toThrow("payload.managerControl must be an object when provided");
+  });
+
+  test("rejects non-array managerControl.actions", () => {
+    expect(() =>
+      parseManagerControlPayload(
+        { managerControl: { actions: "retry" } },
+        makeWorkflow(),
+        { managerStepId: "manager-step" },
+      ),
+    ).toThrow("payload.managerControl.actions must be an array when provided");
   });
 });
 

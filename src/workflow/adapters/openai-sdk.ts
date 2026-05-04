@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import {
   AdapterExecutionError,
+  normalizeOutputContractEnvelope,
   parseJsonObjectCandidate,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
@@ -154,17 +155,24 @@ export class OpenAiSdkAdapter implements NodeAdapter {
         );
 
         const text = extractOpenAiText(response);
-        const payload =
+        const normalizedPayload =
           input.output === undefined
-            ? normalizeTextBusinessPayload(text)
-            : parseJsonObjectCandidate(text, "official OpenAI SDK response");
+            ? {
+                completionPassed: true,
+                when: { always: true },
+                payload: normalizeTextBusinessPayload(text),
+              }
+            : normalizeOutputContractEnvelope(
+                parseJsonObjectCandidate(text, "official OpenAI SDK response"),
+                "official OpenAI SDK response",
+              );
         return {
           provider: "official-openai-sdk",
           model: input.node.model,
           promptText: input.promptText,
-          completionPassed: true,
-          when: { always: true },
-          payload,
+          completionPassed: normalizedPayload.completionPassed,
+          when: normalizedPayload.when,
+          payload: normalizedPayload.payload,
         };
       },
       normalizeError: (error: unknown) => {

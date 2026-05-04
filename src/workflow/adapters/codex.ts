@@ -3,6 +3,7 @@ import {
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
+  type AdapterLlmSessionMessage,
   type NodeAdapter,
 } from "../adapter";
 import {
@@ -194,6 +195,14 @@ function isCodexEvent(value: unknown): value is CodexNormalizedEvent {
   );
 }
 
+function stringifyUnknown(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
 async function executeLocalCodexAgent(
   config: CodexAdapterConfig,
   input: AdapterExecutionInput,
@@ -240,6 +249,7 @@ async function executeLocalCodexAgent(
   let responseText = "";
   let sessionId = session.sessionId;
   let lastError: Error | undefined;
+  const llmMessages: AdapterLlmSessionMessage[] = [];
   const disposeAbort = bindAbortSignal(context.signal, async () => {
     await session.cancel();
   });
@@ -256,6 +266,16 @@ async function executeLocalCodexAgent(
           break;
         case "assistant.snapshot":
           responseText = event.content;
+          const rawMessageJson = stringifyUnknown(event);
+          llmMessages.push({
+            ordinal: llmMessages.length + 1,
+            eventType: event.type,
+            role: "assistant",
+            contentText: event.content,
+            backendSessionId: sessionId,
+            at: new Date().toISOString(),
+            ...(rawMessageJson === undefined ? {} : { rawMessageJson }),
+          });
           break;
         case "session.error":
           lastError = event.error;
@@ -289,6 +309,7 @@ async function executeLocalCodexAgent(
         promptText,
         responseText,
         backendSessionId: sessionId,
+        llmMessages,
       },
     );
   } finally {

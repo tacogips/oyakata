@@ -109,6 +109,40 @@ class OutputContractRetryAdapter implements NodeAdapter {
   }
 }
 
+class OutputContractEnvelopeAdapter implements NodeAdapter {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    if (input.nodeId !== "review") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {
+        when: { needs_revision: true },
+        payload: {
+          needs_revision: true,
+          findings: [{ severity: "mid", message: "plan tracking missing" }],
+        },
+      },
+    };
+  }
+}
+
 class OutputContractInvalidOutputAdapter implements NodeAdapter {
   readonly #mode: "retry-success" | "always-invalid";
 
@@ -5809,6 +5843,103 @@ describe("runWorkflow", () => {
     expect(retryPrompt).toContain("Previous output was rejected:");
     expect(retryPrompt).toContain("Return a corrected JSON object.");
     expect(retryPrompt).not.toContain("satisfies the schema");
+  });
+
+  test("uses adapter envelope from output-contract payload for transitions", async () => {
+    const root = await makeTempDir();
+    const workflowName = "output-contract-envelope-transition";
+    const workflowDir = path.join(root, workflowName);
+    await mkdir(workflowDir, { recursive: true });
+
+    await writeJson(path.join(workflowDir, "workflow.json"), {
+      workflowId: workflowName,
+      description: "fixture",
+      defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+      entryStepId: "review",
+      nodes: [
+        { id: "review", nodeFile: "node-review.json" },
+        { id: "revise", nodeFile: "node-revise.json" },
+        { id: "accepted", nodeFile: "node-accepted.json" },
+      ],
+      steps: [
+        {
+          id: "review",
+          nodeId: "review",
+          transitions: [
+            { toStepId: "revise", label: "needs_revision" },
+            { toStepId: "accepted", label: "!(needs_revision)" },
+          ],
+        },
+        { id: "revise", nodeId: "revise" },
+        { id: "accepted", nodeId: "accepted" },
+      ],
+    });
+    await writeJson(path.join(workflowDir, "node-review.json"), {
+      id: "review",
+      executionBackend: "codex-agent",
+      model: "gpt-5-nano",
+      promptTemplate: "review",
+      variables: {},
+      output: {
+        description:
+          "Return adapter JSON with when.needs_revision and payload findings.",
+      },
+    });
+    await writeJson(path.join(workflowDir, "node-revise.json"), {
+      id: "revise",
+      executionBackend: "codex-agent",
+      model: "gpt-5-nano",
+      promptTemplate: "revise",
+      variables: {},
+    });
+    await writeJson(path.join(workflowDir, "node-accepted.json"), {
+      id: "accepted",
+      executionBackend: "codex-agent",
+      model: "gpt-5-nano",
+      promptTemplate: "accepted",
+      variables: {},
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new OutputContractEnvelopeAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(
+      result.value.session.nodeExecutions.map((entry) => entry.nodeId),
+    ).toEqual(["review", "revise"]);
+    expect(result.value.session.transitions).toEqual([
+      { from: "review", to: "revise", when: "needs_revision" },
+    ]);
+
+    const reviewExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "review",
+    );
+    expect(reviewExec).toBeDefined();
+    if (reviewExec === undefined) {
+      return;
+    }
+    const outputRaw = await readFile(
+      path.join(reviewExec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      when: { needs_revision?: boolean };
+      payload: { needs_revision?: boolean };
+    };
+    expect(outputJson.when.needs_revision).toBe(true);
+    expect(outputJson.payload.needs_revision).toBe(true);
   });
 
   test("fails the node when output schema validation never succeeds", async () => {

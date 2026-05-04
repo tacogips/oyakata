@@ -26,12 +26,17 @@ impl-plans/
 
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
-| _(none)_ | — | — |
+| `output-contract-adapter-envelope-normalization` | Ready | `design-node-output-contract`, `architecture` |
 
 ## Recently Completed
 
 | Plan | Completed | Design Reference |
 | ---- | --------- | ---------------- |
+| `graphql-llm-session-message-selection` | 2026-05-04 | `architecture` |
+| `graphql-llm-session-message-field-selection` | 2026-05-04 | `architecture` |
+| `session-health-command` | 2026-05-04 | `design-session-health` |
+| `robust-manager-output-parsing` | 2026-05-04 | `architecture` |
+| `graphql-llm-session-messages` | 2026-05-04 | `architecture` |
 | `step-run-history-rerun-runtime` | 2026-05-02 | `design-step-run-history-rerun` |
 | `step-run-history-rerun-foundation` | 2026-05-02 | `design-step-run-history-rerun` |
 | `workflow-overview-status-surface` | 2026-05-02 | `design-workflow-overview-status-surface`, `architecture`, `command` |

@@ -28,6 +28,7 @@ import { withResolvedWorkflowSourceOptions } from "./workflow/catalog";
 import {
   listEventReplyDispatchesFromRuntimeDb,
   listRuntimeHookEvents,
+  listRuntimeLlmSessionMessages,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
 } from "./workflow/runtime-db";
@@ -155,6 +156,11 @@ export interface RuntimeSessionView {
   readonly nodeLogs: ReturnType<typeof listRuntimeNodeLogs> extends Promise<
     infer T
   >
+    ? T
+    : never;
+  readonly llmMessages: ReturnType<
+    typeof listRuntimeLlmSessionMessages
+  > extends Promise<infer T>
     ? T
     : never;
   readonly hookEvents?: ReturnType<
@@ -1030,10 +1036,11 @@ export async function getRuntimeSessionView(
     session,
     options,
   });
-  const [nodeExecutions, nodeLogs, hookEvents, replyDispatches] =
+  const [nodeExecutions, nodeLogs, llmMessages, hookEvents, replyDispatches] =
     await Promise.all([
       listRuntimeNodeExecutions(sessionId, options),
       listRuntimeNodeLogs(sessionId, options),
+      listRuntimeLlmSessionMessages(sessionId, options),
       listRuntimeHookEvents(sessionId, options),
       listEventReplyDispatchesFromRuntimeDb(
         { workflowExecutionId: sessionId },
@@ -1047,6 +1054,7 @@ export async function getRuntimeSessionView(
     },
     nodeExecutions,
     nodeLogs,
+    llmMessages,
     hookEvents,
     replyDispatches,
   };
@@ -1081,6 +1089,7 @@ export { handleGraphqlRequest, executeGraphqlDocument } from "./server/graphql";
 export { createGraphqlSchema, executeGraphqlRequest };
 export {
   resolveRuntimeDbPath,
+  listRuntimeLlmSessionMessages,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
   listRuntimeSessions,
@@ -1175,6 +1184,23 @@ export {
   resolveWorkflowScopeSelector,
   resolveWorkflowSource,
 } from "./workflow/catalog";
+export {
+  buildSessionHealthReport,
+  type BuildSessionHealthInput,
+  type EvidenceSourceStatus,
+  type HealthConfidence,
+  type LiveSignalStatus,
+  type SessionHealthActiveNode,
+  type SessionHealthArtifactSummary,
+  type SessionHealthEvidenceCompleteness,
+  type SessionHealthLiveSignal,
+  type SessionHealthPersistedState,
+  type SessionHealthProgressSignal,
+  type SessionHealthRecommendation,
+  type SessionHealthReport,
+  type SessionHealthState,
+  type SessionHealthSummary,
+} from "./workflow/session-health";
 export { runWorkflow } from "./workflow/engine";
 export {
   createWorkflowSupervisorDispatchClient,

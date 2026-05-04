@@ -181,6 +181,23 @@ This does not turn `workflow inspect` into the AI discovery command. It simply
 keeps the single-workflow structural inspection payload aligned with the new
 usage contract model.
 
+When the callable input contract exists, text `workflow inspect <name>` should
+add a short variable-usage block. The block should show copyable forms for:
+
+- inline JSON object input, for example `--variables '{"hours":48}'`
+- explicit file input, for example `--variables @./variables.json`
+- historical bare file input, for example `--variables ./variables.json`
+
+If `callable.input.jsonSchema` is an object schema with properties, the inline
+example may be shaped from those properties using safe placeholder values. This
+sample is an operator hint only. Runtime execution still requires a JSON object
+and does not validate the object against the callable schema in this design
+slice.
+
+JSON `workflow inspect --output json` must keep the callable input as structured
+data. In particular, `callable.input.jsonSchema` remains nested JSON in the
+inspection payload, while text output may summarize or render it for humans.
+
 ## Skill Guidance
 
 The divedra workflow-run skill should instruct LLMs to:

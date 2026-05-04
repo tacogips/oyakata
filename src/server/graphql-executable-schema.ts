@@ -1,7 +1,10 @@
 import { Kind, GraphQLScalarType } from "graphql";
 import type { ValueNode } from "graphql";
 import { createSchema } from "graphql-yoga";
-import { createGraphqlSchema } from "../graphql/schema";
+import {
+  createGraphqlSchema,
+  selectGraphqlLlmSessionMessages,
+} from "../graphql/schema";
 import type {
   CommunicationsQueryInput,
   ContinueWorkflowExecutionInput,
@@ -12,6 +15,8 @@ import type {
   ExecuteWorkflowInput,
   GraphqlRequestContext,
   GraphqlSchemaDependencies,
+  LlmSessionMessagesSelectionInput,
+  LlmSessionMessageOrder,
   ReplayCommunicationInput,
   RerunWorkflowExecutionInput,
   ResumeWorkflowExecutionInput,
@@ -25,11 +30,30 @@ import type {
   WorkflowExecutionsQueryInput,
   WorkflowStatusOverviewGraphqlInput,
 } from "../graphql/types";
+import type { RuntimeLlmSessionMessageRecord } from "../workflow/runtime-db";
 import type { WorkflowOverviewStatus } from "../workflow/overview";
 import type { WorkflowScopeSelector } from "../workflow/types";
 
+const FULL_LLM_SESSION_MESSAGES_SELECTION: LlmSessionMessagesSelectionInput = {
+  limit: Number.MAX_SAFE_INTEGER,
+};
+
+interface GraphqlLlmSessionMessagesFieldArgs {
+  readonly order?: LlmSessionMessageOrder | null;
+  readonly limit?: number | null;
+}
+
+interface GraphqlLlmSessionMessagesParent {
+  readonly llmMessages: readonly RuntimeLlmSessionMessageRecord[];
+}
+
 const GRAPHQL_SCHEMA_TEXT = `
   scalar JSON
+
+  enum LlmSessionMessageOrder {
+    ASC
+    DESC
+  }
 
   type WorkflowDefaults {
     maxLoopIterations: Int!
@@ -228,6 +252,22 @@ const GRAPHQL_SCHEMA_TEXT = `
     at: String!
   }
 
+  type RuntimeLlmSessionMessageRecord {
+    id: Int!
+    sessionId: String!
+    nodeExecId: String!
+    nodeId: String!
+    provider: String!
+    model: String!
+    backendSessionId: String
+    ordinal: Int!
+    role: String
+    eventType: String!
+    contentText: String
+    rawMessageJson: String
+    at: String!
+  }
+
   type RuntimeHookEventRecord {
     hookEventId: String!
     workflowId: String!
@@ -279,6 +319,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     session: WorkflowSessionState!
     nodeExecutions: [RuntimeNodeExecutionSummary!]!
     nodeLogs: [RuntimeNodeLogEntry!]!
+    llmMessages(order: LlmSessionMessageOrder = DESC, limit: Int = 1): [RuntimeLlmSessionMessageRecord!]!
     hookEvents: [RuntimeHookEventRecord!]!
     replyDispatches: [RuntimeEventReplyDispatchRecord!]!
   }
@@ -307,6 +348,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     meta: String
     terminalMessage: String
     recentLogs: [RuntimeNodeLogEntry!]!
+    llmMessages(order: LlmSessionMessageOrder = DESC, limit: Int = 1): [RuntimeLlmSessionMessageRecord!]!
   }
 
   type CommunicationRecord {
@@ -416,6 +458,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     nodes: [NodeExecutionView!]!
     communications: CommunicationConnection!
     nodeLogs: [RuntimeNodeLogEntry!]!
+    llmMessages(order: LlmSessionMessageOrder = DESC, limit: Int = 1): [RuntimeLlmSessionMessageRecord!]!
     hookEvents: [RuntimeHookEventRecord!]!
     replyDispatches: [RuntimeEventReplyDispatchRecord!]!
   }
@@ -933,6 +976,13 @@ function createJsonScalar(): GraphQLScalarType {
   });
 }
 
+function selectLlmMessagesForField(
+  parent: GraphqlLlmSessionMessagesParent,
+  args: GraphqlLlmSessionMessagesFieldArgs,
+): readonly RuntimeLlmSessionMessageRecord[] {
+  return selectGraphqlLlmSessionMessages(parent.llmMessages, args);
+}
+
 export function createExecutableGraphqlSchema(
   deps: GraphqlSchemaDependencies = {},
 ) {
@@ -958,6 +1008,15 @@ export function createExecutableGraphqlSchema(
         }): unknown {
           return parent.remediations ?? [];
         },
+      },
+      WorkflowExecutionView: {
+        llmMessages: selectLlmMessagesForField,
+      },
+      WorkflowExecutionOverviewView: {
+        llmMessages: selectLlmMessagesForField,
+      },
+      NodeExecutionView: {
+        llmMessages: selectLlmMessagesForField,
       },
       Query: {
         workflows(
@@ -986,7 +1045,13 @@ export function createExecutableGraphqlSchema(
           args: { readonly workflowExecutionId: string },
           context: GraphqlRequestContext,
         ) {
-          return schema.query.workflowExecution(args, context);
+          return schema.query.workflowExecution(
+            {
+              ...args,
+              llmMessages: FULL_LLM_SESSION_MESSAGES_SELECTION,
+            },
+            context,
+          );
         },
         workflowExecutionOverview(
           _parent: unknown,
@@ -998,7 +1063,13 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.query.workflowExecutionOverview(args, context);
+          return schema.query.workflowExecutionOverview(
+            {
+              ...args,
+              llmMessages: FULL_LLM_SESSION_MESSAGES_SELECTION,
+            },
+            context,
+          );
         },
         workflowExecutions(
           _parent: unknown,
@@ -1064,7 +1135,13 @@ export function createExecutableGraphqlSchema(
           },
           context: GraphqlRequestContext,
         ) {
-          return schema.query.nodeExecution(args, context);
+          return schema.query.nodeExecution(
+            {
+              ...args,
+              llmMessages: FULL_LLM_SESSION_MESSAGES_SELECTION,
+            },
+            context,
+          );
         },
         managerSession(
           _parent: unknown,
@@ -1170,10 +1247,7 @@ export function createExecutableGraphqlSchema(
           args: { readonly input: ContinueWorkflowExecutionInput },
           context: GraphqlRequestContext,
         ) {
-          return schema.mutation.continueWorkflowExecution(
-            args.input,
-            context,
-          );
+          return schema.mutation.continueWorkflowExecution(args.input, context);
         },
         sendManagerMessage(
           _parent: unknown,

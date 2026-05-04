@@ -53,8 +53,10 @@ import {
 import {
   listEventReplyDispatchesFromRuntimeDb,
   listRuntimeHookEvents,
+  listRuntimeLlmSessionMessages,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
+  type RuntimeLlmSessionMessageRecord,
   type RuntimeNodeExecutionSummary,
   type RuntimeNodeLogEntry,
 } from "../workflow/runtime-db";
@@ -88,7 +90,10 @@ import { deriveWorkflowVisualization } from "../workflow/visualization";
 import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import { parseWorkflowBundleInput } from "../workflow/workflow-bundle-input";
 import type { WorkflowJson } from "../workflow/types";
-import { continueWorkflowFromHistory, listMergedWorkflowExecutionStepRuns } from "../lib";
+import {
+  continueWorkflowFromHistory,
+  listMergedWorkflowExecutionStepRuns,
+} from "../lib";
 import {
   buildWorkflowCatalogOverview,
   buildWorkflowStatusOverview,
@@ -106,6 +111,8 @@ import type {
   GraphqlRequestContext,
   GraphqlSchema,
   GraphqlSchemaDependencies,
+  LlmSessionMessagesSelectionInput,
+  LlmSessionMessageOrder,
   ManagerSessionLookupInput,
   ManagerSessionView,
   NodeExecutionLookupInput,
@@ -157,6 +164,78 @@ import type {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+const DEFAULT_LLM_SESSION_MESSAGE_LIMIT = 1;
+const DEFAULT_LLM_SESSION_MESSAGE_ORDER: LlmSessionMessageOrder = "DESC";
+
+export interface GraphqlLlmSessionMessagesArgs {
+  readonly order?: LlmSessionMessageOrder | null;
+  readonly limit?: number | null;
+}
+
+function parseLlmSessionMessageOrder(
+  order: string | null | undefined,
+): LlmSessionMessagesSelectionInput["order"] {
+  if (order === null || order === undefined) {
+    return DEFAULT_LLM_SESSION_MESSAGE_ORDER;
+  }
+
+  const normalized = order.toUpperCase();
+  if (normalized === "ASC" || normalized === "DESC") {
+    return normalized;
+  }
+  throw new Error(`Unsupported LLM session message order: ${order}`);
+}
+
+function normalizeLlmSessionMessageLimit(
+  limit: number | null | undefined,
+): number {
+  if (limit === null || limit === undefined) {
+    return DEFAULT_LLM_SESSION_MESSAGE_LIMIT;
+  }
+  if (!Number.isFinite(limit)) {
+    throw new Error("LLM session message limit must be a finite number");
+  }
+  return Math.trunc(limit);
+}
+
+function compareLlmSessionMessagesByAge(
+  left: RuntimeLlmSessionMessageRecord,
+  right: RuntimeLlmSessionMessageRecord,
+): number {
+  const idDelta = left.id - right.id;
+  if (idDelta !== 0) {
+    return idDelta;
+  }
+
+  const atCompare = left.at.localeCompare(right.at);
+  if (atCompare !== 0) {
+    return atCompare;
+  }
+
+  const nodeCompare = left.nodeExecId.localeCompare(right.nodeExecId);
+  if (nodeCompare !== 0) {
+    return nodeCompare;
+  }
+  return left.ordinal - right.ordinal;
+}
+
+export function selectGraphqlLlmSessionMessages(
+  messages: readonly RuntimeLlmSessionMessageRecord[],
+  args: GraphqlLlmSessionMessagesArgs = {},
+): readonly RuntimeLlmSessionMessageRecord[] {
+  const order = parseLlmSessionMessageOrder(args.order);
+  const limit = normalizeLlmSessionMessageLimit(args.limit);
+  const ordered = [...messages].sort((left, right) => {
+    const ageComparison = compareLlmSessionMessagesByAge(left, right);
+    return order === "ASC" ? ageComparison : -ageComparison;
+  });
+
+  if (limit <= 0) {
+    return [];
+  }
+  return ordered.slice(0, limit);
 }
 
 interface GraphqlWorkflowRunOverridesInput {
@@ -743,7 +822,9 @@ async function buildNodeExecutionViewFromState(
   sessionRecord: WorkflowSessionState["nodeExecutions"][number],
   runtimeExecutions: readonly RuntimeNodeExecutionSummary[],
   runtimeLogs: readonly RuntimeNodeLogEntry[],
+  runtimeLlmMessages: readonly RuntimeLlmSessionMessageRecord[],
   recentLogLimit: number | undefined,
+  llmMessagesSelection: LlmSessionMessagesSelectionInput | undefined,
 ): Promise<NodeExecutionView> {
   const runtimeExecution = runtimeExecutions.find(
     (execution) =>
@@ -752,6 +833,12 @@ async function buildNodeExecutionViewFromState(
   );
   const matchingLogs = runtimeLogs.filter(
     (entry) => entry.nodeExecId === sessionRecord.nodeExecId,
+  );
+  const matchingLlmMessages = selectGraphqlLlmSessionMessages(
+    runtimeLlmMessages.filter(
+      (entry) => entry.nodeExecId === sessionRecord.nodeExecId,
+    ),
+    llmMessagesSelection,
   );
   const logLimit = recentLogLimit ?? 20;
   const recentLogs =
@@ -813,6 +900,7 @@ async function buildNodeExecutionViewFromState(
       matchingLogs,
     ),
     recentLogs,
+    llmMessages: matchingLlmMessages,
   };
 }
 
@@ -848,13 +936,19 @@ async function buildNodeExecutionView(
     input.workflowExecutionId,
     context,
   );
+  const runtimeLlmMessages = await listRuntimeLlmSessionMessages(
+    input.workflowExecutionId,
+    context,
+  );
 
   return buildNodeExecutionViewFromState(
     session,
     sessionRecord,
     runtimeExecution === undefined ? [] : [runtimeExecution],
     runtimeLogs,
+    runtimeLlmMessages,
     input.recentLogLimit,
+    input.llmMessages,
   );
 }
 
@@ -1010,10 +1104,11 @@ async function buildWorkflowExecutionView(
   if (!loaded.ok) {
     return null;
   }
-  const [nodeExecutions, nodeLogs, hookEvents, replyDispatches] =
+  const [nodeExecutions, nodeLogs, llmMessages, hookEvents, replyDispatches] =
     await Promise.all([
       listRuntimeNodeExecutions(input.workflowExecutionId, context),
       listRuntimeNodeLogs(input.workflowExecutionId, context),
+      listRuntimeLlmSessionMessages(input.workflowExecutionId, context),
       listRuntimeHookEvents(input.workflowExecutionId, context),
       listEventReplyDispatchesFromRuntimeDb(
         { workflowExecutionId: input.workflowExecutionId },
@@ -1025,6 +1120,10 @@ async function buildWorkflowExecutionView(
     session: await toWorkflowSessionView(loaded.value, context),
     nodeExecutions,
     nodeLogs,
+    llmMessages: selectGraphqlLlmSessionMessages(
+      llmMessages,
+      input.llmMessages,
+    ),
     hookEvents,
     replyDispatches,
   };
@@ -1041,16 +1140,22 @@ async function buildWorkflowExecutionOverviewView(
   }
 
   const session = loaded.value;
-  const [runtimeExecutions, runtimeLogs, hookEvents, replyDispatches] =
-    await Promise.all([
-      listRuntimeNodeExecutions(input.workflowExecutionId, context),
-      listRuntimeNodeLogs(input.workflowExecutionId, context),
-      listRuntimeHookEvents(input.workflowExecutionId, context),
-      listEventReplyDispatchesFromRuntimeDb(
-        { workflowExecutionId: input.workflowExecutionId },
-        context,
-      ),
-    ]);
+  const [
+    runtimeExecutions,
+    runtimeLogs,
+    runtimeLlmMessages,
+    hookEvents,
+    replyDispatches,
+  ] = await Promise.all([
+    listRuntimeNodeExecutions(input.workflowExecutionId, context),
+    listRuntimeNodeLogs(input.workflowExecutionId, context),
+    listRuntimeLlmSessionMessages(input.workflowExecutionId, context),
+    listRuntimeHookEvents(input.workflowExecutionId, context),
+    listEventReplyDispatchesFromRuntimeDb(
+      { workflowExecutionId: input.workflowExecutionId },
+      context,
+    ),
+  ]);
   const nodes = await Promise.all(
     session.nodeExecutions.map((execution) =>
       buildNodeExecutionViewFromState(
@@ -1058,7 +1163,9 @@ async function buildWorkflowExecutionOverviewView(
         execution,
         runtimeExecutions,
         runtimeLogs,
+        runtimeLlmMessages,
         input.recentLogLimit,
+        input.llmMessages,
       ),
     ),
   );
@@ -1087,6 +1194,10 @@ async function buildWorkflowExecutionOverviewView(
     nodes,
     communications,
     nodeLogs: runtimeLogs,
+    llmMessages: selectGraphqlLlmSessionMessages(
+      runtimeLlmMessages,
+      input.llmMessages,
+    ),
     hookEvents,
     replyDispatches,
   };
@@ -1356,9 +1467,7 @@ async function workflowExecutionStepRunsQuery(
     stepTrimmed === undefined || stepTrimmed.length === 0
       ? undefined
       : stepTrimmed;
-  const filterStatus = parseWorkflowExecutionStepRunsStatusFilter(
-    input.status,
-  );
+  const filterStatus = parseWorkflowExecutionStepRunsStatusFilter(input.status);
   const listed = await listMergedWorkflowExecutionStepRuns({
     workflowExecutionId,
     ...(filterStepId === undefined ? {} : { filterStepId }),

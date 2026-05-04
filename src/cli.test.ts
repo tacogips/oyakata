@@ -8,7 +8,10 @@ import * as workflowCallStep from "./workflow/call-step";
 import * as workflowEngine from "./workflow/engine";
 import { ok } from "./workflow/result";
 import type { ResolvedWorkflowSource } from "./workflow/types";
-import { saveEventReplyDispatchToRuntimeDb } from "./workflow/runtime-db";
+import {
+  saveEventReplyDispatchToRuntimeDb,
+  saveNodeExecutionToRuntimeDb,
+} from "./workflow/runtime-db";
 import { createSessionState } from "./workflow/session";
 import { saveSession } from "./workflow/session-store";
 
@@ -1233,6 +1236,7 @@ describe("runCli", () => {
     const textOut = inspectTextCapture.stdout.join("\n");
     expect(textOut).toContain("entryStepId: main-worker");
     expect(textOut).not.toContain("compatibility:");
+    expect(textOut).not.toContain("variablesExamples:");
   });
 
   test("inspect reports worker-only workflows without an authored manager node", async () => {
@@ -1261,7 +1265,10 @@ describe("runCli", () => {
         callable: {
           stepId: string;
           role: string;
-          input?: { description?: string };
+          input?: {
+            description?: string;
+            jsonSchema?: Readonly<Record<string, unknown>>;
+          };
           output?: { description?: string };
         };
         steps: Array<{
@@ -1283,6 +1290,12 @@ describe("runCli", () => {
       expect(parsed.callable.input?.description).toBe(
         "Worker-only workflow input payload.",
       );
+      expect(parsed.callable.input?.jsonSchema).toMatchObject({
+        type: "object",
+        properties: {
+          request: { type: "string" },
+        },
+      });
       expect(parsed.callable.output?.description).toBe(
         "Worker-only workflow output payload.",
       );
@@ -1303,6 +1316,30 @@ describe("runCli", () => {
       expect(parsed.counts.nodeRegistry).toBe(2);
       expect(parsed.counts.steps).toBe(2);
       expect(parsed.counts.crossWorkflowDispatches).toBe(0);
+
+      const textCapture = createIoCapture();
+      const textCode = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "worker-only",
+          "--workflow-definition-dir",
+          root,
+        ],
+        textCapture.io,
+      );
+      expect(textCode).toBe(0);
+      const textOut = textCapture.stdout.join("\n");
+      expect(textOut).toContain("variablesExamples:");
+      expect(textOut).toContain(
+        `inline-json: divedra workflow run worker-only --variables '{"request":""}'`,
+      );
+      expect(textOut).toContain(
+        "explicit-file: divedra workflow run worker-only --variables @./variables.json",
+      );
+      expect(textOut).toContain(
+        "file-path: divedra workflow run worker-only --variables ./variables.json",
+      );
     });
   });
 
@@ -1955,6 +1992,156 @@ describe("runCli", () => {
     expect(capture.stderr.join("\n")).toContain(message);
   });
 
+  test("workflow run accepts inline, explicit file, and bare file runtime variables locally", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "worker-only");
+    const explicitVariablesPath = await writeRuntimeVariablesFile(
+      root,
+      "explicit-runtime-variables.json",
+      { hours: 24 },
+    );
+    const bareVariablesPath = await writeRuntimeVariablesFile(
+      root,
+      "bare-runtime-variables.json",
+      { humanInput: { request: "from file" } },
+    );
+    const scalarNamedVariablesPath = await writeRuntimeVariablesFile(
+      root,
+      "48",
+      {
+        hours: 12,
+      },
+    );
+    const session = createSessionState({
+      sessionId: "sess-runtime-vars",
+      workflowName: "worker-only",
+      workflowId: "worker-only",
+      initialNodeId: "step-1",
+      runtimeVariables: {},
+    });
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue(
+        ok({
+          session: {
+            ...session,
+            status: "completed",
+          },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult),
+      );
+
+    const cases = [
+      {
+        value: '{"hours":48}',
+        expected: { hours: 48 },
+      },
+      {
+        value: `@${explicitVariablesPath}`,
+        expected: { hours: 24 },
+      },
+      {
+        value: bareVariablesPath,
+        expected: { humanInput: { request: "from file" } },
+      },
+      {
+        value: scalarNamedVariablesPath,
+        expected: { hours: 12 },
+      },
+    ] as const;
+
+    for (const entry of cases) {
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "run",
+          "worker-only",
+          "--workflow-definition-dir",
+          root,
+          "--variables",
+          entry.value,
+          "--output",
+          "json",
+        ],
+        capture.io,
+      );
+      expect(code).toBe(0);
+    }
+
+    expect(runWorkflowSpy).toHaveBeenCalledTimes(cases.length);
+    for (const [index, entry] of cases.entries()) {
+      expect(runWorkflowSpy.mock.calls[index]?.[1]).toEqual(
+        expect.objectContaining({
+          runtimeVariables: entry.expected,
+        }),
+      );
+    }
+  });
+
+  test.each([
+    {
+      name: "malformed inline object",
+      value: '{"hours":',
+      expected: "inline JSON must contain valid JSON",
+    },
+    {
+      name: "inline array",
+      value: '["hours"]',
+      expected: "--variables must resolve to a JSON object",
+    },
+    {
+      name: "inline scalar",
+      value: "48",
+      expected: "--variables must resolve to a JSON object",
+    },
+    {
+      name: "unreadable explicit file",
+      value: "@/missing/variables.json",
+      expected: "ENOENT",
+    },
+    {
+      name: "unreadable bare file",
+      value: "/missing/variables.json",
+      expected: "ENOENT",
+    },
+  ])(
+    "workflow run rejects invalid runtime variables: $name",
+    async ({ value, expected }) => {
+      const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+      const capture = createIoCapture();
+      const code = await runCli(
+        ["workflow", "run", "demo", "--variables", value],
+        capture.io,
+      );
+
+      expect(code).toBe(1);
+      expect(capture.stderr.join("\n")).toContain(
+        "failed to parse --variables",
+      );
+      expect(capture.stderr.join("\n")).toContain(expected);
+      expect(runWorkflowSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  test("workflow run rejects non-object runtime variables files", async () => {
+    const root = await makeTempDir();
+    const variablesPath = path.join(root, "variables.json");
+    await writeJson(variablesPath, ["hours"]);
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["workflow", "run", "demo", "--variables", variablesPath],
+      capture.io,
+    );
+
+    expect(code).toBe(1);
+    expect(capture.stderr.join("\n")).toContain(
+      "--variables must resolve to a JSON object",
+    );
+    expect(runWorkflowSpy).not.toHaveBeenCalled();
+  });
+
   test("run -> status -> resume flow", async () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
@@ -2365,6 +2552,215 @@ describe("runCli", () => {
     };
     expect(statusPayload.currentNodeId).toBe("writer-step");
     expect(statusPayload.currentStepId).toBe("writer-step");
+  });
+
+  test("session health emits conservative json and omits LLM messages by default", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const sessionId = "sess-health-json";
+    const artifactDir = path.join(
+      artifactsRoot,
+      "demo",
+      sessionId,
+      "node-exec-001",
+    );
+    await mkdir(artifactDir, { recursive: true });
+    await writeFile(path.join(artifactDir, "output.json"), "{}\n", "utf8");
+    const session = {
+      ...createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "writer-step",
+        runtimeVariables: {},
+      }),
+      status: "running" as const,
+      startedAt: "2026-05-04T00:00:00.000Z",
+      currentNodeId: "writer-step",
+      queue: ["writer-step"],
+      nodeExecutions: [
+        {
+          nodeId: "writer-step",
+          stepId: "writer-step",
+          nodeExecId: "node-exec-001",
+          status: "succeeded" as const,
+          artifactDir,
+          startedAt: "2026-05-04T00:00:01.000Z",
+          endedAt: "2026-05-04T00:00:02.000Z",
+        },
+      ],
+      nodeExecutionCounter: 1,
+      nodeExecutionCounts: { "writer-step": 1 },
+    };
+    const saved = await saveSession(session, {
+      sessionStoreRoot: sessionsRoot,
+      rootDataDir: root,
+      artifactRoot: artifactsRoot,
+    });
+    expect(saved.ok).toBe(true);
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId,
+        nodeId: "writer-step",
+        stepId: "writer-step",
+        nodeExecId: "node-exec-001",
+        status: "succeeded",
+        artifactDir,
+        startedAt: "2026-05-04T00:00:01.000Z",
+        endedAt: "2026-05-04T00:00:02.000Z",
+        executionOrdinal: 1,
+        inputJson: "{}",
+        outputJson: JSON.stringify({
+          provider: "codex-agent",
+          model: "gpt-5.5",
+        }),
+        inputHash: "input-hash",
+        outputHash: "output-hash",
+        llmMessages: [
+          {
+            ordinal: 1,
+            eventType: "assistant.message",
+            role: "assistant",
+            contentText: "hidden by default",
+            at: "2026-05-04T00:00:03.000Z",
+          },
+        ],
+      },
+      { rootDataDir: root, artifactRoot: artifactsRoot },
+    );
+
+    const healthCapture = createIoCapture();
+    const healthCode = await runCli(
+      [
+        "session",
+        "health",
+        sessionId,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--stall-timeout-ms",
+        "60000",
+        "--output",
+        "json",
+      ],
+      healthCapture.io,
+    );
+
+    expect(healthCode).toBe(0);
+    const payload = JSON.parse(healthCapture.stdout.join("\n")) as {
+      health: { state: string };
+      recentLlmMessages: unknown[];
+      evidenceCompleteness: { llmMessages: string };
+    };
+    expect(payload.health.state).toBe("running");
+    expect(payload.recentLlmMessages).toEqual([]);
+    expect(payload.evidenceCompleteness.llmMessages).toBe("disabled");
+  });
+
+  test("session health text includes bounded LLM history only with the opt-in flag", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const sessionId = "sess-health-llm";
+    const artifactDir = path.join(
+      artifactsRoot,
+      "demo",
+      sessionId,
+      "node-exec-001",
+    );
+    await mkdir(artifactDir, { recursive: true });
+    const session = {
+      ...createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "writer-step",
+        runtimeVariables: {},
+      }),
+      status: "running" as const,
+      startedAt: "2026-05-04T00:00:00.000Z",
+      currentNodeId: "writer-step",
+      queue: ["writer-step"],
+    };
+    const saved = await saveSession(session, {
+      sessionStoreRoot: sessionsRoot,
+      rootDataDir: root,
+      artifactRoot: artifactsRoot,
+    });
+    expect(saved.ok).toBe(true);
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId,
+        nodeId: "writer-step",
+        stepId: "writer-step",
+        nodeExecId: "node-exec-001",
+        status: "succeeded",
+        artifactDir,
+        startedAt: "2026-05-04T00:00:01.000Z",
+        endedAt: "2026-05-04T00:00:02.000Z",
+        executionOrdinal: 1,
+        inputJson: "{}",
+        outputJson: JSON.stringify({
+          provider: "codex-agent",
+          model: "gpt-5.5",
+        }),
+        inputHash: "input-hash",
+        outputHash: "output-hash",
+        llmMessages: [
+          {
+            ordinal: 1,
+            eventType: "assistant.message",
+            role: "assistant",
+            contentText: "visible when requested",
+            at: "2026-05-04T00:00:03.000Z",
+          },
+        ],
+      },
+      { rootDataDir: root, artifactRoot: artifactsRoot },
+    );
+
+    const healthCapture = createIoCapture();
+    const healthCode = await runCli(
+      [
+        "session",
+        "health",
+        sessionId,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--stall-timeout-ms",
+        "60000",
+        "--include-llm-messages",
+        "--llm-limit",
+        "1",
+      ],
+      healthCapture.io,
+    );
+
+    expect(healthCode).toBe(0);
+    expect(healthCapture.stdout.join("\n")).toContain("recentLlmMessages: 1");
+  });
+
+  test("session health rejects graphql transport", async () => {
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "session",
+        "health",
+        "sess-health-remote",
+        "--endpoint",
+        "http://127.0.0.1:8787/graphql",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(
+      "session health currently supports local execution only",
+    );
   });
 
   test("session export prints workflow execution logs as JSON", async () => {
@@ -2783,17 +3179,7 @@ describe("runCli", () => {
   });
 
   test("workflow run uses GraphQL transport when --endpoint is provided", async () => {
-    const root = await makeTempDir();
     const capture = createIoCapture();
-    const variablesPath = await writeRuntimeVariablesFile(
-      root,
-      "runtime-variables.json",
-      {
-        humanInput: {
-          request: "start demo workflow",
-        },
-      },
-    );
     const requests: Array<{
       url: string;
       body: Readonly<Record<string, unknown>>;
@@ -2807,7 +3193,7 @@ describe("runCli", () => {
         "--endpoint",
         "http://example.test/graphql",
         "--variables",
-        variablesPath,
+        '{"humanInput":{"request":"start demo workflow"}}',
         "--max-steps",
         "3",
         "--output",
@@ -2887,6 +3273,41 @@ describe("runCli", () => {
       transitions: 1,
       exitCode: 4,
     });
+  });
+
+  test("workflow run rejects invalid inline variables before GraphQL transport", async () => {
+    const capture = createIoCapture();
+    const fetchImpl = vi.fn(async () =>
+      createJsonResponse({ data: { unreachable: true } }),
+    );
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--variables",
+        "[]",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl,
+      },
+    );
+
+    expect(code).toBe(1);
+    expect(capture.stderr.join("\n")).toContain(
+      "--variables must resolve to a JSON object",
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   test("session resume uses GraphQL transport when --endpoint is provided", async () => {

@@ -4,6 +4,7 @@ import {
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
+  type AdapterLlmSessionMessage,
   type NodeAdapter,
 } from "../adapter";
 import {
@@ -166,6 +167,38 @@ function extractAssistantText(message: object): string | null {
   return text.length === 0 ? null : text;
 }
 
+function extractMessageRole(message: object): string | undefined {
+  const root = toRecord(message);
+  if (root === null) {
+    return undefined;
+  }
+  const rootRole = root["role"];
+  if (typeof rootRole === "string" && rootRole.length > 0) {
+    return rootRole;
+  }
+  const messageRecord = toRecord(root["message"]);
+  const nestedRole = messageRecord?.["role"];
+  return typeof nestedRole === "string" && nestedRole.length > 0
+    ? nestedRole
+    : undefined;
+}
+
+function extractMessageEventType(message: object): string {
+  const root = toRecord(message);
+  const eventType = root?.["type"];
+  return typeof eventType === "string" && eventType.length > 0
+    ? eventType
+    : "message";
+}
+
+function stringifyUnknown(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveLocalSessionConfig(
   config: ClaudeAdapterConfig,
   input: AdapterExecutionInput,
@@ -234,6 +267,7 @@ async function executeLocalClaudeCodeAgent(
 
   let responseText = "";
   let lastError: Error | undefined;
+  const llmMessages: AdapterLlmSessionMessage[] = [];
   const onError = (error: unknown) => {
     lastError =
       error instanceof Error ? error : new Error(String(error ?? "unknown"));
@@ -249,6 +283,17 @@ async function executeLocalClaudeCodeAgent(
       if (assistantText !== null) {
         responseText = assistantText;
       }
+      const role = extractMessageRole(message);
+      const rawMessageJson = stringifyUnknown(message);
+      llmMessages.push({
+        ordinal: llmMessages.length + 1,
+        eventType: extractMessageEventType(message),
+        backendSessionId: session.sessionId,
+        at: new Date().toISOString(),
+        ...(role === undefined ? {} : { role }),
+        ...(assistantText === null ? {} : { contentText: assistantText }),
+        ...(rawMessageJson === undefined ? {} : { rawMessageJson }),
+      });
     }
 
     const result = await session.waitForCompletion();
@@ -277,6 +322,7 @@ async function executeLocalClaudeCodeAgent(
         promptText,
         responseText,
         backendSessionId: session.sessionId,
+        llmMessages,
       },
     );
   } finally {

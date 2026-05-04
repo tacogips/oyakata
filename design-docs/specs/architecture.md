@@ -135,6 +135,57 @@ selected runtime tree instead of drifting to an ambient default. An explicit
 `DIVEDRA_ARTIFACT_DIR` remains the canonical root data directory override and is
 not replaced by scoped defaults.
 
+### LLM Session Message Inspection Boundary
+
+GraphQL workflow inspection should distinguish runtime logs from backend LLM
+session messages. Runtime logs describe divedra-owned execution milestones,
+process output summaries, and hook metadata. LLM session messages are
+provider-originated records emitted while an agent backend is executing a node.
+
+The runtime should persist a normalized, provider-neutral message index in the
+runtime SQLite database, keyed by workflow execution id and node execution id.
+The record should preserve ordering, backend session id when available, provider
+event type, optional role, optional text content, and a raw JSON snapshot for
+debugging. This index is best-effort like other runtime DB views: canonical node
+artifacts and session state must remain valid even if message indexing fails.
+
+GraphQL should expose these records as inspection-only data on workflow
+execution and node execution views. This avoids overloading `nodeLogs` with LLM
+conversation content and keeps `hookEvents.transcriptPath` as metadata rather
+than an arbitrary file-read API.
+
+The `llmMessages` field on `WorkflowExecutionView`,
+`WorkflowExecutionOverviewView`, and `NodeExecutionView` should support bounded
+selection at the field boundary. With no arguments, each field returns the
+latest one persisted message. The `order` argument is a GraphQL enum with
+`ASC` and `DESC` values and defaults to `DESC`; it is not a free-form string in
+the public GraphQL schema. The `limit` argument is configurable per field
+selection. Resolver internals may retain full persisted message arrays while
+applying the requested order and limit only at the GraphQL field resolver layer,
+so one query can request different message windows for workflow-level and
+node-level views.
+
+### Session Health Inspection Boundary
+
+`session health <session-id>` should assemble an operator-facing health snapshot
+from persisted session state, runtime DB summaries, bounded recent runtime and
+process logs, active-node metadata, artifact/candidate timestamps, and optional
+recent LLM session messages. It is an observational diagnostic surface: it does
+not mutate session state, create auto-improve incidents, rerun steps, or patch
+workflow definitions.
+
+The health surface must keep uncertainty explicit. Persisted state can prove
+terminality and recent progress evidence, but it cannot always prove that a
+backend process is currently alive. The optional `--live` probe can add
+adapter-supported local liveness evidence, but when live process state is not
+available through a supported check, health output reports an unknown or
+not-proven live signal instead of inferring liveness from stale or fresh
+timestamps alone.
+
+Supporting design:
+
+- `design-docs/specs/design-session-health.md`
+
 ### Human Workflow Overview Boundary
 
 Non-TUI human workflow inspection should use an overview-only surface layered on
@@ -333,11 +384,36 @@ Responsibilities:
 - execute agent nodes against concrete backends
 - propagate backend session reuse when `sessionPolicy.mode = "reuse"`
 - enforce runtime timeout boundaries through adapter cancellation
+- normalize common LLM response wrappers before the runtime validates candidate
+  output payloads
 
 Current implementation status:
 
 - `agent` nodes execute
 - `command` and `container` nodes execute through the native node executor
+
+Adapter output parsing is a runtime-owned tolerance boundary, not a workflow
+prompt requirement. `parseJsonObjectCandidate()` accepts only JSON objects as
+candidate payloads, but it may recover an object from common structured-output
+wrappers before validation:
+
+- an exact JSON object
+- a fenced JSON object, including when the fence is surrounded by prose
+- the first balanced JSON object embedded in prose
+
+The parser must still reject non-object JSON such as arrays, strings, numbers,
+or partial/unbalanced object text. Backend-specific output collection remains in
+`src/workflow/adapters/*`; wrapper recovery stays in the shared adapter module
+so `codex-agent`, `claude-code-agent`, and SDK-backed adapters converge before
+engine-level schema, completion, and manager-control validation.
+
+For nodes with `output` configured, output-contract normalization also accepts a
+valid adapter envelope from inline adapter payloads or reserved candidate files:
+`when` is the transition predicate map, `payload` is the business object to
+schema-validate and publish, and optional `completionPassed` overrides the
+completion flag. Invalid envelope fields are validation failures. This keeps
+review workers that return `when.needs_revision` from being misread as ordinary
+business payloads and incorrectly routed through `!(needs_revision)`.
 
 ### Session and Communication Model
 
@@ -587,6 +663,13 @@ In the step-addressed model, terminality comes from explicit manager decisions o
 ## Manager Control Architecture
 
 Manager nodes may return `payload.managerControl.actions`.
+
+The runtime treats `payload.managerControl: null` the same as an absent
+`managerControl` field. Nullable output from an LLM or structured-output wrapper
+therefore means "no manager control action requested" and must not fail an
+otherwise valid manager response. Non-null `managerControl` values must remain
+objects, and `managerControl.actions`, when present, must remain an array that
+passes the same scope and action validation rules.
 
 **Target** step-addressed naming (see `impl-plans/workflow-legacy-compatibility-removal.md`) is:
 

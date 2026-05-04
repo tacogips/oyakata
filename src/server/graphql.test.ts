@@ -13,6 +13,7 @@ import {
 import {
   saveEventReplyDispatchToRuntimeDb,
   saveHookEventToRuntimeDb,
+  saveNodeExecutionToRuntimeDb,
 } from "../workflow/runtime-db";
 import { createSessionState } from "../workflow/session";
 import { saveSession } from "../workflow/session-store";
@@ -1366,6 +1367,54 @@ describe("GraphQL HTTP transport", () => {
       },
       options,
     );
+    const messageNodeExecution = session.nodeExecutions.find(
+      (execution) => execution.status === "succeeded",
+    );
+    expect(messageNodeExecution).toBeDefined();
+    if (messageNodeExecution === undefined) {
+      return;
+    }
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId: session.sessionId,
+        nodeId: messageNodeExecution.nodeId,
+        ...(messageNodeExecution.stepId === undefined
+          ? {}
+          : { stepId: messageNodeExecution.stepId }),
+        ...(messageNodeExecution.nodeRegistryId === undefined
+          ? {}
+          : { nodeRegistryId: messageNodeExecution.nodeRegistryId }),
+        nodeExecId: messageNodeExecution.nodeExecId,
+        executionOrdinal: messageNodeExecution.executionOrdinal ?? 1,
+        ...(messageNodeExecution.mailboxInstanceId === undefined
+          ? {}
+          : { mailboxInstanceId: messageNodeExecution.mailboxInstanceId }),
+        status: messageNodeExecution.status,
+        artifactDir: messageNodeExecution.artifactDir,
+        startedAt: messageNodeExecution.startedAt,
+        endedAt: messageNodeExecution.endedAt,
+        inputJson: await readFile(
+          path.join(messageNodeExecution.artifactDir, "input.json"),
+          "utf8",
+        ),
+        outputJson: await readFile(
+          path.join(messageNodeExecution.artifactDir, "output.json"),
+          "utf8",
+        ),
+        inputHash: "sha256:http-input",
+        outputHash: "sha256:http-output",
+        llmMessages: [
+          {
+            ordinal: 1,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "http message",
+            backendSessionId: "backend-http",
+          },
+        ],
+      },
+      options,
+    );
 
     const response = await handleGraphqlRequest(
       new Request("http://localhost/graphql", {
@@ -1390,6 +1439,15 @@ describe("GraphQL HTTP transport", () => {
                   recentLogs {
                     message
                   }
+                  llmMessages {
+                    backendSessionId
+                    contentText
+                  }
+                }
+                llmMessages {
+                  nodeExecId
+                  backendSessionId
+                  contentText
                 }
                 communications {
                   totalCount
@@ -1437,8 +1495,18 @@ describe("GraphQL HTTP transport", () => {
           readonly workflowName: string;
           readonly status: string;
           readonly nodes: readonly {
+            readonly nodeExecId: string;
             readonly output: string | null;
             readonly recentLogs: readonly { readonly message: string }[];
+            readonly llmMessages: readonly {
+              readonly backendSessionId: string | null;
+              readonly contentText: string | null;
+            }[];
+          }[];
+          readonly llmMessages: readonly {
+            readonly nodeExecId: string;
+            readonly backendSessionId: string | null;
+            readonly contentText: string | null;
           }[];
           readonly communications: {
             readonly totalCount: number;
@@ -1489,14 +1557,29 @@ describe("GraphQL HTTP transport", () => {
         status: "sent",
       },
     ]);
+    expect(payload.data?.workflowExecutionOverview?.llmMessages).toEqual([
+      {
+        nodeExecId: messageNodeExecution.nodeExecId,
+        backendSessionId: "backend-http",
+        contentText: "http message",
+      },
+    ]);
     expect(
       payload.data?.workflowExecutionOverview?.nodes.some(
         (node) =>
           node.output !== null &&
           node.output.includes("stage") &&
-          node.recentLogs.length > 0,
+          node.recentLogs.length > 0 &&
+          (node.nodeExecId !== messageNodeExecution.nodeExecId ||
+            node.llmMessages[0]?.contentText === "http message"),
       ),
     ).toBe(true);
+    const nodeWithMessage = payload.data?.workflowExecutionOverview?.nodes.find(
+      (node) => node.nodeExecId === messageNodeExecution.nodeExecId,
+    );
+    expect(nodeWithMessage?.llmMessages[0]?.backendSessionId).toBe(
+      "backend-http",
+    );
     expect(
       payload.data?.workflowExecutionOverview?.communications.items.some(
         (item) =>
@@ -1504,6 +1587,232 @@ describe("GraphQL HTTP transport", () => {
           item.artifactSnapshot.inboxMessageJson !== null,
       ),
     ).toBe(true);
+  });
+
+  test("supports enum order and independent LLM message limits on /graphql fields", async () => {
+    const root = await makeTempDir();
+    const { options, session } = await createCompletedWorkflowFixture(root);
+    const messageNodeExecution = session.nodeExecutions.find(
+      (execution) => execution.status === "succeeded",
+    );
+    expect(messageNodeExecution).toBeDefined();
+    if (messageNodeExecution === undefined) {
+      return;
+    }
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId: session.sessionId,
+        nodeId: messageNodeExecution.nodeId,
+        ...(messageNodeExecution.stepId === undefined
+          ? {}
+          : { stepId: messageNodeExecution.stepId }),
+        ...(messageNodeExecution.nodeRegistryId === undefined
+          ? {}
+          : { nodeRegistryId: messageNodeExecution.nodeRegistryId }),
+        nodeExecId: messageNodeExecution.nodeExecId,
+        executionOrdinal: messageNodeExecution.executionOrdinal ?? 1,
+        ...(messageNodeExecution.mailboxInstanceId === undefined
+          ? {}
+          : { mailboxInstanceId: messageNodeExecution.mailboxInstanceId }),
+        status: messageNodeExecution.status,
+        artifactDir: messageNodeExecution.artifactDir,
+        startedAt: messageNodeExecution.startedAt,
+        endedAt: messageNodeExecution.endedAt,
+        inputJson: await readFile(
+          path.join(messageNodeExecution.artifactDir, "input.json"),
+          "utf8",
+        ),
+        outputJson: await readFile(
+          path.join(messageNodeExecution.artifactDir, "output.json"),
+          "utf8",
+        ),
+        inputHash: "sha256:http-selection-input",
+        outputHash: "sha256:http-selection-output",
+        llmMessages: [
+          {
+            ordinal: 1,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "first http selection message",
+            backendSessionId: "backend-http-selection",
+          },
+          {
+            ordinal: 2,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "second http selection message",
+            backendSessionId: "backend-http-selection",
+          },
+          {
+            ordinal: 3,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "third http selection message",
+            backendSessionId: "backend-http-selection",
+          },
+        ],
+      },
+      options,
+    );
+
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query LlmMessagesSelection(
+              $workflowExecutionId: String!
+              $workflowId: String!
+              $nodeId: String!
+              $nodeExecId: String!
+            ) {
+              orderType: __type(name: "LlmSessionMessageOrder") {
+                enumValues {
+                  name
+                }
+              }
+              workflowExecution(workflowExecutionId: $workflowExecutionId) {
+                defaultMessages: llmMessages {
+                  contentText
+                }
+                nullLimitMessages: llmMessages(limit: null) {
+                  contentText
+                }
+                llmMessages(order: DESC, limit: 2) {
+                  contentText
+                }
+              }
+              workflowExecutionOverview(workflowExecutionId: $workflowExecutionId) {
+                llmMessages(order: ASC, limit: 2) {
+                  contentText
+                }
+                nodes {
+                  nodeExecId
+                  llmMessages(order: DESC, limit: 1) {
+                    contentText
+                  }
+                }
+              }
+              nodeExecution(
+                workflowId: $workflowId
+                workflowExecutionId: $workflowExecutionId
+                nodeId: $nodeId
+                nodeExecId: $nodeExecId
+              ) {
+                llmMessages(order: ASC, limit: 0) {
+                  contentText
+                }
+              }
+            }
+          `,
+          variables: {
+            workflowExecutionId: session.sessionId,
+            workflowId: session.workflowId,
+            nodeId: messageNodeExecution.nodeId,
+            nodeExecId: messageNodeExecution.nodeExecId,
+          },
+        }),
+      }),
+      options,
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      readonly data?: {
+        readonly orderType?: {
+          readonly enumValues: readonly { readonly name: string }[];
+        };
+        readonly workflowExecution?: {
+          readonly defaultMessages: readonly {
+            readonly contentText: string | null;
+          }[];
+          readonly nullLimitMessages: readonly {
+            readonly contentText: string | null;
+          }[];
+          readonly llmMessages: readonly {
+            readonly contentText: string | null;
+          }[];
+        };
+        readonly workflowExecutionOverview?: {
+          readonly llmMessages: readonly {
+            readonly contentText: string | null;
+          }[];
+          readonly nodes: readonly {
+            readonly nodeExecId: string;
+            readonly llmMessages: readonly {
+              readonly contentText: string | null;
+            }[];
+          }[];
+        };
+        readonly nodeExecution?: {
+          readonly llmMessages: readonly {
+            readonly contentText: string | null;
+          }[];
+        };
+      };
+      readonly errors?: readonly { readonly message: string }[];
+    };
+
+    expect(payload.errors).toBeUndefined();
+    expect(
+      payload.data?.orderType?.enumValues.map((entry) => entry.name),
+    ).toEqual(["ASC", "DESC"]);
+    expect(payload.data?.workflowExecution?.defaultMessages).toEqual([
+      { contentText: "third http selection message" },
+    ]);
+    expect(payload.data?.workflowExecution?.nullLimitMessages).toEqual([
+      { contentText: "third http selection message" },
+    ]);
+    expect(payload.data?.workflowExecution?.llmMessages).toEqual([
+      { contentText: "third http selection message" },
+      { contentText: "second http selection message" },
+    ]);
+    expect(payload.data?.workflowExecutionOverview?.llmMessages).toEqual([
+      { contentText: "first http selection message" },
+      { contentText: "second http selection message" },
+    ]);
+    const nodeWithMessages =
+      payload.data?.workflowExecutionOverview?.nodes.find(
+        (node) => node.nodeExecId === messageNodeExecution.nodeExecId,
+      );
+    expect(nodeWithMessages?.llmMessages).toEqual([
+      { contentText: "third http selection message" },
+    ]);
+    expect(payload.data?.nodeExecution?.llmMessages).toEqual([]);
+  });
+
+  test("rejects free-form LLM message order strings on /graphql", async () => {
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query InvalidLlmMessageOrder {
+              workflowExecutionOverview(workflowExecutionId: "missing") {
+                llmMessages(order: "DESC") {
+                  contentText
+                }
+              }
+            }
+          `,
+        }),
+      }),
+      {},
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      readonly errors?: readonly { readonly message: string }[];
+    };
+    expect(payload.errors?.[0]?.message).toContain(
+      'Enum "LlmSessionMessageOrder" cannot represent non-enum value',
+    );
   });
 
   test("exposes workflow-definition list/load/create/save/validate over /graphql", async () => {
@@ -1777,7 +2086,8 @@ describe("GraphQL HTTP transport", () => {
       createJson.data.createWorkflowDefinition.bundle.workflow.managerStepId,
     ).toBeUndefined();
     expect(
-      "managerRuntimeId" in createJson.data.createWorkflowDefinition.bundle.workflow,
+      "managerRuntimeId" in
+        createJson.data.createWorkflowDefinition.bundle.workflow,
     ).toBe(false);
     expect(
       createJson.data.createWorkflowDefinition.bundle.workflow.entryNodeId,

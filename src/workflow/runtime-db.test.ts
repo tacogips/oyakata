@@ -7,6 +7,7 @@ import type { NodeAdapter } from "./adapter";
 import { runWorkflow } from "./engine";
 import {
   deleteRuntimeSession,
+  listRuntimeLlmSessionMessages,
   listRuntimeSessions,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
@@ -561,7 +562,10 @@ describe("runtime-db", () => {
       },
       options,
     );
-    const logs = await listRuntimeNodeLogs("sess-sqlite-process-logs-step", options);
+    const logs = await listRuntimeNodeLogs(
+      "sess-sqlite-process-logs-step",
+      options,
+    );
     expect(logs).toHaveLength(1);
     expect(logs[0]?.message.startsWith("step entry-worker ")).toBe(true);
   });
@@ -598,6 +602,70 @@ describe("runtime-db", () => {
     expect(finish?.message).toBe("step w1 finished with status succeeded");
   });
 
+  test("persists ordered LLM session messages with node executions", async () => {
+    const root = await makeTempDir();
+    const options = makeRuntimeDbOptions(root, "sess-sqlite-llm-messages");
+    await saveNodeExecutionToRuntimeDb(
+      {
+        sessionId: "sess-sqlite-llm-messages",
+        nodeId: "worker",
+        stepId: "worker-step",
+        nodeExecId: "exec-000001",
+        executionOrdinal: 1,
+        status: "succeeded",
+        artifactDir: path.join(root, "a", "b"),
+        startedAt: "2026-05-04T00:00:00.000Z",
+        endedAt: "2026-05-04T00:00:01.000Z",
+        backendSessionId: "backend-1",
+        inputJson: "{}",
+        outputJson: JSON.stringify({
+          provider: "codex-agent",
+          model: "gpt-5.5",
+          payload: {},
+        }),
+        inputHash: "h1",
+        outputHash: "h2",
+        llmMessages: [
+          {
+            ordinal: 1,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "first",
+            rawMessageJson: '{"type":"assistant.snapshot"}',
+          },
+          {
+            ordinal: 2,
+            eventType: "assistant.snapshot",
+            role: "assistant",
+            contentText: "second",
+          },
+        ],
+      },
+      options,
+    );
+
+    const messages = await listRuntimeLlmSessionMessages(
+      "sess-sqlite-llm-messages",
+      options,
+    );
+    expect(messages.map((message) => message.contentText)).toEqual([
+      "first",
+      "second",
+    ]);
+    expect(messages[0]).toEqual(
+      expect.objectContaining({
+        nodeExecId: "exec-000001",
+        nodeId: "worker",
+        provider: "codex-agent",
+        model: "gpt-5.5",
+        backendSessionId: "backend-1",
+        ordinal: 1,
+        role: "assistant",
+        eventType: "assistant.snapshot",
+      }),
+    );
+  });
+
   test("node execution finish log uses stepId as message key when it differs from nodeId", async () => {
     const root = await makeTempDir();
     const options = makeRuntimeDbOptions(root, "sess-sqlite-finish-step-key");
@@ -624,7 +692,10 @@ describe("runtime-db", () => {
       options,
     );
     expect(execsKey[0]?.executionOrdinal).toBe(1);
-    const logs = await listRuntimeNodeLogs("sess-sqlite-finish-step-key", options);
+    const logs = await listRuntimeNodeLogs(
+      "sess-sqlite-finish-step-key",
+      options,
+    );
     const finish = logs.find((e) => e.message.includes("finished with status"));
     expect(finish?.message).toBe(
       "step author-step finished with status succeeded",

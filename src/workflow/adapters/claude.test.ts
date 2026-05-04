@@ -151,6 +151,15 @@ describe("ClaudeCodeAgentAdapter", () => {
     expect(output.promptText).toBe("system\n\nhello");
     expect(output.payload).toEqual({ text: "local claude reply" });
     expect(output.backendSession?.sessionId).toBe("claude-session-1");
+    expect(output.llmMessages).toEqual([
+      expect.objectContaining({
+        ordinal: 1,
+        eventType: "assistant",
+        role: "assistant",
+        contentText: "local claude reply",
+        backendSessionId: "claude-session-1",
+      }),
+    ]);
     expect(fixture.createRunner).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: "/tmp/project",

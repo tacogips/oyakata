@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_GRAPHQL_ENDPOINT,
@@ -43,6 +44,10 @@ import {
 import { buildInspectionSummary } from "./workflow/inspect";
 import { collectWorkflowAddonSourceSummaries } from "./workflow/addon-source-summary";
 import { loadSession } from "./workflow/session-store";
+import {
+  buildSessionHealthReport,
+  type SessionHealthReport,
+} from "./workflow/session-health";
 import { createCommunicationService } from "./workflow/communication-service";
 import {
   listEventReplyDispatchesFromRuntimeDb,
@@ -135,6 +140,19 @@ interface WorkflowSourceOutput {
   readonly scopeRoot?: string;
 }
 
+type RuntimeVariablesSourceKind = "inline-json" | "explicit-file" | "file-path";
+
+interface RuntimeVariablesSource {
+  readonly kind: RuntimeVariablesSourceKind;
+  readonly displayValue: string;
+  readonly content: string;
+}
+
+interface WorkflowVariablesExample {
+  readonly mode: RuntimeVariablesSourceKind;
+  readonly command: string;
+}
+
 interface ParsedOptions {
   readonly workflowRoot?: string;
   readonly workflowScope?: WorkflowScopeSelector;
@@ -173,6 +191,11 @@ interface ParsedOptions {
   readonly sourceId?: string;
   readonly status?: string;
   readonly limit?: number;
+  readonly logLimit?: number;
+  readonly includeLlmMessages: boolean;
+  readonly llmLimit?: number;
+  readonly live: boolean;
+  readonly stallTimeoutMs?: number;
   readonly reason?: string;
   readonly autoImprove?: AutoImprovePolicy;
   /** Phase-2: run superviser bundle as nested workflow; requires --auto-improve */
@@ -467,6 +490,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let sourceId: string | undefined;
   let status: string | undefined;
   let limit: number | undefined;
+  let logLimit: number | undefined;
+  let includeLlmMessages = false;
+  let llmLimit: number | undefined;
+  let live = false;
   let reason: string | undefined;
   let parseError: string | undefined;
   let autoImprove = false;
@@ -478,6 +505,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let workflowMutationMode: "execution-copy" | "in-place" | undefined;
   let noAllowTargetedRerun = false;
   let firstAutoImprovePolicyFlag: string | undefined;
+  let firstAutoImproveOnlyPolicyFlag: string | undefined;
   let nestedSuperviser = false;
   let continuationStartStepId: string | undefined;
   let continuationAfterStepRunId: string | undefined;
@@ -504,6 +532,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     };
     const markAutoImprovePolicyFlag = (): void => {
       firstAutoImprovePolicyFlag ??= token;
+      if (token !== "--stall-timeout-ms") {
+        firstAutoImproveOnlyPolicyFlag ??= token;
+      }
     };
 
     switch (token) {
@@ -850,6 +881,33 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
           limit = parsedNumber.value;
         }
         break;
+      case "--log-limit":
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          logLimit = parsedNumber.value;
+        }
+        break;
+      case "--llm-limit":
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          llmLimit = parsedNumber.value;
+        }
+        break;
+      case "--include-llm-messages":
+      case "--include-llm-history":
+        includeLlmMessages = true;
+        break;
+      case "--live":
+        live = true;
+        break;
       case "--reason": {
         const parsedString = parseRequiredStringOption(token, readNext());
         if (parsedString.error !== undefined) {
@@ -980,11 +1038,15 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     }
   }
 
+  const isSessionHealthCommand =
+    positionals[0] === "session" && positionals[1] === "health";
   const autoImproveInputs = {
     enabled: autoImprove,
     ...(superviserWorkflowId === undefined ? {} : { superviserWorkflowId }),
     ...(monitorIntervalMs === undefined ? {} : { monitorIntervalMs }),
-    ...(stallTimeoutMs === undefined ? {} : { stallTimeoutMs }),
+    ...(stallTimeoutMs === undefined || (!autoImprove && isSessionHealthCommand)
+      ? {}
+      : { stallTimeoutMs }),
     ...(maxSupervisedAttempts === undefined ? {} : { maxSupervisedAttempts }),
     ...(maxWorkflowPatches === undefined ? {} : { maxWorkflowPatches }),
     ...(workflowMutationMode === undefined ? {} : { workflowMutationMode }),
@@ -996,8 +1058,17 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
     if (nestedSuperviser && !autoImprove) {
       parseError =
         "--nested-superviser / --nested-supervisor require --auto-improve";
-    } else if (!autoImprove && firstAutoImprovePolicyFlag !== undefined) {
-      parseError = `${firstAutoImprovePolicyFlag} requires --auto-improve`;
+    } else if (
+      !autoImprove &&
+      (isSessionHealthCommand
+        ? firstAutoImproveOnlyPolicyFlag
+        : firstAutoImprovePolicyFlag) !== undefined
+    ) {
+      parseError = `${
+        isSessionHealthCommand
+          ? firstAutoImproveOnlyPolicyFlag
+          : firstAutoImprovePolicyFlag
+      } requires --auto-improve`;
     }
   }
   if (parseError === undefined && autoImprovePolicy.error !== undefined) {
@@ -1044,6 +1115,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(sourceId === undefined ? {} : { sourceId }),
       ...(status === undefined ? {} : { status }),
       ...(limit === undefined ? {} : { limit }),
+      ...(logLimit === undefined ? {} : { logLimit }),
+      includeLlmMessages,
+      ...(llmLimit === undefined ? {} : { llmLimit }),
+      live,
+      ...(stallTimeoutMs === undefined ? {} : { stallTimeoutMs }),
       ...(reason === undefined ? {} : { reason }),
       ...(autoImprovePolicy.policy === undefined
         ? {}
@@ -1067,7 +1143,10 @@ function printHelp(io: CliIo): void {
     "  divedra cli workflow <create|validate|inspect|usage|list|status|run> <name?> [options]",
   );
   io.stdout(
-    "  divedra session <status|progress|resume|continue|rerun|export|logs|step-runs> <workflow-execution-id> [positional-args] [options]",
+    "  divedra session <status|progress|health|resume|continue|rerun|export|logs|step-runs> <workflow-execution-id> [positional-args] [options]",
+  );
+  io.stdout(
+    "  divedra session health <workflow-execution-id> [--live] [--stall-timeout-ms <n>] [--log-limit <n>] [--include-llm-messages] [--llm-limit <n>] [options]",
   );
   io.stdout(
     "  divedra session rerun <workflow-execution-id> <step-id> [options]",
@@ -1126,6 +1205,9 @@ function printHelp(io: CliIo): void {
   io.stdout(
     "  workflow usage [name]  Show workflow purpose, compact step overview, and callable manager/entry input/output contracts",
   );
+  io.stdout(
+    "  workflow run <name> --variables <json|@file|file>  Runtime variables as inline JSON object, explicit @file, or bare JSON file path",
+  );
   io.stdout("");
   io.stdout("Session options:");
   io.stdout(
@@ -1139,6 +1221,18 @@ function printHelp(io: CliIo): void {
   );
   io.stdout(
     "  logs --format <format>   Print node logs as text, json, or jsonl",
+  );
+  io.stdout(
+    "  health --live            Request best-effort local liveness evidence while preserving uncertainty",
+  );
+  io.stdout(
+    "  health --log-limit <n>   Cap recent runtime logs included in health output",
+  );
+  io.stdout(
+    "  health --include-llm-messages Include bounded recent LLM messages (alias: --include-llm-history)",
+  );
+  io.stdout(
+    "  health --llm-limit <n>   Cap recent LLM messages included when enabled",
   );
   io.stdout("  --default-timeout-ms <ms>  Override workflow default timeout");
   io.stdout("  --timeout-ms <ms>          call-step only");
@@ -1194,13 +1288,80 @@ function formatValidationIssues(
     .join("\n");
 }
 
+function isJsonScalarLiteralCandidate(value: string): boolean {
+  return (
+    value === "true" ||
+    value === "false" ||
+    value === "null" ||
+    value.startsWith('"') ||
+    /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value)
+  );
+}
+
+async function readRuntimeVariablesSource(
+  value: string,
+): Promise<RuntimeVariablesSource> {
+  const trimmed = value.trim();
+  if (value.startsWith("@")) {
+    const filePath = value.slice(1);
+    if (filePath.length === 0) {
+      throw new Error("explicit @file reference must include a file path");
+    }
+    return {
+      kind: "explicit-file",
+      displayValue: value,
+      content: await readFile(filePath, "utf8"),
+    };
+  }
+  if (await isReadableFile(value)) {
+    return {
+      kind: "file-path",
+      displayValue: value,
+      content: await readFile(value, "utf8"),
+    };
+  }
+  if (
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    isJsonScalarLiteralCandidate(trimmed)
+  ) {
+    return {
+      kind: "inline-json",
+      displayValue: "inline JSON",
+      content: trimmed,
+    };
+  }
+  return {
+    kind: "file-path",
+    displayValue: value,
+    content: await readFile(value, "utf8"),
+  };
+}
+
+async function isReadableFile(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath, fsConstants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function readRuntimeVariables(
-  pathToJson: string,
+  value: string,
 ): Promise<Readonly<Record<string, unknown>>> {
-  const content = await readFile(pathToJson, "utf8");
-  const parsed = JSON.parse(content) as unknown;
+  const source = await readRuntimeVariablesSource(value);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source.content) as unknown;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    throw new Error(
+      `${source.displayValue} must contain valid JSON: ${message}`,
+    );
+  }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("runtime variables file must contain a JSON object");
+    throw new Error("--variables must resolve to a JSON object");
   }
   return parsed as Readonly<Record<string, unknown>>;
 }
@@ -1408,6 +1569,50 @@ function serializeRuntimeNodeLogs(
         ? ""
         : `${entries.map(formatRuntimeNodeLogLine).join("\n")}\n`;
   }
+}
+
+function nullableDisplay(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === ""
+    ? "-"
+    : String(value);
+}
+
+function formatSessionHealthText(
+  report: SessionHealthReport,
+): readonly string[] {
+  return [
+    `sessionId: ${report.sessionId}`,
+    `workflow: ${report.workflowName} (${report.workflowId})`,
+    `status: ${report.status}`,
+    `health: ${report.health.state}`,
+    `confidence: ${report.health.confidence}`,
+    `reason: ${report.health.reason}`,
+    `currentStepId: ${nullableDisplay(report.currentStepId)}`,
+    `currentNodeId: ${nullableDisplay(report.currentNodeId)}`,
+    `activeNode: ${report.activeNode.known ? "known" : "unknown"}`,
+    `activeNodeExecId: ${nullableDisplay(report.activeNode.nodeExecId)}`,
+    `backend: ${nullableDisplay(report.activeNode.backend)}`,
+    `backendSessionId: ${nullableDisplay(report.activeNode.backendSessionId)}`,
+    `elapsedMs: ${nullableDisplay(report.activeNode.elapsedMs)}`,
+    `timeoutMs: ${nullableDisplay(report.activeNode.timeoutMs)}`,
+    `lastProgressAt: ${nullableDisplay(report.progressSignal.lastProgressAt)}`,
+    `lastProgressSource: ${nullableDisplay(report.progressSignal.lastProgressSource)}`,
+    `stallTimeoutMs: ${nullableDisplay(report.progressSignal.stallTimeoutMs)}`,
+    `stalled: ${nullableDisplay(
+      report.progressSignal.stalled === null
+        ? null
+        : report.progressSignal.stalled
+          ? "yes"
+          : "no",
+    )}`,
+    `liveSignal: ${report.liveSignal.status} (${report.liveSignal.source})`,
+    `latestArtifactAt: ${nullableDisplay(report.artifacts.latestArtifactAt)}`,
+    `latestCandidateAt: ${nullableDisplay(report.artifacts.latestCandidateAt)}`,
+    `recommendation: ${report.health.recommendation}`,
+    `recentLogs: ${String(report.recentLogs.length)}`,
+    `recentLlmMessages: ${String(report.recentLlmMessages.length)}`,
+    `evidence: sessionStore=${report.evidenceCompleteness.sessionStore} runtimeDb=${report.evidenceCompleteness.runtimeDb} artifacts=${report.evidenceCompleteness.artifacts} processLogs=${report.evidenceCompleteness.processLogs} llmMessages=${report.evidenceCompleteness.llmMessages}`,
+  ];
 }
 
 async function writeTextFile(
@@ -2141,6 +2346,101 @@ function summarizeWorkflowContractForText(
     return JSON.stringify(contract.jsonSchema);
   }
   return "-";
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sampleJsonValueFromSchema(schema: unknown): unknown {
+  if (!isRecord(schema)) {
+    return {};
+  }
+  if (Object.hasOwn(schema, "default")) {
+    return schema["default"];
+  }
+  if (Object.hasOwn(schema, "const")) {
+    return schema["const"];
+  }
+  const typeValue = schema["type"];
+  const typeName =
+    typeof typeValue === "string"
+      ? typeValue
+      : Array.isArray(typeValue) && typeof typeValue[0] === "string"
+        ? typeValue[0]
+        : undefined;
+  switch (typeName) {
+    case "string":
+      return "";
+    case "integer":
+    case "number":
+      return 0;
+    case "boolean":
+      return false;
+    case "array":
+      return [];
+    case "object":
+      return sampleJsonObjectFromSchema(schema) ?? {};
+    default:
+      return {};
+  }
+}
+
+function sampleJsonObjectFromSchema(
+  schema: unknown,
+): Readonly<Record<string, unknown>> | undefined {
+  if (!isRecord(schema)) {
+    return undefined;
+  }
+  const typeValue = schema["type"];
+  const isObjectSchema =
+    typeValue === "object" ||
+    (Array.isArray(typeValue) && typeValue.includes("object")) ||
+    isRecord(schema["properties"]);
+  if (!isObjectSchema) {
+    return undefined;
+  }
+  const properties = schema["properties"];
+  if (!isRecord(properties)) {
+    return {};
+  }
+  const required = Array.isArray(schema["required"])
+    ? schema["required"].filter(
+        (entry): entry is string => typeof entry === "string",
+      )
+    : [];
+  const keys = required.length > 0 ? required : Object.keys(properties);
+  return Object.fromEntries(
+    keys.map((key) => [key, sampleJsonValueFromSchema(properties[key])]),
+  );
+}
+
+function shellQuoteSingle(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function buildWorkflowVariablesExamples(input: {
+  readonly workflowName: string;
+  readonly jsonSchema?: unknown;
+}): readonly WorkflowVariablesExample[] {
+  const sample = sampleJsonObjectFromSchema(input.jsonSchema) ?? {
+    workflowInput: {},
+  };
+  const inlineJson = JSON.stringify(sample);
+  return [
+    {
+      mode: "inline-json",
+      command: `divedra workflow run ${input.workflowName} --variables ${shellQuoteSingle(inlineJson)}`,
+    },
+    {
+      mode: "explicit-file",
+      command: `divedra workflow run ${input.workflowName} --variables @./variables.json`,
+    },
+    {
+      mode: "file-path",
+      command: `divedra workflow run ${input.workflowName} --variables ./variables.json`,
+    },
+  ];
 }
 
 function renderWorkflowUsageSummaryLines(
@@ -3287,6 +3587,15 @@ export async function runCli(
         io.stdout(
           `callableOutput: ${summarizeWorkflowContractForText(summary.callable.output)}`,
         );
+        if (summary.callable.input !== undefined) {
+          io.stdout("variablesExamples:");
+          for (const example of buildWorkflowVariablesExamples({
+            workflowName: summary.workflowName,
+            jsonSchema: summary.callable.input.jsonSchema,
+          })) {
+            io.stdout(`  ${example.mode}: ${example.command}`);
+          }
+        }
         io.stdout("steps:");
         if (summary.steps.length === 0) {
           io.stdout("  (none)");
@@ -3317,7 +3626,7 @@ export async function runCli(
         } catch (error: unknown) {
           const message =
             error instanceof Error ? error.message : "unknown error";
-          io.stderr(`failed to read --variables file: ${message}`);
+          io.stderr(`failed to parse --variables: ${message}`);
           return 1;
         }
       }
@@ -3541,6 +3850,47 @@ export async function runCli(
         }
       }
       return 0;
+    }
+
+    if (command === "health") {
+      if (graphqlCliTransport !== null) {
+        io.stderr(
+          "session health currently supports local execution only; omit --endpoint",
+        );
+        return 2;
+      }
+
+      try {
+        const report = await buildSessionHealthReport({
+          sessionId: target!,
+          options: sharedOptions,
+          live: parsed.options.live,
+          ...(parsed.options.stallTimeoutMs === undefined
+            ? {}
+            : { stallTimeoutMs: parsed.options.stallTimeoutMs }),
+          ...(parsed.options.logLimit === undefined
+            ? {}
+            : { logLimit: parsed.options.logLimit }),
+          includeLlmMessages: parsed.options.includeLlmMessages,
+          ...(parsed.options.llmLimit === undefined
+            ? {}
+            : { llmLimit: parsed.options.llmLimit }),
+        });
+
+        if (parsed.options.output === "json") {
+          emitJson(io, report);
+        } else {
+          for (const line of formatSessionHealthText(report)) {
+            io.stdout(line);
+          }
+        }
+        return 0;
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`session health failed: ${message}`);
+        return 1;
+      }
     }
 
     if (command === "status") {

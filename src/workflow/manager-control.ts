@@ -84,7 +84,9 @@ function readOptionalTrimmedStringField(
     return undefined;
   }
   if (typeof fieldValue !== "string") {
-    throw new Error(`${actionLabel}.${fieldName} must be a string when provided`);
+    throw new Error(
+      `${actionLabel}.${fieldName} must be a string when provided`,
+    );
   }
   const trimmed = fieldValue.trim();
   return trimmed.length === 0 ? undefined : trimmed;
@@ -318,7 +320,7 @@ export function parseManagerControlPayload(
   context: ManagerControlParseContext,
 ): ParsedManagerControl | null {
   const managerControlRaw = payload["managerControl"];
-  if (managerControlRaw === undefined) {
+  if (managerControlRaw === undefined || managerControlRaw === null) {
     return null;
   }
   if (!isRecord(managerControlRaw)) {

@@ -17,6 +17,44 @@ This design introduces an optional per-node output contract with these goals:
 
 The runtime continues to own the execution envelope (`provider`, `model`, `when`, `completionPassed`, timestamps, mailbox writes). The LLM only proposes the business payload.
 
+## Output-Contract Adapter Envelope Normalization
+
+Nodes with `output` configured may return an adapter-shaped candidate envelope
+from either inline adapter output or the reserved candidate file:
+
+- `when`: object whose values are booleans
+- `payload`: object containing the schema-validated business payload
+- `completionPassed`: optional boolean override
+
+The runtime must normalize this shape before JSON Schema validation and before
+transition evaluation. When a valid envelope is present, the runtime validates
+only the nested `payload` object against `output.jsonSchema`, publishes that
+nested object as `output.payload`, and evaluates outgoing transition labels
+against the envelope `when` map. This preserves review-loop routing such as
+`needs_revision` / `!(needs_revision)` when a review worker returns
+`{"when":{"needs_revision":true},"payload":{...}}`.
+
+Normalization applies after the adapter has produced a top-level JSON object
+candidate, whether that candidate came from inline output or from the reserved
+candidate file. The durable `output-attempts/*/candidate.json` copy records the
+normalized business payload for successful envelope normalization; invalid
+envelopes are recorded as validation failures instead of being preserved as
+publishable payloads.
+
+Envelope recognition is intentionally narrow:
+
+- a top-level object without `when` is treated as the business payload and uses
+  the adapter-provided/default runtime `when`
+- if `when` is present, it must be an object of booleans
+- if `when` is present, `payload` must be an object
+- if `completionPassed` is present, it must be a boolean
+- invalid envelope shapes are output-contract validation failures and follow
+  the same retry/final-failure path as malformed or schema-invalid candidates
+
+This normalization is runtime-owned. Workflow prompts may ask workers for the
+adapter envelope when they need branch-control metadata, but schema authors
+should describe the nested business `payload` only.
+
 ## Node Payload Contract
 
 `node-{id}.json` gains optional `output` configuration:
@@ -109,7 +147,7 @@ Each node execution artifact directory keeps the final published output and ever
 Artifact rules:
 
 - `output-attempts/*/request.json` stores the exact retry-attempt request context prepared by the runtime for that attempt, including prompt augmentation, reserved candidate path, and prior validation feedback.
-- `output-attempts/*/candidate.json` stores the runtime-copied candidate business payload proposed on that attempt after the runtime has read it from the reserved submission path.
+- `output-attempts/*/candidate.json` stores the runtime-copied candidate business payload for that attempt. If a valid adapter envelope was submitted, this artifact stores the normalized nested `payload`, not the outer envelope.
 - `output-attempts/*/validation.json` stores validation result details and retry feedback.
 - `output.json` is written only by the runtime after successful validation, or as a terminal failure envelope when execution fails.
 - mailbox `outbox/*/output.json` is copied from the runtime-published `output.json`, never from an LLM-written file.
@@ -132,11 +170,13 @@ For a node with `output.jsonSchema`:
 
 1. Runtime executes the adapter with output contract metadata.
 2. Adapter returns a candidate payload, or signals that its response was not a valid top-level JSON object candidate.
-3. Runtime writes the candidate payload into `output-attempts/{attempt}/candidate.json`.
-4. Runtime validates the candidate payload against the node schema.
-5. If valid, runtime publishes the final `output.json` and may route it downstream.
-6. If the candidate is malformed or schema-invalid and attempts remain, runtime records the rejection in `validation.json`, feeds a compact error summary back into the next adapter attempt, and requests a corrected payload.
-7. If the final attempt is still invalid, the node execution fails and no downstream mailbox delivery is created.
+3. Runtime unwraps a valid output-contract adapter envelope, when present.
+4. Runtime writes the normalized business payload into `output-attempts/{attempt}/candidate.json`.
+5. Runtime validates the normalized business payload against the node schema.
+6. If valid, runtime publishes the final `output.json` with normalized `when`,
+   `completionPassed`, and business `payload`, then may route it downstream.
+7. If the candidate is malformed, envelope-invalid, or schema-invalid and attempts remain, runtime records the rejection in `validation.json`, feeds a compact error summary back into the next adapter attempt, and requests a corrected payload.
+8. If the final attempt is still invalid, the node execution fails and no downstream mailbox delivery is created.
 
 ## Adapter Contract
 
@@ -160,6 +200,10 @@ Backward compatibility:
 - official text-only SDK adapters for non-schema nodes may continue to consume
   raw text internally, but the published candidate must still be normalized into
   an object-shaped payload such as `{"text":"..."}` before runtime publication
+- text-oriented and local-agent adapters may unwrap valid output-contract
+  adapter envelopes before returning to the engine, but the engine must repeat
+  the same normalization for inline adapter payloads and reserved candidate
+  files so all backend paths share one transition contract.
 - deterministic/mock adapters that simulate repeated responses should key contract retries off the runtime-provided output attempt number rather than only the node execution count.
 - external wrapper adapters that proxy to LLM processes should avoid exposing the final node artifact directory when `output` is configured; the reserved candidate staging path is the only output-write location they need for structured-output publication.
 - in either mode, the runtime remains the only component that publishes final `output.json`.

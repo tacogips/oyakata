@@ -9,7 +9,7 @@ import type {
   WorkflowSessionState,
 } from "./session";
 import { resolveCurrentStepId } from "./session";
-import type { AdapterProcessLog } from "./adapter";
+import type { AdapterLlmSessionMessage, AdapterProcessLog } from "./adapter";
 import type { LoadOptions } from "./types";
 
 type RuntimeNodeLogLevel = "info" | "warning" | "error";
@@ -39,6 +39,7 @@ interface RuntimeNodeExecutionRow {
   readonly outputJson: string;
   readonly inputHash: string;
   readonly outputHash: string;
+  readonly llmMessages?: readonly AdapterLlmSessionMessage[];
 }
 
 export interface RuntimeSessionSummary {
@@ -92,6 +93,22 @@ export interface RuntimeNodeLogEntry {
   readonly level: string;
   readonly message: string;
   readonly payloadJson: string | null;
+  readonly at: string;
+}
+
+export interface RuntimeLlmSessionMessageRecord {
+  readonly id: number;
+  readonly sessionId: string;
+  readonly nodeExecId: string;
+  readonly nodeId: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly backendSessionId: string | null;
+  readonly ordinal: number;
+  readonly role: string | null;
+  readonly eventType: string;
+  readonly contentText: string | null;
+  readonly rawMessageJson: string | null;
   readonly at: string;
 }
 
@@ -395,6 +412,21 @@ function ensureSchema(db: Database): void {
       payload_json TEXT,
       at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS llm_session_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      node_exec_id TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      backend_session_id TEXT,
+      ordinal INTEGER NOT NULL,
+      role TEXT,
+      event_type TEXT NOT NULL,
+      content_text TEXT,
+      raw_message_json TEXT,
+      at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS event_receipts (
       receipt_id TEXT PRIMARY KEY,
       source_id TEXT NOT NULL,
@@ -455,6 +487,7 @@ function ensureSchema(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_sessions_workflow_name ON sessions (workflow_name);
     CREATE INDEX IF NOT EXISTS idx_node_exec_session ON node_executions (session_id, node_id);
     CREATE INDEX IF NOT EXISTS idx_node_logs_session ON node_logs (session_id, at);
+    CREATE INDEX IF NOT EXISTS idx_llm_session_messages_session ON llm_session_messages (session_id, node_exec_id, ordinal);
     CREATE INDEX IF NOT EXISTS idx_event_receipts_dedupe ON event_receipts (source_id, binding_id, dedupe_key, received_at);
     CREATE INDEX IF NOT EXISTS idx_event_receipts_status ON event_receipts (status, updated_at);
     CREATE INDEX IF NOT EXISTS idx_event_reply_dispatches_workflow_execution ON event_reply_dispatches (workflow_execution_id, updated_at);
@@ -604,9 +637,7 @@ function ensureSchema(db: Database): void {
     db.exec("ALTER TABLE node_executions ADD COLUMN timeout_ms INTEGER");
   }
   if (!existingNodeExecutionColumns.has("execution_ordinal")) {
-    db.exec(
-      "ALTER TABLE node_executions ADD COLUMN execution_ordinal INTEGER",
-    );
+    db.exec("ALTER TABLE node_executions ADD COLUMN execution_ordinal INTEGER");
   }
   const sessionColumnsFinal = db
     .query("PRAGMA table_info(sessions)")
@@ -625,35 +656,25 @@ function ensureSchema(db: Database): void {
     db.exec("ALTER TABLE sessions ADD COLUMN continuation_mode TEXT");
   }
   if (
-    !sessionContinuationColumnSet.has(
-      "continued_from_workflow_execution_id",
-    )
+    !sessionContinuationColumnSet.has("continued_from_workflow_execution_id")
   ) {
     db.exec(
       "ALTER TABLE sessions ADD COLUMN continued_from_workflow_execution_id TEXT",
     );
   }
   if (!sessionContinuationColumnSet.has("continued_after_step_run_id")) {
-    db.exec(
-      "ALTER TABLE sessions ADD COLUMN continued_after_step_run_id TEXT",
-    );
+    db.exec("ALTER TABLE sessions ADD COLUMN continued_after_step_run_id TEXT");
   }
-  if (
-    !sessionContinuationColumnSet.has("continued_after_execution_ordinal")
-  ) {
+  if (!sessionContinuationColumnSet.has("continued_after_execution_ordinal")) {
     db.exec(
       "ALTER TABLE sessions ADD COLUMN continued_after_execution_ordinal INTEGER",
     );
   }
   if (!sessionContinuationColumnSet.has("continued_start_step_id")) {
-    db.exec(
-      "ALTER TABLE sessions ADD COLUMN continued_start_step_id TEXT",
-    );
+    db.exec("ALTER TABLE sessions ADD COLUMN continued_start_step_id TEXT");
   }
   if (!sessionContinuationColumnSet.has("history_imports_json")) {
-    db.exec(
-      "ALTER TABLE sessions ADD COLUMN history_imports_json TEXT",
-    );
+    db.exec("ALTER TABLE sessions ADD COLUMN history_imports_json TEXT");
   }
   const receiptColumns = db
     .query("PRAGMA table_info(event_receipts)")
@@ -663,7 +684,9 @@ function ensureSchema(db: Database): void {
     db.exec("ALTER TABLE event_receipts ADD COLUMN supervised_run_id TEXT");
   }
   if (!receiptColumnSet.has("supervisor_execution_id")) {
-    db.exec("ALTER TABLE event_receipts ADD COLUMN supervisor_execution_id TEXT");
+    db.exec(
+      "ALTER TABLE event_receipts ADD COLUMN supervisor_execution_id TEXT",
+    );
   }
   if (!receiptColumnSet.has("supervisor_conversation_id")) {
     db.exec(
@@ -671,7 +694,9 @@ function ensureSchema(db: Database): void {
     );
   }
   if (!receiptColumnSet.has("supervisor_decision_id")) {
-    db.exec("ALTER TABLE event_receipts ADD COLUMN supervisor_decision_id TEXT");
+    db.exec(
+      "ALTER TABLE event_receipts ADD COLUMN supervisor_decision_id TEXT",
+    );
   }
 
   backfillMissingNodeExecutionOrdinals(db);
@@ -803,6 +828,68 @@ function toRuntimeHookEventRecord(row: {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function readOutputStringField(
+  outputJson: string,
+  field: "provider" | "model",
+  fallback: string,
+): string {
+  try {
+    const parsed = JSON.parse(outputJson) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return fallback;
+    }
+    const value = (parsed as Readonly<Record<string, unknown>>)[field];
+    return typeof value === "string" && value.length > 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function insertLlmSessionMessages(
+  db: Database,
+  row: RuntimeNodeExecutionRow,
+  createdAt: string,
+): void {
+  db.prepare(
+    "DELETE FROM llm_session_messages WHERE session_id = ? AND node_exec_id = ?",
+  ).run(row.sessionId, row.nodeExecId);
+
+  const messages = row.llmMessages ?? [];
+  if (messages.length === 0) {
+    return;
+  }
+
+  const provider = readOutputStringField(row.outputJson, "provider", "unknown");
+  const model = readOutputStringField(row.outputJson, "model", "unknown");
+  const stmt = db.prepare(`
+    INSERT INTO llm_session_messages (
+      session_id, node_exec_id, node_id, provider, model, backend_session_id,
+      ordinal, role, event_type, content_text, raw_message_json, at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const message of messages) {
+    stmt.run(
+      row.sessionId,
+      row.nodeExecId,
+      row.nodeId,
+      provider,
+      model,
+      message.backendSessionId ?? row.backendSessionId ?? null,
+      message.ordinal,
+      message.role ?? null,
+      message.eventType,
+      message.contentText ?? null,
+      message.rawMessageJson ?? null,
+      message.at ?? createdAt,
+    );
+  }
 }
 
 export async function saveHookEventToRuntimeDb(
@@ -1287,8 +1374,7 @@ export async function saveNodeExecutionToRuntimeDb(
 
     const finishLogTarget =
       row.stepId != null && row.stepId !== "" ? "step" : "node";
-    const finishKey =
-      finishLogTarget === "step" ? row.stepId! : row.nodeId;
+    const finishKey = finishLogTarget === "step" ? row.stepId! : row.nodeId;
     insertNodeLog(
       db,
       toNodeLogRow({
@@ -1305,6 +1391,7 @@ export async function saveNodeExecutionToRuntimeDb(
         at: row.endedAt,
       }),
     );
+    insertLlmSessionMessages(db, row, now);
   });
 }
 
@@ -1624,12 +1711,74 @@ export async function listRuntimeNodeLogs(
   });
 }
 
+export async function listRuntimeLlmSessionMessages(
+  sessionId: string,
+  options: LoadOptions = {},
+): Promise<readonly RuntimeLlmSessionMessageRecord[]> {
+  return withDatabase(options, (db) => {
+    const rows = db
+      .query(
+        `SELECT
+          id,
+          session_id,
+          node_exec_id,
+          node_id,
+          provider,
+          model,
+          backend_session_id,
+          ordinal,
+          role,
+          event_type,
+          content_text,
+          raw_message_json,
+          at
+         FROM llm_session_messages
+         WHERE session_id = ?
+         ORDER BY node_exec_id ASC, ordinal ASC, id ASC`,
+      )
+      .all(sessionId) as Array<{
+      id: number;
+      session_id: string;
+      node_exec_id: string;
+      node_id: string;
+      provider: string;
+      model: string;
+      backend_session_id: string | null;
+      ordinal: number;
+      role: string | null;
+      event_type: string;
+      content_text: string | null;
+      raw_message_json: string | null;
+      at: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      nodeExecId: row.node_exec_id,
+      nodeId: row.node_id,
+      provider: row.provider,
+      model: row.model,
+      backendSessionId: row.backend_session_id,
+      ordinal: row.ordinal,
+      role: row.role,
+      eventType: row.event_type,
+      contentText: row.content_text,
+      rawMessageJson: row.raw_message_json,
+      at: row.at,
+    }));
+  });
+}
+
 export async function deleteRuntimeSession(
   sessionId: string,
   options: LoadOptions = {},
 ): Promise<void> {
   await withDatabase(options, (db) => {
     const runDelete = db.transaction((targetSessionId: string) => {
+      db.prepare("DELETE FROM llm_session_messages WHERE session_id = ?").run(
+        targetSessionId,
+      );
       db.prepare("DELETE FROM node_logs WHERE session_id = ?").run(
         targetSessionId,
       );
@@ -2147,9 +2296,9 @@ export async function loadSupervisorConversationFromRuntimeDb(
          WHERE supervisor_conversation_id = ?
          LIMIT 1`,
       )
-      .get(supervisorConversationId) as Parameters<
-      typeof toRuntimeSupervisorConversationSaveInput
-    >[0] | null;
+      .get(supervisorConversationId) as
+      | Parameters<typeof toRuntimeSupervisorConversationSaveInput>[0]
+      | null;
     return row === null ? null : toRuntimeSupervisorConversationSaveInput(row);
   });
 }
@@ -2443,4 +2592,3 @@ export async function loadSupervisorDispatchDecisionBySourceMessageFromRuntimeDb
     };
   });
 }
-

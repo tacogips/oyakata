@@ -22,6 +22,16 @@ export interface AdapterBackendSessionOutput {
   readonly sessionId: string;
 }
 
+export interface AdapterLlmSessionMessage {
+  readonly ordinal: number;
+  readonly eventType: string;
+  readonly role?: string;
+  readonly contentText?: string;
+  readonly rawMessageJson?: string;
+  readonly backendSessionId?: string;
+  readonly at?: string;
+}
+
 export interface AdapterExecutionInput {
   readonly workflowId: string;
   readonly workflowExecutionId: string;
@@ -110,6 +120,7 @@ export interface AdapterExecutionOutput {
   readonly backendSession?: AdapterBackendSessionOutput;
   readonly candidateFilePath?: string;
   readonly processLogs?: readonly AdapterProcessLog[];
+  readonly llmMessages?: readonly AdapterLlmSessionMessage[];
 }
 
 export interface AdapterProcessLog {
@@ -156,16 +167,112 @@ function extractJsonObjectCandidateText(text: string): string {
     return trimmed;
   }
 
-  if (trimmed.startsWith("{")) {
+  if (isCompleteJson(trimmed)) {
     return trimmed;
   }
 
-  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/u);
+  if (trimmed.startsWith("{")) {
+    const candidate = extractBalancedJsonObject(trimmed, 0);
+    return candidate ?? trimmed;
+  }
+
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/u);
   if (fencedMatch?.[1] !== undefined) {
     return fencedMatch[1].trim();
   }
 
+  const embeddedCandidate = findFirstJsonObjectCandidate(trimmed);
+  if (embeddedCandidate !== null) {
+    return embeddedCandidate;
+  }
+
   return trimmed;
+}
+
+function isCompleteJson(text: string): boolean {
+  try {
+    JSON.parse(text) as unknown;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findFirstJsonObjectCandidate(text: string): string | null {
+  let searchStart = 0;
+  while (searchStart < text.length) {
+    const objectStart = text.indexOf("{", searchStart);
+    if (objectStart < 0) {
+      return null;
+    }
+
+    const candidate = extractBalancedJsonObject(text, objectStart);
+    if (candidate === null) {
+      return null;
+    }
+    if (isJsonObjectText(candidate)) {
+      return candidate;
+    }
+
+    searchStart = objectStart + 1;
+  }
+
+  return null;
+}
+
+function isJsonObjectText(text: string): boolean {
+  try {
+    return isRecord(JSON.parse(text) as unknown);
+  } catch {
+    return false;
+  }
+}
+
+function extractBalancedJsonObject(text: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === undefined) {
+      break;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char !== "}") {
+      continue;
+    }
+
+    depth -= 1;
+    if (depth === 0) {
+      return text.slice(start, index + 1);
+    }
+  }
+
+  return null;
 }
 
 export function parseJsonObjectCandidate(
@@ -277,6 +384,71 @@ export function normalizeAdapterOutput(
       ? { backendSession: { sessionId: String(backendSession["sessionId"]) } }
       : {}),
     ...(typeof candidateFilePath === "string" ? { candidateFilePath } : {}),
+  };
+}
+
+export interface OutputContractEnvelopeNormalization {
+  readonly completionPassed: boolean;
+  readonly when: Readonly<Record<string, boolean>>;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly usedEnvelope: boolean;
+}
+
+export function normalizeOutputContractEnvelope(
+  value: Readonly<Record<string, unknown>>,
+  source: string,
+  defaults: {
+    readonly completionPassed: boolean;
+    readonly when: Readonly<Record<string, boolean>>;
+  } = {
+    completionPassed: true,
+    when: { always: true },
+  },
+): OutputContractEnvelopeNormalization {
+  const when = value["when"];
+  if (when === undefined) {
+    return {
+      completionPassed: defaults.completionPassed,
+      when: defaults.when,
+      payload: value,
+      usedEnvelope: false,
+    };
+  }
+
+  if (!isBooleanMap(when)) {
+    throw new AdapterExecutionError(
+      "invalid_output",
+      `${source}.when must be an object<boolean> when provided`,
+    );
+  }
+
+  const payload = value["payload"];
+  if (!isRecord(payload)) {
+    throw new AdapterExecutionError(
+      "invalid_output",
+      `${source}.payload must be an object when when is provided`,
+    );
+  }
+
+  const completionPassed = value["completionPassed"];
+  if (
+    completionPassed !== undefined &&
+    typeof completionPassed !== "boolean"
+  ) {
+    throw new AdapterExecutionError(
+      "invalid_output",
+      `${source}.completionPassed must be a boolean when provided`,
+    );
+  }
+
+  return {
+    completionPassed:
+      typeof completionPassed === "boolean"
+        ? completionPassed
+        : defaults.completionPassed,
+    when,
+    payload,
+    usedEnvelope: true,
   };
 }
 

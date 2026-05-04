@@ -15,6 +15,7 @@ import {
   ScenarioNodeAdapter,
   type AdapterAmbientManagerContext,
   type AdapterExecutionOutput,
+  type AdapterLlmSessionMessage,
   type AdapterProcessLog,
   type MockNodeScenario,
   type NodeAdapter,
@@ -613,6 +614,7 @@ class MailboxPublisher {
     readonly outputPayload: Readonly<Record<string, unknown>>;
     readonly timeoutMs: number;
     readonly requestedBackendSessionMode?: NodeExecutionRecord["backendSessionMode"];
+    readonly llmMessages?: readonly AdapterLlmSessionMessage[];
   }): Promise<OutputRef> {
     const nodeExecutionIdentityFields = toStepIdentityFields(
       input.nodeExecution,
@@ -722,6 +724,9 @@ class MailboxPublisher {
           ...(input.nodeExecution.backendSessionId === undefined
             ? {}
             : { backendSessionId: input.nodeExecution.backendSessionId }),
+          ...(input.llmMessages === undefined
+            ? {}
+            : { llmMessages: input.llmMessages }),
           inputJson: input.inputJson,
           outputJson,
           inputHash: `sha256:${inputHash}`,
@@ -1146,6 +1151,7 @@ class ExecutionDispatcher {
     let outputAttemptCount = 1;
     let finalOutputPayload: Readonly<Record<string, unknown>> | undefined;
     let processLogs: readonly AdapterProcessLog[] = [];
+    let llmMessages: readonly AdapterLlmSessionMessage[] = [];
 
     if (input.dryRun === true) {
       finalOutputPayload = {
@@ -1380,6 +1386,10 @@ class ExecutionDispatcher {
           processLogs = [
             ...processLogs,
             ...(execution.value.processLogs ?? []),
+          ];
+          llmMessages = [
+            ...llmMessages,
+            ...(execution.value.llmMessages ?? []),
           ];
           if (execution.value.backendSession?.sessionId !== undefined) {
             backendSession = {
@@ -1632,6 +1642,7 @@ class ExecutionDispatcher {
         outputPayload: finalOutputPayload,
         timeoutMs,
         requestedBackendSessionMode,
+        llmMessages,
       });
     } else {
       await writeRawTextFile(
