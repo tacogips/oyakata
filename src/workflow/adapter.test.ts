@@ -5,6 +5,7 @@ import {
   type AdapterExecutionInput,
   type NodeAdapter,
   isAdapterExecutionOutputEnvelope,
+  normalizeOutputContractEnvelope,
   normalizeAdapterOutput,
   parseJsonObjectCandidate,
   ScenarioNodeAdapter,
@@ -195,6 +196,84 @@ describe("parseJsonObjectCandidate", () => {
   test("rejects unbalanced object text", () => {
     expect(() =>
       parseJsonObjectCandidate('prefix {"summary":"ok"', "test source"),
+    ).toThrowError(AdapterExecutionError);
+  });
+});
+
+describe("normalizeOutputContractEnvelope", () => {
+  test("keeps plain business payloads with adapter defaults", () => {
+    const normalized = normalizeOutputContractEnvelope(
+      { summary: "ok" },
+      "candidate",
+      {
+        completionPassed: true,
+        when: { always: true },
+      },
+    );
+
+    expect(normalized).toEqual({
+      completionPassed: true,
+      when: { always: true },
+      payload: { summary: "ok" },
+      usedEnvelope: false,
+    });
+  });
+
+  test("unwraps valid envelopes and honors completion overrides", () => {
+    const normalized = normalizeOutputContractEnvelope(
+      {
+        when: { needs_revision: true },
+        payload: { summary: "fix me" },
+        completionPassed: false,
+      },
+      "candidate",
+      {
+        completionPassed: true,
+        when: { always: true },
+      },
+    );
+
+    expect(normalized).toEqual({
+      completionPassed: false,
+      when: { needs_revision: true },
+      payload: { summary: "fix me" },
+      usedEnvelope: true,
+    });
+  });
+
+  test("rejects invalid when maps", () => {
+    expect(() =>
+      normalizeOutputContractEnvelope(
+        {
+          when: { needs_revision: "yes" },
+          payload: { summary: "bad" },
+        } as unknown as Readonly<Record<string, unknown>>,
+        "candidate",
+      ),
+    ).toThrowError(AdapterExecutionError);
+  });
+
+  test("rejects envelopes without object payloads", () => {
+    expect(() =>
+      normalizeOutputContractEnvelope(
+        {
+          when: { needs_revision: true },
+        },
+        "candidate",
+      ),
+    ).toThrowError(AdapterExecutionError);
+  });
+
+  test("rejects non-boolean completion overrides", () => {
+    expect(() =>
+      normalizeOutputContractEnvelope(
+        {
+          when: { needs_revision: true },
+          payload: { summary: "bad" },
+          completionPassed: "no",
+        } as unknown as Readonly<Record<string, unknown>>,
+        "candidate",
+      ),
     ).toThrowError(AdapterExecutionError);
   });
 });

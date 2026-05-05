@@ -251,7 +251,7 @@ describe("structural helpers", () => {
 });
 
 describe("workflow defaults", () => {
-  test("defaults omitted nodeTimeoutMs to the shared 20 minute timeout", () => {
+  test("defaults omitted nodeTimeoutMs to the shared 60 minute timeout", () => {
     const raw = makeStepAddressedRaw();
     raw.workflow["defaults"] = { maxLoopIterations: 3 };
 

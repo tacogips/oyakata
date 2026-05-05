@@ -143,6 +143,89 @@ class OutputContractEnvelopeAdapter implements NodeAdapter {
   }
 }
 
+class OutputContractEnvelopeFileAdapter implements NodeAdapter {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    const candidatePath = input.output?.candidatePath;
+    if (input.nodeId !== "step-1" || candidatePath === undefined) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    await mkdir(path.dirname(candidatePath), { recursive: true });
+    await writeJson(candidatePath, {
+      when: { needs_revision: true },
+      payload: {
+        summary: "from envelope file",
+        needs_revision: true,
+      },
+      completionPassed: false,
+    });
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: candidatePath,
+    };
+  }
+}
+
+class OutputContractInvalidEnvelopeRetryAdapter implements NodeAdapter {
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    if (input.nodeId !== "step-1") {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { nodeId: input.nodeId },
+      };
+    }
+
+    const attempt = input.output?.attempt ?? 1;
+    if (attempt === 1) {
+      return {
+        provider: "test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: {
+          when: { needs_revision: "yes" },
+          payload: { summary: "bad envelope" },
+        } as unknown as Readonly<Record<string, unknown>>,
+      };
+    }
+
+    return {
+      provider: "test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { summary: "fixed after envelope retry" },
+    };
+  }
+}
+
 class OutputContractInvalidOutputAdapter implements NodeAdapter {
   readonly #mode: "retry-success" | "always-invalid";
 
@@ -1459,9 +1542,7 @@ async function createWorkflowCallCalleeStepIdMismatchFixture(
         nodeFile: "node-reviewer-node.json",
       },
     ],
-    steps: [
-      { id: "reviewer-step", nodeId: "reviewer-node", role: "worker" },
-    ],
+    steps: [{ id: "reviewer-step", nodeId: "reviewer-node", role: "worker" }],
   });
 
   await writeJson(path.join(workflowDir, "node-reviewer-node.json"), {
@@ -5942,6 +6023,155 @@ describe("runWorkflow", () => {
     expect(outputJson.payload.needs_revision).toBe(true);
   });
 
+  test("normalizes reserved candidate-file envelopes before publishing output", async () => {
+    const root = await makeTempDir();
+    const workflowName = "output-contract-envelope-file";
+
+    await createWorkflowFixture(root, workflowName, false);
+    await writeJson(path.join(root, workflowName, "node-step-1.json"), {
+      id: "step-1",
+      executionBackend: "claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          properties: {
+            summary: { type: "string" },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new OutputContractEnvelopeFileAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const stepExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(stepExec).toBeDefined();
+    if (stepExec === undefined) {
+      return;
+    }
+
+    const outputJson = JSON.parse(
+      await readFile(path.join(stepExec.artifactDir, "output.json"), "utf8"),
+    ) as {
+      completionPassed: boolean;
+      when: { needs_revision?: boolean };
+      payload: { summary?: string; needs_revision?: boolean };
+    };
+    expect(outputJson.completionPassed).toBe(false);
+    expect(outputJson.when.needs_revision).toBe(true);
+    expect(outputJson.payload).toEqual({
+      summary: "from envelope file",
+      needs_revision: true,
+    });
+
+    const candidateJson = JSON.parse(
+      await readFile(
+        path.join(
+          stepExec.artifactDir,
+          "output-attempts",
+          "attempt-000001",
+          "candidate.json",
+        ),
+        "utf8",
+      ),
+    ) as { summary: string; needs_revision: boolean };
+    expect(candidateJson).toEqual({
+      summary: "from envelope file",
+      needs_revision: true,
+    });
+  });
+
+  test("retries invalid output-contract envelopes before publishing output", async () => {
+    const root = await makeTempDir();
+    const workflowName = "output-contract-envelope-retry";
+
+    await createWorkflowFixture(root, workflowName, false);
+    await writeJson(path.join(root, workflowName, "node-step-1.json"), {
+      id: "step-1",
+      executionBackend: "claude-code-agent",
+      model: "claude-opus-4-1",
+      promptTemplate: "step {{topic}}",
+      variables: {},
+      output: {
+        maxValidationAttempts: 2,
+        jsonSchema: {
+          type: "object",
+          required: ["summary"],
+          properties: {
+            summary: { type: "string" },
+          },
+        },
+      },
+    });
+
+    const result = await runWorkflow(
+      workflowName,
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      new OutputContractInvalidEnvelopeRetryAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const stepExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "step-1",
+    );
+    expect(stepExec?.outputAttemptCount).toBe(2);
+    if (stepExec === undefined) {
+      return;
+    }
+
+    const firstValidation = JSON.parse(
+      await readFile(
+        path.join(
+          stepExec.artifactDir,
+          "output-attempts",
+          "attempt-000001",
+          "validation.json",
+        ),
+        "utf8",
+      ),
+    ) as { valid: boolean; errors: readonly { message: string }[] };
+    expect(firstValidation.valid).toBe(false);
+    expect(firstValidation.errors[0]?.message).toContain(
+      "node output candidate.when must be an object<boolean>",
+    );
+
+    const outputJson = JSON.parse(
+      await readFile(path.join(stepExec.artifactDir, "output.json"), "utf8"),
+    ) as { payload: { summary?: string } };
+    expect(outputJson.payload).toEqual({
+      summary: "fixed after envelope retry",
+    });
+  });
+
   test("fails the node when output schema validation never succeeds", async () => {
     const root = await makeTempDir();
     await createWorkflowFixture(root, "output-contract-fail", false);
@@ -8093,54 +8323,50 @@ describe("runWorkflow", () => {
     );
   });
 
-  test(
-    "supports mock-scenario execution for command and container nodes",
-    async () => {
-      const root = await makeTempDir();
-      const exampleWorkflowRoot = path.join(process.cwd(), "examples");
-      const scenarioRaw = await readFile(
-        path.join(
-          exampleWorkflowRoot,
-          "first-four-arithmetic-pipeline",
-          "mock-scenario.json",
-        ),
-        "utf8",
-      );
-      const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
+  test("supports mock-scenario execution for command and container nodes", async () => {
+    const root = await makeTempDir();
+    const exampleWorkflowRoot = path.join(process.cwd(), "examples");
+    const scenarioRaw = await readFile(
+      path.join(
+        exampleWorkflowRoot,
+        "first-four-arithmetic-pipeline",
+        "mock-scenario.json",
+      ),
+      "utf8",
+    );
+    const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
 
-      const result = await runWorkflow("first-four-arithmetic-pipeline", {
-        workflowRoot: exampleWorkflowRoot,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        mockScenario: scenario,
-      });
+    const result = await runWorkflow("first-four-arithmetic-pipeline", {
+      workflowRoot: exampleWorkflowRoot,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      mockScenario: scenario,
+    });
 
-      expect(result.ok).toBe(true);
-      if (!result.ok) {
-        return;
-      }
-      expect(result.value.session.status).toBe("completed");
-      const outputExec = result.value.session.nodeExecutions.find(
-        (entry) => entry.nodeId === "divide-output",
-      );
-      expect(outputExec).toBeDefined();
-      if (outputExec === undefined) {
-        return;
-      }
-      const outputRaw = await readFile(
-        path.join(outputExec.artifactDir, "output.json"),
-        "utf8",
-      );
-      const outputJson = JSON.parse(outputRaw) as {
-        payload: { finalResult: number; summary: string };
-        provider: string;
-      };
-      expect(outputJson.provider).toBe("scenario-mock");
-      expect(outputJson.payload.finalResult).toBe(45);
-      expect(outputJson.payload.summary).toContain("45");
-    },
-    120_000,
-  );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+    const outputExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "divide-output",
+    );
+    expect(outputExec).toBeDefined();
+    if (outputExec === undefined) {
+      return;
+    }
+    const outputRaw = await readFile(
+      path.join(outputExec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { finalResult: number; summary: string };
+      provider: string;
+    };
+    expect(outputJson.provider).toBe("scenario-mock");
+    expect(outputJson.payload.finalResult).toBe(45);
+    expect(outputJson.payload.summary).toContain("45");
+  }, 120_000);
 
   test("persists native command stdout in runtime node logs", async () => {
     const root = await makeTempDir();

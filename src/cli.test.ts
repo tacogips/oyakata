@@ -85,6 +85,20 @@ function createIoCapture(): {
   };
 }
 
+function createCliDeps(
+  overrides: Partial<CliDependencies> = {},
+): CliDependencies {
+  return {
+    startServe: async () => ({
+      host: "127.0.0.1",
+      port: 43173,
+      stop: () => {},
+    }),
+    isInteractiveTerminal: () => false,
+    ...overrides,
+  };
+}
+
 function createJsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -837,15 +851,11 @@ describe("runCli", () => {
     expect(created.ok).toBe(true);
 
     const capture = createIoCapture();
-    const code = await runCli(["workflow", "list"], capture.io, {
-      startServe: async () => ({
-        host: "127.0.0.1",
-        port: 43173,
-        stop: () => {},
-      }),
-      isInteractiveTerminal: () => false,
-      env: { DIVEDRA_WORKFLOW_DEFINITION_DIR: root },
-    });
+    const code = await runCli(
+      ["workflow", "list"],
+      capture.io,
+      createCliDeps({ env: { DIVEDRA_WORKFLOW_DEFINITION_DIR: root } }),
+    );
 
     expect(code).toBe(0);
     const listText = capture.stdout.join("\n");
@@ -855,7 +865,8 @@ describe("runCli", () => {
 
   test("workflow list labels scoped rows and warns on project user duplicates", async () => {
     const root = await makeTempDir();
-    const projectRoot = path.join(root, "workspace", ".divedra");
+    const workspaceRoot = path.join(root, "workspace");
+    const projectRoot = path.join(workspaceRoot, ".divedra");
     const userRoot = path.join(root, "home", ".divedra");
 
     for (const workflowRoot of [
@@ -866,74 +877,89 @@ describe("runCli", () => {
       expect(created.ok).toBe(true);
     }
 
-    const listCapture = createIoCapture();
-    const listCode = await runCli(
-      [
-        "workflow",
-        "list",
-        "--project-root",
-        projectRoot,
-        "--user-root",
-        userRoot,
-      ],
-      listCapture.io,
-    );
-    expect(listCode).toBe(0);
-    const listText = listCapture.stdout.join("\n");
-    expect(listText).toContain("project scope");
-    expect(listText).toContain("user scope");
-    expect(listCapture.stderr.join("\n")).toContain(
-      "warning: workflow 'dup' exists in both project scope and user scope",
-    );
+    const previousCwd = process.cwd();
+    process.chdir(workspaceRoot);
+    try {
+      const listCapture = createIoCapture();
+      const listCode = await runCli(
+        ["workflow", "list", "--user-root", userRoot],
+        listCapture.io,
+      );
+      expect(listCode).toBe(0);
+      const listText = listCapture.stdout.join("\n");
+      expect(listText).toContain("project scope");
+      expect(listText).toContain("user scope");
+      expect(listCapture.stderr.join("\n")).toContain(
+        "warning: workflow 'dup' exists in both project scope and user scope",
+      );
 
-    const listJsonCapture = createIoCapture();
-    const listJsonCode = await runCli(
-      [
-        "workflow",
-        "list",
-        "--project-root",
-        projectRoot,
-        "--user-root",
-        userRoot,
-        "--output",
-        "json",
-      ],
-      listJsonCapture.io,
-    );
-    expect(listJsonCode).toBe(0);
-    const listJsonPayload = JSON.parse(listJsonCapture.stdout.join("\n")) as {
-      workflows: ReadonlyArray<{ workflowName: string; sourceScope: string }>;
-    };
-    expect(
-      listJsonPayload.workflows
-        .filter((row) => row.workflowName === "dup")
-        .map((row) => row.sourceScope)
-        .sort(),
-    ).toEqual(["project", "user"]);
-    expect(listJsonCapture.stderr.join("\n")).toContain(
-      "warning: workflow 'dup' exists in both project scope and user scope",
-    );
+      const listJsonCapture = createIoCapture();
+      const listJsonCode = await runCli(
+        ["workflow", "list", "--user-root", userRoot, "--output", "json"],
+        listJsonCapture.io,
+      );
+      expect(listJsonCode).toBe(0);
+      const listJsonPayload = JSON.parse(listJsonCapture.stdout.join("\n")) as {
+        workflows: ReadonlyArray<{ workflowName: string; sourceScope: string }>;
+      };
+      expect(
+        listJsonPayload.workflows
+          .filter((row) => row.workflowName === "dup")
+          .map((row) => row.sourceScope)
+          .sort(),
+      ).toEqual(["project", "user"]);
+      expect(listJsonCapture.stderr.join("\n")).toContain(
+        "warning: workflow 'dup' exists in both project scope and user scope",
+      );
 
-    const limitedCapture = createIoCapture();
-    const limitedCode = await runCli(
-      [
-        "workflow",
-        "list",
-        "--project-root",
-        projectRoot,
-        "--user-root",
-        userRoot,
-        "--limit",
-        "1",
-      ],
-      limitedCapture.io,
-    );
-    expect(limitedCode).toBe(0);
-    expect(limitedCapture.stdout.join("\n")).toContain("project scope");
-    expect(limitedCapture.stdout.join("\n")).not.toContain("user scope");
-    expect(limitedCapture.stderr.join("\n")).toContain(
-      "warning: workflow 'dup' exists in both project scope and user scope",
-    );
+      const limitedCapture = createIoCapture();
+      const limitedCode = await runCli(
+        ["workflow", "list", "--user-root", userRoot, "--limit", "1"],
+        limitedCapture.io,
+      );
+      expect(limitedCode).toBe(0);
+      expect(limitedCapture.stdout.join("\n")).toContain("project scope");
+      expect(limitedCapture.stdout.join("\n")).not.toContain("user scope");
+      expect(limitedCapture.stderr.join("\n")).toContain(
+        "warning: workflow 'dup' exists in both project scope and user scope",
+      );
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  test("workflow list uses DIVEDRA_PROJECT_ROOT outside the project cwd", async () => {
+    const root = await makeTempDir();
+    const projectScopeRoot = path.join(root, "workspace", ".divedra");
+    const userRoot = path.join(root, "home", ".divedra");
+    const externalRoot = await makeTempDir();
+
+    for (const workflowRoot of [
+      path.join(projectScopeRoot, "workflows"),
+      path.join(userRoot, "workflows"),
+    ]) {
+      const created = await createWorkflowTemplate("dup", { workflowRoot });
+      expect(created.ok).toBe(true);
+    }
+
+    const previousCwd = process.cwd();
+    process.chdir(externalRoot);
+    try {
+      const capture = createIoCapture();
+      const code = await runCli(
+        ["workflow", "list", "--user-root", userRoot],
+        capture.io,
+        createCliDeps({ env: { DIVEDRA_PROJECT_ROOT: projectScopeRoot } }),
+      );
+      expect(code).toBe(0);
+      expect(capture.stdout.join("\n")).toContain("project scope");
+      expect(capture.stdout.join("\n")).toContain("user scope");
+      expect(capture.stderr.join("\n")).toContain(
+        "warning: workflow 'dup' exists in both project scope and user scope",
+      );
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 
   test("remote workflow list warns from unfiltered catalog sources", async () => {
@@ -1136,46 +1162,52 @@ describe("runCli", () => {
 
   test("workflow commands resolve explicit project scope root", async () => {
     const root = await makeTempDir();
-    const projectRoot = path.join(root, ".divedra");
+    const projectRoot = path.join(root, "workspace", ".divedra");
+    const externalRoot = await makeTempDir();
+    const previousCwd = process.cwd();
+    process.chdir(externalRoot);
+    try {
+      const createCapture = createIoCapture();
+      const createCode = await runCli(
+        [
+          "workflow",
+          "create",
+          "demo",
+          "--scope",
+          "project",
+          "--project-root",
+          projectRoot,
+        ],
+        createCapture.io,
+      );
+      expect(createCode).toBe(0);
+      expect(createCapture.stdout.join("\n")).toContain(
+        path.join(projectRoot, "workflows", "demo"),
+      );
 
-    const createCapture = createIoCapture();
-    const createCode = await runCli(
-      [
-        "workflow",
-        "create",
-        "demo",
-        "--scope",
-        "project",
-        "--project-root",
-        projectRoot,
-      ],
-      createCapture.io,
-    );
-    expect(createCode).toBe(0);
-    expect(createCapture.stdout.join("\n")).toContain(
-      path.join(projectRoot, "workflows", "demo"),
-    );
-
-    const inspectCapture = createIoCapture();
-    const inspectCode = await runCli(
-      [
-        "workflow",
-        "inspect",
-        "demo",
-        "--scope",
-        "project",
-        "--project-root",
-        projectRoot,
-        "--output",
-        "json",
-      ],
-      inspectCapture.io,
-    );
-    expect(inspectCode).toBe(0);
-    const parsed = JSON.parse(inspectCapture.stdout.join("\n")) as {
-      workflowName: string;
-    };
-    expect(parsed.workflowName).toBe("demo");
+      const inspectCapture = createIoCapture();
+      const inspectCode = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "demo",
+          "--scope",
+          "project",
+          "--project-root",
+          projectRoot,
+          "--output",
+          "json",
+        ],
+        inspectCapture.io,
+      );
+      expect(inspectCode).toBe(0);
+      const parsed = JSON.parse(inspectCapture.stdout.join("\n")) as {
+        workflowName: string;
+      };
+      expect(parsed.workflowName).toBe("demo");
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 
   test("create --worker-only scaffolds a manager-less starter", async () => {
@@ -2535,6 +2567,92 @@ describe("runCli", () => {
       const statusCode = await runCli(
         ["session", "status", sessionId, "--output", "json"],
         statusCapture.io,
+        createCliDeps({ env: {} }),
+      );
+      expect(statusCode).toBe(0);
+      const payload = JSON.parse(statusCapture.stdout.join("\n")) as {
+        currentNodeId: string | null;
+        currentStepId: string | null;
+        status: string;
+      };
+      expect(payload.status).toBe("running");
+      expect(payload.currentNodeId).toBe("writer-node");
+      expect(payload.currentStepId).toBe("writer-step");
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  test("session status discovers project-local session store from workflow definition dir outside the project cwd", async () => {
+    const projectRoot = await makeTempDir();
+    const externalRoot = await makeTempDir();
+    const projectScopeRoot = path.join(projectRoot, ".divedra");
+    const workflowRoot = path.join(projectScopeRoot, "workflows");
+    const artifactsRoot = path.join(projectScopeRoot, "artifacts");
+    const sessionsRoot = path.join(artifactsRoot, "sessions");
+    const sessionId = "sess-project-local-workflow-root";
+    await mkdir(workflowRoot, { recursive: true });
+
+    const saved = await saveSession(
+      {
+        ...createSessionState({
+          sessionId,
+          workflowName: "demo",
+          workflowId: "demo",
+          initialNodeId: "writer-node",
+          runtimeVariables: {},
+        }),
+        status: "running" as const,
+        currentNodeId: "writer-node",
+        queue: ["writer-node"],
+        nodeExecutionCounter: 1,
+        nodeExecutionCounts: {
+          "writer-node": 1,
+        },
+        nodeExecutions: [
+          {
+            nodeId: "writer-node",
+            stepId: "writer-step",
+            nodeRegistryId: "writer-node",
+            nodeExecId: "exec-writer-1",
+            mailboxInstanceId: "exec-writer-1",
+            status: "succeeded" as const,
+            artifactDir: path.join(
+              artifactsRoot,
+              "workflow",
+              "demo",
+              sessionId,
+              "nodes",
+              "writer-node",
+              "exec-writer-1",
+            ),
+            startedAt: "2026-04-24T05:00:00.000Z",
+            endedAt: "2026-04-24T05:00:10.000Z",
+          },
+        ],
+      },
+      {
+        sessionStoreRoot: sessionsRoot,
+      },
+    );
+    expect(saved.ok).toBe(true);
+
+    const previousCwd = process.cwd();
+    process.chdir(externalRoot);
+    try {
+      const statusCapture = createIoCapture();
+      const statusCode = await runCli(
+        [
+          "session",
+          "status",
+          sessionId,
+          "--workflow-definition-dir",
+          workflowRoot,
+          "--output",
+          "json",
+        ],
+        statusCapture.io,
+        createCliDeps({ env: {} }),
       );
       expect(statusCode).toBe(0);
       const payload = JSON.parse(statusCapture.stdout.join("\n")) as {

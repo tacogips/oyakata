@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-04T00:00:00Z",
+  "lastUpdated": "2026-05-05T07:40:00Z",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -467,7 +467,7 @@
       "status": "COMPLETED"
     },
     "156": {
-      "status": "READY"
+      "status": "COMPLETED"
     },
     "157": {
       "status": "READY"
@@ -481,49 +481,32 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "event-supervisor-control-foundation"
-          ]
+          "deps": ["event-supervisor-control-foundation"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-004"
-          ]
+          "deps": ["TASK-004"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003",
-            "TASK-004",
-            "TASK-005"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004", "TASK-005"]
         }
       }
     },
@@ -534,40 +517,27 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "event-supervisor-control-foundation:TASK-002"
-          ]
+          "deps": ["event-supervisor-control-foundation:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "event-supervisor-control-foundation:TASK-005"
-          ]
+          "deps": ["event-supervisor-control-foundation:TASK-005"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "event-supervisor-control-foundation:TASK-004"
-          ]
+          "deps": ["event-supervisor-control-foundation:TASK-004"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"]
         }
       }
     },
@@ -588,40 +558,27 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-004"
-          ]
+          "deps": ["TASK-004"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003",
-            "TASK-004",
-            "TASK-005"
-          ]
+          "deps": ["TASK-003", "TASK-004", "TASK-005"]
         },
         "TASK-007": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-006"
-          ]
+          "deps": ["TASK-006"]
         }
       }
     },
@@ -637,9 +594,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -655,9 +610,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -673,16 +626,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -698,16 +647,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -723,16 +668,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -748,24 +689,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -781,24 +715,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -809,32 +736,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "workflow-core-and-validation:TASK-003"
-          ]
+          "deps": ["workflow-core-and-validation:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "workflow-core-and-validation:TASK-004"
-          ]
+          "deps": ["TASK-001", "workflow-core-and-validation:TASK-004"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -845,45 +762,32 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "workflow-cli-mvp:TASK-004"
-          ]
+          "deps": ["workflow-cli-mvp:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "workflow-core-and-validation:TASK-004"
-          ]
+          "deps": ["workflow-core-and-validation:TASK-004"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-004"
-          ]
+          "deps": ["TASK-004"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-005"
-          ]
+          "deps": ["TASK-005"]
         }
       }
     },
@@ -894,30 +798,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "workflow-execution-and-session:TASK-005"
-          ]
+          "deps": ["workflow-execution-and-session:TASK-005"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         }
       }
     },
@@ -928,23 +824,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "workflow-execution-and-session:TASK-005"
-          ]
+          "deps": ["workflow-execution-and-session:TASK-005"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -955,23 +845,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "workflow-serve-mvp:TASK-004"
-          ]
+          "deps": ["workflow-serve-mvp:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -982,30 +866,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "workflow-execution-and-session:TASK-006"
-          ]
+          "deps": ["workflow-execution-and-session:TASK-006"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         }
       }
     },
@@ -1021,47 +897,32 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-004"
-          ]
+          "deps": ["TASK-002", "TASK-004"]
         },
         "TASK-007": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-006",
-            "TASK-005"
-          ]
+          "deps": ["TASK-006", "TASK-005"]
         },
         "TASK-008": {
           "status": "Completed",
@@ -1089,23 +950,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -1121,9 +976,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -1150,32 +1003,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -1191,31 +1034,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-004"
-          ]
+          "deps": ["TASK-004"]
         }
       }
     },
@@ -1234,17 +1068,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -1260,16 +1089,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1285,24 +1110,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -1318,17 +1136,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -1347,25 +1160,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -1381,16 +1186,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1401,16 +1202,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "mailbox-delivery-manager-ownership:TASK-003"
-          ]
+          "deps": ["mailbox-delivery-manager-ownership:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -1421,24 +1218,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "mailbox-delivery-manager-ownership:TASK-003"
-          ]
+          "deps": ["mailbox-delivery-manager-ownership:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -1449,24 +1239,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "mailbox-cross-boundary-routing-scope:TASK-003"
-          ]
+          "deps": ["mailbox-cross-boundary-routing-scope:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -1477,16 +1260,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "mailbox-output-snapshot-fidelity:TASK-002"
-          ]
+          "deps": ["mailbox-output-snapshot-fidelity:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -1502,16 +1281,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1527,24 +1302,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -1560,16 +1328,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1585,16 +1349,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1610,16 +1370,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "refactoring-shared-ui-contract:TASK-003"
-          ]
+          "deps": ["refactoring-shared-ui-contract:TASK-003"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1643,9 +1399,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1669,9 +1423,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1687,16 +1439,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "refactoring-editor-support-helpers:TASK-002"
-          ]
+          "deps": ["refactoring-editor-support-helpers:TASK-002"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1721,9 +1469,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1747,9 +1493,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1774,9 +1518,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1792,16 +1534,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1825,9 +1563,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1848,16 +1584,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1873,16 +1605,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1893,31 +1621,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "refactoring-editor-action-helpers:TASK-003"
-          ]
+          "deps": ["refactoring-editor-action-helpers:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -1928,23 +1647,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "refactoring-server-api-request-parsing:TASK-002"
-          ]
+          "deps": ["refactoring-server-api-request-parsing:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1955,23 +1668,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "refactoring-editor-component-boundaries:TASK-004"
-          ]
+          "deps": ["refactoring-editor-component-boundaries:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -1982,61 +1689,42 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "refactoring-editor-main-panel-component:TASK-003"
-          ]
+          "deps": ["refactoring-editor-main-panel-component:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-007": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003",
-            "TASK-004",
-            "TASK-005",
-            "TASK-006"
-          ]
+          "deps": ["TASK-003", "TASK-004", "TASK-005", "TASK-006"]
         },
         "TASK-008": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-007"
-          ]
+          "deps": ["TASK-007"]
         }
       }
     },
@@ -2047,9 +1735,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "refactoring-editor-action-helpers:TASK-003"
-          ]
+          "deps": ["refactoring-editor-action-helpers:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
@@ -2062,9 +1748,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2075,9 +1759,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "refactoring-server-ui-asset-serving:TASK-003"
-          ]
+          "deps": ["refactoring-server-ui-asset-serving:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
@@ -2096,16 +1778,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "frontend-mode-built-asset-contract:TASK-002"
-          ]
+          "deps": ["frontend-mode-built-asset-contract:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2116,16 +1794,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "frontend-mode-package-root-alignment:TASK-002"
-          ]
+          "deps": ["frontend-mode-package-root-alignment:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2166,33 +1840,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003",
-            "TASK-002"
-          ]
+          "deps": ["TASK-003", "TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-001", "TASK-003", "TASK-004"]
         }
       }
     },
@@ -2203,16 +1866,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-004"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2228,9 +1887,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2246,16 +1903,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2280,16 +1933,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "graphql-manager-runtime-session-lifecycle:TASK-003"
-          ]
+          "deps": ["graphql-manager-runtime-session-lifecycle:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2300,9 +1949,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-mode-exclusivity:TASK-002"
-          ]
+          "deps": ["graphql-manager-control-mode-exclusivity:TASK-002"]
         }
       }
     },
@@ -2313,9 +1960,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-001"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-001"]
         }
       }
     },
@@ -2326,9 +1971,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-001"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-001"]
         }
       }
     },
@@ -2339,23 +1982,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-001"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-001"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2366,9 +2003,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-001"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-001"]
         }
       }
     },
@@ -2379,9 +2014,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-http-context-isolation:TASK-001"
-          ]
+          "deps": ["graphql-manager-http-context-isolation:TASK-001"]
         }
       }
     },
@@ -2392,23 +2025,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-004"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2427,17 +2054,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2448,16 +2070,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "graphql-manager-artifact-atomic-writes:TASK-002"
-          ]
+          "deps": ["graphql-manager-artifact-atomic-writes:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2468,9 +2086,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "workflow-tui-resume-decoupling:TASK-001"
-          ]
+          "deps": ["workflow-tui-resume-decoupling:TASK-001"]
         }
       }
     },
@@ -2481,23 +2097,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-004"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2508,23 +2118,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-browser-execution-session-migration:TASK-003"
-          ]
+          "deps": ["graphql-browser-execution-session-migration:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2535,24 +2139,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-browser-execution-session-migration:TASK-003"
-          ]
+          "deps": ["graphql-browser-execution-session-migration:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2568,25 +2165,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -2597,23 +2186,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-manager-control-plane-surface:TASK-001"
-          ]
+          "deps": ["graphql-manager-control-plane-surface:TASK-001"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2629,17 +2212,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2655,24 +2233,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -2688,16 +2259,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -2713,24 +2280,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -2746,24 +2306,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -2779,25 +2332,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -2813,17 +2358,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2839,17 +2379,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2865,38 +2400,27 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-004",
-            "TASK-005"
-          ]
+          "deps": ["TASK-004", "TASK-005"]
         }
       }
     },
@@ -2907,16 +2431,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "tui-opentui-solid-migration:TASK-006"
-          ]
+          "deps": ["tui-opentui-solid-migration:TASK-006"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -2937,10 +2457,7 @@
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2951,24 +2468,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "inline-node-and-nested-example-layout:TASK-001"
-          ]
+          "deps": ["inline-node-and-nested-example-layout:TASK-001"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -2984,9 +2494,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -3002,9 +2510,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
@@ -3025,16 +2531,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -3050,17 +2552,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3076,17 +2573,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3113,9 +2605,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -3131,24 +2621,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -3164,17 +2647,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3190,17 +2668,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3216,17 +2689,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3242,17 +2710,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3263,31 +2726,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "graphql-workflow-execution-overview:TASK-003"
-          ]
+          "deps": ["graphql-workflow-execution-overview:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         }
       }
     },
@@ -3314,32 +2768,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-004"
-          ]
+          "deps": ["TASK-002", "TASK-004"]
         }
       }
     },
@@ -3350,9 +2794,7 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "event-listener-workflow-trigger-foundation:TASK-001"
-          ]
+          "deps": ["event-listener-workflow-trigger-foundation:TASK-001"]
         },
         "TASK-002": {
           "status": "Completed",
@@ -3373,28 +2815,17 @@
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-004"
-          ]
+          "deps": ["TASK-001", "TASK-004"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003",
-            "TASK-004",
-            "TASK-005"
-          ]
+          "deps": ["TASK-002", "TASK-003", "TASK-004", "TASK-005"]
         }
       }
     },
@@ -3410,23 +2841,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -3442,9 +2867,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -3460,23 +2883,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         }
       }
     },
@@ -3492,16 +2909,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -3512,23 +2925,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "event-receipt-operator-commands:TASK-003"
-          ]
+          "deps": ["event-receipt-operator-commands:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -3539,23 +2946,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "event-mock-scenario-dispatch:TASK-001"
-          ]
+          "deps": ["event-mock-scenario-dispatch:TASK-001"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -3571,23 +2972,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         }
       }
     },
@@ -3598,31 +2993,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "node-addon-chat-reply-worker:TASK-004"
-          ]
+          "deps": ["node-addon-chat-reply-worker:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -3633,24 +3019,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "event-reply-dispatcher:TASK-004"
-          ]
+          "deps": ["event-reply-dispatcher:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3661,33 +3040,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "event-reply-dispatcher:TASK-004"
-          ]
+          "deps": ["event-reply-dispatcher:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -3703,23 +3071,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         }
       }
     },
@@ -3730,32 +3092,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "node-addon-chat-reply-worker:TASK-004"
-          ]
+          "deps": ["node-addon-chat-reply-worker:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -3766,24 +3118,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "x-gateway-read-addon:TASK-004"
-          ]
+          "deps": ["x-gateway-read-addon:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3794,24 +3139,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "x-gateway-read-addon:TASK-004"
-          ]
+          "deps": ["x-gateway-read-addon:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3822,24 +3160,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "node-addon-chat-reply-worker:TASK-004"
-          ]
+          "deps": ["node-addon-chat-reply-worker:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3850,24 +3181,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "node-addon-worker-role-validation:TASK-003"
-          ]
+          "deps": ["node-addon-worker-role-validation:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3878,24 +3202,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "x-gateway-addon:TASK-003"
-          ]
+          "deps": ["x-gateway-addon:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3906,33 +3223,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "node-addon-chat-reply-worker:TASK-004"
-          ]
+          "deps": ["node-addon-chat-reply-worker:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -3943,24 +3249,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-resolution:TASK-004"
-          ]
+          "deps": ["third-party-addon-resolution:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3971,24 +3270,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-resolution:TASK-004"
-          ]
+          "deps": ["third-party-addon-resolution:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -3999,16 +3291,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-resolver-validation:TASK-003"
-          ]
+          "deps": ["third-party-addon-resolver-validation:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4019,24 +3307,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-public-api:TASK-001"
-          ]
+          "deps": ["third-party-addon-public-api:TASK-001"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4047,24 +3328,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-public-api:TASK-002"
-          ]
+          "deps": ["third-party-addon-public-api:TASK-002"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4075,24 +3349,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-graphql-validation:TASK-003"
-          ]
+          "deps": ["third-party-addon-graphql-validation:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4103,24 +3370,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-editor-revision:TASK-003"
-          ]
+          "deps": ["third-party-addon-editor-revision:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4131,25 +3391,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "third-party-addon-resolver-unhandled-return:TASK-003"
-          ]
+          "deps": ["third-party-addon-resolver-unhandled-return:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "third-party-addon-graphql-validation:TASK-003"
-          ]
+          "deps": ["TASK-001", "third-party-addon-graphql-validation:TASK-003"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4160,24 +3412,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "third-party-addon-resolver-ergonomics:TASK-003"
-          ]
+          "deps": ["third-party-addon-resolver-ergonomics:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4188,32 +3433,22 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "third-party-addon-definition-registry:TASK-003"
-          ]
+          "deps": ["third-party-addon-definition-registry:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -4229,25 +3464,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -4258,23 +3485,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "scoped-workflow-catalog:TASK-004"
-          ]
+          "deps": ["scoped-workflow-catalog:TASK-004"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4285,24 +3506,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "scoped-workflow-runtime-follow-up:TASK-003"
-          ]
+          "deps": ["scoped-workflow-runtime-follow-up:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4313,16 +3527,12 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "scoped-workflow-graphql-server:TASK-003"
-          ]
+          "deps": ["scoped-workflow-graphql-server:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4333,24 +3543,17 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "scoped-workflow-runtime-follow-up:TASK-003"
-          ]
+          "deps": ["scoped-workflow-runtime-follow-up:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4361,39 +3564,27 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "scoped-workflow-catalog-safety-follow-up:TASK-003"
-          ]
+          "deps": ["scoped-workflow-catalog-safety-follow-up:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003"
-          ]
+          "deps": ["TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-003", "TASK-004"]
         }
       }
     },
@@ -4409,25 +3600,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
@@ -4448,34 +3631,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"]
         }
       }
     },
@@ -4491,25 +3662,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         }
       }
     },
@@ -4525,25 +3688,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     },
@@ -4559,33 +3714,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-002", "TASK-003", "TASK-004"]
         }
       }
     },
@@ -4601,24 +3745,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -4634,16 +3771,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -4659,9 +3792,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4677,16 +3808,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -4702,9 +3829,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4720,9 +3845,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4738,16 +3861,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -4763,9 +3882,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4781,9 +3898,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4799,9 +3914,7 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4817,16 +3930,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -4842,33 +3951,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-003", "TASK-004"]
         }
       }
     },
@@ -4884,16 +3982,12 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
@@ -4912,24 +4006,17 @@
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-004"
-          ]
+          "deps": ["TASK-004"]
         },
         "TASK-006": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-004"
-          ]
+          "deps": ["TASK-004"]
         },
         "TASK-007": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-005",
-            "TASK-006"
-          ]
+          "deps": ["TASK-005", "TASK-006"]
         }
       }
     },
@@ -4945,32 +4032,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -4986,24 +4063,17 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002"
-          ]
+          "deps": ["TASK-002"]
         }
       }
     },
@@ -5014,72 +4084,53 @@
         "TASK-001": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "step-run-history-rerun-foundation:TASK-003"
-          ]
+          "deps": ["step-run-history-rerun-foundation:TASK-003"]
         },
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         }
       }
     },
     "output-contract-adapter-envelope-normalization": {
       "phase": 156,
-      "status": "Ready",
+      "status": "Completed",
       "tasks": {
         "TASK-001": {
-          "status": "Ready",
+          "status": "Completed",
           "parallelizable": false,
           "deps": []
         },
         "TASK-002": {
-          "status": "Ready",
+          "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
-          "status": "Ready",
+          "status": "Completed",
           "parallelizable": true,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-004": {
-          "status": "Ready",
+          "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-002",
-            "TASK-003"
-          ]
+          "deps": ["TASK-002", "TASK-003"]
         }
       }
     },
@@ -5095,34 +4146,22 @@
         "TASK-002": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-003": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002"
-          ]
+          "deps": ["TASK-001", "TASK-002"]
         },
         "TASK-004": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001"
-          ]
+          "deps": ["TASK-001"]
         },
         "TASK-005": {
           "status": "Completed",
           "parallelizable": false,
-          "deps": [
-            "TASK-001",
-            "TASK-002",
-            "TASK-003",
-            "TASK-004"
-          ]
+          "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"]
         }
       }
     }

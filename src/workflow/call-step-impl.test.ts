@@ -18,8 +18,7 @@ const tempDirs: string[] = [];
 const deterministicAdapter = new DeterministicNodeAdapter();
 
 /** Shared workflow-load options for call-step test fixtures. */
-const workflowLoadOpts = {
-} as const;
+const workflowLoadOpts = {} as const;
 
 async function makeTempDir(): Promise<string> {
   const directory = await mkdtemp(
@@ -320,6 +319,105 @@ class PromptAndAmbientCaptureAdapter implements NodeAdapter {
       completionPassed: true,
       when: { always: true },
       payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
+class OutputContractEnvelopeCallStepAdapter implements NodeAdapter {
+  async execute(
+    input: AdapterExecutionInput,
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    return {
+      provider: "envelope-call-step-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {
+        when: { needs_revision: true },
+        payload: { summary: "review requested", needs_revision: true },
+        completionPassed: false,
+      },
+    };
+  }
+}
+
+class OutputContractEnvelopeCandidateFileCallStepAdapter
+  implements NodeAdapter
+{
+  async execute(
+    input: AdapterExecutionInput,
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    const candidatePath = input.output?.candidatePath;
+    if (candidatePath === undefined) {
+      throw new Error(
+        "candidate path should be defined for output-contract tests",
+      );
+    }
+    await mkdir(path.dirname(candidatePath), { recursive: true });
+    await writeFile(
+      candidatePath,
+      `${JSON.stringify(
+        {
+          when: { needs_revision: true },
+          payload: {
+            summary: "review requested from file",
+            needs_revision: true,
+          },
+          completionPassed: false,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    return {
+      provider: "envelope-call-step-file-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: {},
+      candidateFilePath: candidatePath,
+    };
+  }
+}
+
+class InvalidEnvelopeThenFixedCallStepAdapter implements NodeAdapter {
+  calls = 0;
+
+  async execute(
+    input: AdapterExecutionInput,
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    this.calls += 1;
+    if (this.calls === 1) {
+      return {
+        provider: "invalid-envelope-call-step-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: {
+          when: { needs_revision: "yes" },
+          payload: { summary: "bad envelope" },
+        } as unknown as Readonly<Record<string, unknown>>,
+      };
+    }
+
+    return {
+      provider: "invalid-envelope-call-step-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { summary: "fixed after envelope retry" },
     };
   }
 }
@@ -657,6 +755,171 @@ describe("callStepExecution", () => {
     expect(firstValidation.valid).toBe(false);
     expect(firstValidation.errors[0]?.message).toContain(
       "writer must return a JSON object",
+    );
+  });
+
+  test("publishes normalized inline output-contract envelopes for direct step calls", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-step-envelope-inline";
+    const sessionId = "sess-call-step-envelope-inline";
+
+    await createCallStepFixture(root, workflowName);
+    await createCallStepSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    const result = await callStepExecution(
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: artifactsRoot,
+        sessionStoreRoot,
+        workflowId: workflowName,
+        workflowRunId: sessionId,
+        stepId: "writer",
+      },
+      new OutputContractEnvelopeCallStepAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.output["completionPassed"]).toBe(false);
+    expect(result.value.output["when"]).toEqual({ needs_revision: true });
+    expect(result.value.output["payload"]).toEqual({
+      summary: "review requested",
+      needs_revision: true,
+    });
+    const candidate = JSON.parse(
+      await readFile(
+        path.join(
+          result.value.outputRef.artifactDir,
+          "output-attempts",
+          "attempt-000001",
+          "candidate.json",
+        ),
+        "utf8",
+      ),
+    ) as { summary: string; needs_revision: boolean };
+    expect(candidate).toEqual({
+      summary: "review requested",
+      needs_revision: true,
+    });
+  });
+
+  test("normalizes reserved candidate-file envelopes for direct step calls", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-step-envelope-file";
+    const sessionId = "sess-call-step-envelope-file";
+
+    await createCallStepFixture(root, workflowName);
+    await createCallStepSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    const result = await callStepExecution(
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: artifactsRoot,
+        sessionStoreRoot,
+        workflowId: workflowName,
+        workflowRunId: sessionId,
+        stepId: "writer",
+      },
+      new OutputContractEnvelopeCandidateFileCallStepAdapter(),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.output["completionPassed"]).toBe(false);
+    expect(result.value.output["when"]).toEqual({ needs_revision: true });
+    expect(result.value.output["payload"]).toEqual({
+      summary: "review requested from file",
+      needs_revision: true,
+    });
+    const candidate = JSON.parse(
+      await readFile(
+        path.join(
+          result.value.outputRef.artifactDir,
+          "output-attempts",
+          "attempt-000001",
+          "candidate.json",
+        ),
+        "utf8",
+      ),
+    ) as { summary: string; needs_revision: boolean };
+    expect(candidate).toEqual({
+      summary: "review requested from file",
+      needs_revision: true,
+    });
+  });
+
+  test("retries invalid output-contract envelopes for direct step calls", async () => {
+    const root = await makeTempDir();
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionStoreRoot = path.join(root, "sessions");
+    const workflowName = "call-step-envelope-retry";
+    const sessionId = "sess-call-step-envelope-retry";
+
+    await createCallStepFixture(root, workflowName);
+    await createCallStepSession({
+      workflowName,
+      sessionId,
+      sessionStoreRoot,
+    });
+
+    const adapter = new InvalidEnvelopeThenFixedCallStepAdapter();
+    const result = await callStepExecution(
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: artifactsRoot,
+        sessionStoreRoot,
+        workflowId: workflowName,
+        workflowRunId: sessionId,
+        stepId: "writer",
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.calls).toBe(2);
+    expect(result.value.nodeExecution.outputAttemptCount).toBe(2);
+    expect(result.value.output["payload"]).toEqual({
+      summary: "fixed after envelope retry",
+    });
+    const firstValidation = JSON.parse(
+      await readFile(
+        path.join(
+          result.value.outputRef.artifactDir,
+          "output-attempts",
+          "attempt-000001",
+          "validation.json",
+        ),
+        "utf8",
+      ),
+    ) as { valid: boolean; errors: readonly { message: string }[] };
+    expect(firstValidation.valid).toBe(false);
+    expect(firstValidation.errors[0]?.message).toContain(
+      "node output candidate.when must be an object<boolean>",
     );
   });
 

@@ -148,6 +148,22 @@ function resolveCliPath(rawPath: string, cwd: string): string {
   return path.resolve(cwd, rawPath);
 }
 
+async function resolveProjectScopeRootFromWorkflowRoot(
+  workflowRoot: string,
+  cwd: string,
+): Promise<string | undefined> {
+  const resolved = resolveCliPath(workflowRoot, cwd);
+  if (!(await isDirectory(resolved))) {
+    return undefined;
+  }
+  if (path.basename(resolved) !== "workflows") {
+    return undefined;
+  }
+
+  const scopeRoot = path.dirname(resolved);
+  return path.basename(scopeRoot) === ".divedra" ? scopeRoot : undefined;
+}
+
 async function resolveProjectScopeRootForSessionCommand(
   options: CliStorageOptions,
 ): Promise<string | undefined> {
@@ -155,7 +171,6 @@ async function resolveProjectScopeRootForSessionCommand(
   const env = options.env ?? process.env;
   const configuredProjectRoot =
     options.projectRoot ?? env["DIVEDRA_PROJECT_ROOT"];
-
   if (configuredProjectRoot !== undefined && configuredProjectRoot.length > 0) {
     const resolved = resolveCliPath(configuredProjectRoot, cwd);
     if (await isDirectory(path.join(resolved, "workflows"))) {
@@ -166,6 +181,18 @@ async function resolveProjectScopeRootForSessionCommand(
       return nested;
     }
     return resolved;
+  }
+
+  const configuredWorkflowRoot =
+    options.workflowRoot ?? env["DIVEDRA_WORKFLOW_DEFINITION_DIR"];
+  if (configuredWorkflowRoot !== undefined && configuredWorkflowRoot.length > 0) {
+    const scopeRoot = await resolveProjectScopeRootFromWorkflowRoot(
+      configuredWorkflowRoot,
+      cwd,
+    );
+    if (scopeRoot !== undefined) {
+      return scopeRoot;
+    }
   }
 
   let current = path.resolve(cwd);

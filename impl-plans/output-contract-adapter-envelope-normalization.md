@@ -1,9 +1,9 @@
 # Output Contract Adapter Envelope Normalization Implementation Plan
 
-**Status**: Ready
+**Status**: Completed
 **Design Reference**: `design-docs/specs/design-node-output-contract.md#output-contract-adapter-envelope-normalization`
 **Created**: 2026-05-04
-**Last Updated**: 2026-05-04
+**Last Updated**: 2026-05-05
 
 ## Summary
 
@@ -52,7 +52,7 @@ Not included:
 
 ### TASK-001: Shared Envelope Normalization
 
-**Status**: Ready
+**Status**: Completed
 **Parallelizable**: No
 **Dependencies**: None
 **Deliverables**:
@@ -82,16 +82,16 @@ export function normalizeOutputContractEnvelope(
 
 **Completion Criteria**:
 
-- [ ] object without `when` returns original object as business payload
-- [ ] object with boolean-map `when` and object `payload` unwraps successfully
-- [ ] optional `completionPassed` overrides only when boolean
-- [ ] invalid `when`, missing/non-object `payload`, or invalid
+- [x] object without `when` returns original object as business payload
+- [x] object with boolean-map `when` and object `payload` unwraps successfully
+- [x] optional `completionPassed` overrides only when boolean
+- [x] invalid `when`, missing/non-object `payload`, or invalid
       `completionPassed` are rejected as `invalid_output`
-- [ ] helper behavior is covered by focused unit tests
+- [x] helper behavior is covered by focused unit tests
 
 ### TASK-002: Workflow Run Engine Integration
 
-**Status**: Ready
+**Status**: Completed
 **Parallelizable**: Yes
 **Dependencies**: TASK-001
 **Deliverables**:
@@ -101,17 +101,17 @@ export function normalizeOutputContractEnvelope(
 
 **Completion Criteria**:
 
-- [ ] normalize inline output-contract candidates before schema validation
-- [ ] normalize reserved candidate-file payloads before schema validation
-- [ ] write normalized nested payload to `output-attempts/*/candidate.json`
-- [ ] publish normalized `completionPassed`, `when`, and business `payload`
-- [ ] route `needs_revision` to the revision step and not to
+- [x] normalize inline output-contract candidates before schema validation
+- [x] normalize reserved candidate-file payloads before schema validation
+- [x] write normalized nested payload to `output-attempts/*/candidate.json`
+- [x] publish normalized `completionPassed`, `when`, and business `payload`
+- [x] route `needs_revision` to the revision step and not to
       `!(needs_revision)` when the envelope says revision is needed
-- [ ] invalid envelope shape enters the output-contract retry/failure path
+- [x] invalid envelope shape enters the output-contract retry/failure path
 
 ### TASK-003: Call-Step Integration
 
-**Status**: Ready
+**Status**: Completed
 **Parallelizable**: Yes
 **Dependencies**: TASK-001
 **Deliverables**:
@@ -121,18 +121,18 @@ export function normalizeOutputContractEnvelope(
 
 **Completion Criteria**:
 
-- [ ] `OutputValidator` returns normalized `payload`, `when`, and
+- [x] `OutputValidator` returns normalized `payload`, `when`, and
       `completionPassed` for output-contract nodes
-- [ ] `callStepExecution` publishes normalized envelope fields instead of the
+- [x] `callStepExecution` publishes normalized envelope fields instead of the
       adapter default `when`
-- [ ] reserved candidate-file envelope submissions behave like inline
+- [x] reserved candidate-file envelope submissions behave like inline
       submissions
-- [ ] invalid envelopes are retryable validation failures when attempts remain
-- [ ] non-contract candidate-file rejection remains unchanged
+- [x] invalid envelopes are retryable validation failures when attempts remain
+- [x] non-contract candidate-file rejection remains unchanged
 
 ### TASK-004: Regression Verification and Plan Progress
 
-**Status**: Ready
+**Status**: Completed
 **Parallelizable**: No
 **Dependencies**: TASK-002, TASK-003
 **Deliverables**:
@@ -142,20 +142,20 @@ export function normalizeOutputContractEnvelope(
 
 **Completion Criteria**:
 
-- [ ] focused tests pass
-- [ ] type checking passes
-- [ ] full test suite passes or any unrelated failure is documented
-- [ ] progress log records implementation session, review findings, and
+- [x] focused tests pass
+- [x] type checking passes
+- [x] full test suite passes or any unrelated failure is documented
+- [x] progress log records implementation session, review findings, and
       verification commands
 
 ## Dependencies
 
-| Task | Depends On | Reason |
-| ---- | ---------- | ------ |
-| TASK-001 | accepted design | defines envelope recognition rules |
-| TASK-002 | TASK-001 | engine should use one shared normalization contract |
-| TASK-003 | TASK-001 | call-step should match workflow-run semantics |
-| TASK-004 | TASK-002, TASK-003 | final verification requires both runtime paths |
+| Task     | Depends On         | Reason                                              |
+| -------- | ------------------ | --------------------------------------------------- |
+| TASK-001 | accepted design    | defines envelope recognition rules                  |
+| TASK-002 | TASK-001           | engine should use one shared normalization contract |
+| TASK-003 | TASK-001           | call-step should match workflow-run semantics       |
+| TASK-004 | TASK-002, TASK-003 | final verification requires both runtime paths      |
 
 ## Parallelization
 
@@ -208,3 +208,25 @@ routing and validation contract.
 **Notes**: Added explicit per-task dependency fields and registered the plan in
 `impl-plans/PROGRESS.json` so planning automation can discover and track
 TASK-001 through TASK-004.
+
+### Session: 2026-05-05 16:40 JST
+
+**Tasks Completed**: TASK-001, TASK-002, TASK-003, TASK-004
+**Tasks In Progress**: none
+**Blockers**: none
+**Notes**: Finished the remaining envelope-normalization work by adding focused
+adapter helper coverage, extending workflow-run regression coverage for reserved
+candidate-file and invalid-envelope paths, and updating direct `call-step`
+validation/publication to use normalized `completionPassed` and `when` fields
+instead of adapter defaults.
+
+**Verification**:
+
+- `bun test src/workflow/adapter.test.ts`
+- `bun test src/workflow/call-step-impl.test.ts`
+- `bun test src/workflow/engine.test.ts -t "uses adapter envelope from output-contract payload for transitions"`
+- `bun test src/workflow/engine.test.ts -t "normalizes reserved candidate-file envelopes before publishing output"`
+- `bun test src/workflow/engine.test.ts -t "retries invalid output-contract envelopes before publishing output"`
+- `bun run typecheck`
+- `bun test src/workflow/adapter.test.ts src/workflow/engine.test.ts src/workflow/call-step-impl.test.ts`
+- `bun test`

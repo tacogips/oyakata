@@ -12,6 +12,7 @@ import {
 } from "../shared/fs";
 import {
   buildAdapterDivedraHookContext,
+  normalizeOutputContractEnvelope,
   ScenarioNodeAdapter,
   type AdapterAmbientManagerContext,
   type AdapterExecutionOutput,
@@ -538,6 +539,8 @@ class OutputValidator {
   }): Promise<
     Result<
       {
+        readonly completionPassed: boolean;
+        readonly when: Readonly<Record<string, boolean>>;
         readonly payload: Readonly<Record<string, unknown>>;
         readonly errors: readonly JsonSchemaValidationError[];
       },
@@ -549,7 +552,12 @@ class OutputValidator {
     >
   > {
     if (input.node.output === undefined) {
-      return ok({ payload: input.execution.payload, errors: [] });
+      return ok({
+        completionPassed: input.execution.completionPassed,
+        when: input.execution.when,
+        payload: input.execution.payload,
+        errors: [],
+      });
     }
 
     if (input.expectedCandidatePath === undefined) {
@@ -575,23 +583,48 @@ class OutputValidator {
       });
     }
 
+    let normalizedContractPayload: ReturnType<
+      typeof normalizeOutputContractEnvelope
+    >;
+    try {
+      normalizedContractPayload = normalizeOutputContractEnvelope(
+        candidateResult.value,
+        "node output candidate",
+        {
+          completionPassed: input.execution.completionPassed,
+          when: input.execution.when,
+        },
+      );
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "invalid output contract envelope";
+      return err({
+        errors: [{ path: "$", message }],
+        retryable: true,
+      });
+    }
+
     const validationErrors =
       input.node.output.jsonSchema === undefined
         ? []
         : validateJsonValueAgainstSchema({
             schema: input.node.output.jsonSchema as JsonObject,
-            value: candidateResult.value,
+            value: normalizedContractPayload.payload,
           });
     if (validationErrors.length > 0) {
       return err({
-        payload: candidateResult.value,
+        payload: normalizedContractPayload.payload,
         errors: validationErrors,
         retryable: true,
       });
     }
 
     return ok({
-      payload: candidateResult.value,
+      completionPassed: normalizedContractPayload.completionPassed,
+      when: normalizedContractPayload.when,
+      payload: normalizedContractPayload.payload,
       errors: [],
     });
   }
@@ -1479,8 +1512,8 @@ class ExecutionDispatcher {
             provider: execution.value.provider,
             model: execution.value.model,
             promptText,
-            completionPassed: execution.value.completionPassed,
-            when: execution.value.when,
+            completionPassed: validation.value.completionPassed,
+            when: validation.value.when,
             payload: validation.value.payload,
           };
           outputValidationErrors = validation.value.errors;

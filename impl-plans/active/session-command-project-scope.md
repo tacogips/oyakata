@@ -53,3 +53,20 @@ added regression coverage.
 - `bun test src/cli.test.ts -t "session status discovers project-local session store from cwd"`
 - `bun run typecheck`
 - `bun run divedra/src/main.ts session status div-design-and-implement-review-loop-1777949666-19515852 --output json`
+
+### Session: 2026-05-05 (follow-up review)
+
+**Tasks completed**: Extended session-store inference to treat an explicit
+project workflow definition directory as a project-scope hint, which keeps
+`session status` working when operators invoke the CLI from outside the project
+tree. Isolated the session inference regressions from ambient `DIVEDRA_*`
+storage environment variables, and kept explicit `--project-root` /
+`DIVEDRA_PROJECT_ROOT` compatibility for workflow catalog commands so
+out-of-tree automation still has a stable project-scope override.
+
+**Verification**:
+
+- `bun test src/cli.test.ts -t "session status discovers project-local session store from workflow definition dir outside the project cwd"`
+- `bun test src/cli.test.ts -t "workflow commands resolve explicit project scope root"`
+- `bun test src/cli.test.ts -t "workflow list uses DIVEDRA_PROJECT_ROOT outside the project cwd"`
+- `bun run typecheck`

@@ -26,23 +26,24 @@ impl-plans/
 
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
-| `output-contract-adapter-envelope-normalization` | Ready | `design-node-output-contract`, `architecture` |
+| None | -      | -                |
 
 ## Recently Completed
 
-| Plan | Completed | Design Reference |
-| ---- | --------- | ---------------- |
-| `graphql-llm-session-message-selection` | 2026-05-04 | `architecture` |
-| `graphql-llm-session-message-field-selection` | 2026-05-04 | `architecture` |
-| `session-health-command` | 2026-05-04 | `design-session-health` |
-| `robust-manager-output-parsing` | 2026-05-04 | `architecture` |
-| `graphql-llm-session-messages` | 2026-05-04 | `architecture` |
-| `step-run-history-rerun-runtime` | 2026-05-02 | `design-step-run-history-rerun` |
-| `step-run-history-rerun-foundation` | 2026-05-02 | `design-step-run-history-rerun` |
-| `workflow-overview-status-surface` | 2026-05-02 | `design-workflow-overview-status-surface`, `architecture`, `command` |
-| `workflow-supervisor-dispatcher` | 2026-05-02 | `design-workflow-supervisor-dispatcher` |
-| `workflow-supervisor-dispatcher-foundation` | 2026-05-01 | `design-workflow-supervisor-dispatcher` |
-| `workflow-supervisor-dispatcher-runtime` | 2026-05-02 | `design-workflow-supervisor-dispatcher` |
+| Plan                                             | Completed  | Design Reference                                                     |
+| ------------------------------------------------ | ---------- | -------------------------------------------------------------------- |
+| `output-contract-adapter-envelope-normalization` | 2026-05-05 | `design-node-output-contract`, `architecture`                        |
+| `graphql-llm-session-message-selection`          | 2026-05-04 | `architecture`                                                       |
+| `graphql-llm-session-message-field-selection`    | 2026-05-04 | `architecture`                                                       |
+| `session-health-command`                         | 2026-05-04 | `design-session-health`                                              |
+| `robust-manager-output-parsing`                  | 2026-05-04 | `architecture`                                                       |
+| `graphql-llm-session-messages`                   | 2026-05-04 | `architecture`                                                       |
+| `step-run-history-rerun-runtime`                 | 2026-05-02 | `design-step-run-history-rerun`                                      |
+| `step-run-history-rerun-foundation`              | 2026-05-02 | `design-step-run-history-rerun`                                      |
+| `workflow-overview-status-surface`               | 2026-05-02 | `design-workflow-overview-status-surface`, `architecture`, `command` |
+| `workflow-supervisor-dispatcher`                 | 2026-05-02 | `design-workflow-supervisor-dispatcher`                              |
+| `workflow-supervisor-dispatcher-foundation`      | 2026-05-01 | `design-workflow-supervisor-dispatcher`                              |
+| `workflow-supervisor-dispatcher-runtime`         | 2026-05-02 | `design-workflow-supervisor-dispatcher`                              |
 
 ## Completed Plans
 
@@ -50,7 +51,7 @@ impl-plans/
 | -------------------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `event-external-mailbox-binding-foundation`              | 2026-04-30 | `design-event-external-mailbox-binding`                                                                                                       |
 | `supervisor-natural-language-control`                    | 2026-04-29 | `design-event-supervisor-control`, `design-auto-improve-superviser-mode`                                                                      |
-| `event-supervisor-control-review-hardening`              | 2026-04-29 | `design-event-supervisor-control`, `event-supervisor-control-foundation`                                                                        |
+| `event-supervisor-control-review-hardening`              | 2026-04-29 | `design-event-supervisor-control`, `event-supervisor-control-foundation`                                                                      |
 | `event-supervisor-control-foundation`                    | 2026-04-29 | `design-event-supervisor-control`, `design-event-listener-workflow-trigger`, `design-auto-improve-superviser-mode`                            |
 | `workflow-legacy-compatibility-removal`                  | 2026-04-29 | `design-workflow-json`, `design-node-jump-and-code-manager-runtime`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes` |
 | `workflow-legacy-compatibility-removal-tail-cleanup`     | 2026-04-29 | `design-workflow-json`, `design-unified-workflow-role-model`, `architecture`, `command`, `notes`                                              |
