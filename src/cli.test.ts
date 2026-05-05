@@ -4216,6 +4216,68 @@ describe("runCli", () => {
     );
   });
 
+  test("workflow run --verbose prints step-start progress to stderr without polluting json stdout", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "worker-only");
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-verbose-run",
+      workflowName: "worker-only",
+      workflowId: "worker-only",
+      initialNodeId: "main-worker",
+      runtimeVariables: {},
+    });
+
+    vi.spyOn(workflowEngine, "runWorkflow").mockImplementation(
+      async (_workflowName, options) => {
+        options?.onProgress?.({
+          type: "step-start",
+          sessionId: "sess-verbose-run",
+          workflowName: "worker-only",
+          workflowId: "worker-only",
+          stepId: "main-worker",
+          nodeId: "main-worker",
+          nodeExecId: "exec-000001",
+          attempt: 1,
+          queuedStepIds: [],
+        });
+        return ok({
+          session: { ...session, status: "completed" },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult);
+      },
+    );
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "worker-only",
+        "--workflow-definition-dir",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--verbose",
+        "--output",
+        "json",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    expect(capture.stderr.join("\n")).toContain(
+      "workflow step start: sessionId=sess-verbose-run workflow=worker-only stepId=main-worker nodeId=main-worker nodeExecId=exec-000001 attempt=1 queueRemaining=0",
+    );
+    const payload = JSON.parse(capture.stdout.join("\n")) as {
+      readonly sessionId?: string;
+    };
+    expect(payload.sessionId).toBe("sess-verbose-run");
+  });
+
   test.each([
     {
       name: "zero",

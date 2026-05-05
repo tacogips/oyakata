@@ -14,6 +14,8 @@ Bounded fanout/join adds an explicit orchestration primitive while preserving th
 - a join step is queued exactly once after all required branch work completes successfully
 - the join step receives deterministic aggregate inputs ordered by authored branch order or source item order
 
+The current issue scope is to complete the local form of this model. A fanout transition that targets `toStepId` without `toWorkflowId` is an inline local fanout: every branch executes in the parent workflow session, uses the same workflow definition and session store, and still receives branch-scoped runtime variables, mailbox inputs, node execution ids, artifacts, timeout handling, and fanout group records. Cross-workflow fanout remains a separate mode that creates callee workflow executions and then resumes the caller at the same caller-workflow join step.
+
 This is a workflow-engine feature. It is not a cursor-agent backend feature. Cursor-specific behavior remains isolated to agent adapter modules such as `src/workflow/adapters/*`; the fanout scheduler only sees ordinary step executions and backend-neutral outputs.
 
 ## Reference Mapping
@@ -86,6 +88,13 @@ Field meanings:
 - `failurePolicy`: initially `fail-fast` or `collect-all`; default `fail-fast`
 - `resultOrder`: initially `input`; aggregate branch outputs preserve source item order
 
+Local and cross-workflow fanout share the same authored `fanout` object:
+
+- local inline fanout is selected when the transition has `toStepId` and no `toWorkflowId`
+- cross-workflow fanout is selected when the transition has `toWorkflowId`, `toStepId`, and matching `resumeStepId`
+- both modes require `joinStepId` to name a step in the caller workflow
+- both modes use the same `groupId`, `itemsFrom`, `itemVariable`, `failurePolicy`, `resultOrder`, `writeOwnership`, and effective concurrency rules
+
 Static fanout can be added later with an authored `branches[]` array, but the cursor-agent parity workflow needs dynamic classification first. The first implementation should prioritize `itemsFrom` fanout.
 
 ## Validation Rules
@@ -119,7 +128,7 @@ Required fanout group state:
 - `joinStepId`
 - `concurrency`
 - `failurePolicy`
-- branch records containing `branchIndex`, item snapshot, status, work item id, branch execution ids, output refs, and error text
+- branch records containing `branchIndex`, item snapshot, status, work item id, branch execution ids, output refs, workspace roots, superseded workspace roots, and error text
 
 The scheduler should treat queue entries as execution work items internally. A plain queued step remains valid for non-fanout work, but fanout branches need distinct work item identity so the same step can run many times concurrently for different items without deduping the branch executions away.
 
@@ -131,7 +140,7 @@ Session mutation remains single-writer from the engine's scheduling reducer. Bra
 2. The engine resolves `itemsFrom` against the source output payload and creates one branch record per item.
 3. The bounded scheduler starts up to `concurrency` branch work items.
 4. Each branch receives normal upstream inputs plus `runtimeVariables[itemVariable]`, `runtimeVariables.fanout.groupId`, `runtimeVariables.fanout.branchIndex`, and `runtimeVariables.fanout.item`.
-5. Local branch steps execute through the normal node adapter path. Cross-workflow branches run isolated callee workflow sessions with the branch fanout variables included in `runtimeVariables.workflowCall`.
+5. Local branch steps execute through the normal parent-session node adapter path with branch-specific work item identity. Cross-workflow branches run callee workflow sessions with the branch fanout variables included in `runtimeVariables.workflowCall`.
 6. Each branch completion records its output ref and branch status under the fanout group.
 7. When all required branches succeed, the engine publishes one deterministic aggregate communication to `joinStepId` and queues the join step once.
 8. The join step sees `runtimeVariables.fanoutJoin` and inbox aggregate data ordered by `branchIndex`.
@@ -176,6 +185,7 @@ Retry and rerun rules:
 
 - manager `retry-step` may target the source step, a branch target step with fanout group context, or the join step only when the runtime can prove scope from persisted fanout state
 - direct rerun should accept the authored step id plus optional fanout branch selector in a later control-plane extension; without that selector, rerunning a branch target step outside its fanout context is rejected
+- isolated-workspace branch retries create a replacement workspace and persist the previous attempt path in `supersededWorkspaceRoot`; retry lineage must be recorded for both cross-workflow and local fanout branches before the retried group is considered complete
 - `maxSteps` counts each branch node execution as one step execution, so high fanout runs must set `maxSteps` high enough for the branch count
 
 Optional decisions and user actions are branch-scoped. If a branch pauses for user action or optional-step decision, the fanout group remains running and the join waits until that branch reaches a terminal result.
@@ -226,15 +236,26 @@ Implementation planning rules:
 
 For the cursor-agent parity workflow, the first fanout phase should be safe to run concurrently because it produces feature-local design and implementation-plan outputs with disjoint paths. Dependency-aware implementation remains after the join unless a later plan proves branch write ownership is non-overlapping or uses isolated child worktrees.
 
+## Current Runtime Alignment
+
+The design is partially implemented and the remaining work must preserve the behavior already covered by tests:
+
+- authored `fanout` validation, `defaults.fanoutConcurrency`, run-level `maxConcurrency`, persisted fanout groups, branch runtime variables, deterministic join aggregation, and fanout summaries are part of the current runtime surface
+- cross-workflow fanout is supported and must keep using bounded scheduling, child workflow executions, branch-local `workflow-calls/` artifacts, nested concurrency-budget inheritance, and caller-workflow join aggregation
+- isolated fanout branch workspaces are prepared outside the parent checkout when `writeOwnership.mode` is `isolated-workspace`; branch records and join results should expose `workspaceRoot`
+- retrying an isolated fanout branch group must retain lineage by recording the prior attempt workspace as `supersededWorkspaceRoot` on the corresponding replacement branch
+- local inline fanout is the explicit gap for this issue: `src/workflow/engine.ts` currently rejects local fanout transitions with an unsupported message, but the target behavior is parent-session branch work-item execution with the same bounded scheduler and join semantics as cross-workflow fanout
+- implementation-plan status must distinguish the already-supported cross-workflow fanout path from the still-required parent-session local fanout path; local dynamic fanout is not complete until repeated executions of the same target step run with distinct branch context in the parent session and publish a single deterministic join
+
 ## Rollout Constraints
 
 Implementation should be staged:
 
 1. schema/types/validation for `WorkflowStepTransition.fanout` and `defaults.fanoutConcurrency`
 2. internal execution work-item model that preserves existing sequential behavior when no fanout is present
-3. bounded scheduler for local fanout with deterministic aggregate join communication
-4. cross-workflow fanout using the same bounded scheduler and persisted branch artifacts
-5. shared-worktree safety checks for branch write ownership and persisted branch workspace roots
+3. cross-workflow fanout using the bounded scheduler and persisted branch artifacts
+4. bounded scheduler for local inline fanout in the parent workflow session with deterministic aggregate join communication
+5. shared-worktree safety checks for branch write ownership, persisted branch workspace roots, and retry lineage through `supersededWorkspaceRoot`
 6. inspection and test coverage
 7. update `.divedra/workflows/design-and-implement-review-loop` only after the schema is accepted and tests pass
 
@@ -244,7 +265,9 @@ Verification should include:
 - focused workflow validation tests for valid and invalid fanout authoring
 - engine tests for dynamic fanout ordering, concurrency limit, join queueing, fail-fast failure, collect-all failure, cancellation, timeout, optional/user-action pause behavior, and maxSteps accounting
 - cross-workflow fanout tests proving bounded concurrent callee execution, deterministic join aggregation, cycle guard preservation, and artifact/communication stability
+- local inline fanout tests proving parent-session branch work items execute the same target step multiple times with distinct branch context, do not collapse through plain queue dedupe, publish one join communication, and respect `maxConcurrency`
 - shared-worktree safety tests proving concurrent code-writing branches require disjoint ownership or isolated workspaces, while read-only/planning branches can share the parent workspace
+- isolated fanout retry tests proving replacement branch attempts persist `supersededWorkspaceRoot` lineage for the prior branch workspace
 
 ## References
 

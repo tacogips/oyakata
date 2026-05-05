@@ -366,6 +366,7 @@ Supported vendors:
 - `--mock-scenario <path>`: use deterministic mock backend responses.
 - `--output json`: emit structured output.
 - `--dry-run`: plan/check without normal execution where supported.
+- `--verbose` / `-v`: print local workflow step-start progress to stderr.
 - `--max-steps <n>`: cap workflow execution steps.
 - `--max-concurrency <n>`: cap fanout concurrency for a workflow run.
 - `--max-loop-iterations <n>`: cap loop iterations.

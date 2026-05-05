@@ -27,7 +27,11 @@ import type { WorkflowExecutionCompactSummary } from "./shared/ui-contract";
 import { normalizeAutoImprovePolicy } from "./workflow/auto-improve-policy";
 import { createWorkflowTemplate } from "./workflow/create";
 import { callStep, type CallStepInput } from "./workflow/call-step";
-import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
+import {
+  runWorkflow,
+  type WorkflowRunOptions,
+  type WorkflowRunProgressEvent,
+} from "./workflow/engine";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
 import {
   listWorkflowCatalogSources,
@@ -285,6 +289,7 @@ interface ParsedOptions {
   readonly variablesPath?: string;
   readonly mockScenarioPath?: string;
   readonly dryRun: boolean;
+  readonly verbose: boolean;
   readonly maxSteps?: number;
   readonly maxConcurrency?: number;
   readonly maxLoopIterations?: number;
@@ -611,6 +616,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let format: "text" | "json" | "jsonl" | undefined;
   let variablesPath: string | undefined;
   let dryRun = false;
+  let verbose = false;
   let mockScenarioPath: string | undefined;
   let maxSteps: number | undefined;
   let maxConcurrency: number | undefined;
@@ -817,6 +823,10 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       case "--dry-run":
         dryRun = true;
+        break;
+      case "--verbose":
+      case "-v":
+        verbose = true;
         break;
       case "--mock-scenario": {
         const parsedString = parseRequiredStringOption(token, readNext());
@@ -1253,6 +1263,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(mockScenarioPath === undefined ? {} : { mockScenarioPath }),
       output,
       dryRun,
+      verbose,
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
       ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
@@ -1375,6 +1386,9 @@ function printHelp(io: CliIo): void {
   );
   io.stdout(
     "  workflow run <name> --variables <json|@file|file>  Runtime variables as inline JSON object, explicit @file, or bare JSON file path",
+  );
+  io.stdout(
+    "  workflow run <name> --verbose  Print local step-start progress to stderr",
   );
   io.stdout("");
   io.stdout("Session options:");
@@ -1601,6 +1615,38 @@ async function readMockScenarioOption(
 
 function emitJson(io: CliIo, payload: unknown): void {
   io.stdout(JSON.stringify(payload, null, 2));
+}
+
+function formatWorkflowRunProgressEvent(
+  event: WorkflowRunProgressEvent,
+): string {
+  switch (event.type) {
+    case "step-start":
+      return [
+        "workflow step start:",
+        `sessionId=${event.sessionId}`,
+        `workflow=${event.workflowName}`,
+        `stepId=${event.stepId}`,
+        `nodeId=${event.nodeId}`,
+        `nodeExecId=${event.nodeExecId}`,
+        `attempt=${event.attempt}`,
+        `queueRemaining=${event.queuedStepIds.length}`,
+      ].join(" ");
+  }
+}
+
+function buildWorkflowRunProgressLogger(
+  parsedOptions: ParsedOptions,
+  io: CliIo,
+): Pick<WorkflowRunOptions, "onProgress"> {
+  if (!parsedOptions.verbose) {
+    return {};
+  }
+  return {
+    onProgress: (event) => {
+      io.stderr(formatWorkflowRunProgressEvent(event));
+    },
+  };
 }
 
 function isNonNull<T>(value: T | null): value is T {
@@ -3923,6 +3969,7 @@ export async function runCli(
         runtimeVariables,
         ...mockScenarioOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
+        ...buildWorkflowRunProgressLogger(parsed.options, io),
         ...(parsed.options.maxSteps === undefined
           ? {}
           : { maxSteps: parsed.options.maxSteps }),
@@ -4202,6 +4249,7 @@ export async function runCli(
       const result = await runWorkflow(session.value.workflowName, {
         ...sessionOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
+        ...buildWorkflowRunProgressLogger(parsed.options, io),
         resumeSessionId: session.value.sessionId,
         ...mockScenarioOptions,
       });
@@ -4419,6 +4467,7 @@ export async function runCli(
       const result = await runWorkflow(source.value.workflowName, {
         ...sessionOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
+        ...buildWorkflowRunProgressLogger(parsed.options, io),
         rerunFromSessionId: source.value.sessionId,
         rerunFromStepId: fromStepId,
         ...mockScenarioOptions,

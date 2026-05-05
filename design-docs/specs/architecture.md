@@ -221,7 +221,8 @@ It owns:
 - session creation, resume, and rerun
 - queue progression
 - bounded fanout work-item scheduling and join aggregation for step-addressed
-  fanout transitions
+  fanout transitions, with cross-workflow fanout supported and parent-session
+  local fanout tracked as the remaining inline execution gap
 - timeout and stuck-restart handling
 - output-contract validation and retry
 - communication publication and consumption
@@ -271,6 +272,13 @@ completed source step create a persisted fanout group from an output payload
 array, run branch work items with an effective concurrency such as `20`, and
 queue a join step only after all required branch results complete.
 
+Two target modes share the same authored `WorkflowStepTransition.fanout` model.
+Cross-workflow fanout targets `toWorkflowId` and runs bounded callee workflow
+executions before resuming the caller at `fanout.joinStepId`. Local inline
+fanout targets only `toStepId`; its required behavior is to run every branch as
+a distinct work item inside the parent workflow session, not as a child workflow
+and not as a plain queue entry that could dedupe repeated target-step runs.
+
 The fanout scheduler must not treat queue entries as bare step ids internally
 when a fanout branch is active. Branch work needs distinct work-item identity
 (`fanoutGroupRunId`, `branchIndex`, source step run, target step/workflow) so
@@ -291,6 +299,8 @@ must either declare disjoint owned paths or run in branch-local isolated
 workspaces such as child workflow worktrees. Fanout group state records branch
 workspace roots when they differ from the parent workspace so retry, review,
 status, and cleanup surfaces can explain where branch work happened.
+When an isolated branch is retried with a replacement workspace, the new branch
+record also keeps the superseded workspace root for lineage and cleanup.
 
 Cursor-specific behavior is not part of the fanout scheduler. Cursor or Codex
 process behavior remains behind ordinary agent adapter modules; fanout branches

@@ -224,6 +224,22 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly fanoutConcurrencyBudget?: number;
   /** Internal shared step budget for fanout branch child executions. */
   readonly fanoutStepBudget?: FanoutStepBudget;
+  /** Best-effort local progress notifications for operator-facing run logs. */
+  readonly onProgress?: (event: WorkflowRunProgressEvent) => void;
+}
+
+export type WorkflowRunProgressEvent = WorkflowRunStepStartEvent;
+
+export interface WorkflowRunStepStartEvent {
+  readonly type: "step-start";
+  readonly sessionId: string;
+  readonly workflowName: string;
+  readonly workflowId: string;
+  readonly stepId: string;
+  readonly nodeId: string;
+  readonly nodeExecId: string;
+  readonly attempt: number;
+  readonly queuedStepIds: readonly string[];
 }
 
 export interface WorkflowRunResult {
@@ -251,6 +267,17 @@ function workflowRunFailure(
     message,
     ...(session === undefined ? {} : { sessionId: session.sessionId }),
   };
+}
+
+function notifyWorkflowProgress(
+  options: WorkflowRunOptions,
+  event: WorkflowRunProgressEvent,
+): void {
+  try {
+    options.onProgress?.(event);
+  } catch {
+    // Progress logging is operator-facing only and must not change execution.
+  }
 }
 
 export interface CancellationProbe {
@@ -968,6 +995,7 @@ function buildCrossWorkflowCalleeRunOptions(
     ...(options.mockScenario === undefined
       ? {}
       : { mockScenario: options.mockScenario }),
+    ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
     ...(options.restartOnStuck === undefined
       ? {}
       : { restartOnStuck: options.restartOnStuck }),
@@ -3085,6 +3113,17 @@ async function runWorkflowInternal(
           ),
         );
       }
+      notifyWorkflowProgress(options, {
+        type: "step-start",
+        sessionId: session.sessionId,
+        workflowName,
+        workflowId: workflow.workflowId,
+        stepId: stepExecutionAddress.stepId,
+        nodeId,
+        nodeExecId,
+        attempt: nextCount,
+        queuedStepIds: queue,
+      });
       const stepIdentityFields = toStepIdentityFields(stepExecutionAddress);
       const mailboxInstanceId = nodeExecId;
       const mergedVariables = mergeVariables(

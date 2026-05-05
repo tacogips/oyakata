@@ -394,7 +394,7 @@ export interface FanoutGroupSummary {
 
 ## Plan Completion Criteria
 
-- [x] Dynamic `itemsFrom` fanout runs local branches with bounded concurrency
+- [ ] Parent-session local `itemsFrom` fanout runs repeated target-step branches with bounded concurrency and distinct branch context
 - [x] Cross-workflow fanout runs bounded callee workflows and joins deterministically
 - [x] Nested fanout inherits the remaining runtime maximum concurrency budget
 - [x] Join payloads preserve input ordering and include branch item/output refs
@@ -468,3 +468,17 @@ export interface FanoutGroupSummary {
 **Tasks In Progress**: TASK-003, TASK-005, TASK-008.
 **Blockers**: Parent-session local fanout work-item execution, branch retry workspace lineage, and exhaustive cancellation/pause/timeout coverage remain open.
 **Notes**: Added `WorkflowRunOptions.maxConcurrency`, the `--max-concurrency` CLI flag, GraphQL input support, and event-trigger option forwarding. The cap seeds the existing fanout concurrency budget so authored/default fanout concurrency is clamped for the run and nested fanout keeps inheriting the remaining runtime budget. Added engine, CLI, and GraphQL regressions for forwarding, validation, and persisted effective group concurrency. Verification passed for `bun run typecheck`, focused engine/CLI/GraphQL tests, the full `bun run test` suite, and `git diff --check`.
+
+### Session: 2026-05-05 18:35 JST
+
+**Tasks Completed**: Added local verbose step-start progress logging.
+**Tasks In Progress**: TASK-003, TASK-005, TASK-008.
+**Blockers**: Parent-session local fanout work-item execution, branch retry workspace lineage, and exhaustive cancellation/pause/timeout coverage remain open.
+**Notes**: Added a best-effort `WorkflowRunOptions.onProgress` callback and wired `workflow run/resume/rerun --verbose` to print step-start events to stderr while keeping JSON stdout parseable. This addresses the operator gap found while running the design-and-implement workflow, where `--output json` stayed silent until final completion.
+
+### Session: 2026-05-05 18:48 JST
+
+**Tasks Completed**: Step 2 design/plan alignment for inline local fanout scope.
+**Tasks In Progress**: TASK-003, TASK-005, TASK-008.
+**Blockers**: Parent-session local fanout work-item execution remains the explicit runtime gap; isolated retry workspace lineage and failure/cancellation/pause/timeout coverage require downstream verification before plan closure.
+**Notes**: Corrected the plan completion criteria so cross-workflow fanout support is not counted as completion of parent-session local dynamic fanout. The design now requires local `itemsFrom` fanout to execute repeated target-step branches with distinct branch context inside the parent workflow session before TASK-003 can close.
