@@ -1,5 +1,5 @@
 import { constants as fsConstants } from "node:fs";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   DEFAULT_GRAPHQL_ENDPOINT,
@@ -131,6 +131,90 @@ interface CliStorageOptions {
   readonly rootDataDir?: string;
   readonly sessionStoreRoot?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+async function isDirectory(directory: string): Promise<boolean> {
+  try {
+    return (await stat(directory)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function resolveCliPath(rawPath: string, cwd: string): string {
+  if (path.isAbsolute(rawPath)) {
+    return rawPath;
+  }
+  return path.resolve(cwd, rawPath);
+}
+
+async function resolveProjectScopeRootForSessionCommand(
+  options: CliStorageOptions,
+): Promise<string | undefined> {
+  const cwd = process.cwd();
+  const env = options.env ?? process.env;
+  const configuredProjectRoot =
+    options.projectRoot ?? env["DIVEDRA_PROJECT_ROOT"];
+
+  if (configuredProjectRoot !== undefined && configuredProjectRoot.length > 0) {
+    const resolved = resolveCliPath(configuredProjectRoot, cwd);
+    if (await isDirectory(path.join(resolved, "workflows"))) {
+      return resolved;
+    }
+    const nested = path.join(resolved, ".divedra");
+    if (await isDirectory(path.join(nested, "workflows"))) {
+      return nested;
+    }
+    return resolved;
+  }
+
+  let current = path.resolve(cwd);
+  while (true) {
+    const candidate = path.join(current, ".divedra");
+    if (await isDirectory(path.join(candidate, "workflows"))) {
+      return candidate;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+}
+
+function hasExplicitSessionStorageOverride(
+  options: CliStorageOptions,
+): boolean {
+  const env = options.env ?? process.env;
+  return (
+    options.rootDataDir !== undefined ||
+    options.artifactRoot !== undefined ||
+    options.sessionStoreRoot !== undefined ||
+    options.userRoot !== undefined ||
+    env["DIVEDRA_ARTIFACT_DIR"] !== undefined ||
+    env["DIVEDRA_ARTIFACT_ROOT"] !== undefined ||
+    env["DIVEDRA_SESSION_STORE"] !== undefined ||
+    env["DIVEDRA_USER_ROOT"] !== undefined
+  );
+}
+
+async function resolveSessionCommandStorageOptions(
+  options: CliStorageOptions,
+): Promise<CliStorageOptions> {
+  if (hasExplicitSessionStorageOverride(options)) {
+    return options;
+  }
+
+  const projectScopeRoot =
+    await resolveProjectScopeRootForSessionCommand(options);
+  if (projectScopeRoot === undefined) {
+    return options;
+  }
+
+  return {
+    ...options,
+    rootDataDir: path.join(projectScopeRoot, "artifacts"),
+  };
 }
 
 interface WorkflowSourceOutput {
@@ -3790,8 +3874,11 @@ export async function runCli(
   }
 
   if (scope === "session") {
+    const sessionOptions =
+      await resolveSessionCommandStorageOptions(sharedOptions);
+
     if (command === "progress") {
-      const session = await loadSession(target!, sharedOptions);
+      const session = await loadSession(target!, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -3800,7 +3887,7 @@ export async function runCli(
       const countsByNode = session.value.nodeExecutionCounts;
       const currentStepId = await resolveSessionCurrentStepId(
         session.value,
-        sharedOptions,
+        sessionOptions,
       );
       const stepSummaries = buildStepProgressSummaries(session.value);
       const nodeSummaries = Object.keys(countsByNode)
@@ -3863,7 +3950,7 @@ export async function runCli(
       try {
         const report = await buildSessionHealthReport({
           sessionId: target!,
-          options: sharedOptions,
+          options: sessionOptions,
           live: parsed.options.live,
           ...(parsed.options.stallTimeoutMs === undefined
             ? {}
@@ -3894,7 +3981,7 @@ export async function runCli(
     }
 
     if (command === "status") {
-      const session = await loadSession(target!, sharedOptions);
+      const session = await loadSession(target!, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -3902,7 +3989,7 @@ export async function runCli(
 
       const currentStepId = await resolveSessionCurrentStepId(
         session.value,
-        sharedOptions,
+        sessionOptions,
       );
       if (parsed.options.output === "json") {
         emitJson(io, {
@@ -3982,7 +4069,7 @@ export async function runCli(
           return 1;
         }
       }
-      const session = await loadSession(target!, sharedOptions);
+      const session = await loadSession(target!, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -4002,7 +4089,7 @@ export async function runCli(
       }
 
       const result = await runWorkflow(session.value.workflowName, {
-        ...sharedOptions,
+        ...sessionOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
         resumeSessionId: session.value.sessionId,
         ...mockScenarioOptions,
@@ -4084,7 +4171,7 @@ export async function runCli(
         } = buildLocalWorkflowRunOverrides(parsed.options);
 
         const result = await continueWorkflowFromHistory({
-          ...sharedOptions,
+          ...sessionOptions,
           ...budgetOverrides,
           sourceWorkflowExecutionId: target!,
           afterStepRunId: afterRun,
@@ -4199,7 +4286,7 @@ export async function runCli(
         }
       }
 
-      const source = await loadSession(target!, sharedOptions);
+      const source = await loadSession(target!, sessionOptions);
       if (!source.ok) {
         io.stderr(source.error.message);
         return 1;
@@ -4219,7 +4306,7 @@ export async function runCli(
       }
 
       const result = await runWorkflow(source.value.workflowName, {
-        ...sharedOptions,
+        ...sessionOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
         rerunFromSessionId: source.value.sessionId,
         rerunFromStepId: fromStepId,
@@ -4272,7 +4359,7 @@ export async function runCli(
 
       try {
         const overview = await listMergedWorkflowExecutionStepRuns({
-          ...sharedOptions,
+          ...sessionOptions,
           workflowExecutionId: target!,
           ...(filterStepId === undefined ? {} : { filterStepId }),
           ...(statusParsed.value === undefined
@@ -4315,7 +4402,7 @@ export async function runCli(
 
       let payload: WorkflowExecutionExport;
       try {
-        payload = await buildWorkflowExecutionExport(target!, sharedOptions);
+        payload = await buildWorkflowExecutionExport(target!, sessionOptions);
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "unknown error";
@@ -4360,13 +4447,13 @@ export async function runCli(
         );
         return 2;
       }
-      const session = await loadSession(target!, sharedOptions);
+      const session = await loadSession(target!, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
       }
 
-      const logs = await listRuntimeNodeLogs(target!, sharedOptions);
+      const logs = await listRuntimeNodeLogs(target!, sessionOptions);
       const formatBase = parsed.options.format ?? parsed.options.output;
       const format = formatBase === "table" ? "text" : formatBase;
       const serialized = serializeRuntimeNodeLogs(logs, format);

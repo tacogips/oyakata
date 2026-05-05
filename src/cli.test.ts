@@ -2476,6 +2476,80 @@ describe("runCli", () => {
     expect(statusPayload.currentStepId).toBe("writer-step");
   });
 
+  test("session status discovers project-local session store from cwd", async () => {
+    const projectRoot = await makeTempDir();
+    const projectScopeRoot = path.join(projectRoot, ".divedra");
+    const artifactsRoot = path.join(projectScopeRoot, "artifacts");
+    const sessionsRoot = path.join(artifactsRoot, "sessions");
+    const sessionId = "sess-project-local-status";
+    await mkdir(path.join(projectScopeRoot, "workflows"), { recursive: true });
+
+    const saved = await saveSession(
+      {
+        ...createSessionState({
+          sessionId,
+          workflowName: "demo",
+          workflowId: "demo",
+          initialNodeId: "writer-node",
+          runtimeVariables: {},
+        }),
+        status: "running" as const,
+        currentNodeId: "writer-node",
+        queue: ["writer-node"],
+        nodeExecutionCounter: 1,
+        nodeExecutionCounts: {
+          "writer-node": 1,
+        },
+        nodeExecutions: [
+          {
+            nodeId: "writer-node",
+            stepId: "writer-step",
+            nodeRegistryId: "writer-node",
+            nodeExecId: "exec-writer-1",
+            mailboxInstanceId: "exec-writer-1",
+            status: "succeeded" as const,
+            artifactDir: path.join(
+              artifactsRoot,
+              "workflow",
+              "demo",
+              sessionId,
+              "nodes",
+              "writer-node",
+              "exec-writer-1",
+            ),
+            startedAt: "2026-04-24T05:00:00.000Z",
+            endedAt: "2026-04-24T05:00:10.000Z",
+          },
+        ],
+      },
+      {
+        sessionStoreRoot: sessionsRoot,
+      },
+    );
+    expect(saved.ok).toBe(true);
+
+    const previousCwd = process.cwd();
+    process.chdir(projectRoot);
+    try {
+      const statusCapture = createIoCapture();
+      const statusCode = await runCli(
+        ["session", "status", sessionId, "--output", "json"],
+        statusCapture.io,
+      );
+      expect(statusCode).toBe(0);
+      const payload = JSON.parse(statusCapture.stdout.join("\n")) as {
+        currentNodeId: string | null;
+        currentStepId: string | null;
+        status: string;
+      };
+      expect(payload.status).toBe("running");
+      expect(payload.currentNodeId).toBe("writer-node");
+      expect(payload.currentStepId).toBe("writer-step");
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
   test("session progress and status infer the current step from authored workflow state before the first execution record exists", async () => {
     const root = await makeTempDir();
     const artifactsRoot = path.join(root, "artifacts");
