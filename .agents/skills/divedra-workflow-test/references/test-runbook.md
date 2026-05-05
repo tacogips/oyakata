@@ -81,5 +81,5 @@ If run fails, inspect:
 ```bash
 bun run src/main.ts session status <session-id> --output json
 bun run src/main.ts session progress <session-id>
-bun run src/main.ts session logs <session-id> --format text
+bun run src/main.ts graphql '<query or mutation document>'
 ```

@@ -7,6 +7,8 @@ import {
 import type {
   AgentNodePayload,
   SupervisionRunState,
+  WorkflowFanoutFailurePolicy,
+  WorkflowFanoutResultOrder,
   WorkflowJson,
 } from "./types";
 
@@ -217,6 +219,40 @@ export interface ActiveUserActionRef {
   readonly pausedAt: string;
 }
 
+export type FanoutBranchStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "paused";
+
+export interface FanoutBranchRecord {
+  readonly branchIndex: number;
+  readonly item: unknown;
+  readonly status: FanoutBranchStatus;
+  readonly workItemId: string;
+  readonly nodeExecIds?: readonly string[];
+  readonly outputRef?: OutputRef;
+  readonly error?: string;
+  readonly workspaceRoot?: string;
+}
+
+export interface FanoutGroupRunRecord {
+  readonly fanoutGroupRunId: string;
+  readonly groupId: string;
+  readonly sourceStepId: string;
+  readonly sourceNodeExecId: string;
+  readonly transitionLabel?: string;
+  readonly targetStepId: string;
+  readonly targetWorkflowId?: string;
+  readonly joinStepId: string;
+  readonly concurrency: number;
+  readonly failurePolicy: WorkflowFanoutFailurePolicy;
+  readonly resultOrder: WorkflowFanoutResultOrder;
+  readonly branches: readonly FanoutBranchRecord[];
+}
+
 export interface WorkflowSessionState {
   readonly sessionId: string;
   readonly workflowName: string;
@@ -245,6 +281,7 @@ export interface WorkflowSessionState {
   >;
   readonly pendingOptionalNodeDecisions?: readonly PendingOptionalNodeDecision[];
   readonly activeUserActions?: readonly ActiveUserActionRef[];
+  readonly fanoutGroups?: readonly FanoutGroupRunRecord[];
   readonly runtimeVariables: Readonly<Record<string, unknown>>;
   readonly lastError?: string;
   /** Present when the session is part of an auto-improve / superviser cycle. */
@@ -351,8 +388,7 @@ function coerceHistoryImports(
       continue;
     }
     const objectEntry = entry as Record<string, unknown>;
-    const sourceWorkflowExecutionId =
-      objectEntry["sourceWorkflowExecutionId"];
+    const sourceWorkflowExecutionId = objectEntry["sourceWorkflowExecutionId"];
     const throughStepRunId = objectEntry["throughStepRunId"];
     const throughExecutionOrdinal = objectEntry["throughExecutionOrdinal"];
     if (
@@ -389,8 +425,7 @@ function assignStableExecutionOrdinals(
   );
   if (allDefined) {
     return [...executions].sort((left, right) => {
-      const ordinalDiff =
-        left.executionOrdinal! - right.executionOrdinal!;
+      const ordinalDiff = left.executionOrdinal! - right.executionOrdinal!;
       if (ordinalDiff !== 0) {
         return ordinalDiff;
       }
@@ -498,10 +533,7 @@ export function normalizeSessionState(
   next =
     historyImports === undefined
       ? (() => {
-          const {
-            historyImports: removedHistoryImports,
-            ...remainder
-          } = next;
+          const { historyImports: removedHistoryImports, ...remainder } = next;
           void removedHistoryImports;
           return remainder as WorkflowSessionState;
         })()
@@ -513,10 +545,8 @@ export function normalizeSessionState(
   next =
     continuationMode === undefined
       ? (() => {
-          const {
-            continuationMode: removedContinuationMode,
-            ...remainder
-          } = next;
+          const { continuationMode: removedContinuationMode, ...remainder } =
+            next;
           void removedContinuationMode;
           return remainder as WorkflowSessionState;
         })()

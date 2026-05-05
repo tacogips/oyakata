@@ -30,6 +30,7 @@ export interface CompletionRule {
 export interface WorkflowDefaults {
   readonly nodeTimeoutMs: number;
   readonly maxLoopIterations: number;
+  readonly fanoutConcurrency?: number;
   readonly timeoutPolicy?: WorkflowTimeoutPolicy;
   readonly containerRuntime?: ContainerRuntimeDefaults;
 }
@@ -118,6 +119,28 @@ export interface WorkflowStepTransition {
   /** Parent workflow step to queue after the callee workflow completes (required when `toWorkflowId` is set). */
   readonly resumeStepId?: string;
   readonly label?: string;
+  readonly fanout?: WorkflowStepFanout;
+}
+
+export type WorkflowFanoutFailurePolicy = "fail-fast" | "collect-all";
+
+export type WorkflowFanoutResultOrder = "input";
+
+export interface WorkflowFanoutWriteOwnership {
+  readonly mode: "read-only" | "disjoint-paths" | "isolated-workspace";
+  readonly paths?: readonly string[];
+  readonly directories?: readonly string[];
+}
+
+export interface WorkflowStepFanout {
+  readonly groupId: string;
+  readonly itemsFrom: string;
+  readonly itemVariable?: string;
+  readonly concurrency?: number;
+  readonly joinStepId: string;
+  readonly failurePolicy?: WorkflowFanoutFailurePolicy;
+  readonly resultOrder?: WorkflowFanoutResultOrder;
+  readonly writeOwnership?: WorkflowFanoutWriteOwnership;
 }
 
 export interface WorkflowStepSessionPolicy {
@@ -174,6 +197,7 @@ export interface WorkflowEdge {
   readonly to: string;
   readonly when: string;
   readonly priority?: number;
+  readonly fanout?: WorkflowStepFanout;
 }
 
 export interface LoopRule {
@@ -277,6 +301,9 @@ export function getStructuralEdges(
         from: step.id,
         to: transition.toStepId,
         when: transition.label ?? "always",
+        ...(transition.fanout === undefined
+          ? {}
+          : { fanout: transition.fanout }),
       })),
   );
 }

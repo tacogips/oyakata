@@ -204,24 +204,6 @@ Show progress:
 bun run src/main.ts session progress <session-id>
 ```
 
-Read logs:
-
-```bash
-bun run src/main.ts session logs <session-id> --format text
-```
-
-Inspect health and stall evidence:
-
-```bash
-bun run src/main.ts session health <session-id> --stall-timeout-ms 120000
-```
-
-Use `--output json` for the full bounded report. `--live` keeps unsupported
-local liveness checks explicit as unknown or not-proven. LLM session history is
-omitted by default; add `--include-llm-messages --llm-limit <n>` only when
-conversation content is safe to display. Remote `--endpoint` health support is
-deferred.
-
 Resume a paused or resumable execution:
 
 ```bash
@@ -234,24 +216,12 @@ Rerun from a step without importing prior step artifacts:
 bun run src/main.ts session rerun <session-id> <step-id>
 ```
 
-List merged step-run history:
-
-```bash
-bun run src/main.ts session step-runs <session-id>
-```
-
 Continue from a concrete prior step-run boundary:
 
 ```bash
 bun run src/main.ts session continue <session-id> \
   --start-step <step-id> \
   --after-step-run <step-run-id>
-```
-
-Export an execution:
-
-```bash
-bun run src/main.ts session export <session-id> --file session-export.json
 ```
 
 ## Direct Step Calls
@@ -291,12 +261,16 @@ Defaults:
 Run a GraphQL query from the CLI:
 
 ```bash
-bun run src/main.ts gql '
+bun run src/main.ts graphql '
   query {
     workflows(input: {})
   }
 '
 ```
+
+Without `--endpoint`, `graphql` executes against the local in-process GraphQL
+schema using project-scoped workflow/session storage. Use `--endpoint` or
+`DIVEDRA_GRAPHQL_ENDPOINT` to send the same document to a remote server.
 
 Run a workflow through a remote endpoint:
 
@@ -308,9 +282,9 @@ bun run src/main.ts workflow run <workflow-name> \
 ```
 
 Remote-capable CLI operations include `workflow list`, `workflow status`,
-`workflow run`, `session resume`, and `session rerun`. Local-only operations
-include `call-step`, `session continue`, `session step-runs`, `session export`,
-and `session logs`.
+`workflow run`, `session resume`, and `session rerun`. Detailed execution
+inspection, logs, health-style diagnostics, and export-shaped payloads are
+accessed through GraphQL rather than separate CLI subcommands.
 
 ## Events
 

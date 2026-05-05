@@ -1,4 +1,8 @@
-import type { WorkflowJson, WorkflowStepRef } from "./types";
+import type {
+  WorkflowJson,
+  WorkflowStepFanout,
+  WorkflowStepRef,
+} from "./types";
 
 /**
  * Runtime/inspection projection for cross-workflow links derived from
@@ -12,6 +16,7 @@ export interface CrossWorkflowDispatch {
   /** Authored resume target in the caller workflow after the callee completes. */
   readonly resumeStepId: string;
   readonly when?: string;
+  readonly fanout?: WorkflowStepFanout;
 }
 
 /**
@@ -44,6 +49,7 @@ export function crossWorkflowDispatchesFromSteps(
       callerStepId: step.id,
       resumeStepId: cross.resumeStepId,
       ...(when === undefined ? {} : { when }),
+      ...(cross.fanout === undefined ? {} : { fanout: cross.fanout }),
     });
   }
   return out;

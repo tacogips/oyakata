@@ -1,6 +1,6 @@
 ---
 name: divedra-workflow-reference
-description: Use when helping developers integrate with divedra workflows programmatically. Applies to the divedra package API, createWorkflowExecutionClient, inspectWorkflow, executeWorkflow, resumeWorkflow, rerunWorkflow, getRuntimeSessionView, callWorkflowStep, executeGraphqlRequest, createGraphqlSchema, executeGraphqlDocument, GraphQL control-plane queries and mutations, divedra gql, manager-session auth, and choosing between local library calls and remote GraphQL endpoint calls.
+description: Use when helping developers integrate with divedra workflows programmatically. Applies to the divedra package API, createWorkflowExecutionClient, inspectWorkflow, executeWorkflow, resumeWorkflow, rerunWorkflow, getRuntimeSessionView, callWorkflowStep, executeGraphqlRequest, createGraphqlSchema, executeGraphqlDocument, GraphQL control-plane queries and mutations, divedra graphql, manager-session auth, and choosing between local library calls and remote GraphQL endpoint calls.
 metadata:
   short-description: Use divedra workflow APIs
 ---
@@ -15,7 +15,7 @@ Use this skill for developer-facing references and integrations. For end-user CL
 - Use `createWorkflowExecutionClient()` when code should work locally or remotely with the same shape. If `endpoint` is present, it uses GraphQL; otherwise it uses the local library path.
 - Use direct library functions such as `inspectWorkflow()`, `executeWorkflow()`, `resumeWorkflow()`, `rerunWorkflow()`, and `getRuntimeSessionView()` for in-process Node/Bun integration.
 - Use `executeGraphqlRequest()` for low-level GraphQL HTTP calls.
-- Use `divedra gql` for shell-based GraphQL queries and manager/control-plane actions.
+- Use `divedra graphql` for shell-based GraphQL queries and manager/control-plane actions.
 - Use `createGraphqlSchema()` or `executeGraphqlDocument()` for in-process GraphQL without HTTP.
 - Use `callWorkflowStep()` only for local step-addressed debugging/integration; do not invent node-addressed aliases.
 
@@ -141,13 +141,13 @@ divedra workflow usage --workflow-definition-dir ./examples --output json
 ```
 
 ```bash
-divedra gql 'query { workflows(input: {}) }'
+divedra graphql 'query { workflows(input: {}) }'
 ```
 
 With variables:
 
 ```bash
-divedra gql '
+divedra graphql '
   mutation ExecuteWorkflow($input: ExecuteWorkflowInput!) {
     executeWorkflow(input: $input) {
       sessionId
@@ -159,8 +159,8 @@ divedra gql '
 
 ## Integration Rules
 
-- GraphQL endpoint default is `http://127.0.0.1:43173/graphql`.
-- Endpoint resolution for CLI is `--endpoint`, then `DIVEDRA_GRAPHQL_ENDPOINT`, then the local default.
+- Without `--endpoint`, the GraphQL CLI executes in-process against local project-scoped workflow/session storage.
+- Endpoint resolution for remote CLI transport is `--endpoint`, then `DIVEDRA_GRAPHQL_ENDPOINT`.
 - `executeGraphqlRequest()` sends standard `{ query, variables }` JSON and returns `{ data, errors }`.
 - `authToken` becomes `Authorization: Bearer <token>`.
 - `managerSessionId` becomes the manager-session header used by divedra GraphQL.

@@ -117,19 +117,6 @@ Full status:
 divedra session status <session-id> --output json
 ```
 
-Logs:
-
-```bash
-divedra session logs <session-id> --format text
-divedra session logs <session-id> --format jsonl
-```
-
-Export:
-
-```bash
-divedra session export <session-id> --file session-export.json
-```
-
 Resume:
 
 ```bash
@@ -140,13 +127,6 @@ Rerun from a step:
 
 ```bash
 divedra session rerun <session-id> <step-id>
-```
-
-List merged step-run history:
-
-```bash
-divedra session step-runs <session-id>
-divedra session step-runs <session-id> --step <step-id>
 ```
 
 Continue from an imported-history boundary:
@@ -184,7 +164,7 @@ curl http://127.0.0.1:43173/healthz
 GraphQL query:
 
 ```bash
-divedra gql 'query { workflows(input: {}) }'
+divedra graphql 'query { workflows(input: {}) }'
 ```
 
 Endpoint-backed execution:
@@ -206,9 +186,9 @@ Local-only commands:
 
 - `call-step`
 - `session continue`
-- `session step-runs`
-- `session export`
-- `session logs`
+
+Detailed diagnostics, logs, merged execution history, and export-shaped payloads
+are GraphQL queries rather than separate session subcommands.
 
 ## Direct Step Calls
 
@@ -265,7 +245,7 @@ Recommended defaults:
 - Use `--auto-improve --nested-supervisor` for production-like or expensive work.
 - Use `--workflow-mutation-mode execution-copy` unless the user explicitly asks to patch the canonical workflow bundle in place.
 - Set `--max-supervised-attempts` to a small finite number, commonly `3`, to avoid unbounded remediation.
-- Use `session status` or `session export` after the run to inspect supervision state.
+- Use `session status` or GraphQL detail queries after the run to inspect supervision state.
 
 ## Events
 
@@ -349,7 +329,7 @@ Run failed:
 
 - Check `session status <session-id> --output json`.
 - Check `session progress <session-id>`.
-- Check `session logs <session-id> --format text`.
+- Query GraphQL detail fields for logs and communication state.
 - Reproduce with `--mock-scenario` if the failure is backend-dependent.
 
 Remote execution fails:

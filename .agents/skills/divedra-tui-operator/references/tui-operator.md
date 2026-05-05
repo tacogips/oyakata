@@ -25,11 +25,10 @@ Session detail:
 ```bash
 divedra session status <session-id> --output json
 divedra session progress <session-id>
-divedra session logs <session-id> --format text
 ```
 
 GraphQL detail:
 
 ```bash
-divedra gql 'query { workflows(input: {}) }'
+divedra graphql 'query { workflows(input: {}) }'
 ```

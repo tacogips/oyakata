@@ -81,6 +81,7 @@ Authored shape:
   "defaults": {
     "maxLoopIterations": 3,
     "nodeTimeoutMs": 120000,
+    "fanoutConcurrency": 20,
     "timeoutPolicy": {
       "onTimeout": "fail"
     }
@@ -155,6 +156,8 @@ Optional:
 - `prompts.divedraPromptTemplate: string`
 - `prompts.workerSystemPromptTemplate: string`
 - `defaults.maxLoopIterations` (defaults to the runtime default when omitted)
+- `defaults.fanoutConcurrency` (defaults to `20` when omitted; per-transition
+  fanout may set a lower or equal effective bound)
 - `defaults.timeoutPolicy`
 - `defaults.containerRuntime` (defaults to the runtime container runner default when omitted)
 
@@ -368,6 +371,7 @@ Shape:
 - optional `toWorkflowId: string`
 - optional `resumeStepId: string` (required when `toWorkflowId` is present)
 - optional `label: string`
+- optional `fanout: StepTransitionFanout`
 
 Rules:
 
@@ -379,6 +383,48 @@ Rules:
 - cross-workflow transitions must target the callee workflow's callable entry step, which is normally its `managerStepId`, or `entryStepId` for a worker-only workflow
 - transitions always target steps, never raw node ids
 - optional `label` uses the same expression grammar as the `when` field on step-derived routing edges (`getStructuralEdges` in `src/workflow/types.ts` maps omitted `label` to `always`). For cross-workflow transitions, omitted `label` means the derived cross-workflow dispatch is unconditional. When set, `label` gates both local transition selection and cross-workflow dispatch matching. Step-authored cross-workflow transitions are **not** copied onto `workflow.workflowCalls` during normalization; the engine and inspection surfaces derive the effective dispatch list (deterministic ids `__cw:<callerStepId>`) from `steps[]`
+
+### `StepTransitionFanout`
+
+`fanout` defines bounded parallel branch execution from one selected transition
+and an explicit join back into the current workflow.
+
+Initial dynamic shape:
+
+```json
+{
+  "groupId": "feature-design",
+  "itemsFrom": "/payload/features",
+  "itemVariable": "feature",
+  "concurrency": 20,
+  "joinStepId": "join-feature-design",
+  "failurePolicy": "fail-fast",
+  "resultOrder": "input"
+}
+```
+
+Fields:
+
+- `groupId: string`
+- `itemsFrom: string`
+- optional `itemVariable: string`
+- optional `concurrency: number`
+- `joinStepId: string`
+- optional `failurePolicy: "fail-fast" | "collect-all"`
+- optional `resultOrder: "input"`
+
+Rules:
+
+- `itemsFrom` is a JSON Pointer into the source step output payload and must resolve to an array at runtime
+- each source item creates a distinct branch work item, so the same target step may execute once per item without queue dedupe collapsing the branches
+- `concurrency` defaults to `defaults.fanoutConcurrency` or `20` and must stay within the runtime maximum fanout concurrency
+- `joinStepId` must reference a current-workflow step and is queued once after all required branch work succeeds
+- for cross-workflow fanout, authored `resumeStepId` remains required and must equal `fanout.joinStepId`
+- branch outputs are aggregated in source item order and delivered to the join step through runtime-owned communication artifacts
+- partial-success joins are out of scope for the initial schema; `fail-fast` stops on first branch failure, while `collect-all` waits for terminal branch states and then fails if any branch failed
+
+Detailed design:
+`design-docs/specs/design-bounded-fanout-join-workflow-execution.md`.
 
 ## Removed Fields
 

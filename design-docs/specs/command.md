@@ -61,22 +61,6 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
   - Show queue, execution counts, and per-step restart/execution summary.
 - `session status <session-id>`
   - Show the persisted workflow-session snapshot.
-- `session health <session-id>`
-  - Show an operator-facing health snapshot that combines persisted session
-    state, active-node metadata, bounded recent runtime/process logs,
-    artifact/candidate timestamps, optional recent LLM session messages, and a
-    conservative stall assessment.
-  - Default output is compact text; `--output json` returns the complete health
-    object for automation.
-  - `--live` requests a best-effort local liveness probe. Unsupported live checks
-    report `liveSignal.status = "unknown"` or `"not-proven"` instead of
-    guessing from persisted timestamps.
-  - The command must keep live-state uncertainty explicit. If persisted state
-    cannot prove a backend process is active or stalled, it reports
-    `liveSignal.confidence = "unknown"` rather than claiming liveness.
-  - The command is local-only in the first slice and rejects `--endpoint` with a
-    usage error, matching current `session logs`, `session export`, and
-    `session step-runs` locality.
 - `session resume <session-id>`
   - Continue an interrupted session from persisted state.
   - Accepts `--working-dir` / `--working-directory` to override the execution working directory used for resumed step execution.
@@ -89,24 +73,16 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 - `session continue <source-workflow-execution-id> --start-step <step-id> --after-step-run <step-run-id>`
   - Planned history-linked continuation mode. Starts a new workflow execution from `startStepId` while importing source history through one concrete prior step run.
   - `after-step-run` is resolved against the merged step-run timeline visible from the source workflow execution, so the chosen anchor may belong to imported ancestry rather than only the source run's local rows.
-- `session step-runs <workflow-execution-id>`
-  - Planned operator inspection surface for the merged ordered step-run history (`timelineOrdinal`, `executionOrdinal`, `stepRunId`, `stepId`, status, imported, lineage) visible from one workflow execution.
-  - Existing `session status`, `session progress`, and low-level `nodeExecutions` inspection remain local-session views unless an explicit imported-history mode is requested.
-- `session export <session-id>`
-  - Export the persisted workflow run as JSON to stdout or to a file.
-  - Includes session state, runtime step/node execution rows, runtime node logs, and communication snapshots.
-- `session logs <session-id>`
-  - Print runtime node logs for a persisted session.
-  - Accepts `--format text|json|jsonl`; defaults to text unless `--output json` is used.
 - `call-step <workflow-id> <workflow-run-id> <step-id>`
   - Execute one step directly against an existing run context for local debugging.
   - The same call contract is the target runtime primitive for cross-workflow invocation; calling another workflow means targeting that workflow's callable entry step through `call-step` semantics rather than through an authored top-level `workflow.workflowCalls` array (validation rejects that field).
   - Support explicit continuation controls such as prompt variant selection, backend-session reuse, and timeout override so the same reusable node can be revisited through a different step for flows such as self-review and timeout recovery.
   - New API work should follow the same rule: step-addressed direct execution only, with no additive `call-node`-style aliases. The legacy `call-node` command/library surface is removed rather than retained as a compatibility synonym.
-- `gql <graphql-document>`
+- `graphql <graphql-document>`
   - Execute a GraphQL query or mutation against the canonical control-plane endpoint.
   - Manager-node LLM/tool use should call GraphQL mutations such as `sendManagerMessage` through this command rather than dedicated domain subcommands.
   - When `DIVEDRA_MANAGER_SESSION_ID` is present, the CLI forwards it to `/graphql` with `X-Divedra-Manager-Session-Id` so manager-scoped mutations do not need to repeat it in GraphQL variables.
+  - Without `--endpoint`, executes in-process against local project-scoped workflow/session storage. `--endpoint` or `DIVEDRA_GRAPHQL_ENDPOINT` selects remote HTTP transport.
 - `serve [workflow-name]`
   - Start the local HTTP control plane.
   - If `workflow-name` is provided, workflow-definition access is constrained to that workflow.
@@ -146,17 +122,12 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | Flag                                              | Type          | Default                                             | Description                                                                                                                                                                                  |
 | ------------------------------------------------- | ------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--worker-only`                                   | boolean       | `false`                                             | For `workflow create`: scaffold a manager-less starter whose explicit `entryStepId` is `main-worker`                                                                                         |
-| `--variables`                                     | string        | none                                                | For `workflow run`: runtime variables as inline JSON object, existing file path, or `@path/to/variables.json`; for `divedra gql`: inline GraphQL variables JSON or `@path/to/variables.json` |
+| `--variables`                                     | string        | none                                                | For `workflow run`: runtime variables as inline JSON object, existing file path, or `@path/to/variables.json`; for `divedra graphql`: inline GraphQL variables JSON or `@path/to/variables.json` |
 | `--workflow-definition-dir`                       | string (path) | scoped catalog lookup                               | Direct directory containing `<workflow-name>/workflow.json` definition bundles; when supplied, bypasses project/user scope catalog lookup and does not control logs, sessions, or artifacts  |
 | `--scope`                                         | string        | `auto`                                              | Workflow scope selector for read/write commands: `auto`, `project`, or `user`                                                                                                                |
 | `--status`                                        | string        | none                                                | For overview/list commands: filter by aggregate status (`running`, `paused`, `completed`, `failed`, `cancelled`, or `never-run`)                                                             |
 | `--limit`                                         | number        | command-specific                                    | Limit compact list output, such as workflow rows for `workflow list` or recent executions for `workflow status`                                                                              |
-| `--log-limit`                                     | number        | command-specific                                    | For `session health`: maximum recent runtime node log records to include                                                                                                                     |
-| `--llm-limit`                                     | number        | command-specific                                    | For `session health`: maximum recent LLM session message records to include when LLM history is enabled                                                                                      |
-| `--include-llm-messages`                          | boolean       | `false`                                             | For `session health`: include bounded recent backend LLM session messages from the runtime DB message index                                                                                  |
-| `--include-llm-history`                           | boolean       | alias                                               | Compatibility alias for `--include-llm-messages`; documentation and examples should prefer `--include-llm-messages`                                                                          |
-| `--live`                                          | boolean       | `false`                                             | For `session health`: request a best-effort local backend/process liveness probe while keeping unsupported or inconclusive live state explicit                                               |
-| `--stall-timeout-ms`                              | number        | none                                                | For `auto improve mode`, and optionally for `session health`: threshold used to mark no-progress evidence as stalled; must be greater than or equal to `--monitor-interval-ms`               |
+| `--stall-timeout-ms`                              | number        | none                                                | For `auto improve mode`: threshold used to mark no-progress evidence as stalled; must be greater than or equal to `--monitor-interval-ms`                                                     |
 | `--user-root`                                     | string (path) | `~/.divedra`                                        | User scope root; workflows are read from `<user-root>/workflows` unless `--workflow-definition-dir` is supplied                                                                              |
 | `--project-root`                                  | string (path) | nearest project `.divedra`                          | Project scope root; workflows are read from `<project-root>/workflows` unless `--workflow-definition-dir` is supplied                                                                        |
 | `--addon-root`                                    | string (path) | scoped add-on catalog lookup                        | Direct root directory containing local add-ons; during scoped catalog loading, searched before project/user add-on roots                                                                     |
@@ -211,8 +182,8 @@ Commands are designed around JSON workflow lifecycle operations and writing sess
 | `DIVEDRA_SERVE_PORT`              | No       | `43173`                                         | Default listen port for `serve`                                                                                                                               |
 | `DIVEDRA_ARTIFACT_DIR`            | No       | owning scope artifacts root or user artifacts   | Canonical root data directory override: sessions, `workflow/`, `files/`, `divedra.db`                                                                         |
 | `DIVEDRA_GRAPHQL_ENDPOINT`        | No       | local serve endpoint                            | Default GraphQL endpoint for CLI manager/control-plane commands                                                                                               |
-| `DIVEDRA_MANAGER_AUTH_TOKEN`      | No       | none                                            | Manager-session auth token for `divedra gql` and GraphQL control-plane mutations                                                                              |
-| `DIVEDRA_MANAGER_SESSION_ID`      | No       | none                                            | Ambient manager session id forwarded by `divedra gql` to `/graphql` for manager-scoped requests                                                               |
+| `DIVEDRA_MANAGER_AUTH_TOKEN`      | No       | none                                            | Manager-session auth token for `divedra graphql` and GraphQL control-plane mutations                                                                          |
+| `DIVEDRA_MANAGER_SESSION_ID`      | No       | none                                            | Ambient manager session id forwarded by `divedra graphql` to `/graphql` for manager-scoped requests                                                           |
 | `DIVEDRA_WORKFLOW_ID`             | No       | none                                            | Ambient workflow id for divedra-launched backend processes, manager tool environments, and hook event recording                                               |
 | `DIVEDRA_WORKFLOW_EXECUTION_ID`   | No       | none                                            | Ambient workflow execution id for divedra-launched backend processes, manager tool environments, and hook event recording                                     |
 | `DIVEDRA_STEP_ID`                 | No       | none                                            | Ambient step id for the current step invocation and hook event recording                                                                                      |
@@ -332,7 +303,7 @@ GraphQL is the canonical domain-parameter transport for:
 - manager send/control-plane requests.
 
 - domain parameters should be modeled in GraphQL inputs,
-- `divedra gql` is the thin generic GraphQL client surface,
+- `divedra graphql` is the thin generic GraphQL client surface,
 - local-only debug flags such as `--mock-scenario` are not forwarded when a command is executed remotely through GraphQL,
 - `workflow list` and `workflow status` should consume compact overview summary queries rather than low-level node, communication, hook-event, or log detail queries,
 - workflow tooling should use GraphQL rather than parallel REST transports.

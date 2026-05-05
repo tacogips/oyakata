@@ -371,6 +371,128 @@ describe("validateWorkflowBundle", () => {
     expect("workflowCalls" in result.value.workflow).toBe(false);
   });
 
+  test("accepts cross-workflow fanout transition and normalizes defaults", () => {
+    const raw = makeStepAddressedRaw();
+    raw.workflow["defaults"] = {
+      maxLoopIterations: 3,
+      nodeTimeoutMs: 120000,
+      fanoutConcurrency: 20,
+    };
+    raw.workflow["steps"] = [
+      {
+        id: "manager",
+        nodeId: "manager",
+        role: "manager",
+        transitions: [
+          {
+            toStepId: "child-entry",
+            toWorkflowId: "child-flow",
+            resumeStepId: "after-child",
+            fanout: {
+              groupId: "features",
+              itemsFrom: "/payload/features",
+              itemVariable: "feature",
+              concurrency: 5,
+              joinStepId: "after-child",
+              failurePolicy: "fail-fast",
+              resultOrder: "input",
+              writeOwnership: { mode: "read-only" },
+            },
+          },
+        ],
+      },
+      {
+        id: "after-child",
+        nodeId: "after-child",
+        role: "worker",
+      },
+    ];
+
+    const result = validateWorkflowBundle(raw);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.workflow.defaults.fanoutConcurrency).toBe(20);
+    expect(
+      crossWorkflowDispatchesFromSteps(result.value.workflow.steps),
+    ).toEqual([
+      {
+        id: "__cw:manager",
+        workflowId: "child-flow",
+        callerStepId: "manager",
+        resumeStepId: "after-child",
+        fanout: {
+          groupId: "features",
+          itemsFrom: "/payload/features",
+          itemVariable: "feature",
+          concurrency: 5,
+          joinStepId: "after-child",
+          failurePolicy: "fail-fast",
+          resultOrder: "input",
+          writeOwnership: { mode: "read-only" },
+        },
+      },
+    ]);
+  });
+
+  test("rejects invalid fanout authoring", () => {
+    const raw = makeStepAddressedRaw();
+    raw.workflow["defaults"] = {
+      maxLoopIterations: 3,
+      nodeTimeoutMs: 120000,
+      fanoutConcurrency: 2,
+    };
+    raw.workflow["steps"] = [
+      {
+        id: "manager",
+        nodeId: "manager",
+        role: "manager",
+        transitions: [
+          {
+            toStepId: "child-entry",
+            toWorkflowId: "child-flow",
+            resumeStepId: "after-child",
+            fanout: {
+              groupId: "features",
+              itemsFrom: "payload/features",
+              itemVariable: "1bad",
+              concurrency: 3,
+              joinStepId: "missing-join",
+              failurePolicy: "partial",
+              resultOrder: "completion",
+              writeOwnership: { mode: "shared" },
+            },
+          },
+        ],
+      },
+      {
+        id: "after-child",
+        nodeId: "after-child",
+        role: "worker",
+      },
+    ];
+
+    const result = validateWorkflowBundle(raw);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.error.map((issue) => issue.path)).toEqual(
+      expect.arrayContaining([
+        "workflow.steps[0].transitions[0].fanout.itemsFrom",
+        "workflow.steps[0].transitions[0].fanout.itemVariable",
+        "workflow.steps[0].transitions[0].fanout.concurrency",
+        "workflow.steps[0].transitions[0].fanout.joinStepId",
+        "workflow.steps[0].transitions[0].fanout.failurePolicy",
+        "workflow.steps[0].transitions[0].fanout.resultOrder",
+        "workflow.steps[0].transitions[0].fanout.writeOwnership.mode",
+      ]),
+    );
+  });
+
   test("sync and async validation align cross-workflow callee entry to the callee manager step", async () => {
     const workflowRoot = makeTempDir();
     const caller = makeStepAddressedRaw();

@@ -53,14 +53,14 @@ The redesign does conflict with the current surface architecture in these areas:
 The redesign resolves the conflict by changing interface layering, not by replacing the runtime model:
 
 - GraphQL becomes the canonical control-plane API for domain operations.
-- long-term, the CLI becomes a thin GraphQL client; during migration, `divedra gql` is already transport-thin and legacy execution commands may opt into GraphQL transport incrementally.
+- long-term, the CLI becomes a thin GraphQL client; `divedra graphql` is the canonical generic GraphQL command and legacy `gql` compatibility is not retained.
 - manager-output `managerControl.actions` becomes a compatibility mode rather than the long-term primary manager control path.
 - mailbox/session artifacts remain durable runtime state and are not replaced by GraphQL.
 
 ## Design Goals
 
 - Make GraphQL the canonical domain API for workflow execution, communication queries, send/replay, and manager inspection.
-- Allow an `divedra` manager node to call `divedra gql "<graphql document>"` from inside its LLM/tool environment.
+- Allow an `divedra` manager node to call `divedra graphql "<graphql document>"` from inside its LLM/tool environment.
 - Preserve current mailbox and execution auditability.
 - Support communication inspection and communication replay without mutating historical artifacts in place.
 - Keep the existing local-first deployment model.
@@ -83,7 +83,7 @@ Rule:
 
 - domain parameters move into GraphQL query/mutation inputs,
 - CLI flags are retained only for transport/bootstrap concerns such as endpoint selection, auth token, output format, and local debug overrides.
-- `divedra gql` supports GraphQL variables through a single `--variables` option that accepts inline JSON or a file reference syntax such as `@path/to/variables.json`
+- `divedra graphql` supports GraphQL variables through a single `--variables` option that accepts inline JSON or a file reference syntax such as `@path/to/variables.json`
 - legacy execution commands may gain GraphQL-backed transport one slice at a time; until that migration completes, some local debug-only flags remain local-only and are not forwarded through GraphQL
 - GraphQL is now the canonical execution/communication/manager control surface for served workflow-definition, execution, and session operations; no separate bootstrap REST endpoint remains in the current implementation
 
@@ -265,14 +265,14 @@ Required ambient identity for LLM-triggered CLI use:
 The explicit command form requested by the user is supported:
 
 ```bash
-divedra gql "<graphql document>"
+divedra graphql "<graphql document>"
 ```
 
 Resolution rules:
 
 - workflow/domain identifiers are carried inside the GraphQL document variables/input
 - manager node identity and authorization are resolved from ambient manager-session environment and validated against the presented bearer token
-- for HTTP transport, `divedra gql` forwards `DIVEDRA_MANAGER_SESSION_ID` in `X-Divedra-Manager-Session-Id` so the server can resolve the scoped manager session without embedding it in GraphQL variables
+- for HTTP transport, `divedra graphql` forwards `DIVEDRA_MANAGER_SESSION_ID` in `X-Divedra-Manager-Session-Id` so the server can resolve the scoped manager session without embedding it in GraphQL variables
 - local operator/debug mode may allow explicit overrides, but those are not part of the normal LLM-facing contract
 
 ### Manager Token Contract
@@ -669,7 +669,7 @@ The send mutation must return:
 Two manager-control input modes exist during migration:
 
 1. `managerControl.actions` returned inside node output payload
-2. explicit `sendManagerMessage` via `divedra gql` control-plane command
+2. explicit `sendManagerMessage` via `divedra graphql` control-plane command
 
 ### Priority Rule
 
@@ -695,7 +695,7 @@ Payload-embedded `managerControl.actions` remains a compatibility mechanism and 
 
 Canonical CLI command:
 
-- `divedra gql "<graphql document>"`
+- `divedra graphql "<graphql document>"`
 
 ### Compatibility Commands
 
@@ -723,7 +723,7 @@ Added responsibilities:
 - expose `/healthz`
 - expose optional GraphQL schema/introspection in local development mode
 - avoid reintroducing parallel workflow/session REST endpoints beside GraphQL
-- allow the generic `divedra gql` CLI client to target the same local endpoint
+- allow the generic `divedra graphql` CLI client to target the same local endpoint when remote transport is requested
 
 ## Data Model Extensions
 
@@ -785,7 +785,7 @@ Recommended migration order:
 2. Add shared application services for communication inspection/retry/replay and manager messaging.
 3. Add manager-message provenance support for manager-authored mailbox sends.
 4. Add GraphQL schema and server integration on top of those services.
-5. Add the generic `divedra gql` CLI client.
+5. Add the generic `divedra graphql` CLI client.
 6. Inject manager-session environment into manager-node executions and update manager prompt guidance.
 7. Keep browser workflow-definition, execution, and session flows aligned on GraphQL now that the REST browser surface has been removed.
 
@@ -802,4 +802,4 @@ Therefore the redesign direction is:
 - make GraphQL canonical,
 - make CLI a generic client over that control plane,
 - add first-class communication inspection and replay,
-- support LLM-triggered `divedra gql` through ambient manager-session context.
+- support LLM-triggered `divedra graphql` through ambient manager-session context.

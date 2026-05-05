@@ -219,25 +219,26 @@ Transport behavior:
 ## CLI GraphQL Client
 
 ```bash
-divedra gql 'query { workflows(input: {}) }'
+divedra graphql 'query { workflows(input: {}) }'
 ```
 
 Variables can be inline JSON or a file:
 
 ```bash
-divedra gql 'query($input: WorkflowListInput!) { workflows(input: $input) { workflows { workflowName } } }' \
+divedra graphql 'query($input: WorkflowListInput!) { workflows(input: $input) { workflows { workflowName } } }' \
   --variables '{"input":{}}'
 ```
 
 ```bash
-divedra gql 'query($input: WorkflowListInput!) { workflows(input: $input) { workflows { workflowName } } }' \
+divedra graphql 'query($input: WorkflowListInput!) { workflows(input: $input) { workflows { workflowName } } }' \
   --variables @variables.json
 ```
 
 Endpoint resolution:
 
-1. `--endpoint`
-2. `DIVEDRA_GRAPHQL_ENDPOINT`
+Without `--endpoint`, the command executes in-process against local
+project-scoped workflow/session storage. Remote transport uses `--endpoint`,
+then `DIVEDRA_GRAPHQL_ENDPOINT`.
 3. `http://127.0.0.1:43173/graphql`
 
 Manager auth resolution:
@@ -330,7 +331,7 @@ mutation SendManagerMessage($input: SendManagerMessageInput!) {
 
 ## Manager-Control Rules
 
-- Prefer typed GraphQL manager actions over freeform control prose when `divedra gql` is available.
+- Prefer typed GraphQL manager actions over freeform control prose when `divedra graphql` is available.
 - Manager-scoped operations require a manager session id and bearer auth token.
 - Runtime manager steps mint scoped GraphQL manager context and pass it through environment when supported.
 - Manager mutations use persisted idempotency keyed by mutation name, manager session id, and idempotency key.
@@ -363,7 +364,7 @@ Use GraphQL when:
 - Implementing manager control-plane operations.
 - Building automation that should align with the served API.
 
-Use `divedra gql` when:
+Use `divedra graphql` when:
 
 - Running from shell scripts.
 - Giving manager agents a generic control-plane tool.

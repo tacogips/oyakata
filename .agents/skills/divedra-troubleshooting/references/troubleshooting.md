@@ -32,7 +32,6 @@ Inspect:
 ```bash
 divedra session status <session-id> --output json
 divedra session progress <session-id>
-divedra session logs <session-id> --format text
 ```
 
 Then check:
@@ -65,4 +64,5 @@ Check:
 - `DIVEDRA_SESSION_STORE`
 - `DIVEDRA_ARTIFACT_DIR`
 
-Use `session export` for a portable diagnostic snapshot.
+Use GraphQL detail queries for portable diagnostic snapshots, logs, and
+communication state.

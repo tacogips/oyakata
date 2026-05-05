@@ -53,7 +53,7 @@ Use:
 
 ```bash
 divedra session status <session-id> --output json
-divedra session export <session-id> --file session-export.json
+divedra graphql '<query or mutation document>'
 ```
 
 Look for:

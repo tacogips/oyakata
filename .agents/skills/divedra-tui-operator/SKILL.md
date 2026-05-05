@@ -23,4 +23,4 @@ Read `references/tui-operator.md` for navigation conventions and fallback CLI co
 - List-like panes should support arrow keys and `j` / `k`.
 - `enter` and `ctrl-m` should stay semantically aligned.
 - `esc` should return from deeper detail panes to their parent pane.
-- If UI detail is insufficient, fall back to `workflow status`, `session status`, `session progress`, `session logs`, or GraphQL detail queries.
+- If UI detail is insufficient, fall back to `workflow status`, `session status`, `session progress`, or GraphQL detail queries.

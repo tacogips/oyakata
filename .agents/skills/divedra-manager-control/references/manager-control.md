@@ -2,11 +2,13 @@
 
 ## Transport
 
-`divedra gql` sends GraphQL documents to:
+`divedra graphql` sends GraphQL documents to:
+
+Without `--endpoint`, it executes against the local in-process GraphQL schema
+using project-scoped workflow/session storage. Remote transport uses:
 
 1. `--endpoint`
 2. `DIVEDRA_GRAPHQL_ENDPOINT`
-3. `http://127.0.0.1:43173/graphql`
 
 Auth:
 

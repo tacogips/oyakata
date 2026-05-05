@@ -63,6 +63,62 @@ class OptionalDecisionAdapter implements NodeAdapter {
   }
 }
 
+class CrossWorkflowFanoutAdapter implements NodeAdapter {
+  runningReviewers = 0;
+  maxRunningReviewers = 0;
+
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    if (input.nodeId === "writer") {
+      return {
+        provider: "fanout-test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: {
+          features: [
+            { id: "feature-a" },
+            { id: "feature-b" },
+            { id: "feature-c" },
+          ],
+        },
+      };
+    }
+    if (input.nodeId === "reviewer") {
+      this.runningReviewers += 1;
+      this.maxRunningReviewers = Math.max(
+        this.maxRunningReviewers,
+        this.runningReviewers,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      this.runningReviewers -= 1;
+      return {
+        provider: "fanout-test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: {
+          feature: input.mergedVariables["feature"],
+          fanout: input.mergedVariables["fanout"],
+        },
+      };
+    }
+    return {
+      provider: "fanout-test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
 class OutputContractRetryAdapter implements NodeAdapter {
   readonly #mode: "retry-success" | "always-invalid";
 
@@ -1354,6 +1410,154 @@ async function createWorkflowCallFixture(
     executionBackend: "codex-agent",
     model: "gpt-5-nano",
     promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-review-result.json"), {
+    id: "review-result",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review result",
+    variables: {},
+  });
+}
+
+async function createWorkflowCallFanoutFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "step-addressed workflow call fanout fixture",
+    defaults: {
+      maxLoopIterations: 3,
+      nodeTimeoutMs: 120000,
+      fanoutConcurrency: 2,
+    },
+    entryStepId: "writer",
+    nodes: [
+      { id: "writer", nodeFile: "node-writer.json" },
+      { id: "review-result", nodeFile: "node-review-result.json" },
+    ],
+    steps: [
+      {
+        id: "writer",
+        nodeId: "writer",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review-flow",
+            toStepId: "reviewer",
+            resumeStepId: "review-result",
+            fanout: {
+              groupId: "feature-reviews",
+              itemsFrom: "/payload/features",
+              itemVariable: "feature",
+              concurrency: 2,
+              joinStepId: "review-result",
+              failurePolicy: "collect-all",
+              resultOrder: "input",
+              writeOwnership: { mode: "read-only" },
+            },
+          },
+        ],
+      },
+      {
+        id: "review-result",
+        nodeId: "review-result",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer.json"), {
+    id: "writer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-review-result.json"), {
+    id: "review-result",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "review result",
+    variables: {},
+  });
+}
+
+async function createLocalFanoutFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "local fanout fixture",
+    defaults: {
+      maxLoopIterations: 3,
+      nodeTimeoutMs: 120000,
+      fanoutConcurrency: 2,
+    },
+    entryStepId: "writer",
+    nodes: [
+      { id: "writer", nodeFile: "node-writer.json" },
+      { id: "reviewer", nodeFile: "node-reviewer.json" },
+      { id: "review-result", nodeFile: "node-review-result.json" },
+    ],
+    steps: [
+      {
+        id: "writer",
+        nodeId: "writer",
+        role: "worker",
+        transitions: [
+          {
+            toStepId: "reviewer",
+            fanout: {
+              groupId: "local-feature-reviews",
+              itemsFrom: "/payload/features",
+              itemVariable: "feature",
+              concurrency: 2,
+              joinStepId: "review-result",
+              failurePolicy: "collect-all",
+              resultOrder: "input",
+              writeOwnership: { mode: "read-only" },
+            },
+          },
+        ],
+      },
+      {
+        id: "reviewer",
+        nodeId: "reviewer",
+        role: "worker",
+      },
+      {
+        id: "review-result",
+        nodeId: "review-result",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer.json"), {
+    id: "writer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-reviewer.json"), {
+    id: "reviewer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "reviewer",
     variables: {},
   });
 
@@ -3332,6 +3536,101 @@ describe("runWorkflow", () => {
     expect(crossWfParsed["parentNodeExecId"]).toBeUndefined();
     expect(crossWfParsed["childWorkflowId"]).toBeUndefined();
     expect(crossWfParsed["childSessionId"]).toBeUndefined();
+  });
+
+  test("executes cross-workflow fanout with bounded concurrency and deterministic join aggregation", async () => {
+    const root = await makeTempDir();
+    await createWorkflowCallFanoutFixture(root, "workflow-call-fanout");
+    await createWorkflowCallCalleeFixture(root, "review-flow");
+    const adapter = new CrossWorkflowFanoutAdapter();
+
+    const result = await runWorkflow(
+      "workflow-call-fanout",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.maxRunningReviewers).toBeGreaterThan(1);
+    expect(adapter.maxRunningReviewers).toBeLessThanOrEqual(2);
+    expect(result.value.session.fanoutGroups).toHaveLength(1);
+    const group = result.value.session.fanoutGroups?.[0];
+    expect(group?.groupId).toBe("feature-reviews");
+    expect(group?.concurrency).toBe(2);
+    expect(group?.branches.map((branch) => branch.status)).toEqual([
+      "succeeded",
+      "succeeded",
+      "succeeded",
+    ]);
+
+    const joinCommunication = result.value.session.communications.find(
+      (entry) => entry.transitionWhen.startsWith("fanout-join:"),
+    );
+    expect(joinCommunication).toBeDefined();
+    expect(joinCommunication?.toNodeId).toBe("review-result");
+    const aggregateRaw = await readFile(
+      path.join(joinCommunication!.payloadRef.artifactDir, "output.json"),
+      "utf8",
+    );
+    const aggregate = JSON.parse(aggregateRaw) as {
+      readonly results: readonly {
+        readonly branchIndex: number;
+        readonly item: { readonly id: string };
+      }[];
+    };
+    expect(
+      aggregate.results.map((entry) => [entry.branchIndex, entry.item.id]),
+    ).toEqual([
+      [0, "feature-a"],
+      [1, "feature-b"],
+      [2, "feature-c"],
+    ]);
+  });
+
+  test("executes local fanout with bounded concurrency and join runtime variables", async () => {
+    const root = await makeTempDir();
+    await createLocalFanoutFixture(root, "local-fanout");
+    const adapter = new CrossWorkflowFanoutAdapter();
+
+    const result = await runWorkflow(
+      "local-fanout",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(adapter.maxRunningReviewers).toBeGreaterThan(1);
+    expect(adapter.maxRunningReviewers).toBeLessThanOrEqual(2);
+    expect(result.value.session.fanoutGroups).toHaveLength(1);
+    expect(result.value.session.fanoutGroups?.[0]?.branches).toHaveLength(3);
+    const joinExecution = result.value.session.nodeExecutions.find(
+      (entry) => entry.stepId === "review-result",
+    );
+    expect(joinExecution).toBeDefined();
+    const fanoutJoin = result.value.session.runtimeVariables["fanoutJoin"] as
+      | { readonly results?: readonly { readonly branchIndex: number }[] }
+      | undefined;
+    expect(fanoutJoin?.results?.map((entry) => entry.branchIndex)).toEqual([
+      0, 1, 2,
+    ]);
   });
 
   test("skips a cross-workflow dispatch when `when` does not match caller output (gated by evaluateBranch)", async () => {

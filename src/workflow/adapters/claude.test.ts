@@ -5,6 +5,120 @@ import type {
 } from "../adapter";
 import { ClaudeCodeAgentAdapter } from "./claude";
 
+type MockClaudeSessionResultInput = {
+  readonly success?: boolean;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly toolCallCount?: number;
+  readonly messageCount?: number;
+};
+class MockClaudeRunningSession {
+  readonly sessionId: string;
+  readonly #messages: readonly object[];
+  #result: Required<MockClaudeSessionResultInput>;
+  #state: string;
+  #completed: boolean;
+  #completionResolver: (() => void) | undefined;
+
+  constructor(options: {
+    readonly sessionId: string;
+    readonly messages?: readonly object[];
+    readonly result?: MockClaudeSessionResultInput;
+    readonly state?: string;
+    readonly autoComplete?: boolean;
+  }) {
+    this.sessionId = options.sessionId;
+    this.#messages = options.messages ?? [];
+    this.#result = {
+      success: options.result?.success ?? true,
+      startedAt: options.result?.startedAt ?? "2026-03-30T00:00:00.000Z",
+      completedAt: options.result?.completedAt ?? "2026-03-30T00:00:01.000Z",
+      toolCallCount: options.result?.toolCallCount ?? 0,
+      messageCount: options.result?.messageCount ?? this.#messages.length,
+    };
+    this.#state = options.state ?? "running";
+    this.#completed = options.autoComplete ?? true;
+  }
+
+  async *messages(): AsyncIterable<object> {
+    for (const message of this.#messages) {
+      yield message;
+    }
+  }
+
+  async waitForCompletion(): Promise<{
+    readonly success: boolean;
+    readonly stats: {
+      readonly startedAt: string;
+      readonly completedAt: string;
+      readonly toolCallCount: number;
+      readonly messageCount: number;
+    };
+  }> {
+    if (!this.#completed) {
+      await new Promise<void>((resolve) => {
+        this.#completionResolver = resolve;
+      });
+    }
+    return {
+      success: this.#result.success,
+      stats: {
+        startedAt: this.#result.startedAt,
+        completedAt: this.#result.completedAt,
+        toolCallCount: this.#result.toolCallCount,
+        messageCount: this.#result.messageCount,
+      },
+    };
+  }
+
+  async cancel(): Promise<void> {
+    this.complete({ success: false });
+  }
+
+  complete(result?: MockClaudeSessionResultInput): void {
+    this.#result = {
+      ...this.#result,
+      ...result,
+    };
+    this.#state = "completed";
+    this.#completed = true;
+    this.#completionResolver?.();
+    this.#completionResolver = undefined;
+  }
+
+  getState(): unknown {
+    return { status: this.#completed ? "completed" : this.#state };
+  }
+
+  on(_event: "error", _listener: (error: unknown) => void): void {}
+
+  removeListener(_event: "error", _listener: (error: unknown) => void): void {}
+}
+
+function createMockClaudeSessionRunner(input?: {
+  readonly startSessions?: readonly MockClaudeRunningSession[];
+  readonly resumeSessions?: readonly MockClaudeRunningSession[];
+}) {
+  const startSessions = [...(input?.startSessions ?? [])];
+  const resumeSessions = [...(input?.resumeSessions ?? [])];
+  return {
+    startSession: vi.fn(async () => {
+      const session = startSessions.shift();
+      if (session === undefined) {
+        throw new Error("no mock claude start session available");
+      }
+      return session;
+    }),
+    resumeSession: vi.fn(async () => {
+      const session = resumeSessions.shift();
+      if (session === undefined) {
+        throw new Error("no mock claude resume session available");
+      }
+      return session;
+    }),
+  };
+}
+
 const baseInput: AdapterExecutionInput = {
   workflowId: "wf",
   workflowExecutionId: "sess-1",
@@ -72,57 +186,45 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function claudeAssistantText(text: string): object {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
 function makeClaudeRunnerFixture(
   input: {
     readonly sessionId?: string;
     readonly messages?: readonly object[];
     readonly success?: boolean;
   } = {},
-): {
-  readonly createRunner: ReturnType<typeof vi.fn>;
-  readonly startSession: ReturnType<typeof vi.fn>;
-  readonly resumeSession: ReturnType<typeof vi.fn>;
-} {
+) {
   const sessionId = input.sessionId ?? "claude-session-1";
   const messages = input.messages ?? [
-    {
-      type: "assistant",
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: "local claude reply" }],
-      },
-    },
+    claudeAssistantText("local claude reply"),
   ];
-
-  const session = {
+  const session = new MockClaudeRunningSession({
     sessionId,
-    async *messages(): AsyncGenerator<object, void, undefined> {
-      for (const message of messages) {
-        yield message;
-      }
-    },
-    waitForCompletion: vi.fn(async () => ({
+    messages,
+    result: {
       success: input.success ?? true,
-      stats: {
-        startedAt: "2026-03-30T00:00:00.000Z",
-        completedAt: "2026-03-30T00:00:01.000Z",
-        toolCallCount: 0,
-        messageCount: messages.length,
-      },
-    })),
-    cancel: vi.fn(async () => {
-      return;
-    }),
-    on: vi.fn(),
-    removeListener: vi.fn(),
-  };
-
-  const startSession = vi.fn(async () => session);
-  const resumeSession = vi.fn(async () => session);
-  const createRunner = vi.fn(() => ({
-    startSession,
-    resumeSession,
-  }));
+      startedAt: "2026-03-30T00:00:00.000Z",
+      completedAt: "2026-03-30T00:00:01.000Z",
+      toolCallCount: 0,
+      messageCount: messages.length,
+    },
+  });
+  const runner = createMockClaudeSessionRunner({
+    startSessions: [session],
+    resumeSessions: [session],
+  });
+  const startSession = vi.spyOn(runner, "startSession");
+  const resumeSession = vi.spyOn(runner, "resumeSession");
+  const createRunner = vi.fn(() => runner);
 
   return {
     createRunner,
@@ -175,15 +277,7 @@ describe("ClaudeCodeAgentAdapter", () => {
   test("reuses backend sessions for local execution", async () => {
     const fixture = makeClaudeRunnerFixture({
       sessionId: "backend-claude-1",
-      messages: [
-        {
-          type: "assistant",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: '{"summary":"ok"}' }],
-          },
-        },
-      ],
+      messages: [claudeAssistantText('{"summary":"ok"}')],
     });
     const adapter = new ClaudeCodeAgentAdapter({
       createRunner: fixture.createRunner,
@@ -223,68 +317,28 @@ describe("ClaudeCodeAgentAdapter", () => {
   });
 
   test("nudges and completes from a stalled SDK session", async () => {
-    let releasePrimary: (() => void) | undefined;
-    const primaryReleased = new Promise<void>((resolve) => {
-      releasePrimary = resolve;
+    const primarySession = new MockClaudeRunningSession({
+      sessionId: "claude-stall-1",
+      autoComplete: false,
     });
-    const primarySession = {
+    const nudgedSession = new MockClaudeRunningSession({
       sessionId: "claude-stall-1",
-      async *messages(): AsyncGenerator<object, void, undefined> {
-        await primaryReleased;
-      },
-      waitForCompletion: vi.fn(async () => {
-        await primaryReleased;
-        return {
-          success: false,
-          stats: {
-            startedAt: "2026-03-30T00:00:00.000Z",
-            completedAt: "2026-03-30T00:00:02.000Z",
-            toolCallCount: 0,
-            messageCount: 0,
-          },
-        };
-      }),
-      cancel: vi.fn(async () => {
-        releasePrimary?.();
-      }),
-      getState: vi.fn(() => ({ state: "running", messageCount: 0 })),
-      on: vi.fn(),
-      removeListener: vi.fn(),
-    };
-    const nudgedSession = {
-      sessionId: "claude-stall-1",
-      async *messages(): AsyncGenerator<object, void, undefined> {
-        yield {
-          type: "assistant",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "resumed claude reply" }],
-          },
-        };
-      },
-      waitForCompletion: vi.fn(async () => ({
+      messages: [claudeAssistantText("resumed claude reply")],
+      result: {
         success: true,
-        stats: {
-          startedAt: "2026-03-30T00:00:01.000Z",
-          completedAt: "2026-03-30T00:00:02.000Z",
-          toolCallCount: 0,
-          messageCount: 1,
-        },
-      })),
-      cancel: vi.fn(async () => {
-        return;
-      }),
-      getState: vi.fn(() => ({ state: "completed", messageCount: 1 })),
-      on: vi.fn(),
-      removeListener: vi.fn(),
-    };
-    const startSession = vi.fn(async () => primarySession);
-    const resumeSession = vi.fn(async () => nudgedSession);
+        startedAt: "2026-03-30T00:00:01.000Z",
+        completedAt: "2026-03-30T00:00:02.000Z",
+        toolCallCount: 0,
+        messageCount: 1,
+      },
+    });
+    const runner = createMockClaudeSessionRunner({
+      startSessions: [primarySession],
+      resumeSessions: [nudgedSession],
+    });
+    const resumeSession = vi.spyOn(runner, "resumeSession");
     const adapter = new ClaudeCodeAgentAdapter({
-      createRunner: vi.fn(() => ({
-        startSession,
-        resumeSession,
-      })),
+      createRunner: vi.fn(() => runner),
       stallCheckIntervalMs: 5,
       stallNudgeMaxAttempts: 1,
       stallNudgePrompt: "continue now",
@@ -295,7 +349,7 @@ describe("ClaudeCodeAgentAdapter", () => {
       timeoutMs: 1000,
     });
 
-    releasePrimary?.();
+    primarySession.complete({ success: false });
     expect(resumeSession).toHaveBeenCalledWith(
       "claude-stall-1",
       "continue now",
@@ -358,15 +412,7 @@ describe("ClaudeCodeAgentAdapter", () => {
 
   test("maps invalid structured output to invalid_output", async () => {
     const fixture = makeClaudeRunnerFixture({
-      messages: [
-        {
-          type: "assistant",
-          message: {
-            role: "assistant",
-            content: [{ type: "text", text: "not json" }],
-          },
-        },
-      ],
+      messages: [claudeAssistantText("not json")],
     });
     const adapter = new ClaudeCodeAgentAdapter({
       createRunner: fixture.createRunner,

@@ -1,6 +1,6 @@
 ---
 name: divedra-workflow-run
-description: Use when helping an end user run, inspect, monitor, resume, continue, rerun, export, or troubleshoot existing divedra workflows. Applies to workflow list/status/validate/inspect/run, session progress/status/logs/export/resume/continue/rerun/step-runs, mock scenarios, workflow roots, runtime artifacts, local serve, GraphQL endpoint execution, and event-triggered workflow usage.
+description: Use when helping an end user run, inspect, monitor, resume, continue, rerun, or troubleshoot existing divedra workflows. Applies to workflow list/status/validate/inspect/run, session progress/status/resume/continue/rerun, GraphQL inspection, mock scenarios, workflow roots, runtime artifacts, local serve, GraphQL endpoint execution, and event-triggered workflow usage.
 metadata:
   short-description: Run divedra workflows
 ---
@@ -18,11 +18,11 @@ Identify what the user wants:
 - Check a workflow before running: use `workflow validate` and optionally `workflow inspect`.
 - Run locally: use `workflow run`; for important or long-running work, prefer supervised execution with `--auto-improve`.
 - Run deterministically without real agents: add `--mock-scenario`.
-- Monitor an existing run: use `session progress`, `session status`, or `session logs`.
+- Monitor an existing run: use `session progress`, `session status`, or GraphQL detail queries.
 - Continue a run: use `session resume`.
 - Start from a specific step in an existing session: use `session rerun <session-id> <step-id>`.
 - Continue from a concrete prior step-run artifact boundary: use `session continue <session-id> --start-step <step-id> --after-step-run <step-run-id>`.
-- Inspect merged execution history by step: use `session step-runs <session-id>`.
+- Inspect merged execution history, logs, and export-shaped diagnostic payloads through GraphQL.
 - Use a remote control plane: start or target `serve` and pass `--endpoint`.
 - Debug one step locally: use `call-step`.
 
@@ -121,23 +121,11 @@ bun run src/main.ts session status <session-id> --output json
 ```
 
 ```bash
-bun run src/main.ts session logs <session-id> --format text
-```
-
-```bash
-bun run src/main.ts session export <session-id> --file session-export.json
-```
-
-```bash
 bun run src/main.ts session resume <session-id>
 ```
 
 ```bash
 bun run src/main.ts session rerun <session-id> <step-id>
-```
-
-```bash
-bun run src/main.ts session step-runs <session-id> --step <step-id>
 ```
 
 ```bash
@@ -175,13 +163,13 @@ bun run src/main.ts workflow run <workflow-name> \
   --output json
 ```
 
-Remote-capable operations include `workflow run`, `session resume`, and `session rerun`. `call-step`, `session continue`, `session step-runs`, `session export`, and `session logs` are local-only.
+Remote-capable operations include `workflow run`, `session resume`, and `session rerun`. `call-step` and `session continue` remain local-only; detailed diagnostics are GraphQL queries rather than separate session subcommands.
 
 ## Troubleshooting
 
 - If a workflow is not found, check `--workflow-definition-dir`, `DIVEDRA_WORKFLOW_DEFINITION_DIR`, and scope lookup.
 - If an AI cannot tell how to call a workflow, run `workflow usage --output json` and inspect the description, compact `steps`, and callable input/output contract.
 - If validation fails, fix the workflow bundle before running; do not bypass schema errors for normal usage.
-- If a run fails, inspect `session status`, `session progress`, and `session logs`.
+- If a run fails, inspect `session status`, `session progress`, and GraphQL detail queries.
 - If backend calls should not happen, rerun with `--mock-scenario` or `--dry-run` when appropriate.
 - If paths are surprising, check `--working-dir`, `--artifact-root`, `--session-store`, and the command invocation directory.

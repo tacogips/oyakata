@@ -5,6 +5,113 @@ import type {
 } from "../adapter";
 import { CodexAgentAdapter } from "./codex";
 
+type SessionStreamChunk = Record<string, unknown>;
+type MockCodexSessionResultInput = {
+  readonly success?: boolean;
+  readonly exitCode?: number;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly messageCount?: number;
+};
+class MockCodexRunningSession {
+  readonly sessionId: string;
+  readonly #messages: readonly SessionStreamChunk[];
+  #result: Required<MockCodexSessionResultInput>;
+  #completed: boolean;
+  #completionResolver: (() => void) | undefined;
+
+  constructor(options: {
+    readonly sessionId: string;
+    readonly messages?: readonly SessionStreamChunk[];
+    readonly result?: MockCodexSessionResultInput;
+    readonly autoComplete?: boolean;
+  }) {
+    this.sessionId = options.sessionId;
+    this.#messages = options.messages ?? [];
+    this.#result = {
+      success: options.result?.success ?? true,
+      exitCode: options.result?.exitCode ?? 0,
+      startedAt: options.result?.startedAt ?? "2026-03-30T00:00:00.000Z",
+      completedAt: options.result?.completedAt ?? "2026-03-30T00:00:01.000Z",
+      messageCount: options.result?.messageCount ?? this.#messages.length,
+    };
+    this.#completed = options.autoComplete ?? true;
+  }
+
+  async *messages(): AsyncIterable<unknown> {
+    for (const message of this.#messages) {
+      yield message;
+    }
+  }
+
+  async waitForCompletion(): Promise<{
+    readonly success: boolean;
+    readonly exitCode: number;
+    readonly stats: {
+      readonly startedAt: string;
+      readonly completedAt: string;
+      readonly messageCount: number;
+    };
+  }> {
+    if (!this.#completed) {
+      await new Promise<void>((resolve) => {
+        this.#completionResolver = resolve;
+      });
+    }
+    return {
+      success: this.#result.success,
+      exitCode: this.#result.exitCode,
+      stats: {
+        startedAt: this.#result.startedAt,
+        completedAt: this.#result.completedAt,
+        messageCount: this.#result.messageCount,
+      },
+    };
+  }
+
+  async cancel(): Promise<void> {
+    this.complete({ success: false, exitCode: 1 });
+  }
+
+  complete(result?: MockCodexSessionResultInput): void {
+    this.#result = {
+      ...this.#result,
+      ...result,
+    };
+    this.#completed = true;
+    this.#completionResolver?.();
+    this.#completionResolver = undefined;
+  }
+
+  getState(): Readonly<Record<string, string>> {
+    return { status: this.#completed ? "completed" : "running" };
+  }
+}
+
+function createMockCodexSessionRunner(input?: {
+  readonly startSessions?: readonly MockCodexRunningSession[];
+  readonly resumeSessions?: readonly MockCodexRunningSession[];
+}) {
+  const startSessions = [...(input?.startSessions ?? [])];
+  const resumeSessions = [...(input?.resumeSessions ?? [])];
+  return {
+    startSession: vi.fn(async () => {
+      const session = startSessions.shift();
+      if (session === undefined) {
+        throw new Error("no mock codex start session available");
+      }
+      return session;
+    }),
+    resumeSession: vi.fn(async () => {
+      const session = resumeSessions.shift();
+      if (session === undefined) {
+        throw new Error("no mock codex resume session available");
+      }
+      return session;
+    }),
+  };
+}
+
 const baseInput: AdapterExecutionInput = {
   workflowId: "wf",
   workflowExecutionId: "sess-1",
@@ -77,6 +184,35 @@ const originalStallWatchEnv = new Map<string, string | undefined>(
   stallWatchEnvKeys.map((key) => [key, process.env[key]]),
 );
 
+function codexSessionMeta(sessionId: string): SessionStreamChunk {
+  return {
+    type: "session_meta",
+    timestamp: "2026-03-30T00:00:00.000Z",
+    payload: {
+      meta: {
+        id: sessionId,
+        timestamp: "2026-03-30T00:00:00.000Z",
+        cwd: "/tmp/project",
+        originator: "codex",
+        cli_version: "1.0.0",
+        source: "exec",
+      },
+    },
+  };
+}
+
+function codexAssistantText(text: string): SessionStreamChunk {
+  return {
+    type: "response_item",
+    timestamp: "2026-03-30T00:00:01.000Z",
+    payload: {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text }],
+    },
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   for (const key of stallWatchEnvKeys) {
@@ -92,61 +228,35 @@ afterEach(() => {
 function makeCodexRunnerFixture(
   input: {
     readonly sessionId?: string;
-    readonly messages?: readonly unknown[];
+    readonly messages?: readonly SessionStreamChunk[];
     readonly success?: boolean;
     readonly exitCode?: number;
   } = {},
-): {
-  readonly createRunner: ReturnType<typeof vi.fn>;
-  readonly startSession: ReturnType<typeof vi.fn>;
-  readonly resumeSession: ReturnType<typeof vi.fn>;
-  readonly cancel: ReturnType<typeof vi.fn>;
-} {
+) {
   const sessionId = input.sessionId ?? "codex-session-1";
-  const chunks = input.messages ?? [
-    {
-      type: "session_meta",
-      payload: {
-        meta: { id: sessionId },
-      },
-    },
-    {
-      type: "response_item",
-      payload: {
-        type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text: "local codex reply" }],
-      },
-    },
+  const chunks: readonly SessionStreamChunk[] = input.messages ?? [
+    codexSessionMeta(sessionId),
+    codexAssistantText("local codex reply"),
   ];
-  const cancel = vi.fn(async () => {
-    return;
-  });
-  const session = {
+  const session = new MockCodexRunningSession({
     sessionId,
-    async *messages(): AsyncGenerator<unknown, void, undefined> {
-      for (const chunk of chunks) {
-        yield chunk;
-      }
-    },
-    waitForCompletion: vi.fn(async () => ({
+    messages: chunks,
+    result: {
       success: input.success ?? true,
       exitCode: input.exitCode ?? 0,
-      stats: {
-        startedAt: "2026-03-30T00:00:00.000Z",
-        completedAt: "2026-03-30T00:00:01.000Z",
-        messageCount: chunks.length,
-      },
-    })),
-    cancel,
-  };
-
-  const startSession = vi.fn(async () => session);
-  const resumeSession = vi.fn(async () => session);
-  const createRunner = vi.fn(() => ({
-    startSession,
-    resumeSession,
-  }));
+      startedAt: "2026-03-30T00:00:00.000Z",
+      completedAt: "2026-03-30T00:00:01.000Z",
+      messageCount: chunks.length,
+    },
+  });
+  const runner = createMockCodexSessionRunner({
+    startSessions: [session],
+    resumeSessions: [session],
+  });
+  const startSession = vi.spyOn(runner, "startSession");
+  const resumeSession = vi.spyOn(runner, "resumeSession");
+  const cancel = vi.spyOn(session, "cancel");
+  const createRunner = vi.fn(() => runner);
 
   return {
     createRunner,
@@ -199,20 +309,8 @@ describe("CodexAgentAdapter", () => {
     const fixture = makeCodexRunnerFixture({
       sessionId: "backend-codex-1",
       messages: [
-        {
-          type: "session_meta",
-          payload: {
-            meta: { id: "backend-codex-1" },
-          },
-        },
-        {
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: '{"summary":"ok"}' }],
-          },
-        },
+        codexSessionMeta("backend-codex-1"),
+        codexAssistantText('{"summary":"ok"}'),
       ],
     });
     const adapter = new CodexAgentAdapter({
@@ -256,69 +354,29 @@ describe("CodexAgentAdapter", () => {
   });
 
   test("nudges and completes from a stalled SDK session", async () => {
-    let releasePrimary: (() => void) | undefined;
-    const primaryReleased = new Promise<void>((resolve) => {
-      releasePrimary = resolve;
+    const primarySession = new MockCodexRunningSession({
+      sessionId: "codex-stall-1",
+      messages: [codexSessionMeta("codex-stall-1")],
+      autoComplete: false,
     });
-    const primarySession = {
+    const nudgedSession = new MockCodexRunningSession({
       sessionId: "codex-stall-1",
-      async *messages(): AsyncGenerator<unknown, void, undefined> {
-        yield {
-          type: "session_meta",
-          payload: {
-            meta: { id: "codex-stall-1" },
-          },
-        };
-        await primaryReleased;
-      },
-      waitForCompletion: vi.fn(async () => {
-        await primaryReleased;
-        return {
-          success: false,
-          exitCode: 1,
-          stats: {
-            startedAt: "2026-03-30T00:00:00.000Z",
-            completedAt: "2026-03-30T00:00:02.000Z",
-            messageCount: 1,
-          },
-        };
-      }),
-      cancel: vi.fn(async () => {
-        releasePrimary?.();
-      }),
-    };
-    const nudgedSession = {
-      sessionId: "codex-stall-1",
-      async *messages(): AsyncGenerator<unknown, void, undefined> {
-        yield {
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "resumed codex reply" }],
-          },
-        };
-      },
-      waitForCompletion: vi.fn(async () => ({
+      messages: [codexAssistantText("resumed codex reply")],
+      result: {
         success: true,
         exitCode: 0,
-        stats: {
-          startedAt: "2026-03-30T00:00:01.000Z",
-          completedAt: "2026-03-30T00:00:02.000Z",
-          messageCount: 1,
-        },
-      })),
-      cancel: vi.fn(async () => {
-        return;
-      }),
-    };
-    const startSession = vi.fn(async () => primarySession);
-    const resumeSession = vi.fn(async () => nudgedSession);
+        startedAt: "2026-03-30T00:00:01.000Z",
+        completedAt: "2026-03-30T00:00:02.000Z",
+        messageCount: 1,
+      },
+    });
+    const runner = createMockCodexSessionRunner({
+      startSessions: [primarySession],
+      resumeSessions: [nudgedSession],
+    });
+    const resumeSession = vi.spyOn(runner, "resumeSession");
     const adapter = new CodexAgentAdapter({
-      createRunner: vi.fn(() => ({
-        startSession,
-        resumeSession,
-      })),
+      createRunner: vi.fn(() => runner),
       stallCheckIntervalMs: 5,
       stallNudgeMaxAttempts: 1,
       stallNudgePrompt: "continue now",
@@ -329,7 +387,7 @@ describe("CodexAgentAdapter", () => {
       timeoutMs: 1000,
     });
 
-    releasePrimary?.();
+    primarySession.complete({ success: false, exitCode: 1 });
     expect(resumeSession).toHaveBeenCalledWith(
       "codex-stall-1",
       "continue now",
@@ -353,67 +411,33 @@ describe("CodexAgentAdapter", () => {
     process.env["DIVEDRA_LLM_STALL_CHECK_INTERVAL_MS"] = "5";
     process.env["DIVEDRA_LLM_STALL_NUDGE_MAX_ATTEMPTS"] = "1";
     process.env["DIVEDRA_LLM_STALL_NUDGE_PROMPT"] = "continue from env";
-    let releasePrimary: (() => void) | undefined;
-    const primaryReleased = new Promise<void>((resolve) => {
-      releasePrimary = resolve;
+    const primarySession = new MockCodexRunningSession({
+      sessionId: "codex-env-stall-1",
+      autoComplete: false,
     });
-    const primarySession = {
+    const nudgedSession = new MockCodexRunningSession({
       sessionId: "codex-env-stall-1",
-      async *messages(): AsyncGenerator<unknown, void, undefined> {
-        await primaryReleased;
-      },
-      waitForCompletion: vi.fn(async () => {
-        await primaryReleased;
-        return {
-          success: false,
-          exitCode: 1,
-          stats: {
-            startedAt: "2026-03-30T00:00:00.000Z",
-            completedAt: "2026-03-30T00:00:02.000Z",
-            messageCount: 0,
-          },
-        };
-      }),
-      cancel: vi.fn(async () => {
-        releasePrimary?.();
-      }),
-    };
-    const nudgedSession = {
-      sessionId: "codex-env-stall-1",
-      async *messages(): AsyncGenerator<unknown, void, undefined> {
-        yield {
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "env resumed reply" }],
-          },
-        };
-      },
-      waitForCompletion: vi.fn(async () => ({
+      messages: [codexAssistantText("env resumed reply")],
+      result: {
         success: true,
         exitCode: 0,
-        stats: {
-          startedAt: "2026-03-30T00:00:01.000Z",
-          completedAt: "2026-03-30T00:00:02.000Z",
-          messageCount: 1,
-        },
-      })),
-      cancel: vi.fn(async () => {
-        return;
-      }),
-    };
-    const resumeSession = vi.fn(async () => nudgedSession);
+        startedAt: "2026-03-30T00:00:01.000Z",
+        completedAt: "2026-03-30T00:00:02.000Z",
+        messageCount: 1,
+      },
+    });
+    const runner = createMockCodexSessionRunner({
+      startSessions: [primarySession],
+      resumeSessions: [nudgedSession],
+    });
+    const resumeSession = vi.spyOn(runner, "resumeSession");
     const adapter = new CodexAgentAdapter({
-      createRunner: vi.fn(() => ({
-        startSession: vi.fn(async () => primarySession),
-        resumeSession,
-      })),
+      createRunner: vi.fn(() => runner),
     });
 
     const output = await adapter.execute(baseInput, baseContext);
 
-    releasePrimary?.();
+    primarySession.complete({ success: false, exitCode: 1 });
     expect(resumeSession).toHaveBeenCalledWith(
       "codex-env-stall-1",
       "continue from env",
@@ -438,44 +462,28 @@ describe("CodexAgentAdapter", () => {
     let observedWorkflowExecutionId: string | undefined;
     let observedNodeExecId: string | undefined;
     const fixture = makeCodexRunnerFixture();
-    fixture.createRunner.mockImplementation(() => ({
-      startSession: vi.fn(async () => {
-        observedGraphqlEndpoint = process.env["DIVEDRA_GRAPHQL_ENDPOINT"];
-        observedWorkflowExecutionId =
-          process.env["DIVEDRA_WORKFLOW_EXECUTION_ID"];
-        observedNodeExecId = process.env["DIVEDRA_NODE_EXEC_ID"];
-        return {
-          sessionId: "codex-session-ambient",
-          messages: async function* () {
-            yield {
-              type: "session_meta",
-              payload: { meta: { id: "codex-session-ambient" } },
-            };
-            yield {
-              type: "response_item",
-              payload: {
-                type: "message",
-                role: "assistant",
-                content: [{ type: "output_text", text: "ambient ok" }],
-              },
-            };
-          },
-          waitForCompletion: async () => ({
-            success: true,
-            exitCode: 0,
-            stats: {
-              startedAt: "2026-03-30T00:00:00.000Z",
-              completedAt: "2026-03-30T00:00:01.000Z",
-              messageCount: 2,
-            },
-          }),
-          cancel: async () => {
-            return;
-          },
-        };
-      }),
-      resumeSession: vi.fn(),
-    }));
+    const ambientRunner = createMockCodexSessionRunner();
+    vi.spyOn(ambientRunner, "startSession").mockImplementation(async () => {
+      observedGraphqlEndpoint = process.env["DIVEDRA_GRAPHQL_ENDPOINT"];
+      observedWorkflowExecutionId =
+        process.env["DIVEDRA_WORKFLOW_EXECUTION_ID"];
+      observedNodeExecId = process.env["DIVEDRA_NODE_EXEC_ID"];
+      return new MockCodexRunningSession({
+        sessionId: "codex-session-ambient",
+        messages: [
+          codexSessionMeta("codex-session-ambient"),
+          codexAssistantText("ambient ok"),
+        ],
+        result: {
+          success: true,
+          exitCode: 0,
+          startedAt: "2026-03-30T00:00:00.000Z",
+          completedAt: "2026-03-30T00:00:01.000Z",
+          messageCount: 2,
+        },
+      });
+    });
+    fixture.createRunner.mockReturnValue(ambientRunner);
 
     const adapter = new CodexAgentAdapter({
       createRunner: fixture.createRunner,
@@ -517,20 +525,8 @@ describe("CodexAgentAdapter", () => {
   test("maps invalid structured output to invalid_output", async () => {
     const fixture = makeCodexRunnerFixture({
       messages: [
-        {
-          type: "session_meta",
-          payload: {
-            meta: { id: "codex-session-1" },
-          },
-        },
-        {
-          type: "response_item",
-          payload: {
-            type: "message",
-            role: "assistant",
-            content: [{ type: "output_text", text: "not json" }],
-          },
-        },
+        codexSessionMeta("codex-session-1"),
+        codexAssistantText("not json"),
       ],
     });
     const adapter = new CodexAgentAdapter({

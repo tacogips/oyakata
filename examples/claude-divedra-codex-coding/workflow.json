@@ -6,7 +6,7 @@
     "nodeTimeoutMs": 120000
   },
   "prompts": {
-    "divedraPromptTemplate": "Coordinate {{workflowId}} so claude-code managers preserve scope, keep instructions concrete, and hand coding tasks to codex only when the implementation brief is ready. When `divedra gql` is available, use it for manager control actions such as retries and manager-authored routing instead of relying only on prose.",
+    "divedraPromptTemplate": "Coordinate {{workflowId}} so claude-code managers preserve scope, keep instructions concrete, and hand coding tasks to codex only when the implementation brief is ready. When `divedra graphql` is available, use it for manager control actions such as retries and manager-authored routing instead of relying only on prose.",
     "workerSystemPromptTemplate": "Work only on the current node's responsibility. Return a concise business JSON payload that is useful to the next node."
   },
   "managerStepId": "divedra-manager",

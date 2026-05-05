@@ -66,6 +66,7 @@ import {
   type WorkflowNodeRegistryRef,
   type WorkflowNodeRef,
   type WorkflowPrompts,
+  type WorkflowStepFanout,
   type WorkflowStepRef,
   type WorkflowStepSessionPolicy,
   type WorkflowStepTransition,
@@ -236,6 +237,22 @@ function readNumberField(
   if (typeof value !== "number" || !Number.isFinite(value)) {
     issues.push(
       makeIssue("error", `${path}.${key}`, "must be a finite number"),
+    );
+    return null;
+  }
+  return value;
+}
+
+function readPositiveIntegerField(
+  record: UnknownRecord,
+  key: string,
+  path: string,
+  issues: ValidationIssue[],
+): number | null {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    issues.push(
+      makeIssue("error", `${path}.${key}`, "must be a positive integer"),
     );
     return null;
   }
@@ -1324,6 +1341,7 @@ function normalizeWorkflowStepTransition(
     "toWorkflowId",
     "resumeStepId",
     "label",
+    "fanout",
   ]);
   for (const key of Object.keys(value)) {
     if (!allowedKeys.has(key)) {
@@ -1396,6 +1414,12 @@ function normalizeWorkflowStepTransition(
     );
   }
 
+  const fanout = normalizeWorkflowStepFanout(
+    value["fanout"],
+    `${path}.fanout`,
+    issues,
+  );
+
   if (toStepId === null) {
     return null;
   }
@@ -1405,6 +1429,187 @@ function normalizeWorkflowStepTransition(
     ...(toWorkflowId === undefined ? {} : { toWorkflowId }),
     ...(resumeStepId === undefined ? {} : { resumeStepId }),
     ...(label === undefined ? {} : { label }),
+    ...(fanout === undefined ? {} : { fanout }),
+  };
+}
+
+function normalizeWorkflowStepFanout(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): WorkflowStepFanout | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object when provided"));
+    return undefined;
+  }
+
+  const allowedKeys = new Set([
+    "groupId",
+    "itemsFrom",
+    "itemVariable",
+    "concurrency",
+    "joinStepId",
+    "failurePolicy",
+    "resultOrder",
+    "writeOwnership",
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.${key}`,
+          "uses an unsupported fanout field",
+        ),
+      );
+    }
+  }
+
+  const groupId = readStringField(value, "groupId", path, issues);
+  const itemsFrom = readStringField(value, "itemsFrom", path, issues);
+  if (
+    typeof itemsFrom === "string" &&
+    !(itemsFrom === "" || itemsFrom.startsWith("/"))
+  ) {
+    issues.push(
+      makeIssue("error", `${path}.itemsFrom`, "must be a JSON Pointer"),
+    );
+  }
+  const joinStepId = readStringField(value, "joinStepId", path, issues);
+  const itemVariableRaw = value["itemVariable"];
+  let itemVariable: string | undefined;
+  if (itemVariableRaw !== undefined) {
+    if (
+      typeof itemVariableRaw === "string" &&
+      /^[A-Za-z_][A-Za-z0-9_]*$/.test(itemVariableRaw)
+    ) {
+      itemVariable = itemVariableRaw;
+    } else {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.itemVariable`,
+          "must be an identifier-like non-empty string when provided",
+        ),
+      );
+    }
+  }
+
+  const concurrency =
+    value["concurrency"] === undefined
+      ? undefined
+      : readPositiveIntegerField(value, "concurrency", path, issues);
+  const failurePolicyRaw = value["failurePolicy"];
+  let failurePolicy: WorkflowStepFanout["failurePolicy"] | undefined;
+  if (failurePolicyRaw !== undefined) {
+    if (
+      failurePolicyRaw === "fail-fast" ||
+      failurePolicyRaw === "collect-all"
+    ) {
+      failurePolicy = failurePolicyRaw;
+    } else {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.failurePolicy`,
+          "must be 'fail-fast' or 'collect-all' when provided",
+        ),
+      );
+    }
+  }
+  const resultOrderRaw = value["resultOrder"];
+  let resultOrder: WorkflowStepFanout["resultOrder"] | undefined;
+  if (resultOrderRaw !== undefined) {
+    if (resultOrderRaw === "input") {
+      resultOrder = resultOrderRaw;
+    } else {
+      issues.push(makeIssue("error", `${path}.resultOrder`, "must be 'input'"));
+    }
+  }
+  const writeOwnership = normalizeWorkflowFanoutWriteOwnership(
+    value["writeOwnership"],
+    `${path}.writeOwnership`,
+    issues,
+  );
+
+  if (groupId === null || itemsFrom === null || joinStepId === null) {
+    return undefined;
+  }
+  return {
+    groupId,
+    itemsFrom,
+    ...(itemVariable === undefined ? {} : { itemVariable }),
+    ...(concurrency === undefined || concurrency === null
+      ? {}
+      : { concurrency }),
+    joinStepId,
+    ...(failurePolicy === undefined ? {} : { failurePolicy }),
+    ...(resultOrder === undefined ? {} : { resultOrder }),
+    ...(writeOwnership === undefined ? {} : { writeOwnership }),
+  };
+}
+
+function normalizeWorkflowFanoutWriteOwnership(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): WorkflowStepFanout["writeOwnership"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    issues.push(makeIssue("error", path, "must be an object when provided"));
+    return undefined;
+  }
+  const allowedKeys = new Set(["mode", "paths", "directories"]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(
+        makeIssue(
+          "error",
+          `${path}.${key}`,
+          "uses an unsupported fanout writeOwnership field",
+        ),
+      );
+    }
+  }
+  const modeRaw = value["mode"];
+  let mode: "read-only" | "disjoint-paths" | "isolated-workspace" | undefined;
+  if (
+    modeRaw === "read-only" ||
+    modeRaw === "disjoint-paths" ||
+    modeRaw === "isolated-workspace"
+  ) {
+    mode = modeRaw;
+  } else {
+    issues.push(
+      makeIssue(
+        "error",
+        `${path}.mode`,
+        "must be 'read-only', 'disjoint-paths', or 'isolated-workspace'",
+      ),
+    );
+  }
+  const paths = normalizeStringArrayField(
+    value["paths"],
+    `${path}.paths`,
+    issues,
+  );
+  const directories = normalizeStringArrayField(
+    value["directories"],
+    `${path}.directories`,
+    issues,
+  );
+  if (mode === undefined) {
+    return undefined;
+  }
+  return {
+    mode,
+    ...(paths === undefined ? {} : { paths }),
+    ...(directories === undefined ? {} : { directories }),
   };
 }
 
@@ -1782,6 +1987,15 @@ function normalizeStepAddressedWorkflow(
           issues,
         )
       : DEFAULT_MAX_LOOP_ITERATIONS;
+  const fanoutConcurrency =
+    isRecord(defaultsValue) && defaultsValue["fanoutConcurrency"] !== undefined
+      ? readPositiveIntegerField(
+          defaultsValue,
+          "fanoutConcurrency",
+          "workflow.defaults",
+          issues,
+        )
+      : 20;
   const containerRuntime = normalizeContainerRuntimeDefaults(
     isRecord(defaultsValue) ? defaultsValue["containerRuntime"] : undefined,
     "workflow.defaults.containerRuntime",
@@ -2021,7 +2235,68 @@ function normalizeStepAddressedWorkflow(
         ),
       );
     }
+    const seenFanoutGroupIds = new Set<string>();
     step.transitions?.forEach((transition, transitionIndex) => {
+      if (transition.fanout !== undefined) {
+        if (seenFanoutGroupIds.has(transition.fanout.groupId)) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.steps[${index}].transitions[${transitionIndex}].fanout.groupId`,
+              `duplicate fanout groupId '${transition.fanout.groupId}' on step '${step.id}'`,
+            ),
+          );
+        }
+        seenFanoutGroupIds.add(transition.fanout.groupId);
+        if (!stepIdSet.has(transition.fanout.joinStepId)) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.steps[${index}].transitions[${transitionIndex}].fanout.joinStepId`,
+              `must reference an existing step id (${transition.fanout.joinStepId})`,
+            ),
+          );
+        }
+        if (
+          transition.toWorkflowId !== undefined &&
+          transition.resumeStepId !== transition.fanout.joinStepId
+        ) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.steps[${index}].transitions[${transitionIndex}].resumeStepId`,
+              "must equal fanout.joinStepId when cross-workflow fanout is set",
+            ),
+          );
+        }
+        if (
+          transition.fanout.concurrency !== undefined &&
+          fanoutConcurrency !== null &&
+          transition.fanout.concurrency > fanoutConcurrency
+        ) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.steps[${index}].transitions[${transitionIndex}].fanout.concurrency`,
+              `must not exceed workflow.defaults.fanoutConcurrency (${fanoutConcurrency})`,
+            ),
+          );
+        }
+        const effectiveFanoutConcurrency =
+          transition.fanout.concurrency ?? fanoutConcurrency ?? 20;
+        if (
+          effectiveFanoutConcurrency > 1 &&
+          transition.fanout.writeOwnership === undefined
+        ) {
+          issues.push(
+            makeIssue(
+              "error",
+              `workflow.steps[${index}].transitions[${transitionIndex}].fanout.writeOwnership`,
+              "is required for concurrent fanout; declare read-only, disjoint-paths, or isolated-workspace ownership",
+            ),
+          );
+        }
+      }
       if (transition.toWorkflowId !== undefined) {
         if (transition.resumeStepId === undefined) {
           issues.push(
@@ -2073,7 +2348,8 @@ function normalizeStepAddressedWorkflow(
     entryStepId === null ||
     managerStepId === null ||
     typeof nodeTimeoutMs !== "number" ||
-    typeof maxLoopIterationsRaw !== "number"
+    typeof maxLoopIterationsRaw !== "number" ||
+    typeof fanoutConcurrency !== "number"
   ) {
     return null;
   }
@@ -2104,6 +2380,7 @@ function normalizeStepAddressedWorkflow(
     defaults: {
       nodeTimeoutMs,
       maxLoopIterations: maxLoopIterationsRaw,
+      fanoutConcurrency,
       ...(timeoutPolicy === undefined ? {} : { timeoutPolicy }),
       ...(containerRuntime === undefined ? {} : { containerRuntime }),
     },

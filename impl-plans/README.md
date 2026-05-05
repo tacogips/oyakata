@@ -24,9 +24,9 @@ impl-plans/
 
 ## Active Plans
 
-| Plan | Status | Design Reference |
-| ---- | ------ | ---------------- |
-| None | -      | -                |
+| Plan                                            | Status      | Design Reference                                |
+| ----------------------------------------------- | ----------- | ----------------------------------------------- |
+| `active/bounded-fanout-join-workflow-execution` | In Progress | `design-bounded-fanout-join-workflow-execution` |
 
 ## Recently Completed
 

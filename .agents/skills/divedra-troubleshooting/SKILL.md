@@ -23,14 +23,6 @@ divedra session status <session-id> --output json
 divedra session progress <session-id>
 ```
 
-```bash
-divedra session logs <session-id> --format text
-```
-
-```bash
-divedra session export <session-id> --file session-export.json
-```
-
 Read `references/troubleshooting.md` for triage by symptom.
 
 ## Rules

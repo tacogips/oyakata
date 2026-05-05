@@ -220,6 +220,8 @@ It owns:
 
 - session creation, resume, and rerun
 - queue progression
+- bounded fanout work-item scheduling and join aggregation for step-addressed
+  fanout transitions
 - timeout and stuck-restart handling
 - output-contract validation and retry
 - communication publication and consumption
@@ -250,6 +252,49 @@ Execution-time working directory is resolved separately from workflow/artifact/s
 
 Working-directory resolution is implemented in
 `src/workflow/working-directory.ts`.
+
+### Bounded Fanout And Join Boundary
+
+Source:
+
+- `src/workflow/engine.ts`
+- `src/workflow/cross-workflow-from-steps.ts`
+- `src/workflow/types.ts`
+- `src/workflow/validate.ts`
+
+Target design:
+
+- `design-docs/specs/design-bounded-fanout-join-workflow-execution.md`
+
+Bounded fanout/join is a step-addressed workflow-engine capability. It lets a
+completed source step create a persisted fanout group from an output payload
+array, run branch work items with an effective concurrency such as `20`, and
+queue a join step only after all required branch results complete.
+
+The fanout scheduler must not treat queue entries as bare step ids internally
+when a fanout branch is active. Branch work needs distinct work-item identity
+(`fanoutGroupRunId`, `branchIndex`, source step run, target step/workflow) so
+the same target step can execute concurrently for multiple source items without
+being collapsed by existing queue dedupe. Non-fanout workflows keep the current
+single-step queue behavior.
+
+Session mutation remains engine-owned and single-writer. Concurrent branch
+promises report completion events back to the scheduler, and the scheduler
+serializes updates to counters, communications, transitions, fanout group state,
+runtime DB rows, and `saveSession()` writes. This keeps artifact paths,
+communication ids, node execution ids, and aggregate join ordering
+deterministic under concurrency.
+
+Shared-worktree mutation is a separate safety boundary. Read-only analysis and
+planning branches may share the parent worktree, but code-writing fanout branches
+must either declare disjoint owned paths or run in branch-local isolated
+workspaces such as child workflow worktrees. Fanout group state records branch
+workspace roots when they differ from the parent workspace so retry, review,
+status, and cleanup surfaces can explain where branch work happened.
+
+Cursor-specific behavior is not part of the fanout scheduler. Cursor or Codex
+process behavior remains behind ordinary agent adapter modules; fanout branches
+execute the same backend-neutral node payload contract as every other step.
 
 ### Auto-Improve Supervision Boundary
 
@@ -448,12 +493,28 @@ Responsibilities:
 - keep historical compatibility-era concepts isolated from the primary step-addressed authoring surface; new work should not reintroduce authored `workflow.edges`, `workflow.loops`, or similar node-addressed control fields
 - allow validated manager override actions (`manager-control.ts` scope checks)
 - reject structural manager-control actions such as `start-sub-workflow` / `deliver-to-child-input`
+- when a step-derived cross-workflow transition is also a fanout transition,
+  dispatch one isolated callee workflow run per fanout item through the bounded
+  fanout scheduler and deliver a deterministic aggregate result to the caller's
+  join step
 
 Current behavior:
 
 - cross-workflow invocation targets the callee workflow's callable entry step (`managerStepId` when present, otherwise `entryStepId`); there is no supported authored top-level `workflow.workflowCalls` array
 - matching dispatches run after their caller step's node execution succeeds, in deterministic step order
 - manager output payloads may include `managerControl.actions`; the runtime validates control scope before honoring those actions
+
+Fanout extension:
+
+- ordinary cross-workflow dispatches may keep deterministic sequential execution
+  when no `fanout` is authored
+- fanout cross-workflow dispatches resolve branch items from the source output
+  payload, run callees with bounded concurrency, preserve the existing
+  cross-workflow recursion guard per branch, and persist `fanoutGroupRunId` plus
+  `branchIndex` in dispatch artifacts
+- for cross-workflow fanout, authored `resumeStepId` remains required and must
+  match `fanout.joinStepId`, because the join step is always in the caller
+  workflow
 
 ### Server and GraphQL Control Plane
 

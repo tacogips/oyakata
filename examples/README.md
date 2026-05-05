@@ -236,7 +236,7 @@ Recommended mixed-backend reference:
 - `divedra` manager nodes use `claude-code-agent`
 - implementation planning/finalization stays on `claude-code`
 - the actual coding node uses `codex-agent`
-- the workflow-level `divedraPromptTemplate` explicitly prefers `divedra gql`
+- the workflow-level `divedraPromptTemplate` explicitly prefers `divedra graphql`
 - node prompt templates can read upstream mailbox data through `{{inbox.*}}`
 - long node prompts live in `prompts/*.md` and are referenced by
   `node-{id}.json.promptTemplateFile`
