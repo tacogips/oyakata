@@ -371,6 +371,7 @@ function workflowTriggerLocalEngineOverrides(
   | "mockScenario"
   | "dryRun"
   | "maxSteps"
+  | "maxConcurrency"
   | "maxLoopIterations"
   | "defaultTimeoutMs"
 > {
@@ -380,6 +381,9 @@ function workflowTriggerLocalEngineOverrides(
       : { mockScenario: options.mockScenario }),
     ...(options.dryRun === undefined ? {} : { dryRun: options.dryRun }),
     ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
+    ...(options.maxConcurrency === undefined
+      ? {}
+      : { maxConcurrency: options.maxConcurrency }),
     ...(options.maxLoopIterations === undefined
       ? {}
       : { maxLoopIterations: options.maxLoopIterations }),

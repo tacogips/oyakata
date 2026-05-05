@@ -151,6 +151,7 @@ import {
   buildFanoutRuntimeVariables,
   buildFanoutStepBudget,
   claimFanoutStepBudget,
+  findPriorBranchWorkspaceRoot,
   itemAsWorkflowCallPayload,
   persistFanoutJoinOutputRef,
   prepareFanoutBranchWorkspace,
@@ -210,6 +211,13 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly restartOnStuck?: boolean;
   readonly maxStuckRestarts?: number;
   readonly stuckRestartBackoffMs?: number;
+  /**
+   * Public cap on runtime fanout concurrency for this workflow run.
+   * Must be a positive integer when provided.
+   * Seeds {@link fanoutConcurrencyBudget} when that internal field is absent,
+   * clamping authored or default fanout concurrency for all (nested) fanout groups.
+   */
+  readonly maxConcurrency?: number;
   /** Internal fanout branch entry step. */
   readonly fanoutBranchStartStepId?: string;
   /** Internal maximum fanout budget inherited by nested fanout runs. */
@@ -1155,6 +1163,16 @@ async function executeCrossWorkflowFanoutDispatch(input: {
     items.value,
     concurrency,
     async (branchIndex, item) => {
+      const supersededWorkspaceRoot = findPriorBranchWorkspaceRoot({
+        priorGroups: input.base.session.fanoutGroups ?? [],
+        groupId: fanout.groupId,
+        branchIndex,
+      });
+      const supersededRef =
+        supersededWorkspaceRoot === undefined
+          ? {}
+          : { supersededWorkspaceRoot };
+
       if (failurePolicy === "fail-fast" && firstFailure !== undefined) {
         return {
           branchIndex,
@@ -1162,6 +1180,7 @@ async function executeCrossWorkflowFanoutDispatch(input: {
           status: "cancelled" as const,
           workItemId: `${fanoutGroupRunId}:${branchIndex}`,
           error: "fanout fail-fast stopped before branch launch",
+          ...supersededRef,
         } satisfies FanoutBranchRecord;
       }
       const branchRuntimeVariables = buildFanoutRuntimeVariables({
@@ -1186,6 +1205,7 @@ async function executeCrossWorkflowFanoutDispatch(input: {
           status: "failed" as const,
           workItemId: `${fanoutGroupRunId}:${branchIndex}`,
           error: message,
+          ...supersededRef,
         } satisfies FanoutBranchRecord;
       }
       const calleeRun = await runWorkflowInternal(
@@ -1230,6 +1250,7 @@ async function executeCrossWorkflowFanoutDispatch(input: {
             ? {}
             : { workspaceRoot: branchWorkspace.value }),
           error: message,
+          ...supersededRef,
         } satisfies FanoutBranchRecord;
       }
       if (calleeRun.value.exitCode !== 0) {
@@ -1248,6 +1269,7 @@ async function executeCrossWorkflowFanoutDispatch(input: {
             ? {}
             : { workspaceRoot: branchWorkspace.value }),
           error: message,
+          ...supersededRef,
         } satisfies FanoutBranchRecord;
       }
       const calleeResultExecution =
@@ -1296,6 +1318,7 @@ async function executeCrossWorkflowFanoutDispatch(input: {
             ? {}
             : { workspaceRoot: branchWorkspace.value }),
           error: message,
+          ...supersededRef,
         } satisfies FanoutBranchRecord;
       }
       return {
@@ -1308,6 +1331,7 @@ async function executeCrossWorkflowFanoutDispatch(input: {
         ...(branchWorkspace.value === undefined
           ? {}
           : { workspaceRoot: branchWorkspace.value }),
+        ...supersededRef,
       } satisfies FanoutBranchRecord;
     },
   );
@@ -5652,9 +5676,28 @@ export async function runWorkflow(
   adapter?: NodeAdapter,
   guards?: EngineExecutionGuards,
 ): Promise<Result<WorkflowRunResult, WorkflowRunFailure>> {
-  let normalizedOptions = options;
-  if (options.autoImprove !== undefined) {
-    const normalizedPolicy = normalizeAutoImprovePolicy(options.autoImprove);
+  if (
+    options.maxConcurrency !== undefined &&
+    (!Number.isInteger(options.maxConcurrency) || options.maxConcurrency < 1)
+  ) {
+    return err(
+      workflowRunFailure(
+        2,
+        `invalid maxConcurrency '${options.maxConcurrency}'; expected a positive integer`,
+      ),
+    );
+  }
+
+  let normalizedOptions: WorkflowRunOptions =
+    options.maxConcurrency !== undefined &&
+    options.fanoutConcurrencyBudget === undefined
+      ? { ...options, fanoutConcurrencyBudget: options.maxConcurrency }
+      : options;
+
+  if (normalizedOptions.autoImprove !== undefined) {
+    const normalizedPolicy = normalizeAutoImprovePolicy(
+      normalizedOptions.autoImprove,
+    );
     if (!normalizedPolicy.ok || normalizedPolicy.value === undefined) {
       return err(
         workflowRunFailure(
@@ -5666,7 +5709,7 @@ export async function runWorkflow(
       );
     }
     normalizedOptions = {
-      ...options,
+      ...normalizedOptions,
       autoImprove: normalizedPolicy.value,
     };
   }

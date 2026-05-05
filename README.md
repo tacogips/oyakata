@@ -367,6 +367,7 @@ Supported vendors:
 - `--output json`: emit structured output.
 - `--dry-run`: plan/check without normal execution where supported.
 - `--max-steps <n>`: cap workflow execution steps.
+- `--max-concurrency <n>`: cap fanout concurrency for a workflow run.
 - `--max-loop-iterations <n>`: cap loop iterations.
 - `--default-timeout-ms <ms>`: override default node timeout.
 

@@ -1480,6 +1480,48 @@ describe("createGraphqlSchema", () => {
     expect(payload.status).toBe("running");
   });
 
+  test("executeWorkflow forwards maxConcurrency to runWorkflow", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-max-concurrency",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "completed" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    const schema = createGraphqlSchema();
+    await schema.mutation.executeWorkflow(
+      {
+        workflowName: "demo",
+        maxConcurrency: 4,
+      },
+      options,
+    );
+
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({ maxConcurrency: 4 }),
+    );
+  });
+
   test("executeWorkflow rejects nested-superviser without auto-improve before calling runWorkflow", async () => {
     const root = await makeTempDir();
     const options = {

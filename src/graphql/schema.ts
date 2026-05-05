@@ -249,6 +249,7 @@ interface GraphqlWorkflowRunOverridesInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
 }
 
 function buildGraphqlWorkflowRunOverrides(
@@ -263,6 +264,7 @@ function buildGraphqlWorkflowRunOverrides(
     | "maxSteps"
     | "maxLoopIterations"
     | "defaultTimeoutMs"
+    | "maxConcurrency"
   >,
   string
 > {
@@ -300,6 +302,9 @@ function buildGraphqlWorkflowRunOverrides(
     ...(input.defaultTimeoutMs === undefined
       ? {}
       : { defaultTimeoutMs: input.defaultTimeoutMs }),
+    ...(input.maxConcurrency === undefined
+      ? {}
+      : { maxConcurrency: input.maxConcurrency }),
   });
 }
 
@@ -1882,12 +1887,17 @@ async function dispatchSupervisedWorkflowCommandMutation(
     input.defaultTimeoutMs,
     "defaultTimeoutMs",
   );
+  const maxConcurrency = requireOptionalSupervisorInteger(
+    input.maxConcurrency,
+    "maxConcurrency",
+  );
   const engine =
     input.mockScenario === undefined &&
     dryRun === undefined &&
     maxSteps === undefined &&
     maxLoopIterations === undefined &&
-    defaultTimeoutMs === undefined
+    defaultTimeoutMs === undefined &&
+    maxConcurrency === undefined
       ? undefined
       : {
           ...(input.mockScenario === undefined
@@ -1897,6 +1907,7 @@ async function dispatchSupervisedWorkflowCommandMutation(
           ...(maxSteps === undefined ? {} : { maxSteps }),
           ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
           ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+          ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
         };
   const view = await client.dispatchCommand({
     command,
@@ -1963,12 +1974,17 @@ async function dispatchSupervisorConversationMutation(
     input.defaultTimeoutMs,
     "defaultTimeoutMs",
   );
+  const maxConcurrency = requireOptionalSupervisorInteger(
+    input.maxConcurrency,
+    "maxConcurrency",
+  );
   const engine =
     input.mockScenario === undefined &&
     dryRun === undefined &&
     maxSteps === undefined &&
     maxLoopIterations === undefined &&
-    defaultTimeoutMs === undefined
+    defaultTimeoutMs === undefined &&
+    maxConcurrency === undefined
       ? undefined
       : {
           ...(input.mockScenario === undefined
@@ -1978,6 +1994,7 @@ async function dispatchSupervisorConversationMutation(
           ...(maxSteps === undefined ? {} : { maxSteps }),
           ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
           ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
+          ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
         };
   const client = createWorkflowSupervisorDispatchClient(context);
   const view = await client.dispatchExternalInput({

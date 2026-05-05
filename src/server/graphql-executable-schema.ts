@@ -649,6 +649,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     maxSteps: Int
     maxLoopIterations: Int
     defaultTimeoutMs: Int
+    maxConcurrency: Int
   }
 
   enum WorkflowTemplateMode {
@@ -681,6 +682,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     maxSteps: Int
     maxLoopIterations: Int
     defaultTimeoutMs: Int
+    maxConcurrency: Int
   }
 
   input RerunWorkflowExecutionInput {
@@ -693,6 +695,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     maxSteps: Int
     maxLoopIterations: Int
     defaultTimeoutMs: Int
+    maxConcurrency: Int
   }
 
   input ContinueWorkflowExecutionInput {
@@ -707,6 +710,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     maxSteps: Int
     maxLoopIterations: Int
     defaultTimeoutMs: Int
+    maxConcurrency: Int
     mockScenario: JSON
   }
 
@@ -737,6 +741,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     maxSteps: Int
     maxLoopIterations: Int
     defaultTimeoutMs: Int
+    maxConcurrency: Int
   }
 
   input SupervisedWorkflowLookupGraphqlInput {
@@ -768,6 +773,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     maxSteps: Int
     maxLoopIterations: Int
     defaultTimeoutMs: Int
+    maxConcurrency: Int
   }
 
   input SupervisorDispatchConversationLookupInput {

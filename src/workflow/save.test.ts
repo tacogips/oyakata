@@ -280,4 +280,118 @@ describe("saveWorkflowToDisk", () => {
       },
     ]);
   });
+
+  test("preserves fanout concurrency defaults when saving a normalized workflow", async () => {
+    const workflowRoot = await makeTempDir();
+    const workflowDirectory = path.join(workflowRoot, "fanout-demo");
+
+    await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+    await writeFile(
+      path.join(workflowDirectory, "workflow.json"),
+      JSON.stringify(
+        {
+          workflowId: "fanout-demo",
+          defaults: {
+            nodeTimeoutMs: 120000,
+            maxLoopIterations: 8,
+            fanoutConcurrency: 7,
+          },
+          entryStepId: "classify",
+          nodes: [
+            {
+              id: "classify-node",
+              nodeFile: "nodes/node-classify.json",
+            },
+            {
+              id: "join-node",
+              nodeFile: "nodes/node-join.json",
+            },
+          ],
+          steps: [
+            {
+              id: "classify",
+              nodeId: "classify-node",
+              transitions: [
+                {
+                  toStepId: "join",
+                  fanout: {
+                    groupId: "features",
+                    itemsFrom: "/payload/features",
+                    joinStepId: "join",
+                    failurePolicy: "collect-all",
+                    resultOrder: "input",
+                    writeOwnership: { mode: "read-only" },
+                  },
+                },
+              ],
+            },
+            {
+              id: "join",
+              nodeId: "join-node",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(
+      path.join(workflowDirectory, "nodes", "node-classify.json"),
+      JSON.stringify(
+        {
+          id: "classify-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "Classify feature work.",
+          variables: {},
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(
+      path.join(workflowDirectory, "nodes", "node-join.json"),
+      JSON.stringify(
+        {
+          id: "join-node",
+          executionBackend: "codex-agent",
+          model: "gpt-5",
+          promptTemplate: "Join feature work.",
+          variables: {},
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const loaded = await loadWorkflowFromDisk("fanout-demo", { workflowRoot });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+
+    const saved = await saveWorkflowToDisk(
+      "fanout-demo",
+      {
+        workflow: loaded.value.bundle.workflow,
+        nodePayloads: loaded.value.bundle.nodePayloads,
+      },
+      { workflowRoot },
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) {
+      return;
+    }
+
+    const persistedWorkflow = JSON.parse(
+      await readFile(path.join(workflowDirectory, "workflow.json"), "utf8"),
+    ) as {
+      readonly defaults?: Record<string, unknown>;
+    };
+
+    expect(persistedWorkflow.defaults?.["fanoutConcurrency"]).toBe(7);
+  });
 });

@@ -78,6 +78,9 @@ function projectAuthoredWorkflowFromNormalized(input: {
     defaults: {
       nodeTimeoutMs: workflow.defaults.nodeTimeoutMs,
       maxLoopIterations: workflow.defaults.maxLoopIterations,
+      ...(workflow.defaults.fanoutConcurrency === undefined
+        ? {}
+        : { fanoutConcurrency: workflow.defaults.fanoutConcurrency }),
       ...(workflow.defaults.timeoutPolicy === undefined
         ? {}
         : { timeoutPolicy: workflow.defaults.timeoutPolicy }),

@@ -43,8 +43,8 @@ until branch identity, retry, pause, timeout, and maxSteps semantics run inside
 the parent workflow session.
 
 Excluded: static authored `branches[]`, partial-success joins, group-level
-timeouts, branch auto-merge, new run-time CLI flags, and branch rerun selector
-support beyond rejecting ambiguous branch reruns.
+timeouts, branch auto-merge, and branch rerun selector support beyond rejecting
+ambiguous branch reruns.
 
 ## Modules
 
@@ -355,7 +355,7 @@ export interface FanoutGroupSummary {
 
 - [x] `bun run typecheck`
 - [x] `bun test src/workflow/validate.test.ts src/workflow/types.test.ts`
-- [ ] `bun test src/workflow/engine.test.ts --runInBand`
+- [x] `bun test src/workflow/engine.test.ts`
 - [x] `bun test src/graphql/schema.test.ts src/cli.test.ts --runInBand`
 - [x] `bun run src/main.ts workflow validate design-and-implement-review-loop`
 - [x] `bun run src/main.ts workflow validate design-and-implement-review-loop-feature-plan`
@@ -386,6 +386,7 @@ export interface FanoutGroupSummary {
 - `bun test src/workflow/session-store.test.ts`
 - `bun test src/workflow/engine.test.ts --runInBand`
 - focused engine regression: nested cross-workflow fanout cannot exceed the remaining runtime maximum fanout concurrency budget
+- focused engine regression: `maxConcurrency` clamps authored/default fanout concurrency for a workflow run
 - focused engine regression: isolated branch retries reuse the prior workspace or persist replacement linkage
 - `bun test src/graphql/schema.test.ts src/cli.test.ts --runInBand`
 - `bun test src/tui/opentui-screen.test.ts --runInBand`
@@ -460,3 +461,10 @@ export interface FanoutGroupSummary {
 **Tasks In Progress**: TASK-003, TASK-005, TASK-008.
 **Blockers**: Parent-session local fanout work-item execution, branch retry workspace lineage, and exhaustive cancellation/pause/timeout coverage remain open.
 **Notes**: Extracted cohesive fanout helper utilities from `src/workflow/engine.ts` into `src/workflow/engine-fanout.ts`, including JSON Pointer resolution, fanout item/concurrency/budget helpers, branch workspace preparation, bounded branch scheduling, runtime variable builders, and join output persistence. Verification passed for `bun run typecheck`, focused fanout engine tests, the full `src/workflow` test suite, and `git diff --check`.
+
+### Session: 2026-05-05 18:16 JST
+
+**Tasks Completed**: Added run-level maximum fanout concurrency support and documentation refresh.
+**Tasks In Progress**: TASK-003, TASK-005, TASK-008.
+**Blockers**: Parent-session local fanout work-item execution, branch retry workspace lineage, and exhaustive cancellation/pause/timeout coverage remain open.
+**Notes**: Added `WorkflowRunOptions.maxConcurrency`, the `--max-concurrency` CLI flag, GraphQL input support, and event-trigger option forwarding. The cap seeds the existing fanout concurrency budget so authored/default fanout concurrency is clamped for the run and nested fanout keeps inheriting the remaining runtime budget. Added engine, CLI, and GraphQL regressions for forwarding, validation, and persisted effective group concurrency. Verification passed for `bun run typecheck`, focused engine/CLI/GraphQL tests, the full `bun run test` suite, and `git diff --check`.

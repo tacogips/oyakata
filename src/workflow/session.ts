@@ -236,6 +236,12 @@ export interface FanoutBranchRecord {
   readonly outputRef?: OutputRef;
   readonly error?: string;
   readonly workspaceRoot?: string;
+  /**
+   * When this branch was created as a retry of a prior fanout group execution,
+   * records the workspace root from the superseded branch attempt so operators
+   * can locate prior branch work for inspection and cleanup.
+   */
+  readonly supersededWorkspaceRoot?: string;
 }
 
 export interface FanoutGroupRunRecord {

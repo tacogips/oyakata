@@ -260,6 +260,42 @@ export async function prepareFanoutBranchWorkspace(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Retry workspace linkage
+// ---------------------------------------------------------------------------
+
+/**
+ * Looks through prior fanout group run records to find the workspace root used
+ * by an earlier attempt for the same group ID and branch index.  Returns the
+ * most-recent prior workspace root, or `undefined` when no prior attempt had
+ * an isolated workspace for this branch.
+ *
+ * Used to populate `FanoutBranchRecord.supersededWorkspaceRoot` when a retry
+ * of a fanout-producing step creates a new group that repeats an earlier
+ * branch index.
+ */
+export function findPriorBranchWorkspaceRoot(input: {
+  readonly priorGroups: readonly import("./session").FanoutGroupRunRecord[];
+  readonly groupId: string;
+  readonly branchIndex: number;
+}): string | undefined {
+  // Iterate in reverse so the most recent prior attempt wins when multiple
+  // prior groups share the same groupId.
+  for (let i = input.priorGroups.length - 1; i >= 0; i--) {
+    const group = input.priorGroups[i];
+    if (group === undefined || group.groupId !== input.groupId) {
+      continue;
+    }
+    const branch = group.branches.find(
+      (b) => b.branchIndex === input.branchIndex,
+    );
+    if (branch?.workspaceRoot !== undefined) {
+      return branch.workspaceRoot;
+    }
+  }
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Bounded branch scheduler
 // ---------------------------------------------------------------------------
 

@@ -286,6 +286,7 @@ interface ParsedOptions {
   readonly mockScenarioPath?: string;
   readonly dryRun: boolean;
   readonly maxSteps?: number;
+  readonly maxConcurrency?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
   readonly timeoutMs?: number;
@@ -612,6 +613,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let dryRun = false;
   let mockScenarioPath: string | undefined;
   let maxSteps: number | undefined;
+  let maxConcurrency: number | undefined;
   let maxLoopIterations: number | undefined;
   let defaultTimeoutMs: number | undefined;
   let timeoutMs: number | undefined;
@@ -833,6 +835,21 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
             break;
           }
           maxSteps = parsedNumber.value;
+        }
+        break;
+      case "--max-concurrency":
+        {
+          const parsedNumber = parseNumericOption(token, readNext());
+          if (parsedNumber.error !== undefined) {
+            parseError = parsedNumber.error;
+            break;
+          }
+          const parsed = parsedNumber.value!;
+          if (!Number.isInteger(parsed) || parsed < 1) {
+            parseError = `invalid --max-concurrency value '${parsed}'; expected a positive integer`;
+            break;
+          }
+          maxConcurrency = parsed;
         }
         break;
       case "--max-loop-iterations":
@@ -1237,6 +1254,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       output,
       dryRun,
       ...(maxSteps === undefined ? {} : { maxSteps }),
+      ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
       ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
       ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -1383,6 +1401,9 @@ function printHelp(io: CliIo): void {
   );
   io.stdout(
     "  health --llm-limit <n>   Cap recent LLM messages included when enabled",
+  );
+  io.stdout(
+    "  --max-concurrency <n>      Cap fanout concurrency for this run (positive integer)",
   );
   io.stdout("  --default-timeout-ms <ms>  Override workflow default timeout");
   io.stdout("  --timeout-ms <ms>          call-step only");
@@ -1894,6 +1915,9 @@ function buildRemoteExecutionInput(
     ...(parsedOptions.maxSteps === undefined
       ? {}
       : { maxSteps: parsedOptions.maxSteps }),
+    ...(parsedOptions.maxConcurrency === undefined
+      ? {}
+      : { maxConcurrency: parsedOptions.maxConcurrency }),
     ...(parsedOptions.maxLoopIterations === undefined
       ? {}
       : { maxLoopIterations: parsedOptions.maxLoopIterations }),
@@ -2007,6 +2031,7 @@ function buildLocalWorkflowRunOverrides(
   | "nestedSuperviserDriver"
   | "defaultTimeoutMs"
   | "dryRun"
+  | "maxConcurrency"
   | "maxLoopIterations"
   | "maxSteps"
   | "workflowWorkingDirectory"
@@ -2021,6 +2046,9 @@ function buildLocalWorkflowRunOverrides(
     ...(parsedOptions.maxSteps === undefined
       ? {}
       : { maxSteps: parsedOptions.maxSteps }),
+    ...(parsedOptions.maxConcurrency === undefined
+      ? {}
+      : { maxConcurrency: parsedOptions.maxConcurrency }),
     ...(parsedOptions.maxLoopIterations === undefined
       ? {}
       : { maxLoopIterations: parsedOptions.maxLoopIterations }),
@@ -2886,6 +2914,9 @@ export async function runCli(
       ...(parsed.options.maxSteps === undefined
         ? {}
         : { maxSteps: parsed.options.maxSteps }),
+      ...(parsed.options.maxConcurrency === undefined
+        ? {}
+        : { maxConcurrency: parsed.options.maxConcurrency }),
       ...(parsed.options.maxLoopIterations === undefined
         ? {}
         : { maxLoopIterations: parsed.options.maxLoopIterations }),
@@ -3895,6 +3926,9 @@ export async function runCli(
         ...(parsed.options.maxSteps === undefined
           ? {}
           : { maxSteps: parsed.options.maxSteps }),
+        ...(parsed.options.maxConcurrency === undefined
+          ? {}
+          : { maxConcurrency: parsed.options.maxConcurrency }),
       });
 
       if (!result.ok) {

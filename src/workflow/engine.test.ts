@@ -121,6 +121,85 @@ class CrossWorkflowFanoutAdapter implements NodeAdapter {
   }
 }
 
+class FanoutRetryWorkspaceAdapter implements NodeAdapter {
+  joinCallCount = 0;
+  reviewerWorkingDirectories: string[] = [];
+
+  async execute(
+    input: Parameters<NodeAdapter["execute"]>[0],
+  ): Promise<
+    ReturnType<NodeAdapter["execute"]> extends Promise<infer T> ? T : never
+  > {
+    if (input.nodeId === "writer") {
+      return {
+        provider: "fanout-retry-test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: {
+          features: [{ id: "feature-a" }, { id: "feature-b" }],
+        },
+      };
+    }
+    if (input.nodeId === "reviewer") {
+      this.reviewerWorkingDirectories.push(input.workingDirectory);
+      return {
+        provider: "fanout-retry-test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { always: true },
+        payload: { feature: input.mergedVariables["feature"] },
+      };
+    }
+    if (input.nodeId === "join-manager") {
+      this.joinCallCount += 1;
+      if (this.joinCallCount === 1) {
+        return {
+          provider: "fanout-retry-test-adapter",
+          model: input.node.model,
+          promptText: input.promptText,
+          completionPassed: true,
+          when: { runWriter: true },
+          payload: { bootstrap: true },
+        };
+      }
+      if (this.joinCallCount === 2) {
+        return {
+          provider: "fanout-retry-test-adapter",
+          model: input.node.model,
+          promptText: input.promptText,
+          completionPassed: true,
+          when: { always: true },
+          payload: {
+            managerControl: {
+              actions: [{ type: "retry-step", stepId: "writer" }],
+            },
+            retryComplete: false,
+          },
+        };
+      }
+      return {
+        provider: "fanout-retry-test-adapter",
+        model: input.node.model,
+        promptText: input.promptText,
+        completionPassed: true,
+        when: { retryComplete: true },
+        payload: { retryComplete: true },
+      };
+    }
+    return {
+      provider: "fanout-retry-test-adapter",
+      model: input.node.model,
+      promptText: input.promptText,
+      completionPassed: true,
+      when: { always: true },
+      payload: { nodeId: input.nodeId },
+    };
+  }
+}
+
 class OutputContractRetryAdapter implements NodeAdapter {
   readonly #mode: "retry-success" | "always-invalid";
 
@@ -1493,6 +1572,93 @@ async function createWorkflowCallFanoutFixture(
   });
 }
 
+async function createFanoutRetryWorkspaceFixture(
+  root: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDir = path.join(root, workflowName);
+  await mkdir(workflowDir, { recursive: true });
+
+  await writeJson(path.join(workflowDir, "workflow.json"), {
+    workflowId: workflowName,
+    description: "isolated fanout branch retry workspace fixture",
+    managerStepId: "join-manager",
+    defaults: {
+      maxLoopIterations: 5,
+      nodeTimeoutMs: 120000,
+      fanoutConcurrency: 2,
+    },
+    entryStepId: "join-manager",
+    nodes: [
+      { id: "join-manager", nodeFile: "node-join-manager.json" },
+      { id: "writer", nodeFile: "node-writer.json" },
+      { id: "end", nodeFile: "node-end.json" },
+    ],
+    steps: [
+      {
+        id: "join-manager",
+        nodeId: "join-manager",
+        role: "manager",
+        transitions: [
+          { toStepId: "writer", label: "runWriter" },
+          { toStepId: "end", label: "retryComplete" },
+        ],
+      },
+      {
+        id: "writer",
+        nodeId: "writer",
+        role: "worker",
+        transitions: [
+          {
+            toWorkflowId: "review-flow",
+            toStepId: "reviewer",
+            resumeStepId: "join-manager",
+            fanout: {
+              groupId: "review-group",
+              itemsFrom: "/payload/features",
+              itemVariable: "feature",
+              concurrency: 2,
+              joinStepId: "join-manager",
+              failurePolicy: "collect-all",
+              resultOrder: "input",
+              writeOwnership: { mode: "isolated-workspace" },
+            },
+          },
+        ],
+      },
+      {
+        id: "end",
+        nodeId: "end",
+        role: "worker",
+      },
+    ],
+  });
+
+  await writeJson(path.join(workflowDir, "node-writer.json"), {
+    id: "writer",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "writer",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-join-manager.json"), {
+    id: "join-manager",
+    executionBackend: "claude-code-agent",
+    model: "claude-opus-4-1",
+    promptTemplate: "join manager",
+    variables: {},
+  });
+
+  await writeJson(path.join(workflowDir, "node-end.json"), {
+    id: "end",
+    executionBackend: "codex-agent",
+    model: "gpt-5-nano",
+    promptTemplate: "end",
+    variables: {},
+  });
+}
+
 async function createLocalFanoutFixture(
   root: string,
   workflowName: string,
@@ -1636,7 +1802,7 @@ async function createWorkflowCallStepIdMismatchFixture(
 
 /**
  * Like {@link createWorkflowCallFixture} but the workflow call is conditioned with
- * `when: "need_review"`. Deterministic adapter output does not satisfy it, so the
+ * `label: "need_review"`. Deterministic adapter output does not satisfy it, so the
  * callee is never run (see `executeCrossWorkflowDispatchesForNode` gating by `entry.when`).
  */
 async function createWhenGatedWorkflowCallFixture(
@@ -3693,6 +3859,77 @@ describe("runWorkflow", () => {
     expect(fanoutJoin?.results?.[0]?.workspaceRoot).toBe(firstBranchWorkspace);
   });
 
+  test("records superseded workspace root on isolated fanout branch retry", async () => {
+    const root = await makeTempDir();
+    await createFanoutRetryWorkspaceFixture(root, "fanout-retry-workspace");
+    await createWorkflowCallCalleeFixture(root, "review-flow");
+    await writeFile(path.join(root, "source-marker.txt"), "source", "utf8");
+    const adapter = new FanoutRetryWorkspaceAdapter();
+
+    const result = await runWorkflow(
+      "fanout-retry-workspace",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        workflowWorkingDirectory: root,
+      },
+      adapter,
+    );
+
+    if (!result.ok) {
+      throw new Error(`workflow failed: ${result.error.message}`);
+    }
+    expect(result.ok).toBe(true);
+
+    const groups = result.value.session.fanoutGroups ?? [];
+    // Two writer executions → two fanout groups for the same groupId.
+    expect(groups.length).toBe(2);
+    const firstGroup = groups[0];
+    const secondGroup = groups[1];
+    expect(firstGroup).toBeDefined();
+    expect(secondGroup).toBeDefined();
+    if (firstGroup === undefined || secondGroup === undefined) {
+      return;
+    }
+
+    // Both groups share the same authored groupId.
+    expect(firstGroup.groupId).toBe("review-group");
+    expect(secondGroup.groupId).toBe("review-group");
+
+    // First group branches have workspace roots (isolated-workspace mode).
+    expect(firstGroup.branches).toHaveLength(2);
+    const firstGroupWorkspaces = firstGroup.branches.map(
+      (b) => b.workspaceRoot,
+    );
+    expect(
+      firstGroupWorkspaces.every((ws): ws is string => typeof ws === "string"),
+    ).toBe(true);
+
+    // Second group branches record the superseded workspace root from the
+    // corresponding first-group branch.
+    expect(secondGroup.branches).toHaveLength(2);
+    for (const branch of secondGroup.branches) {
+      const priorWorkspace = firstGroup.branches.find(
+        (b) => b.branchIndex === branch.branchIndex,
+      )?.workspaceRoot;
+      if (priorWorkspace === undefined) {
+        throw new Error(
+          `expected first group branch ${branch.branchIndex} to have workspaceRoot`,
+        );
+      }
+      expect(branch.supersededWorkspaceRoot).toBe(priorWorkspace);
+      // Each retry attempt still gets its own new workspace.
+      expect(branch.workspaceRoot).toBeDefined();
+      expect(branch.workspaceRoot).not.toBe(branch.supersededWorkspaceRoot);
+    }
+
+    // The manager runs once to start the writer, once to request the retry, and
+    // once to complete after the retried fanout group finishes.
+    expect(adapter.joinCallCount).toBe(3);
+  });
+
   test("shares maxSteps across cross-workflow fanout branch runs", async () => {
     const root = await makeTempDir();
     const sessionStoreRoot = path.join(root, "sessions");
@@ -3736,6 +3973,56 @@ describe("runWorkflow", () => {
     expect(branches.filter((branch) => branch.status === "failed").length).toBe(
       2,
     );
+  });
+
+  test("maxConcurrency cap clamps authored fanout concurrency and persists as group concurrency 1", async () => {
+    const root = await makeTempDir();
+    await createWorkflowCallFanoutFixture(
+      root,
+      "workflow-call-fanout-max-concurrency",
+    );
+    await createWorkflowCallCalleeFixture(root, "review-flow");
+    const adapter = new CrossWorkflowFanoutAdapter();
+
+    const result = await runWorkflow(
+      "workflow-call-fanout-max-concurrency",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        maxConcurrency: 1,
+      },
+      adapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(adapter.maxRunningReviewers).toBeLessThanOrEqual(1);
+    const group = result.value.session.fanoutGroups?.[0];
+    expect(group?.concurrency).toBe(1);
+    expect(group?.branches.map((b) => b.status)).toEqual([
+      "succeeded",
+      "succeeded",
+      "succeeded",
+    ]);
+  });
+
+  test("runWorkflow rejects non-positive-integer maxConcurrency with exit code 2", async () => {
+    for (const value of [0, -1, 0.5, 1.5]) {
+      const result = await runWorkflow("any-workflow", {
+        ...workflowLoadOpts,
+        maxConcurrency: value,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        continue;
+      }
+      expect(result.error.exitCode).toBe(2);
+      expect(result.error.message).toContain("maxConcurrency");
+    }
   });
 
   test("rejects local fanout until parent-session work items are implemented", async () => {

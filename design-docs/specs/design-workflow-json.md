@@ -417,7 +417,7 @@ Rules:
 
 - `itemsFrom` is a JSON Pointer into the source step output payload and must resolve to an array at runtime
 - each source item creates a distinct branch work item, so the same target step may execute once per item without queue dedupe collapsing the branches
-- `concurrency` defaults to `defaults.fanoutConcurrency` or `20` and must stay within the runtime maximum fanout concurrency
+- `concurrency` defaults to `defaults.fanoutConcurrency` or `20` and must stay within the runtime maximum fanout concurrency, including a run-level `maxConcurrency` cap when provided
 - `joinStepId` must reference a current-workflow step and is queued once after all required branch work succeeds
 - for cross-workflow fanout, authored `resumeStepId` remains required and must equal `fanout.joinStepId`
 - branch outputs are aggregated in source item order and delivered to the join step through runtime-owned communication artifacts

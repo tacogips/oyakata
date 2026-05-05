@@ -81,7 +81,7 @@ Field meanings:
 - `groupId`: stable authored id unique within the source step's outgoing fanout transitions
 - `itemsFrom`: JSON Pointer into the source step output payload; the selected value must be an array
 - `itemVariable`: runtime variable name exposed to each branch as `runtimeVariables[itemVariable]`
-- `concurrency`: optional positive integer; defaults to workflow `defaults.fanoutConcurrency` or `20`
+- `concurrency`: optional positive integer; defaults to workflow `defaults.fanoutConcurrency` or `20`, then clamps to the run-time `maxConcurrency` cap when provided
 - `joinStepId`: current-workflow step to queue after all required branch results complete
 - `failurePolicy`: initially `fail-fast` or `collect-all`; default `fail-fast`
 - `resultOrder`: initially `input`; aggregate branch outputs preserve source item order

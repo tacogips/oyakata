@@ -243,6 +243,7 @@ export interface ExecuteWorkflowInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
 }
 
 export type GraphqlWorkflowTemplateMode =
@@ -298,6 +299,7 @@ export interface ResumeWorkflowExecutionInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
 }
 
 export interface ResumeWorkflowExecutionPayload {
@@ -317,6 +319,7 @@ export interface RerunWorkflowExecutionInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
 }
 
 export interface RerunWorkflowExecutionPayload {
@@ -339,6 +342,7 @@ export interface ContinueWorkflowExecutionInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
   readonly mockScenario?: MockNodeScenario;
 }
 
@@ -412,6 +416,7 @@ export interface DispatchSupervisedWorkflowCommandInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
 }
 
 export interface SupervisedWorkflowGraphqlPayload {
@@ -464,6 +469,7 @@ export interface DispatchSupervisorConversationGraphqlInput {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly maxConcurrency?: number;
 }
 
 export interface DispatchSupervisorConversationPayload {

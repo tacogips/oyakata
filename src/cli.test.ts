@@ -4167,6 +4167,86 @@ describe("runCli", () => {
     });
   });
 
+  test("workflow run forwards --max-concurrency to runWorkflow options", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "worker-only");
+    const artifactsRoot = path.join(root, "artifacts");
+    const sessionsRoot = path.join(root, "sessions");
+    const capture = createIoCapture();
+    const session = createSessionState({
+      sessionId: "sess-max-concurrency-run",
+      workflowName: "worker-only",
+      workflowId: "worker-only",
+      initialNodeId: "main-worker",
+      runtimeVariables: {},
+    });
+
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue(
+        ok({
+          session: { ...session, status: "completed" },
+          exitCode: 0,
+        } satisfies workflowEngine.WorkflowRunResult),
+      );
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "worker-only",
+        "--workflow-definition-dir",
+        root,
+        "--artifact-root",
+        artifactsRoot,
+        "--session-store",
+        sessionsRoot,
+        "--max-concurrency",
+        "3",
+        "--output",
+        "json",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "worker-only",
+      expect.objectContaining({ maxConcurrency: 3 }),
+    );
+  });
+
+  test.each([
+    {
+      name: "zero",
+      value: "0",
+      expected: "invalid --max-concurrency",
+    },
+    {
+      name: "non-integer",
+      value: "1.5",
+      expected: "invalid --max-concurrency",
+    },
+    {
+      name: "negative",
+      value: "-1",
+      expected: "invalid --max-concurrency",
+    },
+  ])(
+    "workflow run rejects invalid --max-concurrency: $name",
+    async ({ value, expected }) => {
+      const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+      const capture = createIoCapture();
+      const code = await runCli(
+        ["workflow", "run", "demo", "--max-concurrency", value],
+        capture.io,
+      );
+      expect(code).toBe(2);
+      expect(capture.stderr.join("\n")).toContain(expected);
+      expect(runWorkflowSpy).not.toHaveBeenCalled();
+    },
+  );
+
   test("session step-runs rejects graphql transport", async () => {
     const capture = createIoCapture();
     const code = await runCli(

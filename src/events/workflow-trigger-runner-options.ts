@@ -15,6 +15,7 @@ export interface WorkflowTriggerRunnerOptions extends DivedraOptions {
   readonly mockScenario?: MockNodeScenario;
   readonly dryRun?: boolean;
   readonly maxSteps?: number;
+  readonly maxConcurrency?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
   readonly readOnly?: boolean;
