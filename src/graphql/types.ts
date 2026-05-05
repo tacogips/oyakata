@@ -14,7 +14,10 @@ import type {
   ReplayCommunicationResult,
   RetryCommunicationDeliveryResult,
 } from "../workflow/communication-service";
-import type { WorkflowInspectionSummary } from "../workflow/inspect";
+import type {
+  FanoutGroupSummary,
+  WorkflowInspectionSummary,
+} from "../workflow/inspect";
 import type { ManagerControlAction } from "../workflow/manager-control";
 import type {
   DataDirFileRef,
@@ -154,6 +157,7 @@ export interface WorkflowDefinitionView extends WorkflowResponse {}
 
 export interface WorkflowSessionView extends WorkflowSessionState {
   readonly currentStepId: string | null;
+  readonly fanoutSummaries: readonly FanoutGroupSummary[];
 }
 
 export interface WorkflowExecutionView {

@@ -210,9 +210,23 @@ const GRAPHQL_SCHEMA_TEXT = `
     communications: JSON!
     conversationTurns: JSON!
     nodeBackendSessions: JSON!
+    fanoutGroups: JSON!
+    fanoutSummaries: [FanoutGroupSummary!]!
     runtimeVariables: JSON!
     lastError: String
     supervision: SupervisionRunState
+  }
+
+  type FanoutGroupSummary {
+    fanoutGroupRunId: String!
+    groupId: String!
+    sourceStepId: String!
+    joinStepId: String!
+    targetStepId: String!
+    targetWorkflowId: String
+    concurrency: Int!
+    branchCounts: JSON!
+    firstFailure: String
   }
 
   type RuntimeNodeExecutionSummary {

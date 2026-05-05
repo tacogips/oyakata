@@ -11,7 +11,10 @@ import {
   createWorkflowTemplate,
   type CreateWorkflowTemplateMode,
 } from "../workflow/create";
-import { buildInspectionSummary } from "../workflow/inspect";
+import {
+  buildFanoutGroupSummaries,
+  buildInspectionSummary,
+} from "../workflow/inspect";
 import { collectWorkflowAddonSourceSummaries } from "../workflow/addon-source-summary";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "../workflow/load";
 import { isSafeWorkflowName } from "../workflow/paths";
@@ -1025,7 +1028,9 @@ async function toWorkflowSessionView(
 ): Promise<WorkflowSessionView> {
   return {
     ...session,
+    fanoutGroups: session.fanoutGroups ?? [],
     currentStepId: await resolveSessionCurrentStepId({ session, context }),
+    fanoutSummaries: buildFanoutGroupSummaries(session),
   };
 }
 

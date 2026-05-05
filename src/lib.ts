@@ -14,7 +14,9 @@ import type {
 } from "./graphql/types";
 import {
   buildInspectionSummary,
+  buildFanoutGroupSummaries,
   getSupervisionSummary,
+  type FanoutGroupSummary,
   type WorkflowInspectionSummary,
 } from "./workflow/inspect";
 import {
@@ -147,6 +149,7 @@ export interface MergedWorkflowExecutionStepRunRow {
 export interface RuntimeSessionView {
   readonly session: WorkflowSessionState & {
     readonly currentStepId: string | null;
+    readonly fanoutSummaries: readonly FanoutGroupSummary[];
   };
   readonly nodeExecutions: ReturnType<
     typeof listRuntimeNodeExecutions
@@ -1050,7 +1053,9 @@ export async function getRuntimeSessionView(
   return {
     session: {
       ...session,
+      fanoutGroups: session.fanoutGroups ?? [],
       currentStepId,
+      fanoutSummaries: buildFanoutGroupSummaries(session),
     },
     nodeExecutions,
     nodeLogs,

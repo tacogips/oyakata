@@ -18,7 +18,11 @@ import {
   type NodeRole,
   type NormalizedWorkflowBundle,
 } from "./types";
-import type { WorkflowSessionState } from "./session";
+import type {
+  FanoutBranchStatus,
+  FanoutGroupRunRecord,
+  WorkflowSessionState,
+} from "./session";
 export interface WorkflowInspectionCounts {
   readonly steps: number;
   readonly nodeRegistry: number;
@@ -37,6 +41,18 @@ export interface WorkflowStepSummary {
   readonly stepId: string;
   readonly role: NodeRole;
   readonly description?: string;
+}
+
+export interface FanoutGroupSummary {
+  readonly fanoutGroupRunId: string;
+  readonly groupId: string;
+  readonly sourceStepId: string;
+  readonly joinStepId: string;
+  readonly targetStepId: string;
+  readonly targetWorkflowId?: string;
+  readonly concurrency: number;
+  readonly branchCounts: Readonly<Record<FanoutBranchStatus, number>>;
+  readonly firstFailure?: string;
 }
 
 export interface WorkflowInspectionSummary {
@@ -88,6 +104,55 @@ export function deriveWorkflowStepSummaries(
       step.role ?? (workflow.managerStepId === step.id ? "manager" : "worker"),
     ...(step.description === undefined ? {} : { description: step.description }),
   }));
+}
+
+function emptyFanoutBranchCounts(): Record<FanoutBranchStatus, number> {
+  return {
+    pending: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    cancelled: 0,
+    paused: 0,
+  };
+}
+
+export function buildFanoutGroupSummary(
+  group: FanoutGroupRunRecord,
+): FanoutGroupSummary {
+  const branchCounts = emptyFanoutBranchCounts();
+  let firstFailure: string | undefined;
+  for (const branch of group.branches) {
+    branchCounts[branch.status] += 1;
+    if (
+      firstFailure === undefined &&
+      (branch.status === "failed" || branch.status === "cancelled") &&
+      branch.error !== undefined
+    ) {
+      firstFailure = `branch ${branch.branchIndex}: ${branch.error}`;
+    }
+  }
+  return {
+    fanoutGroupRunId: group.fanoutGroupRunId,
+    groupId: group.groupId,
+    sourceStepId: group.sourceStepId,
+    joinStepId: group.joinStepId,
+    targetStepId: group.targetStepId,
+    ...(group.targetWorkflowId === undefined
+      ? {}
+      : { targetWorkflowId: group.targetWorkflowId }),
+    concurrency: group.concurrency,
+    branchCounts,
+    ...(firstFailure === undefined ? {} : { firstFailure }),
+  };
+}
+
+export function buildFanoutGroupSummaries(
+  session: Pick<WorkflowSessionState, "fanoutGroups">,
+): readonly FanoutGroupSummary[] {
+  return (session.fanoutGroups ?? []).map((group) =>
+    buildFanoutGroupSummary(group),
+  );
 }
 
 export async function buildInspectionSummary(
