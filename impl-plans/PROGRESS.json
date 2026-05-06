@@ -470,10 +470,13 @@
       "status": "COMPLETED"
     },
     "157": {
-      "status": "READY"
+      "status": "COMPLETED"
     },
     "158": {
-      "status": "READY"
+      "status": "COMPLETED"
+    },
+    "159": {
+      "status": "COMPLETED"
     }
   },
   "plans": {
@@ -4201,6 +4204,54 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": ["TASK-002", "TASK-003", "TASK-004", "TASK-005"]
+        }
+      }
+    },
+    "deterministic-supervisor-runner-pool": {
+      "phase": 159,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-003", "TASK-004"]
+        },
+        "TASK-006": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-004", "TASK-005"]
+        },
+        "TASK-007": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "TASK-002",
+            "TASK-003",
+            "TASK-004",
+            "TASK-005",
+            "TASK-006"
+          ]
         }
       }
     }

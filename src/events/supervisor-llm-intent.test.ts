@@ -80,6 +80,30 @@ function buildLlmSupervisedBinding(input: {
   };
 }
 
+function buildCommandMapBinding(input: {
+  readonly bindingId: string;
+  readonly workflowName: string;
+}): EventBinding {
+  return {
+    id: input.bindingId,
+    sourceId: "chat-webhook",
+    workflowName: input.workflowName,
+    inputMapping: { mode: "event-input" },
+    execution: {
+      mode: "supervised",
+      control: {
+        intentMapping: {
+          mode: "command-map",
+          commands: {
+            start: ["start"],
+            status: ["status"],
+          },
+        },
+      },
+    },
+  };
+}
+
 function buildEvent(text: string, eventId = "evt-1"): ExternalEventEnvelope {
   return {
     sourceId: "chat-webhook",
@@ -99,6 +123,59 @@ function buildSource(): EventSourceConfig {
 }
 
 describe("resolveSupervisorIntentAsync with llm-command", () => {
+  test("routes command-map unknown first-token text to the default command-analysis node", async () => {
+    const root = await makeTempDir();
+    const resolverWorkflowName = "divedra-default-workflow-supervisor";
+    const resolverNodeId = "command-analysis";
+    const managedWorkflowName = "managed-command-map-workflow";
+
+    await writeSimpleWorkflow({
+      root,
+      workflowName: resolverWorkflowName,
+      nodeId: resolverNodeId,
+    });
+    await writeSimpleWorkflow({
+      root,
+      workflowName: managedWorkflowName,
+      nodeId: "worker",
+    });
+
+    const result = await resolveSupervisorIntentAsync({
+      binding: buildCommandMapBinding({
+        bindingId: "command-map-default-fallback",
+        workflowName: managedWorkflowName,
+      }),
+      event: buildEvent("please check current state"),
+      source: buildSource(),
+      divedraOptions: {
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        rootDataDir: path.join(root, "data"),
+        cwd: root,
+        mockScenario: {
+          [resolverNodeId]: [
+            {
+              payload: {
+                action: "status",
+                managedWorkflowName,
+                confidence: 0.92,
+                reason: "natural language asks for status",
+                commandText: "please check current state",
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.outcome).toBe("action");
+    if (result.outcome !== "action") return;
+    expect(result.action).toBe("status");
+    expect(result.reason).toBe("natural language asks for status");
+    expect(result.commandText).toBe("please check current state");
+  });
+
   test("resolves to action when LLM decision meets confidence and action is allowed", async () => {
     const root = await makeTempDir();
     const resolverWorkflowName = "intent-resolver";

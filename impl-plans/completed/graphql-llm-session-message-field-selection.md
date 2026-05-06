@@ -36,9 +36,9 @@ message capture expansion.
 
 Codex-reference behavior is accepted as diagnostic guidance only:
 
-- `/Users/taco/gits/tacogips/codex-agent/src/rollout/reader.ts`: separates
+- `<reference-repository-root>/src/rollout/reader.ts`: separates
   displayable session messages from process/runtime events.
-- `/Users/taco/gits/tacogips/codex-agent/src/session/search.ts`: uses bounded
+- `<reference-repository-root>/src/session/search.ts`: uses bounded
   message retrieval windows.
 
 Divedra intentionally diverges by serving provider-neutral runtime DB records
@@ -225,4 +225,4 @@ direct schema defaults at latest-one behavior, and verified with focused tests,
 typecheck, and diff whitespace checks. Optional full `bun test` was also
 attempted and failed outside this GraphQL slice with existing environment /
 runtime-root issues: readonly runtime DB writes, hook artifact writes under
-`/Users/taco/.divedra`, one timeout, and ambient workflow environment leakage.
+`$HOME/.divedra`, one timeout, and ambient workflow environment leakage.

@@ -22,14 +22,14 @@ This is a workflow-engine feature. It is not a cursor-agent backend feature. Cur
 
 Local codex-agent reference root:
 
-- `/Users/taco/gits/tacogips/codex-agent`
+- `<reference-repository-root>` (for example `../../codex-agent`)
 
 Relevant reference points:
 
-- `/Users/taco/gits/tacogips/codex-agent/src/group/manager.ts`: `runGroup()` uses a bounded `maxConcurrent` loop, an `inFlight` map, and `Promise.race()` to refill pending work as sessions finish.
-- `/Users/taco/gits/tacogips/codex-agent/src/group/types.ts`: `GroupRunOptions.maxConcurrent` is a small public option on the group execution boundary.
-- `/Users/taco/gits/tacogips/codex-agent/src/queue/runner.ts`: queue execution is deliberately sequential and is a useful contrast for divedra's current `session.queue` behavior.
-- `/Users/taco/gits/tacogips/codex-agent/impl-plans/completed/phase3-sqlite-group-queue.md`: documents the separation between concurrency-controlled group execution and strictly sequential queue execution.
+- `<reference-repository-root>/src/group/manager.ts`: `runGroup()` uses a bounded `maxConcurrent` loop, an `inFlight` map, and `Promise.race()` to refill pending work as sessions finish.
+- `<reference-repository-root>/src/group/types.ts`: `GroupRunOptions.maxConcurrent` is a small public option on the group execution boundary.
+- `<reference-repository-root>/src/queue/runner.ts`: queue execution is deliberately sequential and is a useful contrast for divedra's current `session.queue` behavior.
+- `<reference-repository-root>/impl-plans/completed/phase3-sqlite-group-queue.md`: documents the separation between concurrency-controlled group execution and strictly sequential queue execution.
 
 The divedra design intentionally diverges from codex-agent in two ways:
 
@@ -292,5 +292,5 @@ Verification should include:
 - `design-docs/specs/architecture.md`
 - `design-docs/specs/design-workflow-json.md`
 - `design-docs/specs/design-workflow-steps-and-node-reuse.md`
-- `/Users/taco/gits/tacogips/codex-agent/src/group/manager.ts`
-- `/Users/taco/gits/tacogips/codex-agent/src/queue/runner.ts`
+- `<reference-repository-root>/src/group/manager.ts`
+- `<reference-repository-root>/src/queue/runner.ts`

@@ -584,6 +584,7 @@ const GRAPHQL_SCHEMA_TEXT = `
   type SupervisedWorkflowGraphqlPayload {
     supervisedRun: JSON!
     activeTargetStatus: String
+    commandResult: JSON
   }
 
   type DispatchSupervisorChatResult {
@@ -739,6 +740,7 @@ const GRAPHQL_SCHEMA_TEXT = `
     bindingId: String!
     correlationKey: String!
     action: String!
+    args: [String!]
     targetWorkflowName: String!
     supervisedRunId: String
     targetWorkflowExecutionId: String

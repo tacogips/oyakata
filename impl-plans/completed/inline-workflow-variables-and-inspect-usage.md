@@ -35,7 +35,8 @@ changes to workflow usage semantics beyond preserving existing behavior.
 
 ## Codex-Agent Reference Mapping
 
-Codex-reference behavior comes from `/Users/taco/gits/tacogips/codex-agent`:
+Codex-reference behavior comes from `<reference-repository-root>` (for example
+`../../codex-agent`):
 
 - `src/cli/graphql.ts`: `parseJsonSource` accepts inline JSON, explicit `@file`,
   and readable bare file paths, then requires `--variables` to parse as an
@@ -327,7 +328,7 @@ Manual smoke `DIVEDRA_ARTIFACT_DIR=/private/tmp/divedra-cli-smoke-artifacts bun 
 passed, and `bun run src/main.ts workflow inspect worker-only-single-step --workflow-definition-dir ./examples`
 passed.
 An initial `bun test src/cli.test.ts` without `DIVEDRA_ARTIFACT_DIR` failed only
-because the sandbox denied hook recording under `/Users/taco/.divedra`; rerun
+because the sandbox denied hook recording under `$HOME/.divedra`; rerun
 with a writable runtime root passed.
 
 ### Session: 2026-05-04 15:18 JST

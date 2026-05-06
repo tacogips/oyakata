@@ -15,16 +15,19 @@ role:
 Chat event / web chat event / library chat input
   -> external mailbox input
   -> workflow supervisor conversation
-  -> LLM dispatcher decision
+  -> deterministic command parser or command-analysis decision proposal
   -> zero, one, or many target workflow lifecycle actions
   -> external mailbox output reply
 ```
 
-The workflow supervisor is itself a normal divedra workflow. Its primary
-dispatcher step may be an LLM manager node, so the decision logic can be
-implemented with the same workflow/node execution model as other managers. The
-runtime grants that supervisor only scoped system capabilities for workflows
-listed in its supervisor profile. The supervisor cannot launch or cancel
+The workflow supervisor is represented as a normal divedra workflow identity,
+but the default dispatcher is deterministic. It parses configured command
+tokens, applies profile validation, and controls target runs through the
+in-process runner pool. A command-analysis LLM node may be invoked only when the
+first text token is not a known command or when a profile explicitly requests
+LLM-backed dispatch. The LLM output is a decision proposal, not the authority
+boundary. The runtime grants the supervisor only scoped system capabilities for
+workflows listed in its supervisor profile, so it cannot launch or cancel
 arbitrary workflows by name.
 
 This design extends, rather than replaces:
@@ -43,8 +46,9 @@ This design extends, rather than replaces:
 - Let the supervisor decide per incoming chat event whether to stop a workflow,
   switch active workflow, start a new workflow, submit input to an existing
   workflow, answer directly, report status, or ask for clarification.
-- Implement the dispatcher as an LLM-backed workflow manager node when desired,
-  while keeping privileged lifecycle actions behind runtime validation.
+- Keep the default dispatcher deterministic, while allowing an LLM-backed
+  command-analysis or dispatcher node when desired and keeping privileged
+  lifecycle actions behind runtime validation.
 - Preserve direct single-target supervised mode as a simpler compatibility
   shape.
 
@@ -65,7 +69,8 @@ The following invariants are mandatory regardless of whether the packaged
 default supervisor is implemented as a long-lived workflow execution or as
 short decision executions:
 
-- the LLM dispatcher only proposes decisions; it never becomes the authority
+- deterministic command parsing is the default; any LLM dispatcher or
+  command-analysis node only proposes decisions and never becomes the authority
   that mutates runtime state
 - every privileged lifecycle mutation is validated against one concrete
   supervisor profile revision or snapshot

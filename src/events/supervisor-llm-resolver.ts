@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { defaultSupervisorWorkflowName } from "./supervisor-correlation";
 import {
+  EVENT_SUPERVISOR_ACTIONS,
   parseSupervisorChatCommandDecision,
   type SupervisorChatCommandDecision,
 } from "./supervisor-command-contract";
@@ -22,13 +23,8 @@ import {
 import type { WorkflowSupervisorProfile } from "./supervisor-profiles";
 import type { EventSupervisorAction } from "./types";
 
-const ALL_SUPERVISOR_CHAT_ACTIONS: readonly EventSupervisorAction[] = [
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "input",
-];
+const ALL_SUPERVISOR_CHAT_ACTIONS: readonly EventSupervisorAction[] =
+  EVENT_SUPERVISOR_ACTIONS;
 
 export interface RunSupervisorLlmResolverInput {
   readonly binding: EventBinding;

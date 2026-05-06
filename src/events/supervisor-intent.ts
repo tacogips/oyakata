@@ -1,5 +1,8 @@
 import { isJsonObject } from "../shared/json";
-import { resolveSupervisedCorrelationKey } from "./supervisor-correlation";
+import {
+  defaultSupervisorWorkflowName,
+  resolveSupervisedCorrelationKey,
+} from "./supervisor-correlation";
 import { createEventSupervisedRunRepository } from "./supervised-runs";
 import type {
   EventBinding,
@@ -13,23 +16,16 @@ import type {
 } from "./types";
 import type { WorkflowTriggerRunnerOptions } from "./trigger-runner";
 import { runSupervisorLlmResolver } from "./supervisor-llm-resolver";
+import {
+  EVENT_SUPERVISOR_ACTIONS,
+  EVENT_SUPERVISOR_ACTION_SET,
+  parseSupervisorCommandText,
+} from "./supervisor-command-contract";
 
-const ALL_ACTIONS: readonly EventSupervisorAction[] = [
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "input",
-];
+const ALL_ACTIONS: readonly EventSupervisorAction[] = EVENT_SUPERVISOR_ACTIONS;
 
 function isSupervisorAction(value: unknown): value is EventSupervisorAction {
-  return (
-    value === "start" ||
-    value === "stop" ||
-    value === "restart" ||
-    value === "status" ||
-    value === "input"
-  );
+  return typeof value === "string" && EVENT_SUPERVISOR_ACTION_SET.has(value);
 }
 
 function normalizeAllowActions(
@@ -79,24 +75,12 @@ function resolveCommandMapText(
   }
   const value = readPath(root, rest);
   if (typeof value === "string") {
-    return value.trim();
+    return value;
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
   }
   return undefined;
-}
-
-function resolveCommandMapCandidates(text: string): readonly string[] {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) {
-    return [];
-  }
-  const [firstToken] = trimmed.split(/\s+/, 1);
-  if (firstToken === undefined || firstToken === trimmed) {
-    return [trimmed];
-  }
-  return [trimmed, firstToken];
 }
 
 type DeterministicSupervisorIntentMapping =
@@ -137,10 +121,32 @@ function resolveLlmIntentMapping(
   return undefined;
 }
 
+function resolveCommandAnalysisResolver(
+  binding: EventBinding,
+  mapping: EventSupervisorIntentMappingCommandMap,
+): {
+  readonly resolverWorkflowName: string;
+  readonly resolverNodeId: string;
+} {
+  const resolverWorkflowName =
+    typeof mapping.resolverWorkflowName === "string" &&
+    mapping.resolverWorkflowName.length > 0
+      ? mapping.resolverWorkflowName
+      : (binding.execution?.supervisorWorkflowName ??
+        defaultSupervisorWorkflowName());
+  const resolverNodeId =
+    typeof mapping.resolverNodeId === "string" &&
+    mapping.resolverNodeId.length > 0
+      ? mapping.resolverNodeId
+      : "command-analysis";
+  return { resolverWorkflowName, resolverNodeId };
+}
+
 export type SupervisorIntentResolution =
   | {
       readonly outcome: "action";
       readonly action: EventSupervisorAction;
+      readonly args?: readonly string[];
       readonly runtimeVariables?: Readonly<Record<string, unknown>>;
       readonly reason?: string;
       readonly commandText?: string;
@@ -183,37 +189,29 @@ export function resolveSupervisorIntent(input: {
       input.binding,
       mapping.inputPath,
     );
-    if (text === undefined || text.length === 0) {
-      const fallback = mapping.defaultAction ?? "input";
-      if (!allow.includes(fallback)) {
+    const parsed = parseSupervisorCommandText({
+      text: text ?? "",
+      commands: mapping.commands,
+    });
+    if (parsed.outcome === "command") {
+      const { action, args } = parsed.command;
+      if (!allow.includes(action)) {
         return {
           outcome: "skip",
-          reason: `default action '${fallback}' is not allowed`,
+          reason: `action '${action}' is not allowed`,
         };
       }
-      return { outcome: "action", action: fallback };
-    }
-    const candidates = resolveCommandMapCandidates(text);
-    for (const action of ALL_ACTIONS) {
-      const token = mapping.commands[action];
-      if (token !== undefined && candidates.includes(token)) {
-        if (!allow.includes(action)) {
-          return {
-            outcome: "skip",
-            reason: `action '${action}' is not allowed`,
-          };
-        }
-        return { outcome: "action", action };
-      }
-    }
-    const fallback = mapping.defaultAction ?? "input";
-    if (!allow.includes(fallback)) {
       return {
-        outcome: "skip",
-        reason: `default action '${fallback}' is not allowed`,
+        outcome: "action",
+        action,
+        args,
+        ...(text === undefined ? {} : { commandText: text }),
       };
     }
-    return { outcome: "action", action: fallback };
+    return {
+      outcome: "skip",
+      reason: `command-analysis required: ${parsed.request.reason}`,
+    };
   }
 
   const raw = input.event.input["action"];
@@ -248,6 +246,119 @@ export async function resolveSupervisorIntentAsync(input: {
   readonly divedraOptions: WorkflowTriggerRunnerOptions;
 }): Promise<SupervisorIntentResolution> {
   const llmMapping = resolveLlmIntentMapping(input.binding);
+  const configured = input.binding.execution?.control?.intentMapping;
+  const commandMapMapping =
+    llmMapping === undefined &&
+    isJsonObject(configured) &&
+    configured["mode"] === "command-map"
+      ? (configured as unknown as EventSupervisorIntentMappingCommandMap)
+      : undefined;
+  if (commandMapMapping !== undefined) {
+    const deterministic = resolveSupervisorIntent({
+      binding: input.binding,
+      event: input.event,
+      ...(input.source === undefined ? {} : { source: input.source }),
+    });
+    if (
+      deterministic.outcome !== "skip" ||
+      !deterministic.reason.startsWith("command-analysis required:")
+    ) {
+      return deterministic;
+    }
+
+    const allow = normalizeAllowActions(input.binding);
+    const correlationKey = resolveSupervisedCorrelationKey({
+      binding: input.binding,
+      event: input.event,
+      ...(input.source === undefined ? {} : { source: input.source }),
+    });
+    const activeRun = await createEventSupervisedRunRepository(
+      input.divedraOptions,
+    ).findActiveByCorrelation({
+      sourceId: input.binding.sourceId,
+      bindingId: input.binding.id,
+      correlationKey,
+    });
+
+    const commandAnalysisResolver = resolveCommandAnalysisResolver(
+      input.binding,
+      commandMapMapping,
+    );
+    const resolverResult = await runSupervisorLlmResolver({
+      binding: input.binding,
+      event: input.event,
+      ...(input.source === undefined ? {} : { source: input.source }),
+      resolverWorkflowName: commandAnalysisResolver.resolverWorkflowName,
+      resolverNodeId: commandAnalysisResolver.resolverNodeId,
+      ...(typeof commandMapMapping.inputPath === "string"
+        ? { inputPath: commandMapMapping.inputPath }
+        : {}),
+      allowedActions: allow,
+      ...(activeRun?.supervisedRunId === undefined
+        ? {}
+        : { activeSupervisedRunId: activeRun.supervisedRunId }),
+      ...(commandMapMapping.fallbackAction === "ignore"
+        ? { defaultAction: "ignore" as const }
+        : {}),
+      options: input.divedraOptions,
+    });
+
+    if (!resolverResult.ok) {
+      return {
+        outcome: "skip",
+        reason: `command-analysis resolver failed: ${resolverResult.error}`,
+      };
+    }
+
+    const decision = resolverResult.decision;
+    const minConfidence =
+      typeof commandMapMapping.minConfidence === "number"
+        ? commandMapMapping.minConfidence
+        : DEFAULT_LLM_MIN_CONFIDENCE;
+    if (decision.confidence < minConfidence) {
+      return {
+        outcome: "skip",
+        reason: `command-analysis confidence ${decision.confidence.toFixed(3)} is below minimum ${minConfidence.toFixed(3)}`,
+      };
+    }
+    if (decision.action === "ignore") {
+      return { outcome: "skip", reason: "command-analysis decision: ignore" };
+    }
+    const resolvedAction = decision.action;
+    if (!allow.includes(resolvedAction)) {
+      return {
+        outcome: "skip",
+        reason: `command-analysis resolved action '${resolvedAction}' is not in the allowed actions list`,
+      };
+    }
+    const managedWorkflowBinding = input.binding.workflowName?.trim();
+    if (
+      managedWorkflowBinding === undefined ||
+      managedWorkflowBinding.length === 0
+    ) {
+      return {
+        outcome: "skip",
+        reason: "binding.workflowName is required for command-analysis",
+      };
+    }
+    if (decision.managedWorkflowName !== managedWorkflowBinding) {
+      return {
+        outcome: "skip",
+        reason: `command-analysis resolved managedWorkflowName '${decision.managedWorkflowName}' does not match binding workflowName '${managedWorkflowBinding}'`,
+      };
+    }
+    return {
+      outcome: "action",
+      action: resolvedAction,
+      ...(decision.runtimeVariables === undefined
+        ? {}
+        : { runtimeVariables: decision.runtimeVariables }),
+      ...(decision.reason.length === 0 ? {} : { reason: decision.reason }),
+      ...(decision.commandText === undefined
+        ? {}
+        : { commandText: decision.commandText }),
+    };
+  }
 
   if (llmMapping === undefined) {
     return resolveSupervisorIntent({
@@ -320,10 +431,14 @@ export async function resolveSupervisorIntentAsync(input: {
   }
 
   const managedWorkflowBinding = input.binding.workflowName?.trim();
-  if (managedWorkflowBinding === undefined || managedWorkflowBinding.length === 0) {
+  if (
+    managedWorkflowBinding === undefined ||
+    managedWorkflowBinding.length === 0
+  ) {
     return {
       outcome: "skip",
-      reason: "binding.workflowName is required for supervised intent resolution",
+      reason:
+        "binding.workflowName is required for supervised intent resolution",
     };
   }
 

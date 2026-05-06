@@ -1,9 +1,6 @@
 import { isJsonObject } from "../shared/json";
 import { listWorkflowCatalogSources } from "../workflow/catalog";
-import {
-  isEventSourceEnabled,
-  loadEventConfiguration,
-} from "./config";
+import { isEventSourceEnabled, loadEventConfiguration } from "./config";
 import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
 import {
   isValidEventHttpPath,
@@ -13,6 +10,10 @@ import {
   loadSupervisorProfilesFromEventRoot,
   type WorkflowSupervisorProfile,
 } from "./supervisor-profiles";
+import {
+  EVENT_SUPERVISOR_ACTIONS,
+  EVENT_SUPERVISOR_ACTION_SET,
+} from "./supervisor-command-contract";
 import type {
   EventBinding,
   EventConfigLoadOptions,
@@ -300,13 +301,8 @@ async function listWorkflowNames(
   return new Set(sources.value.map((source) => source.workflowName));
 }
 
-const SUPERVISOR_ACTION_SET = new Set<string>([
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "input",
-]);
+const SUPERVISOR_ACTION_SET = EVENT_SUPERVISOR_ACTION_SET;
+const SUPERVISOR_ACTION_LIST = EVENT_SUPERVISOR_ACTIONS.join(", ");
 
 function isSupervisorActionName(value: unknown): value is string {
   return typeof value === "string" && SUPERVISOR_ACTION_SET.has(value);
@@ -439,7 +435,7 @@ function validateSupervisedBinding(
         issues.push(
           error(
             `${pathPrefix}.control.intentMapping.defaultAction`,
-            "defaultAction must be one of start, stop, restart, status, or input when set",
+            `defaultAction must be one of ${SUPERVISOR_ACTION_LIST} when set`,
           ),
         );
       }
@@ -527,11 +523,23 @@ function validateSupervisedBinding(
             );
             continue;
           }
-          if (typeof token !== "string" || token.length === 0) {
+          if (typeof token === "string" && token.length > 0) {
+            continue;
+          }
+          if (
+            Array.isArray(token) &&
+            token.length > 0 &&
+            token.every(
+              (entry) => typeof entry === "string" && entry.length > 0,
+            )
+          ) {
+            continue;
+          }
+          {
             issues.push(
               error(
                 `${pathPrefix}.control.intentMapping.commands.${actionName}`,
-                "command token must be a non-empty string",
+                "command token must be a non-empty string or non-empty string array",
               ),
             );
           }
@@ -546,6 +554,69 @@ function validateSupervisedBinding(
           error(
             `${pathPrefix}.control.intentMapping.inputPath`,
             "inputPath must be a non-empty dotted path when set",
+          ),
+        );
+      }
+      const resolverWorkflowName = intent["resolverWorkflowName"];
+      const resolverNodeId = intent["resolverNodeId"];
+      if (
+        resolverWorkflowName !== undefined &&
+        (typeof resolverWorkflowName !== "string" ||
+          resolverWorkflowName.length === 0)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.resolverWorkflowName`,
+            "command-map resolverWorkflowName must be a non-empty string when set",
+          ),
+        );
+      }
+      if (
+        resolverNodeId !== undefined &&
+        (typeof resolverNodeId !== "string" || resolverNodeId.length === 0)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.resolverNodeId`,
+            "command-map resolverNodeId must be a non-empty string when set",
+          ),
+        );
+      }
+      if (
+        (resolverWorkflowName === undefined) !==
+        (resolverNodeId === undefined)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping`,
+            "command-map command-analysis fallback requires resolverWorkflowName and resolverNodeId together",
+          ),
+        );
+      }
+      const minConfidence = intent["minConfidence"];
+      if (
+        minConfidence !== undefined &&
+        (typeof minConfidence !== "number" ||
+          minConfidence < 0 ||
+          minConfidence > 1)
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.minConfidence`,
+            "minConfidence must be a number in [0, 1] when set",
+          ),
+        );
+      }
+      const fallbackAction = intent["fallbackAction"];
+      if (
+        fallbackAction !== undefined &&
+        fallbackAction !== "proposal" &&
+        fallbackAction !== "ignore"
+      ) {
+        issues.push(
+          error(
+            `${pathPrefix}.control.intentMapping.fallbackAction`,
+            "fallbackAction must be 'proposal' or 'ignore' when set",
           ),
         );
       }
@@ -565,10 +636,7 @@ function validateSupervisorDispatchBinding(
   }
   const pathPrefix = `bindings.${binding.id}.execution`;
   const profileIdRaw = execution.supervisorProfileId;
-  if (
-    typeof profileIdRaw !== "string" ||
-    profileIdRaw.trim().length === 0
-  ) {
+  if (typeof profileIdRaw !== "string" || profileIdRaw.trim().length === 0) {
     issues.push(
       error(
         `${pathPrefix}.supervisorProfileId`,
@@ -642,7 +710,8 @@ function validateMailboxBridge(
     return;
   }
   const mode = binding.execution?.mode;
-  const supervisedLike = mode === "supervised" || mode === "supervisor-dispatch";
+  const supervisedLike =
+    mode === "supervised" || mode === "supervisor-dispatch";
   if (mb.input?.consumer === "supervisor" && !supervisedLike) {
     issues.push(
       error(
@@ -809,13 +878,7 @@ export async function validateEventConfiguration(
   }
   const profilesById = supervisorProfileLoad.profilesById;
   for (const binding of configuration.bindings) {
-    validateBinding(
-      binding,
-      sourcesById,
-      workflowNames,
-      profilesById,
-      issues,
-    );
+    validateBinding(binding, sourcesById, workflowNames, profilesById, issues);
   }
 
   return {

@@ -33,7 +33,8 @@ liveness probes, mutation/remediation actions, and direct reads from
 
 ## Codex-Agent Reference Mapping
 
-The design accepts `/Users/taco/gits/tacogips/codex-agent` as behavioral
+The design accepts `<reference-repository-root>` (for example
+`../../codex-agent`) as behavioral
 guidance only:
 
 - `src/sdk/agent-runner.ts`: normalized session event shape.

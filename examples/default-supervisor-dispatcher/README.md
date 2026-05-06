@@ -15,6 +15,10 @@ This bundle documents the **supervisor-dispatch** example layout shipped across
   `../event-sources/payloads/chat-supervisor-dispatch.json`,
   `../event-sources/payloads/chat-supervisor-dispatch-start-managed.json`
 
+Local supervised lifecycle commands use the deterministic in-process runner
+pool. The supervisor workflow name is the durable identity for policy and audit;
+it does not cause event-source control to spawn a `divedra` binary.
+
 ## Validate configuration
 
 ```bash

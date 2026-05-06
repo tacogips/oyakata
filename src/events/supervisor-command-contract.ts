@@ -1,12 +1,84 @@
 import { isJsonObject } from "../shared/json";
+import type { EventSupervisorAction } from "./types";
 
 export type SupervisorChatDecisionAction =
   | "ignore"
   | "start"
-  | "stop"
-  | "restart"
   | "status"
-  | "input";
+  | "progress"
+  | "inbox"
+  | "read"
+  | "logs"
+  | "export"
+  | "stop"
+  | "cancel"
+  | "restart"
+  | "rerun"
+  | "input"
+  | "submit"
+  | "resume";
+
+export const EVENT_SUPERVISOR_ACTIONS: readonly EventSupervisorAction[] = [
+  "start",
+  "status",
+  "progress",
+  "inbox",
+  "read",
+  "logs",
+  "export",
+  "stop",
+  "cancel",
+  "restart",
+  "rerun",
+  "input",
+  "submit",
+  "resume",
+];
+
+export const EVENT_SUPERVISOR_ACTION_SET: ReadonlySet<string> = new Set(
+  EVENT_SUPERVISOR_ACTIONS,
+);
+
+export const DEFAULT_EVENT_SUPERVISOR_COMMANDS: Readonly<
+  Record<EventSupervisorAction, readonly string[]>
+> = {
+  start: ["start"],
+  status: ["status"],
+  progress: ["progress"],
+  inbox: ["inbox"],
+  read: ["read"],
+  logs: ["logs"],
+  export: ["export"],
+  stop: ["stop"],
+  cancel: ["cancel"],
+  restart: ["restart"],
+  rerun: ["rerun"],
+  input: ["input"],
+  submit: ["submit"],
+  resume: ["resume"],
+};
+
+export interface ParsedSupervisorCommand {
+  readonly action: EventSupervisorAction;
+  readonly args: readonly string[];
+  readonly parserMode: "deterministic-token";
+}
+
+export interface SupervisorCommandAnalysisRequest {
+  readonly text: string;
+  readonly reason: "empty" | "unknown-first-token";
+  readonly configuredCommands: Readonly<Record<string, readonly string[]>>;
+}
+
+export type SupervisorCommandParseResult =
+  | {
+      readonly outcome: "command";
+      readonly command: ParsedSupervisorCommand;
+    }
+  | {
+      readonly outcome: "command-analysis";
+      readonly request: SupervisorCommandAnalysisRequest;
+    };
 
 export interface SupervisorChatCommandDecision {
   readonly action: SupervisorChatDecisionAction;
@@ -19,12 +91,73 @@ export interface SupervisorChatCommandDecision {
 
 const DECISION_ACTIONS = new Set<string>([
   "ignore",
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "input",
+  ...EVENT_SUPERVISOR_ACTIONS,
 ]);
+
+function normalizeConfiguredCommandMap(
+  configured: Readonly<
+    Partial<Record<EventSupervisorAction, string | readonly string[]>>
+  >,
+): Readonly<Record<string, readonly string[]>> {
+  const out: Partial<Record<EventSupervisorAction, readonly string[]>> = {};
+  for (const action of EVENT_SUPERVISOR_ACTIONS) {
+    const raw = configured[action] ?? DEFAULT_EVENT_SUPERVISOR_COMMANDS[action];
+    if (typeof raw === "string") {
+      out[action] = raw.length === 0 ? [] : [raw];
+      continue;
+    }
+    out[action] = raw.filter((token) => token.length > 0);
+  }
+  return out as Readonly<Record<string, readonly string[]>>;
+}
+
+function tokenizeSupervisorText(text: string): readonly string[] {
+  return text.split(/[ \t]+/).filter((token) => token.length > 0);
+}
+
+export function parseSupervisorCommandText(input: {
+  readonly text: string;
+  readonly commands?: Readonly<
+    Partial<Record<EventSupervisorAction, string | readonly string[]>>
+  >;
+}): SupervisorCommandParseResult {
+  const configuredCommands = normalizeConfiguredCommandMap(
+    input.commands ?? {},
+  );
+  const tokens = tokenizeSupervisorText(input.text);
+  const first = tokens[0];
+  if (first === undefined) {
+    return {
+      outcome: "command-analysis",
+      request: {
+        text: input.text,
+        reason: "empty",
+        configuredCommands,
+      },
+    };
+  }
+  for (const action of EVENT_SUPERVISOR_ACTIONS) {
+    const commandTokens = configuredCommands[action] ?? [];
+    if (commandTokens.includes(first)) {
+      return {
+        outcome: "command",
+        command: {
+          action,
+          args: tokens.slice(1),
+          parserMode: "deterministic-token",
+        },
+      };
+    }
+  }
+  return {
+    outcome: "command-analysis",
+    request: {
+      text: input.text,
+      reason: "unknown-first-token",
+      configuredCommands,
+    },
+  };
+}
 
 function isSupervisorChatDecisionAction(
   value: unknown,

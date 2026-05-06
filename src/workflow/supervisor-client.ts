@@ -1,12 +1,13 @@
 import { runWorkflow } from "./engine";
 import { loadWorkflowFromCatalog } from "./load";
 import { withResolvedWorkflowSourceOptions } from "./catalog";
+import { listRuntimeNodeExecutions, listRuntimeNodeLogs } from "./runtime-db";
 import {
   getNormalizedNodePayload,
   resolveWorkflowManagerStepId,
 } from "./types";
 import { loadSession, saveSession } from "./session-store";
-import type { WorkflowSessionState } from "./session";
+import { createSessionId, type WorkflowSessionState } from "./session";
 import type { LoadOptions } from "./types";
 import {
   createEventSupervisedRunRepository,
@@ -27,6 +28,7 @@ import type {
   SubmitSupervisedWorkflowInput,
   SupervisedWorkflowLookup,
   SupervisedWorkflowView,
+  SupervisedWorkflowCommandResult,
   SupervisorEngineOverrides,
   WorkflowSupervisorClient,
 } from "./supervisor-client-types";
@@ -88,6 +90,18 @@ function localEngineOverrides(
   };
 }
 
+function asyncEngineObserver(
+  input: SupervisorEngineOverrides | undefined,
+): Pick<SupervisorEngineOverrides, "asyncRun" | "onAsyncRun"> {
+  if (input === undefined) {
+    return {};
+  }
+  return {
+    ...(input.asyncRun === undefined ? {} : { asyncRun: input.asyncRun }),
+    ...(input.onAsyncRun === undefined ? {} : { onAsyncRun: input.onAsyncRun }),
+  };
+}
+
 function mergeRuntimeVariables(
   base: Readonly<Record<string, unknown>>,
   overlay?: Readonly<Record<string, unknown>>,
@@ -96,6 +110,13 @@ function mergeRuntimeVariables(
     return base;
   }
   return { ...base, ...overlay };
+}
+
+function resolveRerunFromStepId(
+  command: EventSupervisorCommand,
+): string | undefined {
+  const firstArg = command.args?.[0]?.trim();
+  return firstArg === undefined || firstArg.length === 0 ? undefined : firstArg;
 }
 
 function resolvePublicCommandId(input: {
@@ -117,6 +138,41 @@ function requireNonEmptyLookupValue(
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
+}
+
+function normalizeSupervisorLifecycleAction(
+  action: EventSupervisorCommand["action"],
+):
+  | "start"
+  | "status"
+  | "progress"
+  | "inbox"
+  | "logs"
+  | "stop"
+  | "restart"
+  | "input" {
+  if (action === "status") {
+    return "status";
+  }
+  if (action === "progress") {
+    return "progress";
+  }
+  if (action === "inbox" || action === "read") {
+    return "inbox";
+  }
+  if (action === "logs" || action === "export") {
+    return "logs";
+  }
+  if (action === "stop" || action === "cancel") {
+    return "stop";
+  }
+  if (action === "restart" || action === "rerun") {
+    return "restart";
+  }
+  if (action === "input" || action === "submit" || action === "resume") {
+    return "input";
+  }
+  return "start";
 }
 
 async function cancelTargetSession(
@@ -142,20 +198,6 @@ async function cancelTargetSession(
   }
 }
 
-async function resolveWorkflowOptionsForName(
-  workflowName: string,
-  loadOptions: LoadOptions,
-): Promise<LoadOptions> {
-  const loaded = await loadWorkflowFromCatalog(workflowName, loadOptions);
-  if (!loaded.ok) {
-    throw new Error(loaded.error.message);
-  }
-  const src = loaded.value.source;
-  return src === undefined
-    ? loadOptions
-    : withResolvedWorkflowSourceOptions(src, loadOptions);
-}
-
 export function eventBindingStubFromSupervisedRunRecord(
   record: EventSupervisedRunRecord,
 ): EventBinding {
@@ -176,10 +218,12 @@ export function eventBindingStubFromSupervisedRunRecord(
 function viewFrom(
   record: EventSupervisedRunRecord,
   activeTargetStatus?: WorkflowSessionState["status"],
+  commandResult?: SupervisedWorkflowCommandResult,
 ): SupervisedWorkflowView {
   return {
     supervisedRun: record,
     ...(activeTargetStatus === undefined ? {} : { activeTargetStatus }),
+    ...(commandResult === undefined ? {} : { commandResult }),
   };
 }
 
@@ -196,6 +240,89 @@ async function activeTargetStatusFor(
     return undefined;
   }
   return loaded.value.status;
+}
+
+async function loadActiveTargetSession(
+  record: EventSupervisedRunRecord,
+  options: LoadOptions,
+): Promise<WorkflowSessionState | undefined> {
+  const id = record.activeTargetExecutionId;
+  if (id === undefined) {
+    return undefined;
+  }
+  const loaded = await loadSession(id, options);
+  return loaded.ok ? loaded.value : undefined;
+}
+
+async function buildSupervisorInspectionCommandResult(
+  action: "status" | "progress" | "inbox" | "logs",
+  record: EventSupervisedRunRecord,
+  options: LoadOptions,
+): Promise<SupervisedWorkflowCommandResult> {
+  const session = await loadActiveTargetSession(record, options);
+  const workflowExecutionId = record.activeTargetExecutionId;
+  if (action === "status") {
+    return {
+      kind: "status",
+      ...(workflowExecutionId === undefined ? {} : { workflowExecutionId }),
+      ...(session === undefined ? {} : { targetStatus: session.status }),
+    };
+  }
+  if (action === "progress") {
+    return {
+      kind: "progress",
+      ...(workflowExecutionId === undefined ? {} : { workflowExecutionId }),
+      ...(session === undefined
+        ? {}
+        : {
+            targetStatus: session.status,
+            ...(session.currentNodeId === undefined
+              ? {}
+              : { currentStepId: session.currentNodeId }),
+          }),
+      queuedStepIds: session?.queue ?? [],
+      completedStepCount:
+        session?.nodeExecutions.filter((entry) => entry.status === "succeeded")
+          .length ?? 0,
+      nodeExecutionCount: session?.nodeExecutions.length ?? 0,
+    };
+  }
+  if (action === "inbox") {
+    const pending = session?.activeUserActions ?? [];
+    return {
+      kind: "inbox",
+      ...(workflowExecutionId === undefined ? {} : { workflowExecutionId }),
+      pendingUserActionCount: pending.length,
+      pendingUserActions: pending.map((entry) => ({
+        nodeId: entry.nodeId,
+        nodeExecId: entry.nodeExecId,
+        userActionId: entry.userActionId,
+        pausedAt: entry.pausedAt,
+      })),
+    };
+  }
+  const nodeExecutions =
+    workflowExecutionId === undefined
+      ? []
+      : await listRuntimeNodeExecutions(workflowExecutionId, options);
+  const logs =
+    workflowExecutionId === undefined
+      ? []
+      : await listRuntimeNodeLogs(workflowExecutionId, options);
+  return {
+    kind: "logs",
+    ...(workflowExecutionId === undefined ? {} : { workflowExecutionId }),
+    nodeExecutionCount: nodeExecutions.length,
+    runtimeLogCount: logs.length,
+    recentLogs: logs.slice(-20).map((entry) => ({
+      level: entry.level,
+      message: entry.message,
+      nodeId: entry.nodeId,
+      nodeExecId: entry.nodeExecId,
+      at: entry.at,
+    })),
+    exportArtifactDir: resolveSupervisedRunArtifactDir(record, options),
+  };
 }
 
 /**
@@ -378,6 +505,7 @@ export function createWorkflowSupervisorClient(
     return repo.withCorrelationLock(correlation, async () => {
       const binding = input.binding;
       const cmd = input.command;
+      const lifecycleAction = normalizeSupervisorLifecycleAction(cmd.action);
       await reconcileTerminalSupervisedRunForCorrelation(
         correlation,
         repo,
@@ -416,7 +544,7 @@ export function createWorkflowSupervisorClient(
             "supervised run id does not match the active supervised run for this correlation key",
           );
         }
-        if (cmd.action === "start") {
+        if (lifecycleAction === "start") {
           if (latest !== null && latest.supervisedRunId !== scopedId) {
             throw new Error(
               "supervised run id is not the latest supervised run for this correlation key",
@@ -424,7 +552,8 @@ export function createWorkflowSupervisorClient(
           }
         }
         effectiveRunId = scopedId;
-        context = cmd.action === "start" ? (active ?? latest) : scopedRecord;
+        context =
+          lifecycleAction === "start" ? (active ?? latest) : scopedRecord;
       } else {
         effectiveRunId =
           active?.supervisedRunId ??
@@ -481,6 +610,41 @@ export function createWorkflowSupervisorClient(
         });
       };
 
+      const finalizeAsyncRunError = async (
+        runningRecord: EventSupervisedRunRecord,
+        message: string,
+      ): Promise<SupervisedWorkflowView> => {
+        const current =
+          (await repo.loadById(runningRecord.supervisedRunId)) ?? runningRecord;
+        if (current.status === "stopped") {
+          return viewFrom(current);
+        }
+        const targetId =
+          current.activeTargetExecutionId ??
+          runningRecord.activeTargetExecutionId;
+        if (targetId !== undefined) {
+          const loaded = await loadSession(targetId, baseOptions);
+          if (loaded.ok && loaded.value.status === "cancelled") {
+            const { activeTargetExecutionId: _omit, ...stoppedBase } = current;
+            const stopped: EventSupervisedRunRecord = {
+              ...stoppedBase,
+              status: "stopped",
+              updatedAt: nowIso(),
+            };
+            const finalView = await persistAndView(stopped);
+            return viewFrom(finalView.supervisedRun, "cancelled");
+          }
+        }
+        const failed: EventSupervisedRunRecord = {
+          ...runningRecord,
+          status: "failed",
+          updatedAt: nowIso(),
+        };
+        await persistAndView(failed);
+        await finalizeError(failed, message);
+        return viewFrom(failed);
+      };
+
       const runVars = mergeRuntimeVariables(
         input.runtimeVariables,
         cmd.runtimeVariables,
@@ -517,14 +681,69 @@ export function createWorkflowSupervisorClient(
           baseOptions,
         );
         await repo.save(record, artifactDir);
-        const wfOptions = await resolveWorkflowOptionsForName(
+        const loadedWf = await loadWorkflowFromCatalog(
           cmd.targetWorkflowName,
           baseOptions,
         );
+        if (!loadedWf.ok) {
+          throw new Error(loadedWf.error.message);
+        }
+        const wfOptions =
+          loadedWf.value.source === undefined
+            ? baseOptions
+            : withResolvedWorkflowSourceOptions(
+                loadedWf.value.source,
+                baseOptions,
+              );
+        const workflowExecutionId = createSessionId({
+          workflowId: loadedWf.value.bundle.workflow.workflowId,
+        });
+        latestRecord = {
+          ...record,
+          status: "running",
+          activeTargetExecutionId: workflowExecutionId,
+          updatedAt: nowIso(),
+        };
+        const runningView = await persistAndView(latestRecord);
+        const observer = asyncEngineObserver(input.engine);
+        if (observer.asyncRun === true) {
+          const runningRecord = latestRecord;
+          const task = runWorkflow(cmd.targetWorkflowName, {
+            ...wfOptions,
+            ...localEngineOverrides(input.engine ?? {}),
+            runtimeVariables: runVars,
+            sessionId: workflowExecutionId,
+          })
+            .then(async (started) => {
+              if (!started.ok) {
+                throw new Error(started.error.message);
+              }
+              const reconciled = await reconcileTerminalSupervisedRunRecord(
+                runningRecord,
+                repo,
+                baseOptions,
+              );
+              const finalView = await persistAndView(reconciled);
+              await repo.finalizeCommand(cmd.commandId, finalView);
+              return finalView;
+            })
+            .catch(async (error: unknown) => {
+              const message =
+                error instanceof Error ? error.message : "unknown error";
+              return await finalizeAsyncRunError(runningRecord, message);
+            });
+          observer.onAsyncRun?.({
+            supervisedRunId: runId,
+            workflowExecutionId,
+            task,
+          });
+          return finalizeOk(runningView);
+        }
         const started = await runWorkflow(cmd.targetWorkflowName, {
           ...wfOptions,
           ...localEngineOverrides(input.engine ?? {}),
           runtimeVariables: runVars,
+          sessionId: workflowExecutionId,
         });
         if (!started.ok) {
           throw new Error(started.error.message);
@@ -532,22 +751,32 @@ export function createWorkflowSupervisorClient(
         latestRecord = {
           ...record,
           status: "running",
-          activeTargetExecutionId: started.value.session.sessionId,
+          activeTargetExecutionId: workflowExecutionId,
           updatedAt: nowIso(),
         };
         return finalizeOk(await persistAndView(latestRecord));
       };
 
       try {
-        if (cmd.action === "status") {
+        if (
+          lifecycleAction === "status" ||
+          lifecycleAction === "progress" ||
+          lifecycleAction === "inbox" ||
+          lifecycleAction === "logs"
+        ) {
           if (context === null) {
-            throw new Error("no supervised run for status lookup");
+            throw new Error(`no supervised run for ${lifecycleAction} lookup`);
           }
           const st = await activeTargetStatusFor(context, baseOptions);
-          return finalizeOk(viewFrom(context, st));
+          const commandResult = await buildSupervisorInspectionCommandResult(
+            lifecycleAction,
+            context,
+            baseOptions,
+          );
+          return finalizeOk(viewFrom(context, st, commandResult));
         }
 
-        if (cmd.action === "start") {
+        if (lifecycleAction === "start") {
           if (active !== null && active.activeTargetExecutionId !== undefined) {
             const targetSession = await loadSession(
               active.activeTargetExecutionId,
@@ -568,7 +797,7 @@ export function createWorkflowSupervisorClient(
         }
 
         if (context === null) {
-          if (cmd.action === "input") {
+          if (lifecycleAction === "input") {
             const startOnFirst =
               binding.execution?.control?.startOnFirstInput !== false;
             if (!startOnFirst) {
@@ -582,7 +811,7 @@ export function createWorkflowSupervisorClient(
         }
         const ctx = context;
 
-        if (cmd.action === "stop") {
+        if (lifecycleAction === "stop") {
           if (ctx.activeTargetExecutionId !== undefined) {
             await cancelTargetSession(ctx.activeTargetExecutionId, baseOptions);
           }
@@ -597,12 +826,15 @@ export function createWorkflowSupervisorClient(
           return finalizeOk(await persistAndView(updated));
         }
 
-        if (cmd.action === "restart") {
+        if (lifecycleAction === "restart") {
           if (ctx.restartCount >= ctx.maxRestartsOnFailure) {
             throw new Error(
               "supervised restart budget exhausted for this correlation key",
             );
           }
+          const rerunFromStepId = resolveRerunFromStepId(cmd);
+          const rerunSourceSessionId =
+            cmd.targetWorkflowExecutionId ?? ctx.activeTargetExecutionId;
           if (ctx.activeTargetExecutionId !== undefined) {
             await cancelTargetSession(ctx.activeTargetExecutionId, baseOptions);
           }
@@ -615,30 +847,101 @@ export function createWorkflowSupervisorClient(
           latestRecord = restarting;
           shouldPersistErrorRecord = true;
           await persistAndView(restarting);
-          const wfOptions = await resolveWorkflowOptionsForName(
-            cmd.targetWorkflowName,
-            baseOptions,
-          );
-          const started = await runWorkflow(cmd.targetWorkflowName, {
-            ...wfOptions,
-            ...localEngineOverrides(input.engine ?? {}),
-            runtimeVariables: runVars,
-          });
-          if (!started.ok) {
-            throw new Error(started.error.message);
+          if (
+            cmd.action === "rerun" ||
+            rerunFromStepId !== undefined ||
+            cmd.targetWorkflowExecutionId !== undefined
+          ) {
+            if (rerunSourceSessionId === undefined) {
+              throw new Error(
+                "supervised rerun requires an active target workflow execution or command.targetWorkflowExecutionId",
+              );
+            }
+            if (rerunFromStepId === undefined) {
+              throw new Error(
+                "supervised rerun requires the first command arg to be the rerun step id",
+              );
+            }
+            const loadedWf = await loadWorkflowFromCatalog(
+              ctx.targetWorkflowName,
+              baseOptions,
+            );
+            if (!loadedWf.ok) {
+              throw new Error(loadedWf.error.message);
+            }
+            const wfBase =
+              loadedWf.value.source === undefined
+                ? baseOptions
+                : withResolvedWorkflowSourceOptions(
+                    loadedWf.value.source,
+                    baseOptions,
+                  );
+            const workflowExecutionId = createSessionId({
+              workflowId: loadedWf.value.bundle.workflow.workflowId,
+            });
+            const rerunning: EventSupervisedRunRecord = {
+              ...restarting,
+              status: "running",
+              restartCount: ctx.restartCount + 1,
+              activeTargetExecutionId: workflowExecutionId,
+              updatedAt: nowIso(),
+            };
+            const observer = asyncEngineObserver(input.engine);
+            if (observer.asyncRun === true) {
+              const view = await persistAndView(rerunning);
+              const task = runWorkflow(ctx.targetWorkflowName, {
+                ...wfBase,
+                ...localEngineOverrides(input.engine ?? {}),
+                rerunFromSessionId: rerunSourceSessionId,
+                rerunFromStepId,
+                runtimeVariables: runVars,
+                sessionId: workflowExecutionId,
+              })
+                .then(async (rerunResult) => {
+                  if (!rerunResult.ok) {
+                    throw new Error(rerunResult.error.message);
+                  }
+                  const reconciled = await reconcileTerminalSupervisedRunRecord(
+                    rerunning,
+                    repo,
+                    baseOptions,
+                  );
+                  const finalView = await persistAndView(reconciled);
+                  await repo.finalizeCommand(cmd.commandId, finalView);
+                  return finalView;
+                })
+                .catch(async (error: unknown) => {
+                  const message =
+                    error instanceof Error ? error.message : "unknown error";
+                  return await finalizeAsyncRunError(rerunning, message);
+                });
+              observer.onAsyncRun?.({
+                supervisedRunId: rerunning.supervisedRunId,
+                workflowExecutionId,
+                task,
+              });
+              return finalizeOk(view);
+            }
+            const rerunResult = await runWorkflow(ctx.targetWorkflowName, {
+              ...wfBase,
+              ...localEngineOverrides(input.engine ?? {}),
+              rerunFromSessionId: rerunSourceSessionId,
+              rerunFromStepId,
+              runtimeVariables: runVars,
+              sessionId: workflowExecutionId,
+            });
+            if (!rerunResult.ok) {
+              throw new Error(rerunResult.error.message);
+            }
+            return finalizeOk(await persistAndView(rerunning));
           }
-          const updated: EventSupervisedRunRecord = {
+          return await startSupervisedTarget(effectiveRunId, {
             ...ctx,
-            status: "running",
-            activeTargetExecutionId: started.value.session.sessionId,
             restartCount: ctx.restartCount + 1,
-            updatedAt: nowIso(),
-          };
-          latestRecord = updated;
-          return finalizeOk(await persistAndView(updated));
+          });
         }
 
-        if (cmd.action === "input") {
+        if (lifecycleAction === "input") {
           const sessionId = ctx.activeTargetExecutionId;
           if (sessionId === undefined) {
             const startOnFirst =
@@ -689,6 +992,44 @@ export function createWorkflowSupervisorClient(
             if (!saved.ok) {
               throw new Error(saved.error.message);
             }
+            const nextRecord: EventSupervisedRunRecord = {
+              ...ctx,
+              activeTargetExecutionId: merged.sessionId,
+              updatedAt: nowIso(),
+            };
+            const observer = asyncEngineObserver(input.engine);
+            if (observer.asyncRun === true) {
+              const view = await persistAndView(nextRecord);
+              const task = runWorkflow(ctx.targetWorkflowName, {
+                ...wfBase,
+                resumeSessionId: merged.sessionId,
+                ...localEngineOverrides(input.engine ?? {}),
+              })
+                .then(async (runAgain) => {
+                  if (!runAgain.ok) {
+                    throw new Error(runAgain.error.message);
+                  }
+                  const reconciled = await reconcileTerminalSupervisedRunRecord(
+                    nextRecord,
+                    repo,
+                    baseOptions,
+                  );
+                  const finalView = await persistAndView(reconciled);
+                  await repo.finalizeCommand(cmd.commandId, finalView);
+                  return finalView;
+                })
+                .catch(async (error: unknown) => {
+                  const message =
+                    error instanceof Error ? error.message : "unknown error";
+                  return await finalizeAsyncRunError(nextRecord, message);
+                });
+              observer.onAsyncRun?.({
+                supervisedRunId: nextRecord.supervisedRunId,
+                workflowExecutionId: merged.sessionId,
+                task,
+              });
+              return finalizeOk(view);
+            }
             const runAgain = await runWorkflow(ctx.targetWorkflowName, {
               ...wfBase,
               resumeSessionId: merged.sessionId,
@@ -697,12 +1038,48 @@ export function createWorkflowSupervisorClient(
             if (!runAgain.ok) {
               throw new Error(runAgain.error.message);
             }
-            const nextRecord: EventSupervisedRunRecord = {
-              ...ctx,
-              activeTargetExecutionId: runAgain.value.session.sessionId,
-              updatedAt: nowIso(),
-            };
             return finalizeOk(await persistAndView(nextRecord));
+          }
+          const nextRecord: EventSupervisedRunRecord = {
+            ...ctx,
+            activeTargetExecutionId: sessionId,
+            updatedAt: nowIso(),
+          };
+          const observer = asyncEngineObserver(input.engine);
+          if (observer.asyncRun === true) {
+            const view = await persistAndView(nextRecord);
+            const task = runWorkflow(ctx.targetWorkflowName, {
+              ...wfBase,
+              resumeSessionId: sessionId,
+              ...localEngineOverrides(input.engine ?? {}),
+              ...(Object.keys(runVars).length === 0
+                ? {}
+                : { runtimeVariables: runVars }),
+            })
+              .then(async (resumed) => {
+                if (!resumed.ok) {
+                  throw new Error(resumed.error.message);
+                }
+                const reconciled = await reconcileTerminalSupervisedRunRecord(
+                  nextRecord,
+                  repo,
+                  baseOptions,
+                );
+                const finalView = await persistAndView(reconciled);
+                await repo.finalizeCommand(cmd.commandId, finalView);
+                return finalView;
+              })
+              .catch(async (error: unknown) => {
+                const message =
+                  error instanceof Error ? error.message : "unknown error";
+                return await finalizeAsyncRunError(nextRecord, message);
+              });
+            observer.onAsyncRun?.({
+              supervisedRunId: nextRecord.supervisedRunId,
+              workflowExecutionId: sessionId,
+              task,
+            });
+            return finalizeOk(view);
           }
           const resumed = await runWorkflow(ctx.targetWorkflowName, {
             ...wfBase,
@@ -715,11 +1092,6 @@ export function createWorkflowSupervisorClient(
           if (!resumed.ok) {
             throw new Error(resumed.error.message);
           }
-          const nextRecord: EventSupervisedRunRecord = {
-            ...ctx,
-            activeTargetExecutionId: resumed.value.session.sessionId,
-            updatedAt: nowIso(),
-          };
           return finalizeOk(await persistAndView(nextRecord));
         }
 
@@ -745,8 +1117,14 @@ export function createWorkflowSupervisorClient(
             } satisfies Omit<EventSupervisedRunRecord, "status"> & {
               readonly updatedAt: string;
             });
+          const failedRest =
+            "activeTargetExecutionId" in failedBase
+              ? (({ activeTargetExecutionId: _failedTarget, ...rest }) => rest)(
+                  failedBase,
+                )
+              : failedBase;
           const failed: EventSupervisedRunRecord = {
-            ...failedBase,
+            ...failedRest,
             status: "failed" as EventSupervisedRunStatus,
             updatedAt: nowIso(),
           };

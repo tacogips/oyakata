@@ -108,8 +108,8 @@ Expected planning-only final output payload:
   ],
   "implPlanPaths": ["impl-plans/active/codex-reference-session-history.md"],
   "codexAgentReferences": [
-    "/Users/taco/gits/tacogips/codex-agent/src/session",
-    "/Users/taco/gits/tacogips/codex-agent/src/cli"
+    "../../codex-agent/src/session",
+    "../../codex-agent/src/cli"
   ],
   "designReviewSummary": "Design accepted after Cursor adapter boundaries and codex-agent divergence were clarified.",
   "implPlanReviewSummary": "Implementation plan and design consistency review accepted after transcript edge-case tasks were added.",

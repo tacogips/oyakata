@@ -512,6 +512,7 @@ describe("runCli", () => {
     expect(help).toContain("--supervisor-workflow");
     expect(help).toContain("--nested-superviser");
     expect(help).toContain("--nested-supervisor");
+    expect(help).toContain("--no-auto-improve");
     expect(help).toContain("--no-allow-targeted-rerun");
     expect(help).toContain("--disable-targeted-rerun");
     expect(help).toContain("--workflow-definition-dir");
@@ -1814,6 +1815,87 @@ describe("runCli", () => {
     ).toBe(true);
   });
 
+  test("workflow run enables auto-improve by default", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.join(process.cwd(), "examples");
+    const scenarioPath = path.join(
+      examplesRoot,
+      "supervised-mock-retry",
+      "mock-scenario.json",
+    );
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-definition-dir",
+        examplesRoot,
+        "--artifact-root",
+        path.join(root, "artifacts"),
+        "--session-store",
+        path.join(root, "sessions"),
+        "--mock-scenario",
+        scenarioPath,
+        "--output",
+        "json",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(0);
+    const out = JSON.parse(capture.stdout.join("\n")) as {
+      status: string;
+      supervision?: {
+        status: string;
+        incidents: readonly { category: string }[];
+      };
+    };
+    expect(out.status).toBe("completed");
+    expect(out.supervision?.status).toBe("succeeded");
+    expect(
+      (out.supervision?.incidents ?? []).some((i) => i.category === "failure"),
+    ).toBe(true);
+  });
+
+  test("workflow run supports --no-auto-improve as an explicit unsupervised escape hatch", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.join(process.cwd(), "examples");
+    const scenarioPath = path.join(
+      examplesRoot,
+      "supervised-mock-retry",
+      "mock-scenario.json",
+    );
+
+    const capture = createIoCapture();
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "supervised-mock-retry",
+        "--workflow-definition-dir",
+        examplesRoot,
+        "--artifact-root",
+        path.join(root, "artifacts"),
+        "--session-store",
+        path.join(root, "sessions"),
+        "--mock-scenario",
+        scenarioPath,
+        "--no-auto-improve",
+        "--output",
+        "json",
+      ],
+      capture.io,
+    );
+
+    expect(code).toBe(5);
+    const out = JSON.parse(capture.stdout.join("\n")) as {
+      readonly session?: { readonly supervision?: unknown };
+    };
+    expect(out.session?.supervision).toBeUndefined();
+  });
+
   test("commands without auto-improve flags do not synthesize supervision policy input", async () => {
     const root = await makeTempDir();
     const capture = createIoCapture();
@@ -1872,7 +1954,14 @@ describe("runCli", () => {
     );
   });
 
-  test("workflow run rejects supervision policy flags without --auto-improve", async () => {
+  test("workflow run accepts supervision policy flags through default supervision", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.join(process.cwd(), "examples");
+    const scenarioPath = path.join(
+      examplesRoot,
+      "supervised-mock-retry",
+      "mock-scenario.json",
+    );
     const capture = createIoCapture();
     const code = await runCli(
       [
@@ -1880,20 +1969,29 @@ describe("runCli", () => {
         "run",
         "supervised-mock-retry",
         "--workflow-definition-dir",
-        path.join(process.cwd(), "examples"),
+        examplesRoot,
+        "--artifact-root",
+        path.join(root, "artifacts"),
+        "--session-store",
+        path.join(root, "sessions"),
+        "--mock-scenario",
+        scenarioPath,
         "--monitor-interval-ms",
         "1000",
+        "--output",
+        "json",
       ],
       capture.io,
     );
 
-    expect(code).toBe(2);
-    expect(capture.stderr.join("\n")).toContain(
-      "--monitor-interval-ms requires --auto-improve",
-    );
+    expect(code).toBe(0);
+    const out = JSON.parse(capture.stdout.join("\n")) as {
+      readonly supervision?: { readonly policy?: { monitorIntervalMs: number } };
+    };
+    expect(out.supervision?.policy?.monitorIntervalMs).toBe(1000);
   });
 
-  test("workflow run rejects --nested-supervisor without --auto-improve", async () => {
+  test("workflow run does not reject --nested-supervisor under default supervision", async () => {
     const capture = createIoCapture();
     const code = await runCli(
       [
@@ -1902,18 +2000,26 @@ describe("runCli", () => {
         "supervised-mock-retry",
         "--workflow-definition-dir",
         path.join(process.cwd(), "examples"),
+        "--endpoint",
+        "http://127.0.0.1:8787/graphql",
         "--nested-supervisor",
       ],
       capture.io,
     );
 
-    expect(code).toBe(2);
-    expect(capture.stderr.join("\n")).toContain(
-      "--nested-superviser / --nested-supervisor require --auto-improve",
-    );
+    expect(code).toBe(1);
+    expect(capture.stderr.join("\n")).toContain("remote run failed");
+    expect(capture.stderr.join("\n")).not.toContain("require --auto-improve");
   });
 
-  test("workflow run reports the first unexpected supervision flag in argv order", async () => {
+  test("workflow run accepts multiple supervision policy flags through default supervision", async () => {
+    const root = await makeTempDir();
+    const examplesRoot = path.join(process.cwd(), "examples");
+    const scenarioPath = path.join(
+      examplesRoot,
+      "supervised-mock-retry",
+      "mock-scenario.json",
+    );
     const capture = createIoCapture();
     const code = await runCli(
       [
@@ -1921,22 +2027,36 @@ describe("runCli", () => {
         "run",
         "supervised-mock-retry",
         "--workflow-definition-dir",
-        path.join(process.cwd(), "examples"),
+        examplesRoot,
+        "--artifact-root",
+        path.join(root, "artifacts"),
+        "--session-store",
+        path.join(root, "sessions"),
+        "--mock-scenario",
+        scenarioPath,
         "--workflow-mutation-mode",
         "execution-copy",
         "--monitor-interval-ms",
         "1000",
+        "--output",
+        "json",
       ],
       capture.io,
     );
 
-    expect(code).toBe(2);
-    expect(capture.stderr.join("\n")).toContain(
-      "--workflow-mutation-mode requires --auto-improve",
-    );
-    expect(capture.stderr.join("\n")).not.toContain(
-      "--monitor-interval-ms requires --auto-improve",
-    );
+    expect(code).toBe(0);
+    const out = JSON.parse(capture.stdout.join("\n")) as {
+      readonly supervision?: {
+        readonly policy?: {
+          monitorIntervalMs: number;
+          workflowMutationMode: string;
+        };
+      };
+    };
+    expect(out.supervision?.policy).toMatchObject({
+      monitorIntervalMs: 1000,
+      workflowMutationMode: "execution-copy",
+    });
   });
 
   test("workflow run rejects --superviser-workflow without a value", async () => {
@@ -3616,6 +3736,94 @@ describe("runCli", () => {
     });
   });
 
+  test("workflow run forwards --no-auto-improve through GraphQL transport", async () => {
+    const capture = createIoCapture();
+    const requests: Array<{
+      url: string;
+      body: Readonly<Record<string, unknown>>;
+    }> = [];
+
+    const code = await runCli(
+      [
+        "workflow",
+        "run",
+        "demo",
+        "--endpoint",
+        "http://example.test/graphql",
+        "--no-auto-improve",
+        "--output",
+        "json",
+      ],
+      capture.io,
+      {
+        startServe: async () => ({
+          host: "127.0.0.1",
+          port: 43173,
+          stop: () => {},
+        }),
+        isInteractiveTerminal: () => true,
+        fetchImpl: async (input, init) => {
+          const body = JSON.parse(String(init?.body)) as Readonly<
+            Record<string, unknown>
+          >;
+          requests.push({
+            url: String(input),
+            body,
+          });
+          const query = typeof body["query"] === "string" ? body["query"] : "";
+          if (query.includes("mutation ExecuteWorkflow")) {
+            return createJsonResponse({
+              data: {
+                executeWorkflow: {
+                  workflowExecutionId: "sess-remote-no-auto",
+                  sessionId: "sess-remote-no-auto",
+                  status: "completed",
+                  exitCode: 0,
+                },
+              },
+            });
+          }
+          return createJsonResponse({
+            data: {
+              workflowExecution: {
+                session: {
+                  sessionId: "sess-remote-no-auto",
+                  workflowName: "demo",
+                  workflowId: "demo",
+                  transitions: [{ at: "2026-03-15T00:00:00.000Z" }],
+                },
+                nodeExecutions: [{ nodeExecId: "exec-1" }],
+              },
+            },
+          });
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.url).toBe("http://example.test/graphql");
+    expect(requests[0]?.body).toMatchObject({
+      variables: {
+        input: {
+          workflowName: "demo",
+          autoImprove: {
+            enabled: false,
+          },
+        },
+      },
+    });
+    expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
+      sessionId: "sess-remote-no-auto",
+      status: "completed",
+      workflowName: "demo",
+      workflowId: "demo",
+      nodeExecutions: 1,
+      transitions: 1,
+      exitCode: 0,
+    });
+  });
+
   test("workflow run rejects invalid inline variables before GraphQL transport", async () => {
     const capture = createIoCapture();
     const fetchImpl = vi.fn(async () =>
@@ -4082,6 +4290,9 @@ describe("runCli", () => {
         defaultTimeoutMs: 900,
       }),
     );
+    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty(
+      "autoImprove",
+    );
   });
 
   test("local session rerun forwards normalized workflow run overrides", async () => {
@@ -4154,6 +4365,9 @@ describe("runCli", () => {
         maxLoopIterations: 4,
         defaultTimeoutMs: 1200,
       }),
+    );
+    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty(
+      "autoImprove",
     );
     expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
       sourceSessionId: "sess-local-rerun",
@@ -4375,9 +4589,9 @@ describe("runCli", () => {
 
     vi.spyOn(workflowEngine, "runWorkflow").mockImplementation(
       async (_workflowName, options) => {
-        options?.onProgress?.({
-          type: "step-start",
-          sessionId: "sess-verbose-run",
+        await options?.eventSink?.emit({
+          type: "step-started",
+          workflowExecutionId: "sess-verbose-run",
           workflowName: "worker-only",
           workflowId: "worker-only",
           stepId: "main-worker",

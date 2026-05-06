@@ -24,14 +24,22 @@ impl-plans/
 
 ## Active Plans
 
-| Plan                                            | Status      | Design Reference                                |
-| ----------------------------------------------- | ----------- | ----------------------------------------------- |
-| `active/bounded-fanout-join-workflow-execution` | In Progress | `design-bounded-fanout-join-workflow-execution` |
+No active implementation plans remain.
 
 ## Recently Completed
 
 | Plan                                             | Completed  | Design Reference                                                     |
 | ------------------------------------------------ | ---------- | -------------------------------------------------------------------- |
+| `default-supervision-runner-pool-regression-fixes` | 2026-05-06 | `architecture`, `command`, `design-event-supervisor-control` |
+| `workflow-runner-event-channel`                  | 2026-05-06 | `design-event-supervisor-control`                                    |
+| `deterministic-supervisor-runner-pool`           | 2026-05-06 | `architecture`, `command`, `design-event-supervisor-control`         |
+| `default-supervisor-backed-workflow-run`         | 2026-05-06 | `architecture`, `command`                                            |
+| `bounded-fanout-join-workflow-execution`         | 2026-05-06 | `design-bounded-fanout-join-workflow-execution`                      |
+| `default-node-timeout-60-minutes`                | 2026-05-06 | `design-workflow-json`                                               |
+| `inline-workflow-variables-and-inspect-usage`    | 2026-05-06 | `command`, `notes`                                                   |
+| `output-contract-candidate-path-prompt`          | 2026-05-06 | `architecture`                                                       |
+| `real-backend-runtime-artifact-audit`            | 2026-05-06 | `design-node-execution-inbox-contract`                               |
+| `session-command-project-scope`                  | 2026-05-06 | `design-user-scope-workflows`                                        |
 | `output-contract-adapter-envelope-normalization` | 2026-05-05 | `design-node-output-contract`, `architecture`                        |
 | `graphql-llm-session-message-selection`          | 2026-05-04 | `architecture`                                                       |
 | `graphql-llm-session-message-field-selection`    | 2026-05-04 | `architecture`                                                       |

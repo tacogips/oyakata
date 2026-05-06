@@ -5,7 +5,10 @@ import type {
   ValidationResponse,
   WorkflowResponse,
 } from "../shared/ui-contract";
-import { normalizeAutoImprovePolicy } from "../workflow/auto-improve-policy";
+import {
+  createDefaultAutoImprovePolicy,
+  normalizeAutoImprovePolicy,
+} from "../workflow/auto-improve-policy";
 import { runWorkflow, type WorkflowRunOptions } from "../workflow/engine";
 import {
   createWorkflowTemplate,
@@ -75,11 +78,13 @@ import { createRuntimeSupervisorConversationRepository } from "../events/supervi
 import { assertSupervisedBindingGraphqlPolicy } from "../events/validate";
 import { createEventSupervisedRunRepository } from "../events/supervised-runs";
 import { dispatchSupervisorChat } from "../events/dispatch-supervisor-chat";
+import { EVENT_SUPERVISOR_ACTION_SET } from "../events/supervisor-command-contract";
 import {
   createWorkflowSupervisorClient,
   reconcileTerminalSupervisedRunForCorrelation,
   reconcileTerminalSupervisedRunRecord,
 } from "../workflow/supervisor-client";
+import { createSupervisorRunnerPool } from "../workflow/supervisor-runner-pool";
 import { createWorkflowSupervisorDispatchClient } from "../workflow/supervisor-dispatch-client";
 import {
   listSessions,
@@ -254,6 +259,7 @@ interface GraphqlWorkflowRunOverridesInput {
 
 function buildGraphqlWorkflowRunOverrides(
   input: GraphqlWorkflowRunOverridesInput,
+  defaultAutoImprove = false,
 ): Result<
   Pick<
     WorkflowRunOptions,
@@ -273,7 +279,12 @@ function buildGraphqlWorkflowRunOverrides(
   );
   const normalizedAutoImprove =
     input.autoImprove === undefined
-      ? { ok: true as const, value: undefined }
+      ? {
+          ok: true as const,
+          value: defaultAutoImprove
+            ? createDefaultAutoImprovePolicy()
+            : undefined,
+        }
       : normalizeAutoImprovePolicy(input.autoImprove);
   if (!normalizedAutoImprove.ok) {
     return err(`invalid autoImprove policy: ${normalizedAutoImprove.error}`);
@@ -282,7 +293,7 @@ function buildGraphqlWorkflowRunOverrides(
     input.nestedSuperviser === true &&
     normalizedAutoImprove.value === undefined
   ) {
-    return err("nestedSuperviser requires autoImprove");
+    return err("nestedSuperviser requires supervised autoImprove");
   }
   return ok({
     ...(workflowWorkingDirectory === undefined
@@ -1332,7 +1343,7 @@ async function executeWorkflowMutation(
   input: ExecuteWorkflowInput,
   context: GraphqlRequestContext,
 ): Promise<ExecuteWorkflowPayload> {
-  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input);
+  const workflowRunOverrides = buildGraphqlWorkflowRunOverrides(input, true);
   if (!workflowRunOverrides.ok) {
     throw new Error(workflowRunOverrides.error);
   }
@@ -1560,13 +1571,7 @@ async function continueWorkflowExecutionMutation(
   };
 }
 
-const SUPERVISOR_ACTION_SET_FOR_GRAPHQL = new Set<EventSupervisorAction>([
-  "start",
-  "stop",
-  "restart",
-  "status",
-  "input",
-]);
+const SUPERVISOR_ACTION_SET_FOR_GRAPHQL = EVENT_SUPERVISOR_ACTION_SET;
 
 function assertJsonObjectForSupervisor(
   value: unknown,
@@ -1734,6 +1739,26 @@ type ParsedSupervisedWorkflowLookup =
       readonly correlationKey: string;
     };
 
+const supervisorRunnerPoolsByContext = new WeakMap<
+  object,
+  ReturnType<typeof createSupervisorRunnerPool>
+>();
+
+function getGraphqlSupervisorRunnerPool(
+  context: GraphqlRequestContext,
+): ReturnType<typeof createSupervisorRunnerPool> {
+  const key = context as object;
+  const existing = supervisorRunnerPoolsByContext.get(key);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const pool = createSupervisorRunnerPool({
+    client: createWorkflowSupervisorClient(context),
+  });
+  supervisorRunnerPoolsByContext.set(key, pool);
+  return pool;
+}
+
 function parseSupervisedWorkflowLookupGraphqlInput(
   input: SupervisedWorkflowLookupGraphqlInput,
 ): ParsedSupervisedWorkflowLookup {
@@ -1773,6 +1798,17 @@ function parseEventSupervisorCommandFromGraphql(
     raw.runtimeVariables,
     "command.runtimeVariables",
   );
+  const rawArgs = (raw as { readonly args?: unknown }).args;
+  const args =
+    rawArgs === undefined || rawArgs === null
+      ? undefined
+      : Array.isArray(rawArgs) &&
+          rawArgs.every((entry) => typeof entry === "string")
+        ? (rawArgs as readonly string[])
+        : undefined;
+  if (rawArgs !== undefined && rawArgs !== null && args === undefined) {
+    throw new Error("command.args must be a string array when set");
+  }
   const supervisedRunIdRaw = (raw as { readonly supervisedRunId?: unknown })
     .supervisedRunId;
   const supervisedRunId =
@@ -1795,6 +1831,7 @@ function parseEventSupervisorCommandFromGraphql(
       "command.correlationKey",
     ),
     action: raw.action as EventSupervisorAction,
+    ...(args === undefined || args.length === 0 ? {} : { args }),
     targetWorkflowName: requireNonEmptySupervisorString(
       raw.targetWorkflowName,
       "command.targetWorkflowName",
@@ -1876,7 +1913,6 @@ async function dispatchSupervisedWorkflowCommandMutation(
       input.runtimeVariables,
       "runtimeVariables",
     ) ?? {};
-  const client = createWorkflowSupervisorClient(context);
   const dryRun = requireOptionalSupervisorBoolean(input.dryRun, "dryRun");
   const maxSteps = requireOptionalSupervisorInteger(input.maxSteps, "maxSteps");
   const maxLoopIterations = requireOptionalSupervisorInteger(
@@ -1909,7 +1945,7 @@ async function dispatchSupervisedWorkflowCommandMutation(
           ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
           ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
         };
-  const view = await client.dispatchCommand({
+  const view = await getGraphqlSupervisorRunnerPool(context).dispatch({
     command,
     binding,
     runtimeVariables,
@@ -1920,6 +1956,13 @@ async function dispatchSupervisedWorkflowCommandMutation(
     ...(view.activeTargetStatus === undefined
       ? {}
       : { activeTargetStatus: view.activeTargetStatus }),
+    ...(view.commandResult === undefined
+      ? {}
+      : {
+          commandResult: view.commandResult as unknown as Readonly<
+            Record<string, unknown>
+          >,
+        }),
   };
 }
 

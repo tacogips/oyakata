@@ -281,11 +281,11 @@ distinction explicit through provider/backend metadata and request records.
 
 Codex-reference mapping:
 
-- local reference root: `/Users/taco/gits/tacogips/codex-agent`
+- local reference root: `<reference-repository-root>` (for example `../../codex-agent`)
 - relevant reference behavior:
-  `/Users/taco/gits/tacogips/codex-agent/design-docs/specs/design-codex-session-management.md`
+  `<reference-repository-root>/design-docs/specs/design-codex-session-management.md`
   describes Codex rollout/session audit records and
-  `/Users/taco/gits/tacogips/codex-agent/src/sdk/session-runner.ts` exposes
+  `<reference-repository-root>/src/sdk/session-runner.ts` exposes
   `SessionConfig`, `RunningSession`, and streamed rollout messages
 - intentional divedra boundary: divedra keeps workflow mailbox, validation,
   routing, and final publication runtime-owned; `codex-agent` is used as a

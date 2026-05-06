@@ -30,7 +30,7 @@ flowchart TD
 - Run workflows using agent backends such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, and `official/anthropic-sdk`.
 - Run deterministic mock scenarios for demos, tests, and documentation without real agent calls.
 - Monitor, resume, rerun, continue, export, and inspect workflow executions.
-- Use supervised execution with `--auto-improve` when retries, stall detection, and recovery are useful.
+- Start workflows with supervisor-backed execution by default; use `--no-auto-improve` only for specialized unsupervised starts.
 - Start a local GraphQL control plane for remote execution and manager/control-plane operations.
 - Receive external events, replay event receipts, and inspect reply dispatch records.
 - Install shell hooks/snippets for Claude Code, Codex, and Gemini.
@@ -173,7 +173,10 @@ bun run src/main.ts workflow run <workflow-name> \
   --output json
 ```
 
-Run with supervised recovery:
+`workflow run` starts with supervised recovery by default. `--auto-improve`
+remains accepted for scripts that spell the policy explicitly, and
+`--nested-supervisor` opts into running the supervisor bundle as a paired nested
+workflow when that bundle is available in the workflow catalog:
 
 ```bash
 bun run src/main.ts workflow run <workflow-name> \
@@ -185,8 +188,8 @@ bun run src/main.ts workflow run <workflow-name> \
   --output json
 ```
 
-Use plain `workflow run` for quick checks. Use `--auto-improve` for longer or
-more important work where retry, stall detection, and remediation are desired.
+Use `--no-auto-improve` only when a quick check or isolated fixture must preserve
+legacy unsupervised behavior.
 
 ## Session Operations
 
@@ -281,6 +284,10 @@ bun run src/main.ts workflow run <workflow-name> \
   --output json
 ```
 
+Endpoint-backed `workflow run` uses the same default supervised recovery policy
+as local execution. Pass `--no-auto-improve` when the remote GraphQL
+`executeWorkflow` start must receive `autoImprove: { enabled: false }`.
+
 Remote-capable CLI operations include `workflow list`, `workflow status`,
 `workflow run`, `session resume`, and `session rerun`. Detailed execution
 inspection, logs, health-style diagnostics, and export-shaped payloads are
@@ -366,6 +373,9 @@ Supported vendors:
 - `--mock-scenario <path>`: use deterministic mock backend responses.
 - `--output json`: emit structured output.
 - `--dry-run`: plan/check without normal execution where supported.
+- `--auto-improve`: explicitly request the default supervised recovery policy.
+- `--no-auto-improve`: opt out of default supervised recovery, including through
+  remote GraphQL `workflow run --endpoint ...` starts.
 - `--verbose` / `-v`: print local workflow step-start progress to stderr.
 - `--max-steps <n>`: cap workflow execution steps.
 - `--max-concurrency <n>`: cap fanout concurrency for a workflow run.

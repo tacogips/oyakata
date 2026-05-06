@@ -458,10 +458,19 @@ const CHAT_TO_DISPATCH: Readonly<
 > = {
   ignore: "no-op",
   start: "start-workflow",
-  stop: "stop-workflow",
-  restart: "restart-workflow",
   status: "status",
+  progress: "status",
+  inbox: "status",
+  read: "status",
+  logs: "status",
+  export: "status",
+  stop: "stop-workflow",
+  cancel: "stop-workflow",
+  restart: "restart-workflow",
+  rerun: "restart-workflow",
   input: "submit-input",
+  submit: "submit-input",
+  resume: "submit-input",
 };
 
 /**

@@ -6,6 +6,7 @@ import {
   createWorkflowTriggerRunner,
   dispatchEventToMatchingBindings,
 } from "./trigger-runner";
+import { createEventSupervisedRunRepository } from "./supervised-runs";
 import * as dispatchResolver from "./supervisor-llm-resolver";
 import * as supervisorIntent from "./supervisor-intent";
 import type {
@@ -41,6 +42,40 @@ afterEach(async () => {
       .map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
+
+async function waitForLoadedSession(
+  sessionId: string,
+  sessionStoreRoot: string,
+): Promise<Awaited<ReturnType<typeof loadSession>>> {
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const loaded = await loadSession(sessionId, { sessionStoreRoot });
+    if (loaded.ok) {
+      return loaded;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return await loadSession(sessionId, { sessionStoreRoot });
+}
+
+async function waitForSupervisedRunTerminal(input: {
+  readonly supervisedRunId: string;
+  readonly rootDataDir: string;
+  readonly artifactRoot: string;
+  readonly sessionStoreRoot: string;
+}): Promise<void> {
+  const repo = createEventSupervisedRunRepository(input);
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const record = await repo.loadById(input.supervisedRunId);
+    if (
+      record?.status === "completed" ||
+      record?.status === "failed" ||
+      record?.status === "stopped"
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 async function writeManagerOnlyWorkflow(input: {
   readonly root: string;
@@ -922,14 +957,23 @@ describe("workflow trigger runner supervised bindings", () => {
     });
 
     expect(result.workflowExecutionId).toBeDefined();
-    const loaded = await loadSession(result.workflowExecutionId ?? "", {
-      sessionStoreRoot: path.join(root, "sessions"),
-    });
+    const loaded = await waitForLoadedSession(
+      result.workflowExecutionId ?? "",
+      path.join(root, "sessions"),
+    );
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) {
       return;
     }
     expect(loaded.value.runtimeVariables["llmFlag"]).toBe(true);
+    if (result.supervisedRunId !== undefined) {
+      await waitForSupervisedRunTerminal({
+        supervisedRunId: result.supervisedRunId,
+        rootDataDir: path.join(root, "data"),
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+      });
+    }
   });
 
   test("dispatches supervised start through supervisor client", async () => {

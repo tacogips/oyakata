@@ -85,10 +85,12 @@ answers are confirmed, this design uses these provisional defaults:
   `--nested-superviser` (identical semantics).
 - the default supervised restart limit is `3`.
 - core binding configuration accepts structured actions and deterministic text
-  command tokens. Natural-language control is implemented only when a binding
-  sets `intentMapping.mode = "llm-command"` so chat text is routed through a
-  supervisor-owned LLM command-resolution node; the runtime parses and
-  validates structured output before executing any privileged action.
+  command tokens. The default deterministic parser splits event text on spaces
+  and tabs; a known first token becomes the command and remaining tokens become
+  arguments. If the first token is not a known command, the text is routed to a
+  command-analysis LLM node that emits a structured command proposal. The
+  supervisor remains deterministic because the runtime parses and validates that
+  proposal before executing any privileged action.
 - one source/binding/conversation/thread correlation key has at most one active
   supervised run unless the event supplies an explicit target alias or
   supervised run id.
@@ -134,10 +136,11 @@ and `impl-plans/completed/event-supervisor-control-review-hardening.md`:
   conversation target (failure replies use a generic operator message; detailed errors stay on the receipt).
 
 **Phase 1 scope note:** Lifecycle control is enforced by the **runtime supervisor client**, not by executing
-the authored workflow named in `supervisorWorkflowName`. That name is stored on supervised-run records for
-correlation and for future wiring to a packaged system supervisor workflow. The optional field
-`supervisorExecutionId` on supervised-run records is reserved for when that named supervisor workflow is
-actually run; it is unset in Phase 1.
+the authored workflow named in `supervisorWorkflowName`. The deterministic follow-up keeps that native
+runtime ownership and formalizes it as an in-process workflow-runner pool. The supervisor is still represented
+by the default supervisor workflow name for policy, audit, and future packaging, but default lifecycle control
+does not shell out to a `divedra` binary and does not make the supervisor itself an LLM-backed node.
+LLM-backed command analysis remains an explicit fallback parser node, not the supervisor authority.
 
 ### Phase 4 implementation (natural-language supervisor control)
 
@@ -166,8 +169,10 @@ system capabilities.
 
 Phase 1 implements the same **capability set** (start/status/cancel/rerun, durable supervised-run
 persistence) through the runtime-owned `WorkflowSupervisorClient` service rather than by shipping and
-executing the recommended workflow bundle. Packaging `divedra-default-workflow-supervisor` remains the
-next step toward this section's full shape.
+executing the recommended workflow bundle. The next step is deterministic in-process runner-pool mode:
+package `divedra-default-workflow-supervisor` as the supervisor identity, execute lifecycle control through
+a native runner-pool service that calls the workflow engine in the same process, and keep authored LLM
+decision nodes opt-in.
 
 Recommended default workflow id:
 
@@ -201,6 +206,163 @@ Default behavior:
 The supervisor remains an ordinary authored workflow in shape, but its privileged
 operations must be exposed through runtime-owned add-ons or control-plane calls
 with scoped authorization.
+
+### Deterministic In-Process Runner-Pool Mode
+
+Default supervisor mode is deterministic. It is represented as the
+`divedra-default-workflow-supervisor` workflow, but the lifecycle-control step is
+a native in-process runner-pool service rather than an LLM manager node. The
+runner pool owns command persistence, active workflow handles, progress polling,
+and event-source reply materialization.
+
+Hard boundaries:
+
+- deterministic mode runs target workflows asynchronously in the same process
+  through the workflow engine; it must not spawn a `divedra` child process for
+  supervisor lifecycle, inspection, or event-source command handling
+- the supervisor itself is deterministic and must not be an LLM-backed node
+- command-analysis LLM execution is a fallback parser only; its output is a
+  typed command or proposal that returns to the deterministic validation path
+- `runWorkflow()` remains the engine primitive used by the runner pool for
+  starts, resumes, and reruns; event sources and operators should target the
+  supervisor command surface rather than bypassing the pool for active runs
+- LLM-backed dispatch remains available only when a binding or supervisor
+  profile explicitly requests `intentMapping.mode = "llm-command"` or another
+  explicit LLM supervisor mode
+- auto-improve patching remains separate; deterministic lifecycle supervision
+  may observe failures and enforce restart budgets, but it must not mutate
+  workflow definitions unless auto-improve is explicitly enabled
+
+The runner pool should accept commands asynchronously and persist command/run
+records before starting or mutating target workflow handles. Each record should
+include the validated supervisor command id, event receipt id when present,
+supervised run id, runner-pool run id when known, target workflow execution id
+when known, command arguments, status, timestamps, and the operator-safe result
+payload. Replayed event-source commands resolve through the persisted command
+record rather than starting or mutating a second workflow run.
+
+Handle replacement rules:
+
+- mutating commands that start, resume, rerun, restart, or otherwise receive an
+  `onAsyncRun` task from the supervisor client may store or replace active
+  runner-pool handle indexes
+- inspection commands such as status, progress, inbox/read, logs, and export
+  must return the latest view without replacing an existing live handle when no
+  async task was produced
+- cancel, wait, and resume operations must resolve to the original live handle
+  after any number of intervening inspection commands in the same process
+- durable command/run rows remain the source for audit and post-restart
+  inspection, but live handle indexes are the source for in-process task
+  control
+
+Workflow-run progress crosses the runner/supervisor boundary as typed
+in-process events rather than runner-owned prints. `runWorkflow()` emits
+`step-started`, `step-completed`, and `workflow-completed` events to an optional
+`WorkflowRunEventSink`; omitting the sink keeps normal output unchanged. The
+deterministic supervisor owns operator-facing rendering by consuming those
+events, and CLI `--verbose` uses that supervisor renderer for stderr step-start
+lines. Explicit debug mode remains the opt-in path for legacy runner progress
+callbacks.
+
+The runner pool tracks active executions by:
+
+- `runnerPoolRunId`: process-local handle id for async task control
+- `supervisedRunId`: durable event-control lifecycle id
+- `workflowExecutionId` / session id: workflow-engine execution identity
+- optional operator alias or managed workflow key
+- source/binding/correlation key for event-source conversations
+
+Only active in-process handles are directly cancellable or resumable through the
+pool. Durable records remain inspectable after process restart, but a restarted
+process may need to rehydrate status from persisted session/artifact state and
+refuse operations that require a live handle unless the engine supports safe
+resume for that operation.
+
+Event-source command surface:
+
+| Supervisor action | Runner-pool operation |
+| ----------------- | --------------------- |
+| `reference`       | inspect workflow usage/profile metadata from the local catalog or configured remote control plane |
+| `start`           | enqueue an async `runWorkflow()` start for the resolved target workflow and mapped variables |
+| `status`          | read supervised-run state plus target session status |
+| `progress`        | read target session queue/execution progress |
+| `inbox` / `read`  | inspect runtime mailbox/artifact input and output for the active execution |
+| `logs`            | read bounded runtime logs for the target session |
+| `export`          | assemble a session export payload from persisted runtime artifacts |
+| `stop` / `cancel` | request cancellation for the active runner-pool handle and reconcile persisted target status |
+| `restart`         | cancel the active non-terminal target when needed, then start a fresh attempt for the same supervised run |
+| `rerun`           | rerun from a validated step id when supplied, otherwise follow restart policy |
+| `input` / `submit` / `resume` | submit validated input to a paused/resumable active execution or start-on-first-input target when configured |
+
+The action table is a contract for runner-pool behavior, not a requirement that
+event sources expose these names verbatim to users.
+
+### Deterministic Command Parser
+
+For event text, the default parser splits only on spaces and tabs. The first
+token is interpreted as a command only when it exactly matches a configured
+command string or alias. Remaining tokens are preserved, in order, as command
+arguments. Empty input, whitespace-only input, or text whose first token is not
+a configured command is treated as natural language and routed to the
+command-analysis fallback under supervised command parsing. Non-interactive
+bindings that do not want natural-language control should reject or ignore the
+event before it reaches the supervisor command parser.
+
+The default command surface should include:
+
+- `start`
+- `status` and `progress`
+- `inbox` and `read`
+- `logs` and `export`
+- `stop` and `cancel`
+- `restart`
+- `rerun` with an optional step id argument
+- `submit`, `input`, and `resume`
+
+The command-analysis LLM node returns a typed command proposal, such as mapping
+"stop workflow and rerun from step 2" into a cancel command plus a rerun command
+with `rerunFromStepId = "step2"` when that step id can be validated. The
+runtime may apply a single high-confidence safe proposal automatically only when
+the binding policy allows it; otherwise it publishes a clarification or proposal
+reply.
+
+### Codex-Agent Reference Mapping
+
+The local `../../codex-agent` repository is a behavioral reference for async
+runner facade, active-session tracking, normalized streaming, cancellation, and
+testable runner mocks, not a source for copied implementation.
+Relevant reference paths:
+
+- `../../codex-agent/src/sdk/session-runner.ts`
+- `../../codex-agent/src/sdk/agent-runner.ts`
+- `../../codex-agent/src/sdk/mock-session-runner.ts`
+- `../../codex-agent/src/process/manager.ts` (negative/contrast reference only)
+- `../../codex-agent/impl-plans/issue6-stable-runner-api.md`
+
+Concepts to reuse in divedra:
+
+- stable caller-facing runner facade hides whether a command starts new work,
+  resumes existing work, or performs inspection
+- active session/run sets are tracked and pruned on completion
+- cancellation and interrupt controls are methods on running handles, not raw
+  text commands
+- streaming/progress events are normalized before being returned to callers
+- mocks can exercise async runner semantics without launching a real backend
+
+Intentional divergences:
+
+- codex-agent manages `codex` subprocesses and Codex session events; divedra
+  deterministic supervisor mode manages in-process divedra workflow executions
+  and supervised workflow/event records
+- divedra persists command correlation in supervised-run records, event
+  receipts, workflow sessions, and runtime DB rows rather than in codex-agent
+  queue/session stores
+- Cursor/Codex/backend-specific behavior remains behind existing adapter
+  modules; the deterministic runner pool accepts provider-neutral
+  supervisor commands and emits provider-neutral status/reply payloads
+- divedra may use GraphQL for remote control-plane parity, but the local
+  deterministic supervisor runner pool must not shell out to the configured
+  `divedra` binary for lifecycle and inspection operations
 
 Minimum supervisor-only capabilities:
 
@@ -264,8 +426,8 @@ Recommended supervised binding shape:
       "allowActions": ["start", "stop", "restart", "status", "input"],
       "startOnFirstInput": true,
       "intentMapping": {
-        "mode": "structured-or-command",
-        "defaultAction": "input"
+        "mode": "command-map",
+        "naturalLanguageFallback": "command-analysis"
       }
     }
   }
@@ -292,10 +454,12 @@ Rules:
   supervised run starts the target workflow with the mapped input; recommended
   default is true for chat/web-chat bindings and false for non-interactive
   sources.
-- intent mapping is binding-owned. Core runtime accepts structured actions,
-  simple command tokens, and explicit LLM-backed command-resolution mode.
-  Natural-language text is never executed directly; the LLM mode must emit a
-  structured command proposal that the runtime validates before dispatch.
+- intent mapping is binding-owned. Core runtime accepts structured actions and
+  simple command tokens. Natural-language text is never executed directly: when
+  the deterministic parser does not recognize the first token, the command
+  analysis fallback emits a structured command proposal that the runtime
+  validates before dispatch. Profiles may still opt into broader LLM-backed
+  dispatcher behavior, but that is separate from the required fallback parser.
 
 ## Control Command Model
 
@@ -308,9 +472,25 @@ interface EventSupervisorCommand {
   readonly sourceId: string;
   readonly bindingId: string;
   readonly correlationKey: string;
-  readonly action: "start" | "stop" | "restart" | "status" | "input";
+  readonly action:
+    | "start"
+    | "status"
+    | "progress"
+    | "inbox"
+    | "read"
+    | "logs"
+    | "export"
+    | "stop"
+    | "cancel"
+    | "restart"
+    | "rerun"
+    | "input"
+    | "submit"
+    | "resume";
   readonly targetWorkflowName: string;
   readonly targetWorkflowExecutionId?: string;
+  readonly args?: readonly string[];
+  readonly rerunFromStepId?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
   readonly reason?: string;
   readonly receivedEventReceiptId: string;
@@ -326,11 +506,15 @@ Action semantics:
   for a paused user-action workflow it may become a structured user reply in a
   later milestone. If no active supervised run exists, `input` may start one
   only when the binding explicitly enables `startOnFirstInput`.
-- `status`: inspect the active supervised run and publish a provider-neutral
-  status reply.
-- `stop`: cancel the active target workflow and mark the supervised run stopped.
+- `status` / `progress` / `inbox` / `read` / `logs` / `export`: inspect the
+  active supervised run or target session and publish a provider-neutral reply.
+- `stop` / `cancel`: cancel the active target workflow and mark the supervised
+  run stopped or cancelled according to the reconciled target status.
 - `restart`: cancel the active non-terminal target if present, then start a new
   target attempt linked to the same supervised run.
+- `rerun`: rerun from a validated step id when supplied; otherwise normalize to
+  restart according to policy.
+- `submit` / `resume`: deliver input to a paused/resumable target execution.
 
 Every command must be idempotent by `commandId`. Replayed webhooks or repeated
 chat platform deliveries must not issue duplicate starts, stops, or restarts.
@@ -338,11 +522,11 @@ chat platform deliveries must not issue duplicate starts, stops, or restarts.
 ### Intent Mapping Contract
 
 Event adapters may emit structured action fields directly. Bindings may also
-map deterministic command tokens from provider-neutral event input.
-Natural-language chat control is allowed only as an explicit supervised binding
-mode that sends the text to a supervisor-owned LLM command-resolution node and
-then feeds the node's structured output back into the same runtime validation
-path as other privileged actions.
+map deterministic command tokens from provider-neutral event input. When the
+deterministic parser cannot match the first token to a configured command, the
+same text is natural language and routes to the command-analysis fallback node.
+The fallback node's structured output feeds back into the same runtime
+validation path as other privileged actions.
 
 Recommended accepted structured input:
 
@@ -356,7 +540,9 @@ Recommended accepted structured input:
 }
 ```
 
-Command-token mapping should be explicit in binding config:
+Command-token mapping is deterministic. Bindings may override command strings,
+but the default parser always splits by spaces/tabs, treats the first exact
+command token as the action, and preserves remaining tokens as `args`:
 
 ```json
 {
@@ -364,27 +550,35 @@ Command-token mapping should be explicit in binding config:
     "mode": "command-map",
     "inputPath": "event.input.text",
     "commands": {
-      "start": "start",
-      "stop": "stop",
-      "restart": "restart",
-      "status": "status"
+      "start": ["start"],
+      "status": ["status"],
+      "progress": ["progress"],
+      "inbox": ["inbox", "read"],
+      "logs": ["logs"],
+      "export": ["export"],
+      "stop": ["stop", "cancel"],
+      "restart": ["restart"],
+      "rerun": ["rerun"],
+      "input": ["input", "submit", "resume"]
     },
-    "defaultAction": "input"
+    "naturalLanguageFallback": "command-analysis"
   }
 }
 ```
 
-LLM command resolution should also be explicit in binding config:
+Command-analysis resolver settings should be explicit in binding or supervisor
+profile config, even though the fallback path is the default behavior for
+unknown first-token text:
 
 ```json
 {
   "intentMapping": {
-    "mode": "llm-command",
+    "mode": "command-map",
     "inputPath": "event.input.text",
     "resolverWorkflowName": "divedra-default-workflow-supervisor",
-    "resolverNodeId": "resolve-chat-command",
+    "resolverNodeId": "command-analysis",
     "minConfidence": 0.8,
-    "defaultAction": "input",
+    "fallbackAction": "proposal",
     "allowMultiTargetCommands": false
   }
 }
@@ -664,12 +858,17 @@ alias for stop/restart/status commands.
 
 The core runtime cannot safely decide by itself that arbitrary text means stop
 or restart. Resolution: adapters or bindings may emit structured actions, slash
-commands, buttons, deterministic command-token mappings, or an explicit
-`llm-command` mapping. In `llm-command` mode, the same chat text is delivered to
-candidate workflow supervisors, each supervisor's LLM command-resolution node
-decides whether the text targets the workflow it manages, and the node emits a
-structured command proposal. Privileged action execution still consumes only
-runtime-validated structured commands.
+commands, buttons, or deterministic command-token mappings. When the first text
+token is not a known command, the default supervised path treats the message as
+natural language and routes it to a command-analysis LLM node. The node decides
+whether the text targets the workflow it manages and emits a structured command
+proposal. Privileged action execution still consumes only runtime-validated
+structured commands, and the supervisor itself remains deterministic.
+
+Explicit `llm-command` or broader LLM-backed dispatcher modes remain available
+only as opt-in profile behavior for richer dispatch, direct answers, or
+multi-workflow selection. They do not replace the required deterministic
+first-token parser plus command-analysis fallback.
 
 For multi-run chat, the default remains conservative: if multiple supervisors
 return destructive actions such as `stop` or `restart` and the message does not
@@ -697,10 +896,12 @@ auto-improve patching:
 - GraphQL wrapper operations
 - event router integration for local and remote modes
 
-Phase 2 should package the default supervisor as a system workflow and route
-commands through that authored workflow when enabled. Until then, the lifecycle
-service may directly call existing workflow execution/rerun/cancel operations as
-the deterministic system implementation behind the same public contract.
+Phase 2 should implement the deterministic in-process runner-pool default. It
+packages `divedra-default-workflow-supervisor` as the supervisor identity and
+routes validated lifecycle commands to a native runner-pool service that starts,
+tracks, cancels, resumes, and reruns workflow executions asynchronously in the
+same process. This phase must not shell out to a configured `divedra` binary for
+deterministic target lifecycle, inspection, or event-source command handling.
 
 Phase 3 should add richer chat/web examples, status replies, and optional
 auto-improve handoff. Automatic workflow patching stays out of Phase 1.
@@ -724,11 +925,11 @@ done for public surfaces.
 The Phase 1 codebase implements the public contract above through
 `WorkflowSupervisorClient`, the SQLite-backed supervised-run repository, and
 GraphQL `dispatchSupervisedWorkflowCommand` / `supervisedWorkflowRun`. Target
-lifecycle uses existing `runWorkflow` / session cancel paths; the binding field
-`supervisorWorkflowName` is recorded on supervised-run rows for correlation and
-defaults but a separate supervisor workflow process is not started yet.
-Accordingly, `supervisorExecutionId` may be absent on `EventSupervisedRunRecord`
-until Phase 2 runs an authored supervisor workflow execution.
+lifecycle in the current tree already uses existing `runWorkflow` / session
+cancel paths. Phase 2 should keep that in-process execution model, formalize it
+behind the runner pool, persist command/run records, and populate
+`supervisorExecutionId` or its successor runner-pool identity when the durable
+supervisor run is created.
 
 ## Implementation Milestones
 

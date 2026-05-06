@@ -15,12 +15,14 @@ function buildBinding(): EventBinding {
           mode: "command-map",
           inputPath: "event.input.text",
           commands: {
-            start: "start",
-            stop: "stop",
+            start: ["start"],
+            stop: ["stop", "cancel"],
             restart: "restart",
+            rerun: "rerun",
             status: "status",
+            progress: "progress",
+            input: ["input", "submit", "resume"],
           },
-          defaultAction: "input",
         },
       },
     },
@@ -55,18 +57,34 @@ describe("resolveSupervisorIntent", () => {
     expect(result).toEqual({
       outcome: "action",
       action: "start",
+      args: ["release", "review"],
+      commandText: "start release review",
     });
   });
 
-  test("command-map falls back to input for unmatched chat text", () => {
+  test("command-map routes unmatched chat text to command-analysis", () => {
     const result = resolveSupervisorIntent({
       binding: buildBinding(),
       event: buildEvent("please continue"),
     });
 
     expect(result).toEqual({
+      outcome: "skip",
+      reason: "command-analysis required: unknown-first-token",
+    });
+  });
+
+  test("command-map supports configured aliases as exact first-token commands", () => {
+    const result = resolveSupervisorIntent({
+      binding: buildBinding(),
+      event: buildEvent("submit next answer"),
+    });
+
+    expect(result).toEqual({
       outcome: "action",
       action: "input",
+      args: ["next", "answer"],
+      commandText: "submit next answer",
     });
   });
 

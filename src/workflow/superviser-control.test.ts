@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ok } from "./result";
+import { DEFAULT_STALL_TIMEOUT_MS } from "./auto-improve-policy";
 import {
   parseGetWorkflowExecutionDetailsControlArguments,
   parseGetWorkflowStatusControlArguments,
@@ -94,7 +95,7 @@ describe("parseStartTargetWorkflowControlArguments", () => {
         autoImprove: {
           enabled: true,
           monitorIntervalMs: 1500,
-          stallTimeoutMs: 60000,
+          stallTimeoutMs: DEFAULT_STALL_TIMEOUT_MS,
           maxSupervisedAttempts: 5,
           maxWorkflowPatches: 3,
           superviserWorkflowId: "divedra-default-superviser",

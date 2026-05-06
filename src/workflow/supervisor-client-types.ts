@@ -13,11 +13,59 @@ export type SupervisorEngineOverrides = {
   readonly maxSteps?: number;
   readonly maxLoopIterations?: number;
   readonly defaultTimeoutMs?: number;
+  readonly asyncRun?: boolean;
+  readonly onAsyncRun?: (input: {
+    readonly supervisedRunId: string;
+    readonly workflowExecutionId: string;
+    readonly task: Promise<SupervisedWorkflowView>;
+  }) => void;
 };
+
+export type SupervisedWorkflowCommandResult =
+  | {
+      readonly kind: "status";
+      readonly workflowExecutionId?: string;
+      readonly targetStatus?: WorkflowSessionState["status"];
+    }
+  | {
+      readonly kind: "progress";
+      readonly workflowExecutionId?: string;
+      readonly targetStatus?: WorkflowSessionState["status"];
+      readonly currentStepId?: string;
+      readonly queuedStepIds: readonly string[];
+      readonly completedStepCount: number;
+      readonly nodeExecutionCount: number;
+    }
+  | {
+      readonly kind: "inbox";
+      readonly workflowExecutionId?: string;
+      readonly pendingUserActionCount: number;
+      readonly pendingUserActions: readonly {
+        readonly nodeId: string;
+        readonly nodeExecId: string;
+        readonly userActionId: string;
+        readonly pausedAt: string;
+      }[];
+    }
+  | {
+      readonly kind: "logs";
+      readonly workflowExecutionId?: string;
+      readonly nodeExecutionCount: number;
+      readonly runtimeLogCount: number;
+      readonly recentLogs: readonly {
+        readonly level: string;
+        readonly message: string;
+        readonly nodeId: string | null;
+        readonly nodeExecId: string | null;
+        readonly at: string;
+      }[];
+      readonly exportArtifactDir: string;
+    };
 
 export interface SupervisedWorkflowView {
   readonly supervisedRun: EventSupervisedRunRecord;
   readonly activeTargetStatus?: WorkflowSessionState["status"];
+  readonly commandResult?: SupervisedWorkflowCommandResult;
 }
 
 export interface StartSupervisedWorkflowInput extends LoadOptions {
@@ -59,7 +107,11 @@ export interface RestartSupervisedWorkflowInput extends LoadOptions {
 }
 
 export interface SupervisedWorkflowLookup extends LoadOptions {
+  readonly runnerPoolRunId?: string;
   readonly supervisedRunId?: string;
+  readonly workflowExecutionId?: string;
+  readonly alias?: string;
+  readonly workflowKey?: string;
   readonly sourceId?: string;
   readonly bindingId?: string;
   readonly correlationKey?: string;

@@ -4,7 +4,7 @@ import type { AutoImprovePolicy } from "./types";
 /** Default superviser bundle id (valid workflow id; loadWorkflowByIdFromDisk matches workflow.json). */
 export const DEFAULT_SUPERVISER_WORKFLOW_ID = "divedra-default-superviser";
 export const DEFAULT_MONITOR_INTERVAL_MS = 5_000;
-export const DEFAULT_STALL_TIMEOUT_MS = 60_000;
+export const DEFAULT_STALL_TIMEOUT_MS = 60 * 60 * 1000;
 export const DEFAULT_MAX_SUPERVISED_ATTEMPTS = 5;
 export const DEFAULT_MAX_WORKFLOW_PATCHES = 3;
 export const DEFAULT_WORKFLOW_MUTATION_MODE = "execution-copy" as const;
@@ -20,7 +20,21 @@ export interface AutoImprovePolicyInput {
   readonly allowTargetedRerun?: boolean;
 }
 
-function hasDisabledAutoImproveOverrides(input: AutoImprovePolicyInput): boolean {
+export function createDefaultAutoImprovePolicy(): AutoImprovePolicy {
+  return {
+    enabled: true,
+    superviserWorkflowId: DEFAULT_SUPERVISER_WORKFLOW_ID,
+    monitorIntervalMs: DEFAULT_MONITOR_INTERVAL_MS,
+    stallTimeoutMs: DEFAULT_STALL_TIMEOUT_MS,
+    maxSupervisedAttempts: DEFAULT_MAX_SUPERVISED_ATTEMPTS,
+    maxWorkflowPatches: DEFAULT_MAX_WORKFLOW_PATCHES,
+    workflowMutationMode: DEFAULT_WORKFLOW_MUTATION_MODE,
+  };
+}
+
+function hasDisabledAutoImproveOverrides(
+  input: AutoImprovePolicyInput,
+): boolean {
   return (
     input.superviserWorkflowId !== undefined ||
     input.monitorIntervalMs !== undefined ||

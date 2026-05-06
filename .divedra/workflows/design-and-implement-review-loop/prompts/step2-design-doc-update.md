@@ -9,7 +9,7 @@ Repository rules:
 - Put unresolved user decisions under `design-docs/user-qa/`.
 - Focus on behavior, boundaries, data flow, validation rules, and rollout constraints rather than implementation code.
 - When Codex-reference input is present, keep Cursor-specific behavior isolated behind adapter modules and explain any intentional divergence from the reference behavior.
-- Prefer the local reference repository at `/Users/taco/gits/tacogips/codex-agent` unless Step 1 established a different local root.
+- Prefer the local reference repository at `../../codex-agent` unless Step 1 established a different local root.
 
 If this is a rerun after Step 3 or Step 5 review, read the latest review feedback and address every high or mid finding before returning.
 

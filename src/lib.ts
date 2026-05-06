@@ -24,10 +24,8 @@ import {
 } from "./workflow/usage";
 import { loadWorkflowFromCatalog } from "./workflow/load";
 import { withResolvedWorkflowSourceOptions } from "./workflow/catalog";
-import {
-  loadSession,
-  type SessionStoreOptions,
-} from "./workflow/session-store";
+import { createDefaultAutoImprovePolicy } from "./workflow/auto-improve-policy";
+import { loadSession, type SessionStoreOptions } from "./workflow/session-store";
 import type { WorkflowSessionState } from "./workflow/session";
 import type { MockNodeScenario } from "./workflow/scenario-adapter";
 import type {
@@ -55,6 +53,8 @@ export interface ExecuteWorkflowInput extends DivedraOptions {
    * (retry on terminal target failure) until success or `maxSupervisedAttempts`.
    */
   readonly autoImprove?: AutoImprovePolicy;
+  /** Use only when a caller intentionally needs legacy unsupervised start semantics. */
+  readonly disableAutoImprove?: boolean;
   /**
    * Phase-2: run the configured superviser workflow as a nested session (requires
    * `autoImprove`; see engine `runWorkflow` option `nestedSuperviserDriver`).
@@ -433,6 +433,9 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
   readonly status: WorkflowSessionState["status"];
   readonly exitCode: number;
 }> {
+  if (input.disableAutoImprove && input.nestedSuperviserDriver) {
+    throw new Error("nestedSuperviserDriver requires supervised autoImprove");
+  }
   const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
     input.workflowWorkingDirectory,
   );
@@ -485,9 +488,9 @@ export async function executeWorkflow(input: ExecuteWorkflowInput): Promise<{
     ...(input.defaultTimeoutMs === undefined
       ? {}
       : { defaultTimeoutMs: input.defaultTimeoutMs }),
-    ...(input.autoImprove === undefined
+    ...(input.disableAutoImprove
       ? {}
-      : { autoImprove: input.autoImprove }),
+      : { autoImprove: input.autoImprove ?? createDefaultAutoImprovePolicy() }),
     ...(input.nestedSuperviserDriver === true
       ? { nestedSuperviserDriver: true as const }
       : {}),
@@ -844,7 +847,13 @@ export {
   type SessionHealthState,
   type SessionHealthSummary,
 } from "./workflow/session-health";
-export { runWorkflow } from "./workflow/engine";
+export {
+  noopWorkflowRunEventSink,
+  runWorkflow,
+  type WorkflowRunEvent,
+  type WorkflowRunEventOptions,
+  type WorkflowRunEventSink,
+} from "./workflow/engine";
 export {
   createWorkflowSupervisorDispatchClient,
   type DispatchSupervisorConversationInput,
@@ -871,6 +880,17 @@ export {
   type SupervisedWorkflowLookup,
   type SubmitSupervisedWorkflowInput,
 } from "./workflow/supervisor-client";
+export {
+  createSupervisorRunnerPool,
+  type SupervisorRunnerPool,
+  type SupervisorRunnerPoolHandle,
+} from "./workflow/supervisor-runner-pool";
+export {
+  createSupervisorProgressEventSink,
+  createSupervisorProgressRenderer,
+  type SupervisorProgressRenderer,
+  type SupervisorProgressRendererOptions,
+} from "./workflow/supervisor-progress-renderer";
 export {
   buildSupervisorChatConversation,
   dispatchSupervisorChat,

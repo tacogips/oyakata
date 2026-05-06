@@ -35,6 +35,10 @@ import {
 } from "./supervisor-intent";
 import { createEventSupervisorRouter } from "./supervisor-router";
 import { createWorkflowSupervisorClient } from "../workflow/supervisor-client";
+import {
+  createSupervisorRunnerPool,
+  type SupervisorRunnerPool,
+} from "../workflow/supervisor-runner-pool";
 import { createWorkflowSupervisorGraphqlClient } from "../workflow/supervisor-graphql-client";
 import { createWorkflowSupervisorDispatchClient } from "../workflow/supervisor-dispatch-client";
 import type { WorkflowSupervisorDispatchView } from "../workflow/supervisor-dispatch-client";
@@ -396,6 +400,17 @@ function workflowTriggerLocalEngineOverrides(
 export function createWorkflowTriggerRunner(
   options: WorkflowTriggerRunnerOptions = {},
 ): WorkflowTriggerRunner {
+  let localSupervisorRunnerPool: SupervisorRunnerPool | undefined;
+
+  function getLocalSupervisorRunnerPool(): SupervisorRunnerPool {
+    if (localSupervisorRunnerPool === undefined) {
+      localSupervisorRunnerPool = createSupervisorRunnerPool({
+        client: createWorkflowSupervisorClient(options),
+      });
+    }
+    return localSupervisorRunnerPool;
+  }
+
   return {
     async dispatch(
       input: WorkflowTriggerDispatchInput,
@@ -583,8 +598,11 @@ export function createWorkflowTriggerRunner(
                     ? {}
                     : { fetchImpl: options.fetchImpl }),
                 })
-              : createWorkflowSupervisorClient(options));
-          const router = createEventSupervisorRouter({ client });
+              : undefined);
+          const router =
+            client === undefined
+              ? undefined
+              : createEventSupervisorRouter({ client });
 
           const correlationKey = resolveSupervisedCorrelationKey({
             binding: input.binding,
@@ -596,7 +614,9 @@ export function createWorkflowTriggerRunner(
             bindingTargetWorkflow === undefined ||
             bindingTargetWorkflow.length === 0
           ) {
-            throw new Error("internal: supervised binding missing workflowName");
+            throw new Error(
+              "internal: supervised binding missing workflowName",
+            );
           }
           const command = {
             commandId: buildStableSupervisorCommandId({
@@ -609,17 +629,25 @@ export function createWorkflowTriggerRunner(
             action: intent.action,
             targetWorkflowName: bindingTargetWorkflow,
             receivedEventReceiptId: receipt.receiptId,
+            ...(intent.args === undefined || intent.args.length === 0
+              ? {}
+              : { args: intent.args }),
             ...(intent.runtimeVariables === undefined
               ? {}
               : { runtimeVariables: intent.runtimeVariables }),
             ...(intent.reason === undefined ? {} : { reason: intent.reason }),
           };
-          const view = await router.dispatch({
+          const dispatchInput = {
             command,
             binding: input.binding,
             runtimeVariables: mapping.runtimeVariables,
             engine: workflowTriggerLocalEngineOverrides(options),
-          });
+          };
+          const view =
+            options.supervisorClient === undefined &&
+            options.endpoint === undefined
+              ? await getLocalSupervisorRunnerPool().dispatch(dispatchInput)
+              : await router!.dispatch(dispatchInput);
           receipt = await updateEventReceipt(
             {
               record: receipt,
@@ -685,7 +713,8 @@ export function createWorkflowTriggerRunner(
             ...(input.source === undefined ? {} : { source: input.source }),
           });
           const eventRoot = resolveEventRoot(options);
-          const dispatchClient = createWorkflowSupervisorDispatchClient(options);
+          const dispatchClient =
+            createWorkflowSupervisorDispatchClient(options);
           const view = await dispatchClient.dispatchExternalInput({
             ...options,
             eventRoot,
@@ -710,7 +739,8 @@ export function createWorkflowTriggerRunner(
               ...(workflowExecutionIdResolved === undefined
                 ? {}
                 : { workflowExecutionId: workflowExecutionIdResolved }),
-              supervisorConversationId: view.conversation.supervisorConversationId,
+              supervisorConversationId:
+                view.conversation.supervisorConversationId,
               supervisorDecisionId: view.decision.decisionId,
               dispatchPayload: view,
             },
@@ -732,13 +762,17 @@ export function createWorkflowTriggerRunner(
             ...(workflowExecutionIdResolved === undefined
               ? {}
               : { workflowExecutionId: workflowExecutionIdResolved }),
-            supervisorConversationId: view.conversation.supervisorConversationId,
+            supervisorConversationId:
+              view.conversation.supervisorConversationId,
             supervisorDecisionId: view.decision.decisionId,
           };
         }
 
         const directWorkflowName = input.binding.workflowName?.trim();
-        if (directWorkflowName === undefined || directWorkflowName.length === 0) {
+        if (
+          directWorkflowName === undefined ||
+          directWorkflowName.length === 0
+        ) {
           const failed = await updateEventReceipt(
             {
               record: receipt,

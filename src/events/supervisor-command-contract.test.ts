@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { parseSupervisorChatCommandDecision } from "./supervisor-command-contract";
+import {
+  EVENT_SUPERVISOR_ACTIONS,
+  parseSupervisorChatCommandDecision,
+  parseSupervisorCommandText,
+} from "./supervisor-command-contract";
 
 describe("parseSupervisorChatCommandDecision", () => {
   test("parses a valid full decision", () => {
@@ -38,7 +42,7 @@ describe("parseSupervisorChatCommandDecision", () => {
   });
 
   test("accepts all valid actions", () => {
-    const actions = ["ignore", "start", "stop", "restart", "status", "input"];
+    const actions = ["ignore", ...EVENT_SUPERVISOR_ACTIONS];
     for (const action of actions) {
       const result = parseSupervisorChatCommandDecision({
         action,
@@ -150,5 +154,34 @@ describe("parseSupervisorChatCommandDecision", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.managedWorkflowName).toBe("my-workflow");
+  });
+
+  test("parses deterministic command text with space-tab tokenization and args", () => {
+    const result = parseSupervisorCommandText({
+      text: "rerun\tstep-2  --force",
+      commands: {
+        rerun: ["rerun"],
+      },
+    });
+
+    expect(result).toEqual({
+      outcome: "command",
+      command: {
+        action: "rerun",
+        args: ["step-2", "--force"],
+        parserMode: "deterministic-token",
+      },
+    });
+  });
+
+  test("routes empty and unknown first-token text to command-analysis", () => {
+    expect(parseSupervisorCommandText({ text: " \t " })).toMatchObject({
+      outcome: "command-analysis",
+      request: { reason: "empty" },
+    });
+    expect(parseSupervisorCommandText({ text: "please stop" })).toMatchObject({
+      outcome: "command-analysis",
+      request: { reason: "unknown-first-token" },
+    });
   });
 });

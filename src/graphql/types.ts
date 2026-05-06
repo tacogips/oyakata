@@ -399,6 +399,7 @@ export interface EventSupervisorCommandInput {
   readonly bindingId: string;
   readonly correlationKey: string;
   readonly action: string;
+  readonly args?: readonly string[];
   readonly targetWorkflowName: string;
   readonly supervisedRunId?: string;
   readonly targetWorkflowExecutionId?: string;
@@ -422,6 +423,7 @@ export interface DispatchSupervisedWorkflowCommandInput {
 export interface SupervisedWorkflowGraphqlPayload {
   readonly supervisedRun: EventSupervisedRunRecord;
   readonly activeTargetStatus?: WorkflowSessionState["status"];
+  readonly commandResult?: Readonly<Record<string, unknown>>;
 }
 
 export interface SupervisedWorkflowLookupGraphqlInput {

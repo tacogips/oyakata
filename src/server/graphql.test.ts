@@ -1007,7 +1007,7 @@ describe("GraphQL HTTP transport", () => {
     );
   });
 
-  test("rejects invalid nested superviser execution inputs over /graphql before runWorkflow", async () => {
+  test("allows nested superviser execution inputs over /graphql through default auto-improve", async () => {
     const root = await makeTempDir();
     const options = {
       workflowRoot: root,
@@ -1015,7 +1015,24 @@ describe("GraphQL HTTP transport", () => {
       rootDataDir: path.join(root, "data"),
       cwd: root,
     };
-    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-http-default-supervised-start",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
 
     const response = await handleGraphqlRequest(
       new Request("http://localhost/graphql", {
@@ -1045,14 +1062,20 @@ describe("GraphQL HTTP transport", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      data: null,
-      errors: [
-        expect.objectContaining({
-          message: "nestedSuperviser requires autoImprove",
-        }),
-      ],
+      data: {
+        executeWorkflow: {
+          workflowExecutionId: "sess-http-default-supervised-start",
+          status: "running",
+        },
+      },
     });
-    expect(runWorkflowSpy).not.toHaveBeenCalled();
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        nestedSuperviserDriver: true,
+        autoImprove: expect.objectContaining({ enabled: true }),
+      }),
+    );
   });
 
   test("exposes currentStepId on workflowExecution and workflowExecutionOverview session views over /graphql", async () => {

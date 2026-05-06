@@ -165,7 +165,17 @@ import {
   type FanoutStepBudget,
 } from "./engine-fanout";
 
-export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
+export interface WorkflowRunEventOptions {
+  /** Typed in-process workflow-run event channel for supervisor-owned consumers. */
+  readonly eventSink?: WorkflowRunEventSink;
+  /** Enables legacy local debug progress callbacks. */
+  readonly debug?: boolean;
+}
+
+export interface WorkflowRunOptions
+  extends LoadOptions,
+    SessionStoreOptions,
+    WorkflowRunEventOptions {
   readonly sessionId?: string;
   readonly workflowWorkingDirectory?: string;
   readonly runtimeVariables?: Readonly<Record<string, unknown>>;
@@ -227,7 +237,7 @@ export interface WorkflowRunOptions extends LoadOptions, SessionStoreOptions {
   readonly fanoutConcurrencyBudget?: number;
   /** Internal shared step budget for fanout branch child executions. */
   readonly fanoutStepBudget?: FanoutStepBudget;
-  /** Best-effort local progress notifications for operator-facing run logs. */
+  /** Best-effort local progress notifications for explicit debug consumers. */
   readonly onProgress?: (event: WorkflowRunProgressEvent) => void;
 }
 
@@ -244,6 +254,47 @@ export interface WorkflowRunStepStartEvent {
   readonly attempt: number;
   readonly queuedStepIds: readonly string[];
 }
+
+export interface WorkflowRunEventSink {
+  emit(event: WorkflowRunEvent): void | Promise<void>;
+}
+
+export type WorkflowRunEvent =
+  | WorkflowRunStepStartedEvent
+  | WorkflowRunStepCompletedEvent
+  | WorkflowRunCompletedEvent;
+
+export interface WorkflowRunStepStartedEvent {
+  readonly type: "step-started";
+  readonly workflowExecutionId: string;
+  readonly stepId: string;
+  readonly nodeExecId: string;
+  readonly workflowName?: string;
+  readonly workflowId?: string;
+  readonly nodeId?: string;
+  readonly attempt?: number;
+  readonly queuedStepIds?: readonly string[];
+}
+
+export interface WorkflowRunStepCompletedEvent {
+  readonly type: "step-completed";
+  readonly workflowExecutionId: string;
+  readonly stepId: string;
+  readonly nodeExecId: string;
+  readonly status: string;
+}
+
+export interface WorkflowRunCompletedEvent {
+  readonly type: "workflow-completed";
+  readonly workflowExecutionId: string;
+  readonly status: string;
+}
+
+export const noopWorkflowRunEventSink: WorkflowRunEventSink = {
+  emit() {
+    return undefined;
+  },
+};
 
 export interface WorkflowRunResult {
   readonly session: WorkflowSessionState;
@@ -276,10 +327,25 @@ function notifyWorkflowProgress(
   options: WorkflowRunOptions,
   event: WorkflowRunProgressEvent,
 ): void {
+  if (options.debug !== true) {
+    return;
+  }
   try {
     options.onProgress?.(event);
   } catch {
-    // Progress logging is operator-facing only and must not change execution.
+    // Debug progress callbacks must not change execution.
+  }
+}
+
+async function emitWorkflowRunEvent(
+  options: WorkflowRunOptions,
+  event: WorkflowRunEvent,
+): Promise<void> {
+  try {
+    await (options.eventSink ?? noopWorkflowRunEventSink).emit(event);
+  } catch {
+    // Event sinks are an operator-facing notification surface and must not
+    // change workflow execution semantics.
   }
 }
 
@@ -1030,6 +1096,10 @@ function buildCrossWorkflowCalleeRunOptions(
     ...(options.onProgress === undefined
       ? {}
       : { onProgress: options.onProgress }),
+    ...(options.eventSink === undefined
+      ? {}
+      : { eventSink: options.eventSink }),
+    ...(options.debug === undefined ? {} : { debug: options.debug }),
     ...(options.restartOnStuck === undefined
       ? {}
       : { restartOnStuck: options.restartOnStuck }),
@@ -3118,7 +3188,9 @@ async function runWorkflowInternal(
     }
 
     session = createSessionState({
-      sessionId: createSessionId({ workflowId: workflow.workflowId }),
+      sessionId:
+        options.sessionId ??
+        createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
       initialNodeId: rerunTargetId,
@@ -3200,7 +3272,9 @@ async function runWorkflowInternal(
     }
 
     session = createSessionState({
-      sessionId: createSessionId({ workflowId: workflow.workflowId }),
+      sessionId:
+        options.sessionId ??
+        createSessionId({ workflowId: workflow.workflowId }),
       workflowName,
       workflowId: workflow.workflowId,
       initialNodeId: trimmedStart,
@@ -3666,6 +3740,17 @@ async function runWorkflowInternal(
           ),
         );
       }
+      await emitWorkflowRunEvent(options, {
+        type: "step-started",
+        workflowExecutionId: session.sessionId,
+        stepId: stepExecutionAddress.stepId,
+        nodeExecId,
+        workflowName,
+        workflowId: workflow.workflowId,
+        nodeId,
+        attempt: nextCount,
+        queuedStepIds: queue,
+      });
       notifyWorkflowProgress(options, {
         type: "step-start",
         sessionId: session.sessionId,
@@ -5411,6 +5496,14 @@ async function runWorkflowInternal(
         // runtime DB index is best-effort and must not break artifact/session persistence
       }
 
+      await emitWorkflowRunEvent(options, {
+        type: "step-completed",
+        workflowExecutionId: session.sessionId,
+        stepId: stepExecutionAddress.stepId,
+        nodeExecId,
+        status: nodeStatus,
+      });
+
       if (nodeStatus === "timed_out") {
         const authoredTimeoutPolicy = workflow.defaults.timeoutPolicy;
         if (
@@ -6078,6 +6171,11 @@ async function runWorkflowInternal(
   if (!persistedCompleted.ok) {
     return err(workflowRunFailure(1, persistedCompleted.error, completed));
   }
+  await emitWorkflowRunEvent(options, {
+    type: "workflow-completed",
+    workflowExecutionId: completed.sessionId,
+    status: completed.status,
+  });
   return ok({ session: completed, exitCode: 0 });
 }
 

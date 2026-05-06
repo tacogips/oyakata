@@ -16,6 +16,8 @@ Rules:
 Return JSON with:
 - `workflowMode`
 - `commitMessage`
-- `committedFiles`
+- `committedFiles`: a JSON array of repository-relative file path strings only,
+  with no status objects or metadata, because the next `divedra/git-commit`
+  add-on stages exactly these paths.
 - `changeSummary`
 - `residualRisks`

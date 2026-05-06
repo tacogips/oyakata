@@ -105,10 +105,19 @@ export type EventExecutionMode =
 
 export type EventSupervisorAction =
   | "start"
-  | "stop"
-  | "restart"
   | "status"
-  | "input";
+  | "progress"
+  | "inbox"
+  | "read"
+  | "logs"
+  | "export"
+  | "stop"
+  | "cancel"
+  | "restart"
+  | "rerun"
+  | "input"
+  | "submit"
+  | "resume";
 
 export interface EventSupervisorIntentMappingStructuredOrCommand
   extends JsonObject {
@@ -119,8 +128,15 @@ export interface EventSupervisorIntentMappingStructuredOrCommand
 export interface EventSupervisorIntentMappingCommandMap extends JsonObject {
   readonly mode: "command-map";
   readonly inputPath?: string;
-  readonly commands: Readonly<Partial<Record<EventSupervisorAction, string>>>;
+  readonly commands: Readonly<
+    Partial<Record<EventSupervisorAction, string | readonly string[]>>
+  >;
   readonly defaultAction?: EventSupervisorAction;
+  readonly resolverWorkflowName?: string;
+  readonly resolverNodeId?: string;
+  readonly minConfidence?: number;
+  readonly fallbackAction?: "proposal" | "ignore";
+  readonly allowMultiTargetCommands?: boolean;
 }
 
 export interface EventSupervisorIntentMappingStructuredOnly extends JsonObject {
@@ -283,6 +299,7 @@ export interface EventSupervisorCommand {
   readonly bindingId: string;
   readonly correlationKey: string;
   readonly action: EventSupervisorAction;
+  readonly args?: readonly string[];
   readonly targetWorkflowName: string;
   /**
    * When set, dispatch targets this supervised-run row instead of inferring

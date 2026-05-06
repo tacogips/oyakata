@@ -187,7 +187,8 @@ Recommendations are derived from evidence and must remain conservative:
 
 ## Codex-Agent Reference Mapping
 
-The local reference repository `/Users/taco/gits/tacogips/codex-agent` provides
+The local reference repository `<reference-repository-root>` (for example
+`../../codex-agent`) provides
 behavioral guidance, not copy/paste implementation:
 
 - `src/sdk/agent-runner.ts` emits normalized session events such as

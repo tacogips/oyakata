@@ -6,6 +6,7 @@ import { atomicWriteJsonFile as writeJson } from "../shared/fs";
 import { createEventSupervisedRunRepository } from "../events/supervised-runs";
 import type { EventBinding } from "../events/types";
 import { saveSession, loadSession } from "./session-store";
+import { createSessionState } from "./session";
 import { createWorkflowSupervisorClient } from "./supervisor-client";
 
 const tempDirs: string[] = [];
@@ -353,6 +354,227 @@ describe("createWorkflowSupervisorClient", () => {
     });
     expect(latest?.status).toBe("failed");
     expect(latest?.activeTargetExecutionId).toBeUndefined();
+  });
+
+  test("reruns from the step id supplied as the first command arg", async () => {
+    const root = await makeTempDir();
+    const workflowName = "sup-rerun-from-step";
+    await writeManagerOnlyWorkflow({
+      root,
+      workflowName,
+      sticky: false,
+    });
+
+    const loadOpts = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const binding: EventBinding = {
+      id: "b-rerun-step",
+      sourceId: "s-rerun-step",
+      workflowName,
+      inputMapping: { mode: "event-input" },
+      execution: {
+        mode: "supervised",
+        maxRestartsOnFailure: 2,
+        control: { intentMapping: { mode: "structured-only" } },
+      },
+    };
+
+    const client = createWorkflowSupervisorClient(loadOpts);
+    const started = await client.dispatchCommand({
+      command: {
+        commandId: "rerun-step-start",
+        sourceId: binding.sourceId,
+        bindingId: binding.id,
+        correlationKey: "corr-rerun-step",
+        action: "start",
+        targetWorkflowName: workflowName,
+        receivedEventReceiptId: "rx-rerun-start",
+      },
+      binding,
+      runtimeVariables: { original: true },
+      engine: {
+        mockScenario: {
+          "divedra-manager": {
+            payload: { reply: "ok" },
+            backendSession: { sessionId: "backend-rerun-step-1" },
+          },
+        },
+      },
+    });
+    const sourceSessionId = started.supervisedRun.activeTargetExecutionId;
+    expect(sourceSessionId).toBeDefined();
+
+    const rerun = await client.dispatchCommand({
+      command: {
+        commandId: "rerun-step-command",
+        sourceId: binding.sourceId,
+        bindingId: binding.id,
+        correlationKey: "corr-rerun-step",
+        action: "rerun",
+        args: ["divedra-manager"],
+        targetWorkflowName: workflowName,
+        ...(sourceSessionId === undefined
+          ? {}
+          : { targetWorkflowExecutionId: sourceSessionId }),
+        receivedEventReceiptId: "rx-rerun-step",
+      },
+      binding,
+      runtimeVariables: { rerunFlag: true },
+      engine: {
+        mockScenario: {
+          "divedra-manager": {
+            payload: { reply: "rerun-ok" },
+            backendSession: { sessionId: "backend-rerun-step-2" },
+          },
+        },
+      },
+    });
+
+    const rerunSessionId = rerun.supervisedRun.activeTargetExecutionId;
+    expect(rerunSessionId).toBeDefined();
+    expect(rerunSessionId).not.toBe(sourceSessionId);
+    const loaded = await loadSession(rerunSessionId ?? "", loadOpts);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
+    expect(loaded.value.runtimeVariables["original"]).toBe(true);
+    expect(loaded.value.runtimeVariables["rerunFlag"]).toBe(true);
+  });
+
+  test("returns distinct commandResult shapes for progress, inbox, and logs", async () => {
+    const root = await makeTempDir();
+    const workflowName = "sup-inspection-shapes";
+    await writeManagerOnlyWorkflow({
+      root,
+      workflowName,
+      sticky: false,
+    });
+
+    const loadOpts = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+
+    const binding: EventBinding = {
+      id: "b-inspection",
+      sourceId: "s-inspection",
+      workflowName,
+      inputMapping: { mode: "event-input" },
+      execution: {
+        mode: "supervised",
+        control: { intentMapping: { mode: "structured-only" } },
+      },
+    };
+    const sessionId = "sess-supervised-inspection";
+    const saved = await saveSession(
+      {
+        ...createSessionState({
+          sessionId,
+          workflowName,
+          workflowId: workflowName,
+          initialNodeId: "divedra-manager",
+          runtimeVariables: {},
+        }),
+        currentNodeId: "divedra-manager",
+        activeUserActions: [
+          {
+            nodeId: "divedra-manager",
+            nodeExecId: "exec-waiting",
+            userActionId: "ua-1",
+            artifactDir: path.join(root, "artifacts", "ua-1"),
+            status: "waiting-for-reply" as const,
+            pausedAt: "2026-05-06T00:00:00.000Z",
+          },
+        ],
+      },
+      loadOpts,
+    );
+    expect(saved.ok).toBe(true);
+
+    const repo = createEventSupervisedRunRepository(loadOpts);
+    await repo.save(
+      {
+        supervisedRunId: "esv-inspection",
+        sourceId: binding.sourceId,
+        bindingId: binding.id,
+        correlationKey: "corr-inspection",
+        supervisorWorkflowName: "divedra-default-workflow-supervisor",
+        targetWorkflowName: workflowName,
+        activeTargetExecutionId: sessionId,
+        status: "running",
+        restartCount: 0,
+        maxRestartsOnFailure: 3,
+        autoImproveEnabled: false,
+        createdAt: "2026-05-06T00:00:00.000Z",
+        updatedAt: "2026-05-06T00:00:00.000Z",
+      },
+      path.join(root, "artifacts", "supervised", "esv-inspection"),
+    );
+
+    const client = createWorkflowSupervisorClient(loadOpts);
+    const progress = await client.dispatchCommand({
+      command: {
+        commandId: "inspection-progress",
+        sourceId: binding.sourceId,
+        bindingId: binding.id,
+        correlationKey: "corr-inspection",
+        action: "progress",
+        targetWorkflowName: workflowName,
+        receivedEventReceiptId: "rx-progress",
+      },
+      binding,
+      runtimeVariables: {},
+    });
+    const inbox = await client.dispatchCommand({
+      command: {
+        commandId: "inspection-inbox",
+        sourceId: binding.sourceId,
+        bindingId: binding.id,
+        correlationKey: "corr-inspection",
+        action: "inbox",
+        targetWorkflowName: workflowName,
+        receivedEventReceiptId: "rx-inbox",
+      },
+      binding,
+      runtimeVariables: {},
+    });
+    const logs = await client.dispatchCommand({
+      command: {
+        commandId: "inspection-logs",
+        sourceId: binding.sourceId,
+        bindingId: binding.id,
+        correlationKey: "corr-inspection",
+        action: "logs",
+        targetWorkflowName: workflowName,
+        receivedEventReceiptId: "rx-logs",
+      },
+      binding,
+      runtimeVariables: {},
+    });
+
+    expect(progress.commandResult).toMatchObject({
+      kind: "progress",
+      workflowExecutionId: sessionId,
+      currentStepId: "divedra-manager",
+    });
+    expect(inbox.commandResult).toMatchObject({
+      kind: "inbox",
+      pendingUserActionCount: 1,
+    });
+    expect(logs.commandResult).toMatchObject({
+      kind: "logs",
+      workflowExecutionId: sessionId,
+    });
   });
 
   test("rejects command and binding workflow mismatches", async () => {

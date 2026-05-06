@@ -31,9 +31,9 @@ Out of scope:
 
 ## Codex References
 
-- `/Users/taco/gits/tacogips/codex-agent/design-docs/specs/design-codex-session-management.md`:
+- `<reference-repository-root>/design-docs/specs/design-codex-session-management.md`:
   reference for session and rollout auditability.
-- `/Users/taco/gits/tacogips/codex-agent/src/sdk/session-runner.ts`:
+- `<reference-repository-root>/src/sdk/session-runner.ts`:
   reference for `SessionConfig`, `RunningSession`, and streamed session
   messages that stay behind divedra backend adapter boundaries.
 

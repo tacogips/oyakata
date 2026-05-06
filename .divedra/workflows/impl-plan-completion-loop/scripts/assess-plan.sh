@@ -3,7 +3,7 @@
 set -eu
 
 mailbox_dir="${DIVEDRA_MAILBOX_DIR:?DIVEDRA_MAILBOX_DIR is required}"
-plan_path="${PLAN_PATH:-impl-plans/active/bounded-fanout-join-workflow-execution.md}"
+plan_path="${PLAN_PATH:-}"
 target_tasks_json="${TARGET_TASKS_JSON:-}"
 output_path="${mailbox_dir}/outbox/output.json"
 
@@ -13,7 +13,7 @@ PLAN_PATH="$plan_path" TARGET_TASKS_JSON="$target_tasks_json" bun -e '
 const fs = require("fs");
 const path = require("path");
 
-const planPath = process.env.PLAN_PATH || "impl-plans/active/bounded-fanout-join-workflow-execution.md";
+const requestedPlanPath = (process.env.PLAN_PATH ?? "").trim();
 let targetTasks = null;
 if ((process.env.TARGET_TASKS_JSON ?? "").trim().length > 0) {
   try {
@@ -42,10 +42,108 @@ function emit(payload) {
   );
 }
 
+function readPlanTasks(planPath) {
+  const text = fs.readFileSync(planPath, "utf8");
+  const taskRegex = /^### (TASK-\d+): ([^\n]+)\n([\s\S]*?)(?=^### TASK-\d+: |\n## Dependencies|\n## Parallelization Notes|\n## Verification Plan|\n## Plan Completion Criteria|\n## Completion Criteria|\n## Progress Log|(?![\s\S]))/gm;
+  const tasks = [];
+  let match;
+  while ((match = taskRegex.exec(text)) !== null) {
+    const [, taskId, title, body] = match;
+    if (targetTasks !== null && !targetTasks.has(taskId)) {
+      continue;
+    }
+    const statusMatch = body.match(/\*\*Status\*\*:\s*([^\n]+)/);
+    const depsMatch = body.match(/\*\*Dependencies\*\*:\s*([^\n]+)/);
+    const criteria = [];
+    for (const criteriaMatch of body.matchAll(/^- \[( |x|X)\] (.+)$/gm)) {
+      criteria.push({
+        done: criteriaMatch[1].toLowerCase() === "x",
+        text: criteriaMatch[2],
+      });
+    }
+    const status = normalizeStatus(statusMatch?.[1], criteria);
+    tasks.push({
+      taskId,
+      title: title.trim(),
+      status,
+      dependencies: depsMatch?.[1]?.trim() ?? "None",
+      completionCriteria: criteria,
+    });
+  }
+  if (tasks.length === 0) {
+    for (const rowMatch of text.matchAll(
+      /^\|\s*(TASK-\d+)\s+([^|]+?)\s*\|[^|]*\|\s*([^|]+?)\s*\|[^|]*\|$/gm,
+    )) {
+      const [, taskId, title, statusRaw] = rowMatch;
+      if (targetTasks !== null && !targetTasks.has(taskId)) {
+        continue;
+      }
+      tasks.push({
+        taskId,
+        title: title.trim(),
+        status: normalizeStatus(statusRaw, []),
+        dependencies: "See plan dependencies table",
+        completionCriteria: [],
+      });
+    }
+  }
+  return tasks;
+}
+
+function selectPlanPath() {
+  if (requestedPlanPath.length > 0) {
+    return {
+      planPath: requestedPlanPath,
+      selectionMode: "explicit",
+      candidatePlans: [],
+    };
+  }
+
+  const activeDir = path.join("impl-plans", "active");
+  if (!fs.existsSync(activeDir)) {
+    return {
+      planPath: path.join(activeDir, "__missing__.md"),
+      selectionMode: "active-auto",
+      candidatePlans: [],
+    };
+  }
+
+  const candidatePlans = fs
+    .readdirSync(activeDir)
+    .filter((entry) => entry.endsWith(".md"))
+    .map((entry) => path.join(activeDir, entry))
+    .sort();
+
+  for (const candidate of candidatePlans) {
+    const candidateTasks = readPlanTasks(candidate);
+    if (
+      candidateTasks.length > 0 &&
+      candidateTasks.some((task) => task.status !== "Completed")
+    ) {
+      return {
+        planPath: candidate,
+        selectionMode: "active-auto",
+        candidatePlans,
+      };
+    }
+  }
+
+  return {
+    planPath: candidatePlans[0] ?? path.join(activeDir, "__empty__.md"),
+    selectionMode: "active-auto",
+    candidatePlans,
+  };
+}
+
+const planSelection = selectPlanPath();
+const planPath = planSelection.planPath;
+
 if (!fs.existsSync(planPath)) {
   emit({
     plan_complete: false,
     planPath,
+    planSelectionMode: planSelection.selectionMode,
+    candidatePlans: planSelection.candidatePlans,
     error: "plan file not found",
     incompleteTasks: [],
     completedTasks: [],
@@ -55,10 +153,6 @@ if (!fs.existsSync(planPath)) {
   process.exit(1);
 }
 
-const text = fs.readFileSync(planPath, "utf8");
-const taskRegex = /^### (TASK-\d+): ([^\n]+)\n([\s\S]*?)(?=^### TASK-\d+: |\n## Dependencies|\n## Parallelization Notes|\n## Verification Plan|\n## Plan Completion Criteria|\n## Progress Log|(?![\s\S]))/gm;
-const tasks = [];
-let match;
 function normalizeStatus(rawStatus, criteria) {
   const trimmed = rawStatus?.trim();
   if (trimmed !== undefined && /^completed$/i.test(trimmed)) {
@@ -78,29 +172,8 @@ function normalizeStatus(rawStatus, criteria) {
   }
   return trimmed ?? "Unknown";
 }
-while ((match = taskRegex.exec(text)) !== null) {
-  const [, taskId, title, body] = match;
-  if (targetTasks !== null && !targetTasks.has(taskId)) {
-    continue;
-  }
-  const statusMatch = body.match(/\*\*Status\*\*:\s*([^\n]+)/);
-  const depsMatch = body.match(/\*\*Dependencies\*\*:\s*([^\n]+)/);
-  const criteria = [];
-  for (const criteriaMatch of body.matchAll(/^- \[( |x|X)\] (.+)$/gm)) {
-    criteria.push({
-      done: criteriaMatch[1].toLowerCase() === "x",
-      text: criteriaMatch[2],
-    });
-  }
-  const status = normalizeStatus(statusMatch?.[1], criteria);
-  tasks.push({
-    taskId,
-    title: title.trim(),
-    status,
-    dependencies: depsMatch?.[1]?.trim() ?? "None",
-    completionCriteria: criteria,
-  });
-}
+
+const tasks = readPlanTasks(planPath);
 
 const completedTasks = tasks.filter((task) => task.status === "Completed");
 const incompleteTasks = tasks.filter((task) => task.status !== "Completed");
@@ -112,6 +185,8 @@ const nextTask = inProgress ?? notStarted ?? ready ?? incompleteTasks[0] ?? null
 emit({
   plan_complete: incompleteTasks.length === 0,
   planPath,
+  planSelectionMode: planSelection.selectionMode,
+  candidatePlans: planSelection.candidatePlans,
   targetTasks: targetTasks === null ? null : [...targetTasks],
   taskCount: tasks.length,
   remainingCount: incompleteTasks.length,

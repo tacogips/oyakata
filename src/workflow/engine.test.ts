@@ -10,7 +10,11 @@ import {
 import type { NodeAdapter } from "./adapter";
 import { ScenarioNodeAdapter, type MockNodeScenario } from "./scenario-adapter";
 import { createWorkflowTemplate } from "./create";
-import { runWorkflow } from "./engine";
+import {
+  noopWorkflowRunEventSink,
+  runWorkflow,
+  type WorkflowRunEvent,
+} from "./engine";
 import { createManagerSessionStore } from "./manager-session-store";
 import { listRuntimeNodeExecutions, listRuntimeNodeLogs } from "./runtime-db";
 import { resolveCurrentStepId } from "./session";
@@ -2811,6 +2815,149 @@ describe("runWorkflow", () => {
     expect(
       result.value.session.nodeExecutions.map((entry) => entry.nodeId),
     ).toEqual(["step-1", "step-2"]);
+  });
+
+  test("emits typed workflow-run events to the configured event sink", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless-events");
+    const events: WorkflowRunEvent[] = [];
+
+    const result = await runWorkflow(
+      "managerless-events",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "events" },
+        eventSink: {
+          async emit(event) {
+            events.push(event);
+          },
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(events).toEqual([
+      {
+        type: "step-started",
+        workflowExecutionId: result.value.session.sessionId,
+        stepId: "step-1",
+        nodeExecId: "exec-000001",
+        workflowName: "managerless-events",
+        workflowId: "managerless-events",
+        nodeId: "step-1",
+        attempt: 1,
+        queuedStepIds: [],
+      },
+      {
+        type: "step-completed",
+        workflowExecutionId: result.value.session.sessionId,
+        stepId: "step-1",
+        nodeExecId: "exec-000001",
+        status: "succeeded",
+      },
+      {
+        type: "step-started",
+        workflowExecutionId: result.value.session.sessionId,
+        stepId: "step-2",
+        nodeExecId: "exec-000002",
+        workflowName: "managerless-events",
+        workflowId: "managerless-events",
+        nodeId: "step-2",
+        attempt: 1,
+        queuedStepIds: [],
+      },
+      {
+        type: "step-completed",
+        workflowExecutionId: result.value.session.sessionId,
+        stepId: "step-2",
+        nodeExecId: "exec-000002",
+        status: "succeeded",
+      },
+      {
+        type: "workflow-completed",
+        workflowExecutionId: result.value.session.sessionId,
+        status: "completed",
+      },
+    ]);
+  });
+
+  test("accepts the default no-op workflow-run event sink", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless-noop-events");
+
+    const result = await runWorkflow(
+      "managerless-noop-events",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "events" },
+        eventSink: noopWorkflowRunEventSink,
+      },
+      deterministicAdapter,
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.exitCode).toBe(0);
+    expect(result.value.session.status).toBe("completed");
+  });
+
+  test("keeps legacy progress callbacks quiet unless debug is enabled", async () => {
+    const root = await makeTempDir();
+    await createManagerlessWorkflowFixture(root, "managerless-debug-events");
+    const progressEvents: unknown[] = [];
+
+    const quietResult = await runWorkflow(
+      "managerless-debug-events",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "artifacts"),
+        sessionStoreRoot: path.join(root, "sessions"),
+        runtimeVariables: { topic: "quiet" },
+        onProgress(event) {
+          progressEvents.push(event);
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(quietResult.ok).toBe(true);
+    expect(progressEvents).toEqual([]);
+
+    const debugResult = await runWorkflow(
+      "managerless-debug-events",
+      {
+        ...workflowLoadOpts,
+        workflowRoot: root,
+        artifactRoot: path.join(root, "debug-artifacts"),
+        sessionStoreRoot: path.join(root, "debug-sessions"),
+        runtimeVariables: { topic: "debug" },
+        debug: true,
+        onProgress(event) {
+          progressEvents.push(event);
+        },
+      },
+      deterministicAdapter,
+    );
+
+    expect(debugResult.ok).toBe(true);
+    expect(progressEvents).toEqual([
+      expect.objectContaining({ type: "step-start", stepId: "step-1" }),
+      expect.objectContaining({ type: "step-start", stepId: "step-2" }),
+    ]);
   });
 
   test("seeds supervision state when autoImprove is set on a new run", async () => {

@@ -85,7 +85,9 @@ See that directory's `README.md` for `events validate` / `events emit` examples.
 ### `divedra-default-workflow-supervisor`
 
 Minimal manager workflow bundle matching the design-default supervisor id. Used
-by the dispatcher demo and validated like other reference workflows:
+by the dispatcher demo and validated like other reference workflows. Local
+supervised lifecycle control is deterministic and in-process; this workflow id is
+the supervisor identity, not a child `divedra` process manager:
 
 ```bash
 bun run src/main.ts workflow validate divedra-default-workflow-supervisor --workflow-definition-dir ./examples

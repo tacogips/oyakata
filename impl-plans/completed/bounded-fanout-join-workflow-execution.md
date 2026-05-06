@@ -15,7 +15,7 @@ Complete the remaining bounded fanout runtime gap after parent-session local fan
 - Issue title: `Continue bounded fanout inline subworkflow implementation and mailbox input verification`
 - Accepted design: `design-docs/specs/design-bounded-fanout-join-workflow-execution.md`
 - Accepted inbox contract: `design-docs/specs/design-node-execution-inbox-contract.md`
-- Codex references: `/Users/taco/gits/tacogips/codex-agent/src/group/manager.ts`, `/Users/taco/gits/tacogips/codex-agent/src/group/types.ts`, `/Users/taco/gits/tacogips/codex-agent/src/queue/runner.ts`, `/Users/taco/gits/tacogips/codex-agent/impl-plans/completed/phase3-sqlite-group-queue.md`
+- Codex references: `<reference-repository-root>/src/group/manager.ts`, `<reference-repository-root>/src/group/types.ts`, `<reference-repository-root>/src/queue/runner.ts`, `<reference-repository-root>/impl-plans/completed/phase3-sqlite-group-queue.md`
 
 Codex-agent maps only to the bounded scheduler mechanics: `runGroup()` keeps an in-flight set up to `maxConcurrent` and refills it as work completes. divedra intentionally diverges by executing step-addressed workflow work items, persisting fanout group state on workflow sessions, and preserving mailbox, retry, timeout, artifact, GraphQL, CLI, TUI, and library inspection semantics.
 

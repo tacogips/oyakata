@@ -309,7 +309,7 @@ interface ComposerRecursivePrompt {
 Use this prompt with Composer 2:
 
 ```text
-You are working in /g/gits/tacogips/divedra.
+You are working in `<repository-root>`.
 
 Objective:
 Recursively remove the remaining workflow legacy-compatibility residue until only intentional schema-rejection coverage, archived historical plans, or unrelated database-migration tests remain.

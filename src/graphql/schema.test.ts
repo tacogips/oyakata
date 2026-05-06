@@ -1630,7 +1630,7 @@ describe("createGraphqlSchema", () => {
     );
   });
 
-  test("executeWorkflow rejects nested-superviser without auto-improve before calling runWorkflow", async () => {
+  test("executeWorkflow allows nested-superviser through default auto-improve policy", async () => {
     const root = await makeTempDir();
     const options = {
       workflowRoot: root,
@@ -1638,19 +1638,40 @@ describe("createGraphqlSchema", () => {
       rootDataDir: path.join(root, "data"),
       cwd: root,
     };
-    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-default-supervised-start",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
     const schema = createGraphqlSchema();
 
-    await expect(
-      schema.mutation.executeWorkflow(
-        {
-          workflowName: "demo",
-          nestedSuperviser: true,
-        },
-        options,
-      ),
-    ).rejects.toThrow("nestedSuperviser requires autoImprove");
-    expect(runWorkflowSpy).not.toHaveBeenCalled();
+    await schema.mutation.executeWorkflow(
+      {
+        workflowName: "demo",
+        nestedSuperviser: true,
+      },
+      options,
+    );
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({
+        nestedSuperviserDriver: true,
+        autoImprove: expect.objectContaining({ enabled: true }),
+      }),
+    );
   });
 
   test("executeWorkflow rejects invalid auto-improve policy before calling runWorkflow", async () => {
@@ -1748,6 +1769,56 @@ describe("createGraphqlSchema", () => {
     expect(payload.status).toBe("running");
   });
 
+  test("resumeWorkflowExecution does not synthesize default auto-improve", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const sessionId = "sess-schema-unsupervised-resume";
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    expect(saved.ok).toBe(true);
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId,
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    await createGraphqlSchema().mutation.resumeWorkflowExecution(
+      { workflowExecutionId: sessionId },
+      options,
+    );
+
+    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty(
+      "autoImprove",
+    );
+  });
+
   test("rerunWorkflowExecution normalizes auto-improve into runWorkflow", async () => {
     const root = await makeTempDir();
     const options = {
@@ -1814,6 +1885,56 @@ describe("createGraphqlSchema", () => {
       }),
     );
     expect(payload.rerunFromStepId).toBe("main-worker");
+  });
+
+  test("rerunWorkflowExecution does not synthesize default auto-improve", async () => {
+    const root = await makeTempDir();
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    const sessionId = "sess-schema-unsupervised-rerun";
+    const saved = await saveSession(
+      createSessionState({
+        sessionId,
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "divedra-manager",
+        runtimeVariables: {},
+      }),
+      options,
+    );
+    expect(saved.ok).toBe(true);
+    const runWorkflowSpy = vi
+      .spyOn(workflowEngine, "runWorkflow")
+      .mockResolvedValue({
+        ok: true,
+        value: {
+          session: {
+            ...createSessionState({
+              sessionId: "sess-schema-unsupervised-rerun-2",
+              workflowName: "demo",
+              workflowId: "demo",
+              initialNodeId: "divedra-manager",
+              runtimeVariables: {},
+            }),
+            status: "running" as const,
+          },
+          exitCode: 0,
+        },
+      });
+
+    await createGraphqlSchema().mutation.rerunWorkflowExecution(
+      { workflowExecutionId: sessionId, stepId: "main-worker" },
+      options,
+    );
+
+    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty(
+      "autoImprove",
+    );
   });
 
   test("exposes worker-only workflows without requiring an authored manager id", async () => {
@@ -2766,24 +2887,31 @@ describe("createGraphqlSchema", () => {
       return;
     }
 
-    const sessionId = "sess-supervised-gql-start";
     const runWorkflowSpy = vi
       .spyOn(workflowEngine, "runWorkflow")
-      .mockResolvedValue({
-        ok: true,
-        value: {
-          session: {
-            ...createSessionState({
-              sessionId,
-              workflowName: "demo",
-              workflowId: "demo",
-              initialNodeId: "divedra-manager",
-              runtimeVariables: {},
-            }),
-            status: "running" as const,
+      .mockImplementation(async (_workflowName, runOptions) => {
+        const sessionId =
+          (runOptions as { readonly sessionId?: string }).sessionId ??
+          "sess-supervised-gql-start";
+        const session = {
+          ...createSessionState({
+            sessionId,
+            workflowName: "demo",
+            workflowId: "demo",
+            initialNodeId: "divedra-manager",
+            runtimeVariables: {},
+          }),
+          status: "running" as const,
+        };
+        const saved = await saveSession(session, options);
+        expect(saved.ok).toBe(true);
+        return {
+          ok: true,
+          value: {
+            session,
+            exitCode: 0,
           },
-          exitCode: 0,
-        },
+        };
       });
 
     const schema = createGraphqlSchema();
@@ -2817,14 +2945,18 @@ describe("createGraphqlSchema", () => {
       );
 
     expect(runWorkflowSpy).toHaveBeenCalled();
-    expect(dispatchPayload.supervisedRun.activeTargetExecutionId).toBe(
-      sessionId,
+    const activeSessionId =
+      dispatchPayload.supervisedRun.activeTargetExecutionId;
+    expect(activeSessionId).toMatch(/^div-demo-/);
+    expect(runWorkflowSpy).toHaveBeenCalledWith(
+      "demo",
+      expect.objectContaining({ sessionId: activeSessionId }),
     );
 
     const savedAfter = await saveSession(
       {
         ...createSessionState({
-          sessionId,
+          sessionId: activeSessionId ?? "missing-active-session",
           workflowName: "demo",
           workflowId: "demo",
           initialNodeId: "divedra-manager",

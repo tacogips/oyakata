@@ -31,7 +31,8 @@ Current direction:
 - workflows use `workflow -> steps[] + nodes[]`, where steps are the canonical execution addresses and `workflow.json.nodes[]` is a reusable node registry
 - manager nodes should default to a deterministic `code` manager, with `llm` manager retained as experimental
 - repeated visits to the same node should materialize distinct mailbox instances and support same-session continuation with prompt variants
-- `auto improve mode` defaults to an engine-owned outer supervision loop that persists incidents, remediations, and mutable-workspace audit data on the target session; phase 2 optionally runs a paired `divedra superviser` workflow (`nestedSuperviserDriver` / `--nested-superviser`) using the same audit model
+- new workflow starts should be supervisor-backed by default at the CLI, GraphQL, and library entrypoint layer. The default supervisor is deterministic in-process runner-pool mode: it represents supervision as a workflow boundary, but the runtime service that owns lifecycle control starts, tracks, cancels, resumes, and reruns target workflows asynchronously in the same process. The supervisor command surface is the default lifecycle boundary for event sources and operators; `runWorkflow()` remains the low-level engine primitive used by the runner pool, tests, and specialized embedding.
+- `auto improve mode` persists incidents, remediations, and mutable-workspace audit data on the target session; phase 2 optionally runs a paired `divedra superviser` workflow (`nestedSuperviserDriver` / `--nested-superviser`) using the same audit model
 
 The authoritative implementation for those behaviors lives in:
 
@@ -42,6 +43,70 @@ The authoritative implementation for those behaviors lives in:
 - `src/workflow/node-addons.ts` (native `divedra/*` supervision add-ons)
 - `src/workflow/types.ts` (shared step-addressed runtime identifiers, including phase-2 superviser-control add-on names)
 - `src/workflow/validate.ts`
+
+### Default Supervisor-Backed Starts
+
+Workflow start surfaces should prefer deterministic supervised execution without
+requiring an operator to remember `--auto-improve`. The start boundary is:
+
+- CLI `workflow run <name>` starts under deterministic in-process runner-pool
+  supervision unless `--no-auto-improve` or another explicit unsupervised escape
+  hatch is present.
+- CLI `workflow run <name> --endpoint ... --no-auto-improve` must forward the
+  opt-out as `autoImprove: { enabled: false }` instead of omitting
+  `autoImprove`, because the GraphQL start boundary treats omitted policy input
+  as a request for the default supervisor-backed start.
+- GraphQL `executeWorkflow` synthesizes the same deterministic supervisor policy
+  when `autoImprove` is omitted; callers can pass
+  `autoImprove: { enabled: false }` to preserve unsupervised start semantics.
+- Library `executeWorkflow()` uses the same default and exposes
+  `disableAutoImprove` for specialized callers that intentionally need the
+  legacy normal-mode start.
+- Resume, rerun, continuation, direct `call-step`, and low-level
+  `runWorkflow()` do not silently add supervision because those paths may target
+  old unsupervised sessions, imported history, or isolated test fixtures.
+
+Implementation boundaries for this default are strict:
+
+- helper entrypoints that accept a `defaultAutoImprove` behavior toggle must
+  apply it when no explicit `autoImprove` or `disableAutoImprove` option was
+  supplied; ignoring the toggle is a contract violation because it silently
+  reverts the default local path to unsupervised execution.
+- CLI local execution, CLI endpoint execution, GraphQL `executeWorkflow`, and
+  library `executeWorkflow()` must make the same default/opt-out decision before
+  invoking the engine or transport. Endpoint-backed CLI calls must serialize the
+  explicit opt-out as `autoImprove: { enabled: false }`.
+- nested supervisor execution is valid only when the effective policy is
+  supervised. If the caller opts out with `--no-auto-improve` or
+  `disableAutoImprove`, nested supervisor flags must be rejected or ignored by a
+  documented validation rule rather than starting a partially supervised run.
+
+This keeps the user-facing execution model supervisor-first while avoiding a
+second lifecycle implementation. The default policy records
+`divedra-default-workflow-supervisor` as the supervisor workflow name and uses a
+deterministic runner-pool service for lifecycle control. Explicit LLM-backed
+supervisor decisions remain opt-in through `intentMapping.mode = "llm-command"`
+or an explicit nested supervisor mode; auto-improve patching remains opt-in and
+must not be implied by ordinary deterministic lifecycle supervision.
+
+The runner pool executes target workflow runs in-process and asynchronously. It
+retains active run handles by runner-pool run id, workflow execution id,
+supervised run id, optional operator alias or managed workflow key, and
+event-source correlation key. Command arguments are assembled from structured
+command objects, never from raw event text. Event text first passes through the
+deterministic command parser: split on spaces/tabs, match the first token
+against configured command strings, and preserve remaining tokens as arguments.
+Text without a known first-token command routes to a command-analysis LLM node
+that returns a typed command proposal; the supervisor itself remains
+deterministic and validates the proposal before applying it.
+
+Runner-pool handle storage must distinguish mutating async commands from
+inspection commands. A dispatch that produces a real async task may create or
+replace the active handle indexes for that supervised run. A status, progress,
+inbox, logs, export, or other inspection dispatch that does not invoke
+`onAsyncRun` must not overwrite an existing live handle with a non-async view.
+This preserves later wait, cancel, and resume semantics for the original active
+run while still allowing inspection commands to return fresh persisted state.
 
 Current compatibility-removal sequence (see
 `impl-plans/workflow-legacy-compatibility-removal.md`):
@@ -230,6 +295,13 @@ It owns:
 - step jump resolution and timeout-policy routing
 - manager-control validation
 - final workflow-output publication
+
+It must not print normal execution progress directly. Local progress visibility
+is expressed through `WorkflowRunEvent` records delivered to an optional
+`WorkflowRunEventSink`; the default sink is a no-op. CLI verbose mode wires that
+sink to the supervisor progress renderer, which owns stderr formatting and keeps
+JSON stdout clean. The legacy `onProgress` callback is reserved for explicit
+debug consumers and only fires when debug mode is enabled.
 
 Planned extension:
 

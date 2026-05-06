@@ -26,7 +26,9 @@ function safeSegment(value: string): string {
   return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 96) || "run";
 }
 
-function rowToRecord(row: RuntimeEventSupervisedRunSaveInput): EventSupervisedRunRecord {
+function rowToRecord(
+  row: RuntimeEventSupervisedRunSaveInput,
+): EventSupervisedRunRecord {
   return {
     supervisedRunId: row.supervisedRunId,
     sourceId: row.sourceId,
@@ -239,10 +241,7 @@ export function createEventSupervisedRunRepository(
       record: EventSupervisedRunRecord,
       artifactDir: string,
     ): Promise<void> {
-      await atomicWriteJsonFile(
-        path.join(artifactDir, "record.json"),
-        record,
-      );
+      await atomicWriteJsonFile(path.join(artifactDir, "record.json"), record);
       await upsertEventSupervisedRunToRuntimeDb(
         recordToSaveInput(record, artifactDir),
         options,
@@ -271,6 +270,9 @@ export function createEventSupervisedRunRepository(
         bindingId: input.command.bindingId,
         correlationKey: input.command.correlationKey,
         action: input.command.action,
+        ...(input.command.args === undefined
+          ? {}
+          : { argsJson: JSON.stringify(input.command.args) }),
         receiptId: input.command.receivedEventReceiptId,
         resultJson: JSON.stringify({ pending: true, startedAt: now }),
         createdAt: now,

@@ -520,6 +520,7 @@ function ensureSchema(db: Database): void {
       binding_id TEXT NOT NULL,
       correlation_key TEXT NOT NULL,
       action TEXT NOT NULL,
+      args_json TEXT,
       receipt_id TEXT NOT NULL,
       result_json TEXT NOT NULL,
       created_at TEXT NOT NULL
@@ -697,6 +698,15 @@ function ensureSchema(db: Database): void {
     db.exec(
       "ALTER TABLE event_receipts ADD COLUMN supervisor_decision_id TEXT",
     );
+  }
+  const supervisorCommandColumns = db
+    .query("PRAGMA table_info(event_supervisor_commands)")
+    .all() as Array<{ name: string }>;
+  const supervisorCommandColumnSet = new Set(
+    supervisorCommandColumns.map((row) => row.name),
+  );
+  if (!supervisorCommandColumnSet.has("args_json")) {
+    db.exec("ALTER TABLE event_supervisor_commands ADD COLUMN args_json TEXT");
   }
 
   backfillMissingNodeExecutionOrdinals(db);
@@ -1818,6 +1828,7 @@ export interface RuntimeEventSupervisorCommandSaveInput {
   readonly bindingId: string;
   readonly correlationKey: string;
   readonly action: string;
+  readonly argsJson?: string;
   readonly receiptId: string;
   readonly resultJson: string;
   readonly createdAt: string;
@@ -2081,8 +2092,8 @@ export async function insertEventSupervisorCommandRow(
       const stmt = db.prepare(`
         INSERT INTO event_supervisor_commands (
           command_id, supervised_run_id, source_id, binding_id, correlation_key,
-          action, receipt_id, result_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          action, args_json, receipt_id, result_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       stmt.run(
         row.commandId,
@@ -2091,6 +2102,7 @@ export async function insertEventSupervisorCommandRow(
         row.bindingId,
         row.correlationKey,
         row.action,
+        row.argsJson ?? null,
         row.receiptId,
         row.resultJson,
         row.createdAt,

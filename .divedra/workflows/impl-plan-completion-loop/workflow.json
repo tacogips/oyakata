@@ -1,12 +1,12 @@
 {
   "workflowId": "impl-plan-completion-loop",
-  "description": "Execute an implementation plan until every authored task in the target plan is completed, with an explicit plan-assessment exit gate between implementation iterations.",
+  "description": "Execute active implementation-plan tasks until every authored task in the selected target plan is completed, with an explicit plan-assessment exit gate and deterministic completed-plan archival before final output. If workflowInput.planPath is omitted, select the next incomplete plan from impl-plans/active.",
   "defaults": {
     "maxLoopIterations": 50,
     "nodeTimeoutMs": 3600000
   },
   "prompts": {
-    "divedraPromptTemplate": "Coordinate {{workflowId}}. Start by assessing the target implementation plan. If the plan is complete, publish workflow output. Otherwise implement the next incomplete task, review it, and reassess the plan. Loop until the assessment reports plan_complete true. Do not commit, push, stage files, or revert unrelated dirty worktree changes.",
+    "divedraPromptTemplate": "Coordinate {{workflowId}}. Start by assessing the target implementation plan. If workflowInput.planPath is omitted, select the next incomplete plan from impl-plans/active. If the selected plan is complete, archive completed active plans and refresh plan indexes before publishing workflow output. Otherwise implement the next incomplete task, review it, and reassess the plan. Loop until the assessment reports plan_complete true. Do not commit, push, stage files, or revert unrelated dirty worktree changes.",
     "workerSystemPromptTemplate": "Return concise business JSON only. Keep plan path, task ids, changed files, verification commands, review findings, routing flags, and remaining work explicit."
   },
   "managerStepId": "divedra-manager",
@@ -27,6 +27,10 @@
     {
       "id": "step3-review",
       "nodeFile": "nodes/node-step3-review.json"
+    },
+    {
+      "id": "step4-archive-completed-plans",
+      "nodeFile": "nodes/node-step4-archive-completed-plans.json"
     },
     {
       "id": "workflow-output",
@@ -53,7 +57,7 @@
       "role": "worker",
       "transitions": [
         {
-          "toStepId": "workflow-output",
+          "toStepId": "step4-archive-completed-plans",
           "label": "plan_complete"
         },
         {
@@ -86,6 +90,17 @@
         {
           "toStepId": "step1-plan-assess",
           "label": "!(needs_revision)"
+        }
+      ]
+    },
+    {
+      "id": "step4-archive-completed-plans",
+      "nodeId": "step4-archive-completed-plans",
+      "description": "Move completed plans out of impl-plans/active and refresh plan indexes before final output.",
+      "role": "worker",
+      "transitions": [
+        {
+          "toStepId": "workflow-output"
         }
       ]
     },

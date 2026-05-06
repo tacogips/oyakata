@@ -33,10 +33,10 @@
         "Reference behavior may not map one-to-one onto local Cursor state."
       ],
       "codexAgentReferences": [
-        "/Users/taco/gits/tacogips/codex-agent/src/session",
-        "/Users/taco/gits/tacogips/codex-agent/src/cli"
+        "../../codex-agent/src/session",
+        "../../codex-agent/src/cli"
       ],
-      "referenceRepositoryRoot": "/Users/taco/gits/tacogips/codex-agent",
+      "referenceRepositoryRoot": "../../codex-agent",
       "referenceRepositoryUrl": "https://github.com/tacogips/codex-agent"
     }
   },
@@ -54,7 +54,7 @@
           "design-docs/specs/design-codex-reference-session-history.md"
         ],
         "codexAgentReferences": [
-          "/Users/taco/gits/tacogips/codex-agent/src/session"
+          "../../codex-agent/src/session"
         ],
         "cursorCliBehaviorMapping": [
           "Map codex-agent session history behavior to cursor-agent local Cursor transcript discovery."
@@ -83,8 +83,8 @@
           "design-docs/specs/design-codex-reference-session-history.md"
         ],
         "codexAgentReferences": [
-          "/Users/taco/gits/tacogips/codex-agent/src/session",
-          "/Users/taco/gits/tacogips/codex-agent/src/cli"
+          "../../codex-agent/src/session",
+          "../../codex-agent/src/cli"
         ],
         "cursorCliBehaviorMapping": [
           "Map codex-agent session history behavior to cursor-agent local Cursor transcript discovery.",
@@ -180,8 +180,8 @@
           "design-docs/specs/design-codex-reference-session-history.md"
         ],
         "codexAgentReferences": [
-          "/Users/taco/gits/tacogips/codex-agent/src/session",
-          "/Users/taco/gits/tacogips/codex-agent/src/cli"
+          "../../codex-agent/src/session",
+          "../../codex-agent/src/cli"
         ],
         "taskBreakdown": [
           "Add transcript discovery adapter",
@@ -213,8 +213,8 @@
           "design-docs/specs/design-codex-reference-session-history.md"
         ],
         "codexAgentReferences": [
-          "/Users/taco/gits/tacogips/codex-agent/src/session",
-          "/Users/taco/gits/tacogips/codex-agent/src/cli"
+          "../../codex-agent/src/session",
+          "../../codex-agent/src/cli"
         ],
         "taskBreakdown": [
           "Add transcript discovery adapter",
@@ -384,8 +384,8 @@
       ],
       "implPlanPaths": ["impl-plans/active/codex-reference-session-history.md"],
       "codexAgentReferences": [
-        "/Users/taco/gits/tacogips/codex-agent/src/session",
-        "/Users/taco/gits/tacogips/codex-agent/src/cli"
+        "../../codex-agent/src/session",
+        "../../codex-agent/src/cli"
       ],
       "designReviewSummary": "Design accepted after Cursor adapter boundaries and codex-agent divergence were clarified.",
       "implPlanReviewSummary": "Implementation plan and design consistency review accepted after transcript edge-case tasks were added.",

@@ -30,27 +30,27 @@ specific chat adapters.
 
 ## Review Findings
 
-1. [src/events/supervised-runs.ts](/g/gits/tacogips/divedra/src/events/supervised-runs.ts:50):
+1. [src/events/supervised-runs.ts](../../src/events/supervised-runs.ts:50):
    correlation serialization used an in-memory `Map` only. **Update (2026-04-29)**:
    `withCorrelationLock` now wraps work in a per-correlation dedicated SQLite
    file (`BEGIN IMMEDIATE` + `PRAGMA busy_timeout`) after the in-process promise
    chain, so separate processes sharing the same `rootDataDir` serialize on the
    same binding correlation key without relying solely on memory.
-2. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:353):
+2. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:353):
    replay of finalized failure results must always throw (including empty-string
    or non-string `error` fields). **Update**: `dispatchCommand` replay handling
    was tightened so `error` in the stored result envelope always rethrows;
    remaining idempotency work stays under durable correlation locking (finding 1).
-3. [src/graphql/schema.ts](/g/gits/tacogips/divedra/src/graphql/schema.ts:1238)
-   and [src/workflow/supervisor-graphql-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-graphql-client.ts:34):
+3. [src/graphql/schema.ts](../../src/graphql/schema.ts:1238)
+   and [src/workflow/supervisor-graphql-client.ts](../../src/workflow/supervisor-graphql-client.ts:34):
    GraphQL supervisor payloads are cast after shallow object checks.
-4. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:663):
+4. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:663):
    public convenience methods synthesize timestamp command ids and do not accept
    caller idempotency keys.
-5. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:491):
+5. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:491):
    restart count is incremented, but restart budget and failed-target recovery
    behavior need explicit enforcement tests.
-6. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:440):
+6. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:440):
    returning the async start helper without `await` bypassed the surrounding
    `try`/`catch`, leaving failed command rows stuck in `pending` state. The
    same area also re-dispatched `input` as `start` with the same `commandId`,
@@ -58,36 +58,36 @@ specific chat adapters.
 
 ## Follow-Up Review Feedback (2026-04-29)
 
-1. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:403)
+1. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:403)
    still mints a new `supervisedRunId` for `start` when there is no currently
-   active target, and [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:606)
+   active target, and [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:606)
    mints a fresh run again when `input` arrives against an existing correlation
    whose target is no longer active. That does not match the design contract in
-   [design-event-supervisor-control.md](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:296),
+   [design-event-supervisor-control.md](../../design-docs/specs/design-event-supervisor-control.md:296),
    which says `start` should "create or reuse" a supervisor run, nor the
    lifecycle rule in the same design
-   [section](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:434)
+   [section](../../design-docs/specs/design-event-supervisor-control.md:434)
    that target attempts should remain under the same supervised-run authority.
    **Resolved (2026-04-29)**: `start` reuses `latest.supervisedRunId` when the
    correlation already has a durable row without a live target; regression tests
    cover `start` after stop/terminal completion and `startOnFirstInput` against
    an existing stopped run (see progress log "follow-up behavioral alignment").
-2. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:511)
+2. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:511)
    never persists a `completed` terminal state, and the only explicit failure
    transition remains the command-level catch block at
-   [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:692).
+   [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:692).
    As written, a target workflow can finish successfully while the supervised
    run record still says `running`, which means the record is not yet the
    lifecycle authority described in the design
-   [concurrency section](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:428).
+   [concurrency section](../../design-docs/specs/design-event-supervisor-control.md:428).
    **Resolved (2026-04-29/30)**: `reconcileTerminalSupervisedRunRecord` runs at
    correlation-locked command boundaries and on lookups/queries; supervised-run
    rows reflect terminal target sessions before subsequent commands (see progress
    log sessions "follow-up behavioral alignment" and "authoritative supervisedRunId + query reconciliation").
-3. [src/events/trigger-runner.ts](/g/gits/tacogips/divedra/src/events/trigger-runner.ts:362)
+3. [src/events/trigger-runner.ts](../../src/events/trigger-runner.ts:362)
    maps the event into workflow runtime variables before the supervised action
    has been resolved at
-   [src/events/trigger-runner.ts](/g/gits/tacogips/divedra/src/events/trigger-runner.ts:439).
+   [src/events/trigger-runner.ts](../../src/events/trigger-runner.ts:439).
    That means `status`, `stop`, or `restart` can fail on unrelated
    `inputMapping` requirements even though those actions do not need target
    runtime input. This is a control-plane/data-plane coupling that is broader
@@ -96,15 +96,15 @@ specific chat adapters.
    full `inputMapping` runs only for `start` and `input`; other actions use
    minimal runtime variables (`buildEventRuntimeMetadata`). Covered in
    `src/events/trigger-runner.test.ts`.
-4. [src/events/dispatch-supervisor-chat.ts](/g/gits/tacogips/divedra/src/events/dispatch-supervisor-chat.ts:81)
+4. [src/events/dispatch-supervisor-chat.ts](../../src/events/dispatch-supervisor-chat.ts:81)
    prepares an `eventReplyDispatcher`, but the supervised path in
-   [src/events/trigger-runner.ts](/g/gits/tacogips/divedra/src/events/trigger-runner.ts:455)
+   [src/events/trigger-runner.ts](../../src/events/trigger-runner.ts:455)
    only records skipped/dispatched receipts and returns a result object. The
    current architecture therefore does not yet satisfy the natural-language chat
    control purpose described in the design
-   [status reply requirement](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:303)
+   [status reply requirement](../../design-docs/specs/design-event-supervisor-control.md:303)
    and
-   [ambiguity reply requirement](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:644):
+   [ambiguity reply requirement](../../design-docs/specs/design-event-supervisor-control.md:644):
    users can issue chat control messages, but they do not receive the
    provider-neutral reply/clarification output the design calls for.
    **Resolved (2026-04-30)**: `buildSupervisorControlChatReplyRequest` and
@@ -138,28 +138,28 @@ current lifecycle authority, while authored supervisor workflow execution
 remains a later packaging step. The 2026-04-30 follow-up pass closed the
 recorded idempotency and public control-plane ergonomics gaps below.
 
-1. **Resolved (2026-04-30)**. [src/events/trigger-runner.ts](/g/gits/tacogips/divedra/src/events/trigger-runner.ts:817)
+1. **Resolved (2026-04-30)**. [src/events/trigger-runner.ts](../../src/events/trigger-runner.ts:817)
    now emits a single router-level destructive-ambiguity clarification, and
-   [src/events/reply-dispatcher.ts](/g/gits/tacogips/divedra/src/events/reply-dispatcher.ts:76)
+   [src/events/reply-dispatcher.ts](../../src/events/reply-dispatcher.ts:76)
    persistently dedupes reply sends by idempotency key. The synthetic router
    reply key now uses `sourceId + dedupeKey + ambiguity kind`, aligning the
    durable reply idempotency key with event-receipt dedupe semantics instead of
    `eventId`.
-2. **Resolved (2026-04-30)**. [src/graphql/types.ts](/g/gits/tacogips/divedra/src/graphql/types.ts:329)
-   and [src/graphql/schema.ts](/g/gits/tacogips/divedra/src/graphql/schema.ts:1512)
+2. **Resolved (2026-04-30)**. [src/graphql/types.ts](../../src/graphql/types.ts:329)
+   and [src/graphql/schema.ts](../../src/graphql/schema.ts:1512)
    previously made `dispatchSupervisorChat` accept caller-supplied `eventRoot`,
    `endpoint`, and `authToken`. That leaks server filesystem layout and
    `endpoint`, and `authToken`. The public mutation input is now narrowed to
    source identity plus chat/event payload fields; event configuration root and
    transport credentials resolve from server context/configuration.
-3. **Resolved (2026-04-30)**. [src/workflow/supervisor-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-client.ts:1001)
-   and [src/workflow/supervisor-graphql-client.ts](/g/gits/tacogips/divedra/src/workflow/supervisor-graphql-client.ts:447)
+3. **Resolved (2026-04-30)**. [src/workflow/supervisor-client.ts](../../src/workflow/supervisor-client.ts:1001)
+   and [src/workflow/supervisor-graphql-client.ts](../../src/workflow/supervisor-graphql-client.ts:447)
    previously looked up an existing supervised run before `submitInput`, then
    forcibly set `startOnFirstInput: false`. The convenience clients now accept
    `targetWorkflowName` and `bindingSnapshot` so `submitInput` can create the
    first supervised run when policy allows, matching the correlation-aware
    first-input behavior from
-   [design-event-supervisor-control.md](/g/gits/tacogips/divedra/design-docs/specs/design-event-supervisor-control.md:275),
+   [design-event-supervisor-control.md](../../design-docs/specs/design-event-supervisor-control.md:275),
    while existing-run input still disables accidental first-run creation.
 
 ## Modules

@@ -24,14 +24,18 @@ import { listEventReceipts, replayEventReceipt } from "./events/receipt-ops";
 import type { EventListenerHandle } from "./events/listener-service";
 import type { MockNodeScenario } from "./workflow/scenario-adapter";
 import type { WorkflowExecutionCompactSummary } from "./shared/ui-contract";
-import { normalizeAutoImprovePolicy } from "./workflow/auto-improve-policy";
+import {
+  createDefaultAutoImprovePolicy,
+  normalizeAutoImprovePolicy,
+  type AutoImprovePolicyInput,
+} from "./workflow/auto-improve-policy";
 import { createWorkflowTemplate } from "./workflow/create";
 import { callStep, type CallStepInput } from "./workflow/call-step";
+import { runWorkflow, type WorkflowRunOptions } from "./workflow/engine";
 import {
-  runWorkflow,
-  type WorkflowRunOptions,
-  type WorkflowRunProgressEvent,
-} from "./workflow/engine";
+  createSupervisorProgressEventSink,
+  createSupervisorProgressRenderer,
+} from "./workflow/supervisor-progress-renderer";
 import { loadWorkflowFromCatalog, type LoadedWorkflow } from "./workflow/load";
 import {
   listWorkflowCatalogSources,
@@ -299,6 +303,7 @@ interface ParsedOptions {
   readonly mockScenarioPath?: string;
   readonly dryRun: boolean;
   readonly verbose: boolean;
+  readonly debug: boolean;
   readonly maxSteps?: number;
   readonly maxConcurrency?: number;
   readonly maxLoopIterations?: number;
@@ -330,6 +335,7 @@ interface ParsedOptions {
   readonly stallTimeoutMs?: number;
   readonly reason?: string;
   readonly autoImprove?: AutoImprovePolicy;
+  readonly disableAutoImprove: boolean;
   /** Phase-2: run superviser bundle as nested workflow; requires --auto-improve */
   readonly nestedSuperviser?: boolean;
   readonly continuationStartStepId?: string;
@@ -644,6 +650,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let variablesPath: string | undefined;
   let dryRun = false;
   let verbose = false;
+  let debug = false;
   let mockScenarioPath: string | undefined;
   let maxSteps: number | undefined;
   let maxConcurrency: number | undefined;
@@ -676,6 +683,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let reason: string | undefined;
   let parseError: string | undefined;
   let autoImprove = false;
+  let disableAutoImprove = false;
   let superviserWorkflowId: string | undefined;
   let monitorIntervalMs: number | undefined;
   let stallTimeoutMs: number | undefined;
@@ -854,6 +862,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       case "--verbose":
       case "-v":
         verbose = true;
+        break;
+      case "--debug":
+        debug = true;
         break;
       case "--mock-scenario": {
         const parsedString = parseRequiredStringOption(token, readNext());
@@ -1118,6 +1129,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       case "--auto-improve":
         autoImprove = true;
         break;
+      case "--no-auto-improve":
+        disableAutoImprove = true;
+        break;
       case "--superviser-workflow":
       case "--supervisor-workflow": {
         markAutoImprovePolicyFlag();
@@ -1197,7 +1211,6 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
         break;
       case "--nested-superviser":
       case "--nested-supervisor":
-        markAutoImprovePolicyFlag();
         nestedSuperviser = true;
         break;
       case "--start-step": {
@@ -1238,8 +1251,13 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
 
   const isSessionHealthCommand =
     positionals[0] === "session" && positionals[1] === "health";
+  const hasWorkflowAutoImprovePolicyFlag =
+    firstAutoImprovePolicyFlag !== undefined && !isSessionHealthCommand;
+  const shouldEnableCliAutoImprovePolicy =
+    !disableAutoImprove &&
+    (autoImprove || nestedSuperviser || hasWorkflowAutoImprovePolicyFlag);
   const autoImproveInputs = {
-    enabled: autoImprove,
+    enabled: shouldEnableCliAutoImprovePolicy,
     ...(superviserWorkflowId === undefined ? {} : { superviserWorkflowId }),
     ...(monitorIntervalMs === undefined ? {} : { monitorIntervalMs }),
     ...(stallTimeoutMs === undefined || (!autoImprove && isSessionHealthCommand)
@@ -1253,20 +1271,22 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   const autoImprovePolicy =
     parseAutoImprovePolicyFromCliFlags(autoImproveInputs);
   if (parseError === undefined) {
-    if (nestedSuperviser && !autoImprove) {
+    if (autoImprove && disableAutoImprove) {
+      parseError = "--auto-improve cannot be combined with --no-auto-improve";
+    } else if (nestedSuperviser && disableAutoImprove) {
       parseError =
-        "--nested-superviser / --nested-supervisor require --auto-improve";
+        "--nested-superviser / --nested-supervisor cannot be combined with --no-auto-improve";
     } else if (
-      !autoImprove &&
-      (isSessionHealthCommand
-        ? firstAutoImproveOnlyPolicyFlag
-        : firstAutoImprovePolicyFlag) !== undefined
+      disableAutoImprove &&
+      firstAutoImprovePolicyFlag !== undefined
     ) {
-      parseError = `${
-        isSessionHealthCommand
-          ? firstAutoImproveOnlyPolicyFlag
-          : firstAutoImprovePolicyFlag
-      } requires --auto-improve`;
+      parseError = `${firstAutoImprovePolicyFlag} cannot be combined with --no-auto-improve`;
+    } else if (
+      isSessionHealthCommand &&
+      !autoImprove &&
+      firstAutoImproveOnlyPolicyFlag !== undefined
+    ) {
+      parseError = `${firstAutoImproveOnlyPolicyFlag} requires --auto-improve`;
     }
   }
   if (parseError === undefined && autoImprovePolicy.error !== undefined) {
@@ -1291,6 +1311,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       output,
       dryRun,
       verbose,
+      debug,
       ...(maxSteps === undefined ? {} : { maxSteps }),
       ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
       ...(maxLoopIterations === undefined ? {} : { maxLoopIterations }),
@@ -1324,6 +1345,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(autoImprovePolicy.policy === undefined
         ? {}
         : { autoImprove: autoImprovePolicy.policy }),
+      disableAutoImprove,
       ...(nestedSuperviser ? { nestedSuperviser: true } : {}),
       ...(continuationStartStepId === undefined
         ? {}
@@ -1417,6 +1439,9 @@ function printHelp(io: CliIo): void {
   io.stdout(
     "  workflow run <name> --verbose  Print local step-start progress to stderr",
   );
+  io.stdout(
+    "  workflow run <name> --debug    Enable explicit local debug progress callbacks",
+  );
   io.stdout("");
   io.stdout("Session options:");
   io.stdout(
@@ -1461,7 +1486,10 @@ function printHelp(io: CliIo): void {
     "  persisted stall watch is active; use --nested-supervisor (alias: --nested-superviser) to run the superviser bundle as a workflow):",
   );
   io.stdout(
-    "  --auto-improve               Enable supervised runs with durable supervision state",
+    "  --auto-improve               Explicitly enable supervised runs with durable supervision state",
+  );
+  io.stdout(
+    "  --no-auto-improve            Send an explicit disabled auto-improve policy",
   );
   io.stdout(
     "  --supervisor-workflow <id> Superviser bundle id (alias: --superviser-workflow; persisted; divedra/* control + optional nested driver)",
@@ -1473,7 +1501,7 @@ function printHelp(io: CliIo): void {
     "  --monitor-interval-ms <n>    Observation cadence (default 5000)",
   );
   io.stdout(
-    "  --stall-timeout-ms <n>       Stall threshold (default 60000; must be >= monitor interval)",
+    "  --stall-timeout-ms <n>       Stall threshold (default 3600000; must be >= monitor interval)",
   );
   io.stdout("  --max-supervised-attempts <n> Attempt budget (default 5)");
   io.stdout("  --max-workflow-patches <n>   Patch budget (default 3)");
@@ -1644,35 +1672,19 @@ function emitJson(io: CliIo, payload: unknown): void {
   io.stdout(JSON.stringify(payload, null, 2));
 }
 
-function formatWorkflowRunProgressEvent(
-  event: WorkflowRunProgressEvent,
-): string {
-  switch (event.type) {
-    case "step-start":
-      return [
-        "workflow step start:",
-        `sessionId=${event.sessionId}`,
-        `workflow=${event.workflowName}`,
-        `stepId=${event.stepId}`,
-        `nodeId=${event.nodeId}`,
-        `nodeExecId=${event.nodeExecId}`,
-        `attempt=${event.attempt}`,
-        `queueRemaining=${event.queuedStepIds.length}`,
-      ].join(" ");
-  }
-}
-
-function buildWorkflowRunProgressLogger(
+function buildSupervisorProgressEventSink(
   parsedOptions: ParsedOptions,
   io: CliIo,
-): Pick<WorkflowRunOptions, "onProgress"> {
-  if (!parsedOptions.verbose) {
+): Pick<WorkflowRunOptions, "eventSink"> {
+  const renderer = createSupervisorProgressRenderer({
+    verbose: parsedOptions.verbose,
+    writeLine: io.stderr,
+  });
+  if (!renderer.verbose) {
     return {};
   }
   return {
-    onProgress: (event) => {
-      io.stderr(formatWorkflowRunProgressEvent(event));
-    },
+    eventSink: createSupervisorProgressEventSink(renderer),
   };
 }
 
@@ -1978,10 +1990,10 @@ function buildRemoteExecutionInput(
   const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
     parsedOptions.workingDirectory,
   );
+  const autoImprove: AutoImprovePolicyInput =
+    parsedOptions.autoImprove ?? { enabled: !parsedOptions.disableAutoImprove };
   return {
-    ...(parsedOptions.autoImprove === undefined
-      ? {}
-      : { autoImprove: parsedOptions.autoImprove }),
+    autoImprove,
     ...(parsedOptions.nestedSuperviser ? { nestedSuperviser: true } : {}),
     ...(workingDirectory === undefined ? {} : { workingDirectory }),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
@@ -2098,11 +2110,13 @@ function parseStepRunExecutionStatusFilter(
 
 function buildLocalWorkflowRunOverrides(
   parsedOptions: ParsedOptions,
+  defaultAutoImprove = false,
 ): Pick<
   WorkflowRunOptions,
   | "autoImprove"
   | "nestedSuperviserDriver"
   | "defaultTimeoutMs"
+  | "debug"
   | "dryRun"
   | "maxConcurrency"
   | "maxLoopIterations"
@@ -2112,6 +2126,11 @@ function buildLocalWorkflowRunOverrides(
   const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
     parsedOptions.workingDirectory,
   );
+  const autoImprove =
+    parsedOptions.autoImprove ??
+    (!defaultAutoImprove || parsedOptions.disableAutoImprove
+      ? undefined
+      : createDefaultAutoImprovePolicy());
   return {
     ...(workflowWorkingDirectory === undefined
       ? {}
@@ -2128,10 +2147,9 @@ function buildLocalWorkflowRunOverrides(
     ...(parsedOptions.defaultTimeoutMs === undefined
       ? {}
       : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
+    ...(parsedOptions.debug ? { debug: true } : {}),
     ...(parsedOptions.dryRun ? { dryRun: true } : {}),
-    ...(parsedOptions.autoImprove === undefined
-      ? {}
-      : { autoImprove: parsedOptions.autoImprove }),
+    ...(autoImprove === undefined ? {} : { autoImprove }),
     ...(parsedOptions.nestedSuperviser ? { nestedSuperviserDriver: true } : {}),
   };
 }
@@ -3995,8 +4013,8 @@ export async function runCli(
         ...workflowRunOptions,
         runtimeVariables,
         ...mockScenarioOptions,
-        ...buildLocalWorkflowRunOverrides(parsed.options),
-        ...buildWorkflowRunProgressLogger(parsed.options, io),
+        ...buildLocalWorkflowRunOverrides(parsed.options, true),
+        ...buildSupervisorProgressEventSink(parsed.options, io),
         ...(parsed.options.maxSteps === undefined
           ? {}
           : { maxSteps: parsed.options.maxSteps }),
@@ -4276,7 +4294,7 @@ export async function runCli(
       const result = await runWorkflow(session.value.workflowName, {
         ...sessionOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
-        ...buildWorkflowRunProgressLogger(parsed.options, io),
+        ...buildSupervisorProgressEventSink(parsed.options, io),
         resumeSessionId: session.value.sessionId,
         ...mockScenarioOptions,
       });
@@ -4494,7 +4512,7 @@ export async function runCli(
       const result = await runWorkflow(source.value.workflowName, {
         ...sessionOptions,
         ...buildLocalWorkflowRunOverrides(parsed.options),
-        ...buildWorkflowRunProgressLogger(parsed.options, io),
+        ...buildSupervisorProgressEventSink(parsed.options, io),
         rerunFromSessionId: source.value.sessionId,
         rerunFromStepId: fromStepId,
         ...mockScenarioOptions,
