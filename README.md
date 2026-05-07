@@ -64,6 +64,15 @@ nix profile install github:tacogips/divedra
 The flake package provides a `divedra` wrapper. Development still uses `nix
 develop` or direnv when you want the full local toolchain.
 
+Entering the repository through `nix develop` or direnv also provides
+`gitleaks` and configures the repo-local `pre-commit` hook to scan staged
+changes for secrets before `git commit` completes. If you need to install the
+hook path without entering the dev shell, run `./scripts/install-git-hooks.sh`
+once.
+
+GitHub Actions also runs `gitleaks` on `push` and `pull_request` as a repo-side
+backstop in case a local hook was not installed yet.
+
 ## Workflow Locations
 
 By default, divedra looks for workflow bundles in scoped catalogs:
@@ -507,6 +516,8 @@ bun run build
 bun run test
 bun run typecheck
 bun run format:check
+task install-git-hooks
+task gitleaks
 ```
 
 Runtime is Bun, and the project is written in strict TypeScript. Optional shell

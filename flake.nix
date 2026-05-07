@@ -21,7 +21,7 @@
         pkgs = import nixpkgs { inherit system; };
         pkgs-unstable = import nixpkgs-unstable { inherit system; };
 
-        baseDevPackages = with pkgs; [
+        runtimePackages = with pkgs; [
           # Bun runtime
           pkgs-unstable.bun
 
@@ -42,9 +42,13 @@
 
         ];
 
+        devOnlyPackages = with pkgs; [
+          gitleaks
+        ];
+
         divedraCli = pkgs.writeShellApplication {
           name = "divedra";
-          runtimeInputs = baseDevPackages;
+          runtimeInputs = runtimePackages;
           text = ''
             set -euo pipefail
 
@@ -92,7 +96,7 @@
           };
         };
 
-        devPackages = baseDevPackages ++ [ divedraCli ];
+        devPackages = runtimePackages ++ devOnlyPackages ++ [ divedraCli ];
 
       in
       {
@@ -115,10 +119,20 @@
           shellHook = ''
             # Dev-only: fixed root data dir for this checkout (production default is ~/.divedra/project/<cwd-encoded>/divedra-artifact).
             export DIVEDRA_ARTIFACT_DIR="/tmp/divedra-artifact-dev"
+
+            if git rev-parse --show-toplevel >/dev/null 2>&1; then
+              repo_root="$(git rev-parse --show-toplevel)"
+              if [ -f "$repo_root/.githooks/pre-commit" ]; then
+                chmod +x "$repo_root/.githooks/pre-commit"
+                git config --local core.hooksPath "$repo_root/.githooks"
+              fi
+            fi
+
             echo "TypeScript development environment ready"
             echo "Bun version: $(bun --version)"
             echo "TypeScript version: $(tsc --version)"
             echo "Task version: $(task --version 2>/dev/null || echo 'not available')"
+            echo "Gitleaks version: $(gitleaks version 2>/dev/null || echo 'not available')"
           '';
         };
       }

@@ -34,13 +34,14 @@ When a user asks to commit changes, automatically proceed with staging and commi
 
 **Automatic Commit Process**: When the user requests a commit, automatically:
 
-a) Stage the files with `git add`
-b) Show a summary that includes:
+1. Stage the files with `git add`
+2. Run `gitleaks git --pre-commit --redact --staged --verbose` and stop if secrets are detected
+3. Show a summary that includes:
 
 - The commit message
 - Files to be committed with diff stats (using `git diff --staged --stat`)
-  c) Create and execute the commit with the message
-  d) Show the commit result to the user
+4. Create and execute the commit with the message
+5. Show the commit result to the user
 
 Summary format example:
 

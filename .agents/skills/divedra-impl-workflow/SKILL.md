@@ -76,8 +76,9 @@ The workflow is responsible for:
 9. implementation self-review
 10. implementation review
 11. user-facing documentation refresh (`README.md` and exposed workflow skill docs)
-12. commit-message generation
-13. built-in git commit and git push add-on steps
+12. staged secret scan with `gitleaks git --pre-commit --redact --staged --verbose`
+13. commit-message generation
+14. built-in git commit and git push add-on steps
 
 Because the workflow ends with commit/push, do not use it when the user has
 explicitly asked to avoid workflow-driven commits or wants manual local edits
