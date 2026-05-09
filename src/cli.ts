@@ -2920,7 +2920,9 @@ export async function runCli(
 
       if (response.errors !== undefined && response.errors.length > 0) {
         if (parsed.options.output !== "json") {
-          response.errors.forEach((error) => io.stderr(error.message));
+          response.errors.forEach((error) => {
+            io.stderr(error.message);
+          });
         }
         return 1;
       }
@@ -4714,7 +4716,9 @@ export async function runCli(
           .trimEnd()
           .split("\n")
           .filter((line) => line.length > 0)
-          .forEach((line) => io.stdout(line));
+          .forEach((line) => {
+            io.stdout(line);
+          });
       }
       return 0;
     }

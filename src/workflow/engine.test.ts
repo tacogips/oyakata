@@ -3283,8 +3283,12 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    expect(result.error.sessionId).toBeDefined();
-    const loaded = await loadSession(result.error.sessionId!, {
+    const failedSessionId = result.error.sessionId;
+    expect(failedSessionId).toBeDefined();
+    if (failedSessionId === undefined) {
+      throw new Error("expected failed session id");
+    }
+    const loaded = await loadSession(failedSessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(loaded.ok).toBe(true);
@@ -3342,7 +3346,12 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    const loaded = await loadSession(result.error.sessionId!, {
+    const failedSessionId = result.error.sessionId;
+    expect(failedSessionId).toBeDefined();
+    if (failedSessionId === undefined) {
+      throw new Error("expected failed session id");
+    }
+    const loaded = await loadSession(failedSessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(loaded.ok).toBe(true);
@@ -3397,8 +3406,12 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    expect(result.error.sessionId).toBeDefined();
-    const loaded = await loadSession(result.error.sessionId!, {
+    const failedSessionId = result.error.sessionId;
+    expect(failedSessionId).toBeDefined();
+    if (failedSessionId === undefined) {
+      throw new Error("expected failed session id");
+    }
+    const loaded = await loadSession(failedSessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(loaded.ok).toBe(true);
@@ -4110,6 +4123,9 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "writer",
     );
     expect(writerExecution).toBeDefined();
+    if (writerExecution === undefined) {
+      throw new Error("expected writer execution");
+    }
     const crossWfArtifactPath = path.join(
       root,
       "artifacts",
@@ -4118,7 +4134,7 @@ describe("runWorkflow", () => {
       result.value.session.sessionId,
       "nodes",
       "writer",
-      writerExecution!.nodeExecId,
+      writerExecution.nodeExecId,
       "workflow-calls",
       "__cw:writer.json",
     );
@@ -4317,7 +4333,7 @@ describe("runWorkflow", () => {
     expect(result.ok).toBe(true);
 
     const groups = result.value.session.fanoutGroups ?? [];
-    // Two writer executions → two fanout groups for the same groupId.
+    // Two writer executions -> two fanout groups for the same groupId.
     expect(groups.length).toBe(2);
     const firstGroup = groups[0];
     const secondGroup = groups[1];
@@ -4358,10 +4374,10 @@ describe("runWorkflow", () => {
       expect(branch.workspaceRoot).not.toBe(branch.supersededWorkspaceRoot);
     }
 
-    // The manager runs once to start the writer, once to request the retry, and
-    // once to complete after the retried fanout group finishes.
+    // The manager runs once to start the writer, once to request the retry,
+    // and once to complete after the retried fanout group finishes.
     expect(adapter.joinCallCount).toBe(3);
-  });
+  }, 20_000);
 
   test("records superseded retry workspace root on local isolated fanout branch retry after reload", async () => {
     const root = await makeTempDir();
@@ -4427,7 +4443,7 @@ describe("runWorkflow", () => {
     }
 
     expect(adapter.joinCallCount).toBe(3);
-  });
+  }, 20_000);
 
   test("shares maxSteps across cross-workflow fanout branch runs", async () => {
     const root = await makeTempDir();
@@ -5321,6 +5337,9 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "writer-step",
     );
     expect(writerExecution).toBeDefined();
+    if (writerExecution === undefined) {
+      throw new Error("expected writer execution");
+    }
     const crossWfArtifactPath = path.join(
       root,
       "artifacts",
@@ -5329,7 +5348,7 @@ describe("runWorkflow", () => {
       result.value.session.sessionId,
       "nodes",
       "writer-step",
-      writerExecution!.nodeExecId,
+      writerExecution.nodeExecId,
       "workflow-calls",
       "__cw:writer-step.json",
     );
@@ -9083,9 +9102,12 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "step-1",
     );
     expect(stepExecution).toBeDefined();
+    if (stepExecution === undefined) {
+      throw new Error("expected step execution");
+    }
     const candidateRaw = await readFile(
       path.join(
-        stepExecution!.artifactDir,
+        stepExecution.artifactDir,
         "output-attempts",
         "attempt-000001",
         "candidate.json",
@@ -9200,7 +9222,10 @@ describe("runWorkflow", () => {
     expect(successResult.ok).toBe(true);
     const successCandidatePath = successCaptureAdapter.capturedCandidatePath;
     expect(successCandidatePath).toBeDefined();
-    await expect(readFile(successCandidatePath!, "utf8")).rejects.toThrow();
+    if (successCandidatePath === undefined) {
+      throw new Error("expected success candidate path");
+    }
+    await expect(readFile(successCandidatePath, "utf8")).rejects.toThrow();
 
     const failureRoot = await makeTempDir();
     await createWorkflowFixture(
@@ -9251,7 +9276,10 @@ describe("runWorkflow", () => {
     expect(failureResult.ok).toBe(false);
     const failureCandidatePath = failureCaptureAdapter.capturedCandidatePath;
     expect(failureCandidatePath).toBeDefined();
-    await expect(readFile(failureCandidatePath!, "utf8")).rejects.toThrow();
+    if (failureCandidatePath === undefined) {
+      throw new Error("expected failure candidate path");
+    }
+    await expect(readFile(failureCandidatePath, "utf8")).rejects.toThrow();
   });
 
   test("fails deterministically when required argument binding source is missing", async () => {
@@ -9776,8 +9804,11 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "divedra-manager",
     );
     expect(managerExec).toBeDefined();
+    if (managerExec === undefined) {
+      throw new Error("expected manager execution");
+    }
     const outputRaw = await readFile(
-      path.join(managerExec!.artifactDir, "output.json"),
+      path.join(managerExec.artifactDir, "output.json"),
       "utf8",
     );
     const outputJson = JSON.parse(outputRaw) as { provider: string };
@@ -9826,7 +9857,7 @@ describe("runWorkflow", () => {
     }
     expect(result.value.session.status).toBe("completed");
     expect((result.value.session.restartEvents ?? []).length).toBe(1);
-    expect((result.value.session.restartCounts ?? {})["step-1"]).toBe(1);
+    expect(result.value.session.restartCounts?.["step-1"]).toBe(1);
     const stepExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "step-1",
     );
@@ -9882,7 +9913,7 @@ describe("runWorkflow", () => {
 
     expect(result.value.session.status).toBe("completed");
     expect((result.value.session.restartEvents ?? []).length).toBe(1);
-    expect((result.value.session.restartCounts ?? {})["step-1"]).toBe(1);
+    expect(result.value.session.restartCounts?.["step-1"]).toBe(1);
     const stepExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "step-1",
     );

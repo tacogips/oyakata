@@ -291,7 +291,7 @@ async function executeLocalCodexAgent(
         case "session.started":
           sessionId = event.sessionId;
           break;
-        case "assistant.snapshot":
+        case "assistant.snapshot": {
           responseText = event.content;
           const rawMessageJson = stringifyUnknown(event);
           llmMessages.push({
@@ -304,6 +304,7 @@ async function executeLocalCodexAgent(
             ...(rawMessageJson === undefined ? {} : { rawMessageJson }),
           });
           break;
+        }
         case "session.error":
           lastError = event.error;
           break;

@@ -26,6 +26,15 @@ function makeWorkflow(input: {
     >
   >;
 }): WorkflowJson {
+  const firstStep = input.steps[0];
+  if (firstStep === undefined && input.entryStepId === undefined) {
+    throw new Error("makeWorkflow requires at least one step or entryStepId");
+  }
+  const entryStepId = input.entryStepId ?? firstStep?.id;
+  if (entryStepId === undefined) {
+    throw new Error("makeWorkflow requires an entry step id");
+  }
+
   return {
     workflowId: "wf",
     description: "wf",
@@ -33,7 +42,7 @@ function makeWorkflow(input: {
     ...(input.managerStepId === undefined
       ? {}
       : { managerStepId: input.managerStepId }),
-    entryStepId: input.entryStepId ?? input.steps[0]!.id,
+    entryStepId,
     nodeRegistry: input.nodeIds.map((id) => ({
       id,
       nodeFile: `nodes/node-${id}.json`,

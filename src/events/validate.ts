@@ -106,9 +106,9 @@ function validateTemplateValue(
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      validateTemplateValue(entry, `${pathName}[${String(index)}]`, issues),
-    );
+    value.forEach((entry, index) => {
+      validateTemplateValue(entry, `${pathName}[${String(index)}]`, issues);
+    });
     return;
   }
   if (isJsonObject(value)) {

@@ -10,10 +10,7 @@ import {
   type RuntimeNodeExecutionSummary,
   type RuntimeNodeLogEntry,
 } from "./runtime-db";
-import {
-  buildFanoutGroupSummaries,
-  type FanoutGroupSummary,
-} from "./inspect";
+import { buildFanoutGroupSummaries, type FanoutGroupSummary } from "./inspect";
 import {
   isTerminalWorkflowSessionStatus,
   resolveCurrentStepId,
@@ -389,7 +386,7 @@ async function scanArtifactDir(
     return;
   }
 
-  let entries;
+  let entries: Awaited<ReturnType<typeof readdir>>;
   try {
     entries = await readdir(dir, { withFileTypes: true });
     state.existingDirs += depth === 0 ? 1 : 0;
@@ -416,7 +413,7 @@ async function scanArtifactDir(
     }
     localFiles += 1;
     state.scannedFiles += 1;
-    let fileStat;
+    let fileStat: Awaited<ReturnType<typeof stat>>;
     try {
       fileStat = await stat(entryPath);
     } catch {

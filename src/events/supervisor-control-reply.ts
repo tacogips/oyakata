@@ -145,7 +145,7 @@ export function buildControlStatusExternalOutputMessage(input: {
   const text =
     input.view !== undefined
       ? formatSupervisorControlReplyText(input.view, input.action)
-      : skipReason !== undefined && skipReason.includes("ambiguous")
+      : skipReason?.includes("ambiguous")
         ? `Supervisor needs a specific workflow target before running this command: ${skipReason}`
         : `Supervisor: ${skipReason ?? "skipped"}`;
   const run = input.view?.supervisedRun;

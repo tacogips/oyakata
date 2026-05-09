@@ -137,16 +137,19 @@ describe("supervisor-control-reply", () => {
       skipReason: "ambiguous",
     });
     expect(req).not.toBeNull();
-    expect(req!.message.text).toBe(
+    if (req === null) {
+      throw new Error("expected chat reply request");
+    }
+    expect(req.message.text).toBe(
       "Supervisor needs a specific workflow target before running this command: ambiguous",
     );
-    expect(req!.idempotencyKey).toBe("supervisor-control:r1:skip");
-    expect(req!.dispatchAuditMetadata?.["canonicalExternalOutput"]).toMatchObject(
-      {
-        kind: "external-output",
-        outputKind: "control-status",
-      },
-    );
+    expect(req.idempotencyKey).toBe("supervisor-control:r1:skip");
+    expect(
+      req.dispatchAuditMetadata?.["canonicalExternalOutput"],
+    ).toMatchObject({
+      kind: "external-output",
+      outputKind: "control-status",
+    });
   });
 
   test("buildControlStatusExternalOutputMessage is control-status", () => {

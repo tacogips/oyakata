@@ -467,7 +467,9 @@ function validateValue(
   }
 
   if (schema.allOf !== undefined) {
-    schema.allOf.forEach((entry) => validateValue(entry, value, path, errors));
+    schema.allOf.forEach((entry) => {
+      validateValue(entry, value, path, errors);
+    });
   }
 
   if (schema.anyOf !== undefined) {
