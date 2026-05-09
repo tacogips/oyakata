@@ -1,9 +1,6 @@
 import { isJsonObject } from "../shared/json";
 import { listWorkflowCatalogSources } from "../workflow/catalog";
-import {
-  isEventSourceEnabled,
-  loadEventConfiguration,
-} from "./config";
+import { isEventSourceEnabled, loadEventConfiguration } from "./config";
 import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
 import {
   isValidEventHttpPath,
@@ -107,9 +104,13 @@ function validateTemplateValue(
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((entry, index) =>
-      validateTemplateValue(entry, `${pathName}[${String(index)}]`, issues),
-    );
+    for (let index = 0; index < value.length; index += 1) {
+      validateTemplateValue(
+        value[index],
+        `${pathName}[${String(index)}]`,
+        issues,
+      );
+    }
     return;
   }
   if (isJsonObject(value)) {
@@ -565,10 +566,7 @@ function validateSupervisorDispatchBinding(
   }
   const pathPrefix = `bindings.${binding.id}.execution`;
   const profileIdRaw = execution.supervisorProfileId;
-  if (
-    typeof profileIdRaw !== "string" ||
-    profileIdRaw.trim().length === 0
-  ) {
+  if (typeof profileIdRaw !== "string" || profileIdRaw.trim().length === 0) {
     issues.push(
       error(
         `${pathPrefix}.supervisorProfileId`,
@@ -642,7 +640,8 @@ function validateMailboxBridge(
     return;
   }
   const mode = binding.execution?.mode;
-  const supervisedLike = mode === "supervised" || mode === "supervisor-dispatch";
+  const supervisedLike =
+    mode === "supervised" || mode === "supervisor-dispatch";
   if (mb.input?.consumer === "supervisor" && !supervisedLike) {
     issues.push(
       error(
@@ -809,13 +808,7 @@ export async function validateEventConfiguration(
   }
   const profilesById = supervisorProfileLoad.profilesById;
   for (const binding of configuration.bindings) {
-    validateBinding(
-      binding,
-      sourcesById,
-      workflowNames,
-      profilesById,
-      issues,
-    );
+    validateBinding(binding, sourcesById, workflowNames, profilesById, issues);
   }
 
   return {

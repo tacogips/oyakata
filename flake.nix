@@ -33,6 +33,9 @@
           pkgs-unstable.typescript-language-server
           nodePackages.prettier
 
+          # Rust-based JS/TS linter used by repository lint tasks.
+          pkgs-unstable.biome
+
           # Development tools
           fd
           gnused
@@ -104,6 +107,7 @@
             echo "TypeScript development environment ready"
             echo "Bun version: $(bun --version)"
             echo "TypeScript version: $(tsc --version)"
+            echo "Biome version: $(biome --version 2>/dev/null || echo 'not available')"
             echo "Task version: $(task --version 2>/dev/null || echo 'not available')"
           '';
         };

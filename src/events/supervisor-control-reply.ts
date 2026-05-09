@@ -41,7 +41,8 @@ export function formatSupervisorDispatchControlReplyText(
     `decisionId: ${view.decision.decisionId}`,
     `applied: ${String(view.applied)}`,
     `profileRevision: ${view.conversation.profileRevision}`,
-    ...(view.validationIssues === undefined || view.validationIssues.length === 0
+    ...(view.validationIssues === undefined ||
+    view.validationIssues.length === 0
       ? []
       : [
           `validationIssues: ${view.validationIssues
@@ -67,9 +68,7 @@ export function buildDispatchControlExternalOutputMessage(input: {
     input.view.proposal.reply,
   );
   const text =
-    replyLead !== undefined
-      ? `${replyLead}\n\n${metadata}`
-      : metadata;
+    replyLead !== undefined ? `${replyLead}\n\n${metadata}` : metadata;
   const workflowExecutionId = `supervisor-conversation:${input.view.conversation.supervisorConversationId}`;
   const createdAt = input.createdAt ?? new Date().toISOString();
   return {
@@ -141,7 +140,7 @@ export function buildControlStatusExternalOutputMessage(input: {
   const text =
     input.view !== undefined
       ? formatSupervisorControlReplyText(input.view, input.action)
-      : skipReason !== undefined && skipReason.includes("ambiguous")
+      : skipReason?.includes("ambiguous")
         ? `Supervisor needs a specific workflow target before running this command: ${skipReason}`
         : `Supervisor: ${skipReason ?? "skipped"}`;
   const run = input.view?.supervisedRun;

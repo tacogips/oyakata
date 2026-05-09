@@ -9,10 +9,7 @@ import {
   type WorkflowRuntimeReadiness,
 } from "./runtime-readiness";
 import { collectWorkflowRevisionNodeFiles } from "./revision";
-import {
-  type SupervisionSummary,
-  type LoadOptions,
-} from "./types";
+import type { SupervisionSummary, LoadOptions } from "./types";
 import type { WorkflowSessionState } from "./session";
 export interface WorkflowInspectionCounts {
   readonly steps: number;

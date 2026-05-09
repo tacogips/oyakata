@@ -1425,9 +1425,7 @@ async function createWorkflowCallCalleeStepIdMismatchFixture(
         nodeFile: "node-reviewer-node.json",
       },
     ],
-    steps: [
-      { id: "reviewer-step", nodeId: "reviewer-node", role: "worker" },
-    ],
+    steps: [{ id: "reviewer-step", nodeId: "reviewer-node", role: "worker" }],
   });
 
   await writeJson(path.join(workflowDir, "node-reviewer-node.json"), {
@@ -2494,8 +2492,12 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    expect(result.error.sessionId).toBeDefined();
-    const loaded = await loadSession(result.error.sessionId!, {
+    const failedSessionId = result.error.sessionId;
+    expect(failedSessionId).toBeDefined();
+    if (failedSessionId === undefined) {
+      throw new Error("expected failed session id");
+    }
+    const loaded = await loadSession(failedSessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(loaded.ok).toBe(true);
@@ -2553,7 +2555,12 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    const loaded = await loadSession(result.error.sessionId!, {
+    const failedSessionId = result.error.sessionId;
+    expect(failedSessionId).toBeDefined();
+    if (failedSessionId === undefined) {
+      throw new Error("expected failed session id");
+    }
+    const loaded = await loadSession(failedSessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(loaded.ok).toBe(true);
@@ -2608,8 +2615,12 @@ describe("runWorkflow", () => {
     if (result.ok) {
       return;
     }
-    expect(result.error.sessionId).toBeDefined();
-    const loaded = await loadSession(result.error.sessionId!, {
+    const failedSessionId = result.error.sessionId;
+    expect(failedSessionId).toBeDefined();
+    if (failedSessionId === undefined) {
+      throw new Error("expected failed session id");
+    }
+    const loaded = await loadSession(failedSessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(loaded.ok).toBe(true);
@@ -3189,6 +3200,9 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "writer",
     );
     expect(writerExecution).toBeDefined();
+    if (writerExecution === undefined) {
+      throw new Error("expected writer execution");
+    }
     const crossWfArtifactPath = path.join(
       root,
       "artifacts",
@@ -3197,7 +3211,7 @@ describe("runWorkflow", () => {
       result.value.session.sessionId,
       "nodes",
       "writer",
-      writerExecution!.nodeExecId,
+      writerExecution.nodeExecId,
       "workflow-calls",
       "__cw:writer.json",
     );
@@ -3284,6 +3298,9 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "writer-step",
     );
     expect(writerExecution).toBeDefined();
+    if (writerExecution === undefined) {
+      throw new Error("expected writer execution");
+    }
     const crossWfArtifactPath = path.join(
       root,
       "artifacts",
@@ -3292,7 +3309,7 @@ describe("runWorkflow", () => {
       result.value.session.sessionId,
       "nodes",
       "writer-step",
-      writerExecution!.nodeExecId,
+      writerExecution.nodeExecId,
       "workflow-calls",
       "__cw:writer-step.json",
     );
@@ -6700,9 +6717,12 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "step-1",
     );
     expect(stepExecution).toBeDefined();
+    if (stepExecution === undefined) {
+      throw new Error("expected step execution");
+    }
     const candidateRaw = await readFile(
       path.join(
-        stepExecution!.artifactDir,
+        stepExecution.artifactDir,
         "output-attempts",
         "attempt-000001",
         "candidate.json",
@@ -6817,7 +6837,10 @@ describe("runWorkflow", () => {
     expect(successResult.ok).toBe(true);
     const successCandidatePath = successCaptureAdapter.capturedCandidatePath;
     expect(successCandidatePath).toBeDefined();
-    await expect(readFile(successCandidatePath!, "utf8")).rejects.toThrow();
+    if (successCandidatePath === undefined) {
+      throw new Error("expected success candidate path");
+    }
+    await expect(readFile(successCandidatePath, "utf8")).rejects.toThrow();
 
     const failureRoot = await makeTempDir();
     await createWorkflowFixture(
@@ -6868,7 +6891,10 @@ describe("runWorkflow", () => {
     expect(failureResult.ok).toBe(false);
     const failureCandidatePath = failureCaptureAdapter.capturedCandidatePath;
     expect(failureCandidatePath).toBeDefined();
-    await expect(readFile(failureCandidatePath!, "utf8")).rejects.toThrow();
+    if (failureCandidatePath === undefined) {
+      throw new Error("expected failure candidate path");
+    }
+    await expect(readFile(failureCandidatePath, "utf8")).rejects.toThrow();
   });
 
   test("fails deterministically when required argument binding source is missing", async () => {
@@ -7393,8 +7419,11 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "divedra-manager",
     );
     expect(managerExec).toBeDefined();
+    if (managerExec === undefined) {
+      throw new Error("expected manager execution");
+    }
     const outputRaw = await readFile(
-      path.join(managerExec!.artifactDir, "output.json"),
+      path.join(managerExec.artifactDir, "output.json"),
       "utf8",
     );
     const outputJson = JSON.parse(outputRaw) as { provider: string };
@@ -7443,7 +7472,7 @@ describe("runWorkflow", () => {
     }
     expect(result.value.session.status).toBe("completed");
     expect((result.value.session.restartEvents ?? []).length).toBe(1);
-    expect((result.value.session.restartCounts ?? {})["step-1"]).toBe(1);
+    expect(result.value.session.restartCounts?.["step-1"]).toBe(1);
     const stepExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "step-1",
     );
@@ -7499,7 +7528,7 @@ describe("runWorkflow", () => {
 
     expect(result.value.session.status).toBe("completed");
     expect((result.value.session.restartEvents ?? []).length).toBe(1);
-    expect((result.value.session.restartCounts ?? {})["step-1"]).toBe(1);
+    expect(result.value.session.restartCounts?.["step-1"]).toBe(1);
     const stepExecutions = result.value.session.nodeExecutions.filter(
       (entry) => entry.nodeId === "step-1",
     );
@@ -7962,54 +7991,50 @@ describe("runWorkflow", () => {
     );
   });
 
-  test(
-    "supports mock-scenario execution for command and container nodes",
-    async () => {
-      const root = await makeTempDir();
-      const exampleWorkflowRoot = path.join(process.cwd(), "examples");
-      const scenarioRaw = await readFile(
-        path.join(
-          exampleWorkflowRoot,
-          "first-four-arithmetic-pipeline",
-          "mock-scenario.json",
-        ),
-        "utf8",
-      );
-      const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
+  test("supports mock-scenario execution for command and container nodes", async () => {
+    const root = await makeTempDir();
+    const exampleWorkflowRoot = path.join(process.cwd(), "examples");
+    const scenarioRaw = await readFile(
+      path.join(
+        exampleWorkflowRoot,
+        "first-four-arithmetic-pipeline",
+        "mock-scenario.json",
+      ),
+      "utf8",
+    );
+    const scenario = JSON.parse(scenarioRaw) as MockNodeScenario;
 
-      const result = await runWorkflow("first-four-arithmetic-pipeline", {
-        workflowRoot: exampleWorkflowRoot,
-        artifactRoot: path.join(root, "artifacts"),
-        sessionStoreRoot: path.join(root, "sessions"),
-        mockScenario: scenario,
-      });
+    const result = await runWorkflow("first-four-arithmetic-pipeline", {
+      workflowRoot: exampleWorkflowRoot,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      mockScenario: scenario,
+    });
 
-      expect(result.ok).toBe(true);
-      if (!result.ok) {
-        return;
-      }
-      expect(result.value.session.status).toBe("completed");
-      const outputExec = result.value.session.nodeExecutions.find(
-        (entry) => entry.nodeId === "divide-output",
-      );
-      expect(outputExec).toBeDefined();
-      if (outputExec === undefined) {
-        return;
-      }
-      const outputRaw = await readFile(
-        path.join(outputExec.artifactDir, "output.json"),
-        "utf8",
-      );
-      const outputJson = JSON.parse(outputRaw) as {
-        payload: { finalResult: number; summary: string };
-        provider: string;
-      };
-      expect(outputJson.provider).toBe("scenario-mock");
-      expect(outputJson.payload.finalResult).toBe(45);
-      expect(outputJson.payload.summary).toContain("45");
-    },
-    120_000,
-  );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    expect(result.value.session.status).toBe("completed");
+    const outputExec = result.value.session.nodeExecutions.find(
+      (entry) => entry.nodeId === "divide-output",
+    );
+    expect(outputExec).toBeDefined();
+    if (outputExec === undefined) {
+      return;
+    }
+    const outputRaw = await readFile(
+      path.join(outputExec.artifactDir, "output.json"),
+      "utf8",
+    );
+    const outputJson = JSON.parse(outputRaw) as {
+      payload: { finalResult: number; summary: string };
+      provider: string;
+    };
+    expect(outputJson.provider).toBe("scenario-mock");
+    expect(outputJson.payload.finalResult).toBe(45);
+    expect(outputJson.payload.summary).toContain("45");
+  }, 120_000);
 
   test("persists native command stdout in runtime node logs", async () => {
     const root = await makeTempDir();

@@ -6,10 +6,7 @@ import {
   type NodeExecutionRecord,
   type WorkflowSessionState,
 } from "./session";
-import {
-  loadSession,
-  type SessionStoreOptions,
-} from "./session-store";
+import { loadSession, type SessionStoreOptions } from "./session-store";
 
 export const DEFAULT_CONTINUATION_ALLOWED_STATUSES: ReadonlySet<
   NodeExecutionRecord["status"]
@@ -219,17 +216,23 @@ export function flattenedHistoryImportsForTimelinePrefix(
   const segments: HistoryImportSegment[] = [];
   let cursor = 0;
   while (cursor < prefix.length) {
-    const owner = prefix[cursor]!.persistedWorkflowExecutionId;
+    const first = prefix[cursor];
+    if (first === undefined) {
+      break;
+    }
+    const owner = first.persistedWorkflowExecutionId;
     let segmentEndIndex = cursor;
-    for (
-      let index = cursor + 1;
-      index < prefix.length &&
-      prefix[index]!.persistedWorkflowExecutionId === owner;
-      index++
-    ) {
+    for (let index = cursor + 1; index < prefix.length; index++) {
+      const entry = prefix[index];
+      if (entry === undefined || entry.persistedWorkflowExecutionId !== owner) {
+        break;
+      }
       segmentEndIndex = index;
     }
-    const last = prefix[segmentEndIndex]!;
+    const last = prefix[segmentEndIndex];
+    if (last === undefined) {
+      break;
+    }
     segments.push({
       sourceWorkflowExecutionId: last.persistedWorkflowExecutionId,
       throughStepRunId: last.stepRunId,
@@ -289,22 +292,22 @@ export async function loadContinuationRelatedSnapshots(
     }
   } catch (error: unknown) {
     const message =
-      error instanceof Error ? error.message : "unknown continuation snapshot load failure";
+      error instanceof Error
+        ? error.message
+        : "unknown continuation snapshot load failure";
     return err(message);
   }
 
   return ok(map);
 }
 
-export function resolveContinuationAnchorPlacement(
-  input: {
-    readonly snapshots: ReadonlyMap<string, WorkflowSessionState>;
-    readonly sourceWorkflowExecutionId: string;
-    readonly anchorStepRunId: string;
-    readonly expectedWorkflowId: string;
-    readonly terminalStatuses?: ReadonlySet<NodeExecutionRecord["status"]>;
-  },
-): Result<
+export function resolveContinuationAnchorPlacement(input: {
+  readonly snapshots: ReadonlyMap<string, WorkflowSessionState>;
+  readonly sourceWorkflowExecutionId: string;
+  readonly anchorStepRunId: string;
+  readonly expectedWorkflowId: string;
+  readonly terminalStatuses?: ReadonlySet<NodeExecutionRecord["status"]>;
+}): Result<
   {
     readonly mergedTimelinePrefixThroughAnchor: readonly ContinuationTimelineEntry[];
     readonly anchor: ContinuationTimelineEntry;
@@ -338,8 +341,15 @@ export function resolveContinuationAnchorPlacement(
       message: `step run id '${input.anchorStepRunId}' is ambiguous in the merged timeline (${String(anchorMatches.length)} rows); refs repeat across workflow executions`,
     });
   }
-  const anchorIndex = anchorMatches[0]!.index;
-  const anchor = timeline[anchorIndex]!;
+  const anchorMatch = anchorMatches[0];
+  if (anchorMatch === undefined) {
+    return err({
+      kind: "unknown_step_run",
+      message: `step run '${input.anchorStepRunId}' not found in merged timeline for workflow execution '${input.sourceWorkflowExecutionId}'`,
+    });
+  }
+  const anchorIndex = anchorMatch.index;
+  const anchor = anchorMatch.row;
   if (anchor.workflowId !== input.expectedWorkflowId) {
     return err({
       kind: "workflow_mismatch_at_anchor",

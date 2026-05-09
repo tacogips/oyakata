@@ -242,12 +242,15 @@ export async function createWorkflowTemplate(
       : { managerStepId: templateDefinition.managerStepId }),
     entryStepId: templateDefinition.entryStepId,
     nodes: templateDefinition.nodes.map(createTemplateWorkflowNode),
-    steps: templateDefinition.nodes.map((definition, index, definitions) => ({
-      ...createTemplateWorkflowStep(definition),
-      ...(index + 1 < definitions.length
-        ? { transitions: [{ toStepId: definitions[index + 1]!.id }] }
-        : {}),
-    })),
+    steps: templateDefinition.nodes.map((definition, index, definitions) => {
+      const nextDefinition = definitions[index + 1];
+      return {
+        ...createTemplateWorkflowStep(definition),
+        ...(nextDefinition === undefined
+          ? {}
+          : { transitions: [{ toStepId: nextDefinition.id }] }),
+      };
+    }),
   };
 
   const nodePayloads = templateDefinition.nodes.map((definition) =>

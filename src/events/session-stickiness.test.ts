@@ -66,9 +66,12 @@ describe("event workflow session stickiness", () => {
       { rootDataDir },
     );
     const dir = path.join(rootDataDir, "events", "session-stickiness");
-    const [file] = (await readdir(dir)).filter((f) => f.endsWith(".json"));
+    const file = (await readdir(dir)).find((f) => f.endsWith(".json"));
     expect(file).toBeDefined();
-    await writeFile(path.join(dir, file!), "not json {", "utf8");
+    if (file === undefined) {
+      throw new Error("expected stickiness file to be written");
+    }
+    await writeFile(path.join(dir, file), "not json {", "utf8");
 
     const loaded = await loadEventWorkflowSessionStickiness(
       {
@@ -95,10 +98,13 @@ describe("event workflow session stickiness", () => {
       { rootDataDir },
     );
     const dir = path.join(rootDataDir, "events", "session-stickiness");
-    const [file] = (await readdir(dir)).filter((f) => f.endsWith(".json"));
+    const file = (await readdir(dir)).find((f) => f.endsWith(".json"));
     expect(file).toBeDefined();
+    if (file === undefined) {
+      throw new Error("expected stickiness file to be written");
+    }
     await writeFile(
-      path.join(dir, file!),
+      path.join(dir, file),
       JSON.stringify({
         workflowId: "wf-id",
         workflowName: "wf",
@@ -133,10 +139,13 @@ describe("event workflow session stickiness", () => {
       { rootDataDir },
     );
     const dir = path.join(rootDataDir, "events", "session-stickiness");
-    const [file] = (await readdir(dir)).filter((f) => f.endsWith(".json"));
+    const file = (await readdir(dir)).find((f) => f.endsWith(".json"));
     expect(file).toBeDefined();
+    if (file === undefined) {
+      throw new Error("expected stickiness file to be written");
+    }
     await writeFile(
-      path.join(dir, file!),
+      path.join(dir, file),
       JSON.stringify({
         workflowId: "wf-id",
         workflowName: "wf",

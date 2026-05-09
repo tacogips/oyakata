@@ -351,8 +351,7 @@ function coerceHistoryImports(
       continue;
     }
     const objectEntry = entry as Record<string, unknown>;
-    const sourceWorkflowExecutionId =
-      objectEntry["sourceWorkflowExecutionId"];
+    const sourceWorkflowExecutionId = objectEntry["sourceWorkflowExecutionId"];
     const throughStepRunId = objectEntry["throughStepRunId"];
     const throughExecutionOrdinal = objectEntry["throughExecutionOrdinal"];
     if (
@@ -389,8 +388,12 @@ function assignStableExecutionOrdinals(
   );
   if (allDefined) {
     return [...executions].sort((left, right) => {
-      const ordinalDiff =
-        left.executionOrdinal! - right.executionOrdinal!;
+      const leftOrdinal = left.executionOrdinal;
+      const rightOrdinal = right.executionOrdinal;
+      if (leftOrdinal === undefined || rightOrdinal === undefined) {
+        return left.nodeExecId.localeCompare(right.nodeExecId);
+      }
+      const ordinalDiff = leftOrdinal - rightOrdinal;
       if (ordinalDiff !== 0) {
         return ordinalDiff;
       }
@@ -498,10 +501,7 @@ export function normalizeSessionState(
   next =
     historyImports === undefined
       ? (() => {
-          const {
-            historyImports: removedHistoryImports,
-            ...remainder
-          } = next;
+          const { historyImports: removedHistoryImports, ...remainder } = next;
           void removedHistoryImports;
           return remainder as WorkflowSessionState;
         })()
@@ -513,10 +513,8 @@ export function normalizeSessionState(
   next =
     continuationMode === undefined
       ? (() => {
-          const {
-            continuationMode: removedContinuationMode,
-            ...remainder
-          } = next;
+          const { continuationMode: removedContinuationMode, ...remainder } =
+            next;
           void removedContinuationMode;
           return remainder as WorkflowSessionState;
         })()

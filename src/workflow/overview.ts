@@ -193,9 +193,9 @@ export function deriveWorkflowOverviewStatus(
 
 type OverviewLoadOptions = LoadOptions & SessionStoreOptions;
 
-async function workflowOverviewBundleExists(workflowDirectory: string): Promise<
-  Result<boolean, WorkflowCatalogFailure>
-> {
+async function workflowOverviewBundleExists(
+  workflowDirectory: string,
+): Promise<Result<boolean, WorkflowCatalogFailure>> {
   const filePath = path.join(workflowDirectory, "workflow.json");
   try {
     const st = await stat(filePath);
@@ -217,7 +217,9 @@ async function workflowOverviewBundleExists(workflowDirectory: string): Promise<
   }
 }
 
-async function readWorkflowOverviewMeta(workflowDirectory: string): Promise<
+async function readWorkflowOverviewMeta(
+  workflowDirectory: string,
+): Promise<
   Result<
     { readonly workflowId: string; readonly description: string },
     WorkflowCatalogFailure
@@ -324,10 +326,7 @@ export async function buildWorkflowCatalogOverview(
   input: WorkflowCatalogOverviewInput,
   options?: WorkflowOverviewBuildContext,
 ): Promise<
-  Result<
-    WorkflowCatalogOverview,
-    WorkflowCatalogFailure | SessionStoreFailure
-  >
+  Result<WorkflowCatalogOverview, WorkflowCatalogFailure | SessionStoreFailure>
 > {
   const baseOptions = mergeOverviewBaseOptions(input, options);
   const sourcesResult = await listWorkflowCatalogSources(baseOptions);
@@ -357,11 +356,7 @@ export async function buildWorkflowCatalogOverview(
     if (!execs.ok) {
       return execs;
     }
-    const row = buildOverviewRow(
-      source,
-      meta.value.description,
-      execs.value,
-    );
+    const row = buildOverviewRow(source, meta.value.description, execs.value);
     if (input.status !== undefined && row.aggregateStatus !== input.status) {
       continue;
     }
@@ -369,9 +364,7 @@ export async function buildWorkflowCatalogOverview(
   }
 
   const limited =
-    input.limit === undefined
-      ? rows
-      : rows.slice(0, Math.max(0, input.limit));
+    input.limit === undefined ? rows : rows.slice(0, Math.max(0, input.limit));
 
   return ok({ workflows: limited });
 }
@@ -380,16 +373,10 @@ export async function buildWorkflowStatusOverview(
   input: WorkflowStatusOverviewInput,
   options?: WorkflowOverviewBuildContext,
 ): Promise<
-  Result<
-    WorkflowStatusOverview,
-    WorkflowCatalogFailure | SessionStoreFailure
-  >
+  Result<WorkflowStatusOverview, WorkflowCatalogFailure | SessionStoreFailure>
 > {
   const baseOptions = mergeOverviewBaseOptions(input, options);
-  const resolved = await resolveWorkflowSource(
-    input.workflowName,
-    baseOptions,
-  );
+  const resolved = await resolveWorkflowSource(input.workflowName, baseOptions);
   if (!resolved.ok) {
     return resolved;
   }
@@ -424,11 +411,7 @@ export async function buildWorkflowStatusOverview(
     input.limit === undefined
       ? sorted
       : sorted.slice(0, Math.max(0, input.limit));
-  const baseRow = buildOverviewRow(
-    source,
-    meta.value.description,
-    sorted,
-  );
+  const baseRow = buildOverviewRow(source, meta.value.description, sorted);
   return ok({
     ...baseRow,
     recentExecutions,
@@ -476,7 +459,7 @@ export function selectDefaultWorkflowOverviewRow(
   if (rows.length === 0) {
     return null;
   }
-  let pool =
+  const pool =
     options?.fixedWorkflowName === undefined
       ? rows
       : rows.filter((r) => {

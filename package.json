@@ -27,7 +27,8 @@
     "test:all": "bun run test",
     "test:watch": "bash ./scripts/run-bun-tests.sh --watch",
     "typecheck": "bun run typecheck:server",
-    "lint": "bun run typecheck",
+    "lint:biome": "biome check . --diagnostic-level=warn",
+    "lint": "biome check . --diagnostic-level=warn && bun run typecheck",
     "format": "prettier --ignore-unknown --write \"src/**/*.{ts,tsx}\" \"scripts/**/*\" \"*.{md,json}\"",
     "format:check": "prettier --ignore-unknown --check \"src/**/*.{ts,tsx}\" \"scripts/**/*\" \"*.{md,json}\"",
     "clean": "rm -rf dist"

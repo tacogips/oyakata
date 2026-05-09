@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 vars:
   PROJECT_NAME: divedra
@@ -70,8 +70,9 @@ tasks:
       - bun run format:check
 
   lint:
-    desc: Run all lints (format check + typecheck)
+    desc: Run all lints (Biome + format check + typecheck)
     cmds:
+      - biome check . --diagnostic-level=warn
       - task: fmt-check
       - task: typecheck
 
@@ -83,6 +84,7 @@ tasks:
   ci:
     desc: Run all CI checks
     cmds:
+      - biome check . --diagnostic-level=warn
       - task: fmt-check
       - task: typecheck
       - task: test
@@ -91,7 +93,7 @@ tasks:
     desc: Build the default flake package and open a shell with its bin dir prepended to PATH (pass a command after `--` to run it instead)
     interactive: true
     env:
-      TASK_NIX_BIN_ARGS: '{{.CLI_ARGS}}'
+      TASK_NIX_BIN_ARGS: "{{.CLI_ARGS}}"
     cmds:
       - |
         set -euo pipefail
