@@ -12,11 +12,13 @@ import {
 } from "./anthropic-sdk";
 import { ClaudeCodeAgentAdapter, type ClaudeAdapterConfig } from "./claude";
 import { CodexAgentAdapter, type CodexAdapterConfig } from "./codex";
+import { CursorCliAgentAdapter, type CursorAdapterConfig } from "./cursor";
 import { OpenAiSdkAdapter, type OpenAiSdkAdapterConfig } from "./openai-sdk";
 
 export interface DispatchingNodeAdapterConfig {
   readonly codexAgent?: CodexAdapterConfig;
   readonly claudeCodeAgent?: ClaudeAdapterConfig;
+  readonly cursorCliAgent?: CursorAdapterConfig;
   readonly openAiSdk?: OpenAiSdkAdapterConfig;
   readonly anthropicSdk?: AnthropicSdkAdapterConfig;
 }
@@ -36,12 +38,14 @@ export function resolveNodeExecutionBackend(
 export class DispatchingNodeAdapter implements NodeAdapter {
   readonly #codexAgent: NodeAdapter;
   readonly #claudeCodeAgent: NodeAdapter;
+  readonly #cursorCliAgent: NodeAdapter;
   readonly #openAiSdk: NodeAdapter;
   readonly #anthropicSdk: NodeAdapter;
 
   constructor(config: DispatchingNodeAdapterConfig = {}) {
     this.#codexAgent = new CodexAgentAdapter(config.codexAgent);
     this.#claudeCodeAgent = new ClaudeCodeAgentAdapter(config.claudeCodeAgent);
+    this.#cursorCliAgent = new CursorCliAgentAdapter(config.cursorCliAgent);
     this.#openAiSdk = new OpenAiSdkAdapter(config.openAiSdk);
     this.#anthropicSdk = new AnthropicSdkAdapter(config.anthropicSdk);
   }
@@ -55,6 +59,8 @@ export class DispatchingNodeAdapter implements NodeAdapter {
         return this.#codexAgent.execute(input, context);
       case "claude-code-agent":
         return this.#claudeCodeAgent.execute(input, context);
+      case "cursor-cli-agent":
+        return this.#cursorCliAgent.execute(input, context);
       case "official/openai-sdk":
         return this.#openAiSdk.execute(input, context);
       case "official/anthropic-sdk":

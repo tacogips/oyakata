@@ -2858,7 +2858,7 @@ function normalizeNodePayload(input: {
         makeIssue(
           "error",
           `${path}.executionBackend`,
-          "must be codex-agent, claude-code-agent, official/openai-sdk, or official/anthropic-sdk",
+          "must be codex-agent, claude-code-agent, cursor-cli-agent, official/openai-sdk, or official/anthropic-sdk",
         ),
       );
     }

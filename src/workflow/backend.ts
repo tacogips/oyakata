@@ -3,6 +3,7 @@ import type { CliAgentBackend, NodeExecutionBackend } from "./types";
 const CLI_AGENT_BACKENDS = {
   "codex-agent": "codex-agent",
   "claude-code-agent": "claude-code-agent",
+  "cursor-cli-agent": "cursor-cli-agent",
 } as const satisfies Record<CliAgentBackend, CliAgentBackend>;
 
 const NATIVE_NODE_EXECUTION_BACKENDS = new Set<NodeExecutionBackend>([

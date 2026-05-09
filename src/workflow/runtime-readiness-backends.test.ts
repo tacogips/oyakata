@@ -138,6 +138,82 @@ afterEach(async () => {
 });
 
 describe("inspectWorkflowRuntimeReadiness", () => {
+  test("marks cursor-cli-agent backend available when cursor-cli-agent wrapper reports cursor-agent available", async () => {
+    const root = await makeTempDir();
+    const cursorCliAgentBin = path.join(
+      root,
+      "node_modules",
+      ".bin",
+      "cursor-cli-agent",
+    );
+    await writeExecutable(
+      cursorCliAgentBin,
+      '#!/usr/bin/env bash\ncat <<\'EOF\'\n{"agent":"1.0.0","tools":{"cursor-agent":{"version":"0.45.0","error":null}}}\nEOF',
+    );
+
+    const readiness = await inspectWorkflowRuntimeReadiness(
+      makeBundle({
+        worker: {
+          id: "worker",
+          executionBackend: "cursor-cli-agent",
+          model: "claude-sonnet-4-5",
+          promptTemplate: "worker",
+          variables: {},
+        },
+      }),
+      { cwd: root },
+    );
+
+    const requirement = findRequirement(
+      readiness.requirements,
+      "agent-backend:cursor-cli-agent",
+    );
+    expect(requirement).toMatchObject({
+      kind: "agent-backend",
+      status: "available",
+      sourceStepIds: expect.arrayContaining(["worker"]),
+    });
+    expect(requirement.detail).toContain("cursor-agent");
+    expect(requirement.detail).toContain("0.45.0");
+  });
+
+  test("marks cursor-cli-agent backend unavailable when cursor-agent tool reports error", async () => {
+    const root = await makeTempDir();
+    const cursorCliAgentBin = path.join(
+      root,
+      "node_modules",
+      ".bin",
+      "cursor-cli-agent",
+    );
+    await writeExecutable(
+      cursorCliAgentBin,
+      '#!/usr/bin/env bash\ncat <<\'EOF\'\n{"agent":"1.0.0","tools":{"cursor-agent":{"version":null,"error":"cursor binary not found"}}}\nEOF',
+    );
+
+    const readiness = await inspectWorkflowRuntimeReadiness(
+      makeBundle({
+        worker: {
+          id: "worker",
+          executionBackend: "cursor-cli-agent",
+          model: "claude-sonnet-4-5",
+          promptTemplate: "worker",
+          variables: {},
+        },
+      }),
+      { cwd: root },
+    );
+
+    const requirement = findRequirement(
+      readiness.requirements,
+      "agent-backend:cursor-cli-agent",
+    );
+    expect(requirement).toMatchObject({
+      kind: "agent-backend",
+      status: "unavailable",
+    });
+    expect(requirement.detail).toContain("cursor-agent");
+  });
+
   test("marks codex-agent and claude-code-agent backends available when local tools are runnable", async () => {
     const root = await makeTempDir();
     const binDir = path.join(root, "bin");

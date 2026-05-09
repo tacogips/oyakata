@@ -145,6 +145,81 @@ export async function probeCodexBackend(
   };
 }
 
+export async function probeCursorBackend(
+  candidate: AgentBackendRequirementCandidate,
+  options: Pick<LoadOptions, "cwd" | "env">,
+): Promise<WorkflowRuntimeRequirement> {
+  const commandCandidates = toSortedArray([
+    path.join(
+      resolveProbeCwd(options.cwd),
+      "node_modules",
+      ".bin",
+      "cursor-cli-agent",
+    ),
+    path.join(process.cwd(), "node_modules", ".bin", "cursor-cli-agent"),
+    "cursor-cli-agent",
+  ]);
+
+  let commandSummary = "cursor-cli-agent version probe unavailable";
+  let cursorAvailable = false;
+  for (const command of commandCandidates) {
+    const result = await runCommand(
+      command,
+      ["tool", "versions", "--json"],
+      options,
+    );
+    if (!result.ok) {
+      if (
+        result.message !== undefined &&
+        /no such file or directory|enoent/i.test(result.message)
+      ) {
+        continue;
+      }
+      commandSummary =
+        result.message ?? "cursor-cli-agent version probe failed";
+      break;
+    }
+    try {
+      const parsed = JSON.parse(result.stdout) as {
+        readonly agent?: string;
+        readonly tools?: Readonly<
+          Record<string, { version: string | null; error: string | null }>
+        >;
+      };
+      const cursorAgentTool = parsed.tools?.["cursor-agent"];
+      cursorAvailable =
+        cursorAgentTool?.version !== null &&
+        cursorAgentTool?.version !== undefined;
+      const toolSummary = Object.entries(parsed.tools ?? {})
+        .map(([name, value]) =>
+          value.version === null
+            ? `${name}=${value.error ?? "unavailable"}`
+            : `${name}=${value.version}`,
+        )
+        .join(", ");
+      commandSummary =
+        `agent=${parsed.agent ?? "unknown"}` +
+        (toolSummary.length === 0 ? "" : `, ${toolSummary}`);
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "unknown JSON parse error";
+      commandSummary = `cursor-cli-agent version output was invalid JSON: ${message}`;
+    }
+    break;
+  }
+
+  return {
+    id: `agent-backend:${candidate.backend}`,
+    kind: "agent-backend",
+    label: `${candidate.backend} backend`,
+    status: cursorAvailable ? "available" : "unavailable",
+    detail:
+      `local SDK execution; models=${toSortedArray(candidate.models).join(", ")}; ` +
+      `local tools: ${commandSummary}`,
+    sourceStepIds: candidate.sourceStepIds,
+  };
+}
+
 export async function probeClaudeBackend(
   candidate: AgentBackendRequirementCandidate,
   options: Pick<LoadOptions, "cwd" | "env">,

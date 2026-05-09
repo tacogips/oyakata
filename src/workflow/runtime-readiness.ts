@@ -20,6 +20,7 @@ import {
 import {
   probeClaudeBackend,
   probeCodexBackend,
+  probeCursorBackend,
   runCommand,
   type AgentBackendRequirementCandidate,
 } from "./runtime-readiness-agent-probes";
@@ -505,6 +506,9 @@ export async function inspectWorkflowRuntimeReadiness(
         break;
       case "claude-code-agent":
         requirements.push(await probeClaudeBackend(candidate, options));
+        break;
+      case "cursor-cli-agent":
+        requirements.push(await probeCursorBackend(candidate, options));
         break;
       case "official/openai-sdk":
         requirements.push(

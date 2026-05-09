@@ -1,4 +1,7 @@
-export type CliAgentBackend = "codex-agent" | "claude-code-agent";
+export type CliAgentBackend =
+  | "codex-agent"
+  | "claude-code-agent"
+  | "cursor-cli-agent";
 
 export type NodeExecutionBackend =
   | CliAgentBackend

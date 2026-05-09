@@ -58,6 +58,54 @@ function makeCodexRunner() {
   };
 }
 
+function makeCursorRunnerSession() {
+  return {
+    sessionId: "cursor-session-1",
+    messages: async function* (): AsyncGenerator<unknown, void, undefined> {
+      yield {
+        type: "session.started",
+        sessionId: "cursor-session-1",
+        cwd: "/tmp/project",
+      };
+      yield {
+        type: "session.assistant_message",
+        sessionId: "cursor-session-1",
+        message: {
+          role: "assistant",
+          rawText: '{"ok":true}',
+          displayText: '{"ok":true}',
+        },
+      };
+    },
+    waitForCompletion: vi.fn(async () => ({
+      sessionId: "cursor-session-1",
+      exitCode: 0,
+      signal: null as null,
+      stdout: "",
+      stderr: "",
+      events: [] as readonly unknown[],
+    })),
+    cancel: vi.fn(async () => {
+      return;
+    }),
+    interrupt: vi.fn(async () => {
+      return;
+    }),
+  };
+}
+
+function makeCursorRunner() {
+  const session = makeCursorRunnerSession();
+  return {
+    createRunner: vi.fn(() => ({
+      start: vi.fn(() => session),
+      resume: vi.fn(() => {
+        throw new Error("resume should not be called in this test");
+      }),
+    })),
+  };
+}
+
 function makeClaudeRunner() {
   return {
     createRunner: vi.fn(() => ({
@@ -176,6 +224,39 @@ describe("DispatchingNodeAdapter", () => {
 
     const output = await adapter.execute(input, baseContext);
     expect(output.provider).toBe("codex-agent");
+    expect(output.payload).toEqual({ text: '{"ok":true}' });
+    expect(fixture.createRunner).toHaveBeenCalledTimes(1);
+  });
+
+  test("routes to cursor-cli-agent backend when explicitly selected", async () => {
+    const fixture = makeCursorRunner();
+    const adapter = new DispatchingNodeAdapter({
+      cursorCliAgent: { createRunner: fixture.createRunner },
+    });
+    const input: AdapterExecutionInput = {
+      workflowId: "wf",
+      workflowExecutionId: "sess-1",
+      nodeId: "node-1",
+      nodeExecId: "exec-1",
+      node: {
+        id: "node-1",
+        executionBackend: "cursor-cli-agent",
+        model: "claude-sonnet-4-5",
+        promptTemplate: "test",
+        variables: {},
+      },
+      workingDirectory: "/tmp/project",
+      mergedVariables: {},
+      promptText: "hello",
+      arguments: null,
+      executionIndex: 1,
+      artifactDir: "/tmp/node-1/exec-1",
+      upstreamCommunicationIds: [],
+    };
+
+    const output = await adapter.execute(input, baseContext);
+    expect(output.provider).toBe("cursor-cli-agent");
+    expect(output.model).toBe("claude-sonnet-4-5");
     expect(output.payload).toEqual({ text: '{"ok":true}' });
     expect(fixture.createRunner).toHaveBeenCalledTimes(1);
   });
