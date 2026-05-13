@@ -134,6 +134,7 @@ export interface CliDependencies {
   readonly waitForEventListenerShutdown?: (
     started: EventListenerHandle,
   ) => Promise<void>;
+  readonly buildInspectionSummary?: typeof buildInspectionSummary;
   readonly fetchImpl?: typeof fetch;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly readStdin?: () => Promise<string>;
@@ -3853,25 +3854,27 @@ export async function runCli(
           : 1;
       }
 
-      const loadedWorkflowOptions = optionsForLoadedWorkflow(
-        loaded.value,
-        sharedOptions,
-      );
-      const summary = await buildInspectionSummary(
-        loaded.value,
-        loadedWorkflowOptions,
-      );
-      if (parsed.options.output === "json") {
-        emitJson(io, {
-          ...summary,
-          source: workflowSourceJson(loaded.value.source),
-        });
-      } else if (parsed.options.structure) {
+      if (parsed.options.structure && parsed.options.output !== "json") {
         for (const line of renderWorkflowStructureLines(
           deriveWorkflowStructureRows(loaded.value.bundle.workflow),
         )) {
           io.stdout(line);
         }
+        return 0;
+      }
+
+      const loadedWorkflowOptions = optionsForLoadedWorkflow(
+        loaded.value,
+        sharedOptions,
+      );
+      const summaryBuilder =
+        deps.buildInspectionSummary ?? buildInspectionSummary;
+      const summary = await summaryBuilder(loaded.value, loadedWorkflowOptions);
+      if (parsed.options.output === "json") {
+        emitJson(io, {
+          ...summary,
+          source: workflowSourceJson(loaded.value.source),
+        });
       } else {
         io.stdout(`workflow: ${summary.workflowName}`);
         const sourceLine = formatWorkflowSource(loaded.value.source);

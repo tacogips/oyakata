@@ -1383,10 +1383,18 @@ describe("runCli", () => {
     });
   });
 
-  test("workflow inspect --structure prints compact id and description rows", async () => {
+  test("workflow inspect --structure prints compact rows without inspection summary", async () => {
     await withLegacyWorkflowAuthorshipForCli(async () => {
       const root = await makeTempDir();
       await createManagerlessWorkflowFixture(root, "worker-only");
+      const buildInspectionSummary: NonNullable<
+        CliDependencies["buildInspectionSummary"]
+      > = async () => {
+        throw new Error(
+          "compact structure text must not build inspection summary",
+        );
+      };
+      const buildInspectionSummarySpy = vi.fn(buildInspectionSummary);
 
       const capture = createIoCapture();
       const code = await runCli(
@@ -1399,9 +1407,11 @@ describe("runCli", () => {
           "--structure",
         ],
         capture.io,
+        createCliDeps({ buildInspectionSummary: buildInspectionSummarySpy }),
       );
 
       expect(code).toBe(0);
+      expect(buildInspectionSummarySpy).not.toHaveBeenCalled();
       expect(capture.stdout).toEqual([
         "step-1 Accept the initial worker-only input and produce the first result.",
         "step-2 Finalize the worker-only workflow output.",

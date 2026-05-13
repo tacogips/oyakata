@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-07T00:00:00Z",
+  "lastUpdated": "2026-05-13T05:09:00Z",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -479,6 +479,9 @@
       "status": "COMPLETED"
     },
     "160": {
+      "status": "COMPLETED"
+    },
+    "161": {
       "status": "COMPLETED"
     }
   },
@@ -4286,6 +4289,39 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": ["TASK-002", "TASK-003", "TASK-004"]
+        }
+      }
+    },
+    "workflow-inspect-structure-compact-routing": {
+      "phase": 161,
+      "status": "Completed",
+      "path": "impl-plans/completed/workflow-inspect-structure-compact-routing.md",
+      "designReference": "design-docs/specs/command.md:36-37",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["design-docs/specs/command.md:36-37"]
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"]
         }
       }
     }
