@@ -24,14 +24,15 @@ impl-plans/
 
 ## Active Plans
 
-| Plan                                     | Created    | Design Reference                                      |
-| ---------------------------------------- | ---------- | ----------------------------------------------------- |
-| `workflow-runner-module-split`           | 2026-05-13 | `architecture#workflow-runner-module-split`           |
+| Plan | Created | Design Reference |
+| ---- | ------- | ---------------- |
 
 ## Recently Completed
 
 | Plan                                               | Completed  | Design Reference                                                                                                                                                                            |
 | -------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow-runner-module-split`                     | 2026-05-13 | `architecture#workflow-runner-module-split`                                                                                                                                                 |
+| `typescript-source-module-size-boundary`           | 2026-05-13 | `architecture#typescript-source-module-size-boundary`                                                                                                                                       |
 | `matrix-recent-change-blocking-fixes`              | 2026-05-13 | `design-event-listener-workflow-trigger#checked-in-matrix-sample-and-local-synapse-verification`                                                                                            |
 | `matrix-send-receive-synapse-sample`               | 2026-05-13 | `design-event-listener-workflow-trigger#checked-in-matrix-sample-and-local-synapse-verification`, `design-output-destinations-and-supervisor-memory#matrix-local-sample-reply-verification` |
 | `matrix-event-source`                              | 2026-05-13 | `design-event-listener-workflow-trigger#matrix`                                                                                                                                             |

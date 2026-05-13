@@ -912,6 +912,7 @@ export async function runWorkflowQueue(input) {
         stuckRestartBackoffMs,
         agentNodePayload,
         processLogs,
+        llmMessages,
       });
       if (finalization.kind === "restart") {
         session = finalization.session;

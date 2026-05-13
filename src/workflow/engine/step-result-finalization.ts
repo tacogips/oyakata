@@ -88,6 +88,7 @@ export async function finalizeExecutedNode(input) {
     stuckRestartBackoffMs,
     agentNodePayload,
     processLogs,
+    llmMessages,
   } = input;
   const endedAt = nowIso();
   try {

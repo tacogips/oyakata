@@ -1,6 +1,6 @@
 # Workflow Runner Module Split Implementation Plan
 
-**Status**: In Progress
+**Status**: Completed
 **Design Reference**: `design-docs/specs/architecture.md#workflow-runner-module-split`
 **Created**: 2026-05-13
 **Last Updated**: 2026-05-13
@@ -45,7 +45,7 @@ reference behavior was available for comparison.
 
 #### `src/workflow/engine/workflow-runner-lifecycle.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 export async function runWorkflowInternal(
@@ -59,16 +59,16 @@ export async function runWorkflowInternal(
 
 **Checklist**:
 
-- [ ] Keep only queue-loop sequencing and phase orchestration in this file.
-- [ ] Delegate setup, session entry, step input, node execution, and
+- [x] Keep only queue-loop sequencing and phase orchestration in this file.
+- [x] Delegate setup, session entry, step input, node execution, and
       finalization to typed helpers.
-- [ ] Keep the file below 1000 lines.
+- [x] Keep the file below 1000 lines.
 
 ### 2. Shared Runner Context
 
-#### `src/workflow/engine/workflow-runner-context.ts`
+#### `src/workflow/engine/workflow-runner-deps.ts`
 
-**Status**: IN_PROGRESS
+**Status**: COMPLETED
 
 ```typescript
 interface WorkflowRunnerBaseContext {
@@ -88,16 +88,16 @@ interface WorkflowRunnerLoadedContext extends WorkflowRunnerBaseContext {
 
 **Checklist**:
 
-- [ ] Define only the context records needed by at least two extracted modules.
-- [ ] Keep mutable state explicit on context objects.
-- [ ] Avoid circular imports by keeping runtime helper functions in their
+- [x] Define only the context records needed by at least two extracted modules.
+- [x] Keep mutable state explicit on context objects.
+- [x] Avoid circular imports by keeping runtime helper functions in their
       responsibility modules.
 
 ### 3. Run Setup
 
 #### `src/workflow/engine/run-setup.ts`
 
-**Status**: IN_PROGRESS
+**Status**: COMPLETED
 
 ```typescript
 interface PrepareWorkflowRunInput {
@@ -115,19 +115,19 @@ async function prepareWorkflowRun(
 
 **Checklist**:
 
-- [ ] Move working-directory resolution and mutually exclusive entry-mode
+- [x] Move working-directory resolution and mutually exclusive entry-mode
       validation.
-- [ ] Move source-session preload for resume, rerun, and continuation.
-- [ ] Move workflow loading, auto-improve execution-copy reload, runtime
+- [x] Move source-session preload for resume, rerun, and continuation.
+- [x] Move workflow loading, auto-improve execution-copy reload, runtime
       readiness checks, adapter selection, cancellation probe setup, manager
       session store creation, and static workflow maps.
-- [ ] Keep this file below 1000 lines.
+- [x] Keep this file below 1000 lines.
 
 ### 4. Session Entry
 
 #### `src/workflow/engine/session-entry.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 interface EnterWorkflowSessionInput {
@@ -141,17 +141,17 @@ async function enterWorkflowSession(
 
 **Checklist**:
 
-- [ ] Move fresh-run, resume, rerun, and history-linked continuation setup.
-- [ ] Move auto-improve supervision state attachment and bootstrap human input
+- [x] Move fresh-run, resume, rerun, and history-linked continuation setup.
+- [x] Move auto-improve supervision state attachment and bootstrap human input
       communication.
-- [ ] Move nested superviser handoff and early paused/completed returns.
-- [ ] Keep this file below 1000 lines.
+- [x] Move nested superviser handoff and early paused/completed returns.
+- [x] Keep this file below 1000 lines.
 
 ### 5. Step Input
 
 #### `src/workflow/engine/step-input.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 interface PrepareStepInput {
@@ -167,18 +167,18 @@ async function prepareStepExecution(
 
 **Checklist**:
 
-- [ ] Move missing-step failure handling and optional-step decision gating.
-- [ ] Move scenario/dry-run payload resolution, execution id allocation, and
+- [x] Move missing-step failure handling and optional-step decision gating.
+- [x] Move scenario/dry-run payload resolution, execution id allocation, and
       artifact directory setup.
-- [ ] Move workflow-run event emission, upstream/latest-output mailbox input
+- [x] Move workflow-run event emission, upstream/latest-output mailbox input
       resolution, prompt/input assembly, and candidate path preparation.
-- [ ] Keep this file below 1000 lines.
+- [x] Keep this file below 1000 lines.
 
 ### 6. Node Execution
 
 #### `src/workflow/engine/node-execution.ts`
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 
 ```typescript
 interface ExecutePreparedStepInput {
@@ -193,18 +193,18 @@ async function executePreparedStep(
 
 **Checklist**:
 
-- [ ] Move user-action pause handling and optional skip execution.
-- [ ] Move agent/native execution, manager control-plane environment setup,
+- [x] Move user-action pause handling and optional skip execution.
+- [x] Move agent/native execution, manager control-plane environment setup,
       timeout and stall policy, output-contract candidate attempts, schema
       validation, process/LLM log capture, backend session persistence, and
       execution-log normalization.
-- [ ] Keep this file below 1000 lines.
+- [x] Keep this file below 1000 lines.
 
 ### 7. Result Finalization
 
 #### `src/workflow/engine/result-finalization.ts`
 
-**Status**: PARTIAL
+**Status**: COMPLETED
 
 ```typescript
 interface FinalizeStepResultInput {
@@ -219,27 +219,27 @@ async function finalizeStepResult(
 
 **Checklist**:
 
-- [ ] Keep existing `finalizeCompletedWorkflowRun()` behavior intact.
-- [ ] Move input/output/meta/handoff artifact writing and runtime DB
+- [x] Keep existing `finalizeCompletedWorkflowRun()` behavior intact.
+- [x] Move input/output/meta/handoff artifact writing and runtime DB
       persistence.
-- [ ] Move manager session finalization, optional manager decisions,
+- [x] Move manager session finalization, optional manager decisions,
       completion-rule evaluation, communication consumption, edge/loop
       transition selection, local fanout dispatch, cross-workflow dispatch,
       retry queue updates, workflow output runtime-variable updates, terminal
       failure mapping, and final external output publication.
-- [ ] Keep this file below 1000 lines.
+- [x] Keep this file below 1000 lines.
 
 ## Module Status
 
 | Module | File Path | Status | Tests |
 | --- | --- | --- | --- |
-| Orchestration shell | `src/workflow/engine/workflow-runner-lifecycle.ts` | NOT_STARTED | Targeted workflow engine tests |
-| Shared context | `src/workflow/engine/workflow-runner-context.ts` | IN_PROGRESS | Typecheck and targeted workflow engine tests |
-| Run setup | `src/workflow/engine/run-setup.ts` | IN_PROGRESS | Targeted workflow engine tests |
-| Session entry | `src/workflow/engine/session-entry.ts` | NOT_STARTED | Resume/rerun/continuation tests |
-| Step input | `src/workflow/engine/step-input.ts` | NOT_STARTED | Call-step and mailbox-adjacent tests |
-| Node execution | `src/workflow/engine/node-execution.ts` | NOT_STARTED | Call-step implementation and manager-control tests |
-| Result finalization | `src/workflow/engine/result-finalization.ts` | PARTIAL | Workflow completion, fanout, and supervisor tests |
+| Orchestration shell | `src/workflow/engine/workflow-runner-lifecycle.ts` | COMPLETED | Targeted workflow engine tests |
+| Shared dependencies | `src/workflow/engine/workflow-runner-deps.ts` | COMPLETED | Typecheck and targeted workflow engine tests |
+| Run setup | `src/workflow/engine/run-setup.ts` | COMPLETED | Targeted workflow engine tests |
+| Session entry | `src/workflow/engine/session-entry.ts` | COMPLETED | Resume/rerun/continuation tests |
+| Step input | `src/workflow/engine/step-input.ts` | COMPLETED | Call-step and mailbox-adjacent tests |
+| Node execution | `src/workflow/engine/node-execution.ts` | COMPLETED | Call-step implementation and manager-control tests |
+| Result finalization | `src/workflow/engine/result-finalization.ts` | COMPLETED | Workflow completion, fanout, and supervisor tests |
 
 ## Task Breakdown
 
@@ -260,25 +260,25 @@ async function finalizeStepResult(
 
 ### TASK-002: Extract Run Setup
 
-**Status**: IN_PROGRESS
+**Status**: COMPLETED
 **Parallelizable**: No
 **Depends On**: TASK-001
 **Deliverables**:
 
-- `src/workflow/engine/workflow-runner-context.ts`
+- `src/workflow/engine/workflow-runner-deps.ts`
 - `src/workflow/engine/run-setup.ts`
 - smaller `src/workflow/engine/workflow-runner-lifecycle.ts`
 
 **Completion Criteria**:
 
-- [ ] Setup helper returns typed success/failure instead of throwing for normal
+- [x] Setup helper returns typed success/failure instead of throwing for normal
       run setup failures.
-- [ ] `runWorkflowInternal()` delegates setup without changing error messages.
-- [ ] No touched source file exceeds 1000 lines.
+- [x] `runWorkflowInternal()` delegates setup without changing error messages.
+- [x] No touched source file exceeds 1000 lines.
 
 ### TASK-003: Extract Session Entry
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 **Parallelizable**: No
 **Depends On**: TASK-002
 **Deliverables**:
@@ -288,15 +288,15 @@ async function finalizeStepResult(
 
 **Completion Criteria**:
 
-- [ ] Fresh, resume, rerun, and continuation entry paths preserve session
+- [x] Fresh, resume, rerun, and continuation entry paths preserve session
       status and queue behavior.
-- [ ] Auto-improve and nested superviser entry handling remain behaviorally
+- [x] Auto-improve and nested superviser entry handling remain behaviorally
       identical.
-- [ ] No touched source file exceeds 1000 lines.
+- [x] No touched source file exceeds 1000 lines.
 
 ### TASK-004: Extract Step Input
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 **Parallelizable**: No
 **Depends On**: TASK-003
 **Deliverables**:
@@ -306,15 +306,15 @@ async function finalizeStepResult(
 
 **Completion Criteria**:
 
-- [ ] Prepared step records contain all fields needed for execution and
+- [x] Prepared step records contain all fields needed for execution and
       finalization.
-- [ ] Mailbox input, prompt assembly, candidate path, and scenario/dry-run
+- [x] Mailbox input, prompt assembly, candidate path, and scenario/dry-run
       semantics match the pre-split behavior.
-- [ ] No touched source file exceeds 1000 lines.
+- [x] No touched source file exceeds 1000 lines.
 
 ### TASK-005: Extract Node Execution
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 **Parallelizable**: No
 **Depends On**: TASK-004
 **Deliverables**:
@@ -324,14 +324,14 @@ async function finalizeStepResult(
 
 **Completion Criteria**:
 
-- [ ] Agent and native node execution paths preserve timeout, stall, log,
+- [x] Agent and native node execution paths preserve timeout, stall, log,
       candidate-output, and backend-session behavior.
-- [ ] Optional skip and user-action pause behavior remain unchanged.
-- [ ] No touched source file exceeds 1000 lines.
+- [x] Optional skip and user-action pause behavior remain unchanged.
+- [x] No touched source file exceeds 1000 lines.
 
 ### TASK-006: Extract Result Finalization And Transitions
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 **Parallelizable**: No
 **Depends On**: TASK-005
 **Deliverables**:
@@ -341,15 +341,15 @@ async function finalizeStepResult(
 
 **Completion Criteria**:
 
-- [ ] Artifact writes, runtime DB persistence, manager decisions,
+- [x] Artifact writes, runtime DB persistence, manager decisions,
       communication consumption, completion evaluation, edge/loop transition,
       fanout, cross-workflow dispatch, retry, runtime-variable, terminal
       failure, and external-output publication paths preserve behavior.
-- [ ] No touched source file exceeds 1000 lines.
+- [x] No touched source file exceeds 1000 lines.
 
 ### TASK-007: Import Surface And Verification Closure
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 **Parallelizable**: No
 **Depends On**: TASK-006
 **Deliverables**:
@@ -364,12 +364,12 @@ async function finalizeStepResult(
 
 **Completion Criteria**:
 
-- [ ] `bun run format` passes.
-- [ ] `bun run typecheck` passes.
-- [ ] `bun run lint:biome` passes with no `noExcessiveLinesPerFile` errors.
-- [ ] Targeted workflow tests pass.
-- [ ] Line-count and rejected-pattern checks pass.
-- [ ] Documentation changes are either unnecessary because no public reference
+- [x] `bun run format` passes.
+- [x] `bun run typecheck` passes.
+- [x] `bun run lint:biome` passes with no `noExcessiveLinesPerFile` errors.
+- [x] Targeted workflow tests pass.
+- [x] Line-count and rejected-pattern checks pass.
+- [x] Documentation changes are either unnecessary because no public reference
       became stale, or are completed in the later user-facing documentation
       refresh step.
 
@@ -378,12 +378,12 @@ async function finalizeStepResult(
 | Task | Depends On | Status |
 | --- | --- | --- |
 | TASK-001 | None | COMPLETED |
-| TASK-002 | TASK-001 | IN_PROGRESS |
-| TASK-003 | TASK-002 | BLOCKED |
-| TASK-004 | TASK-003 | BLOCKED |
-| TASK-005 | TASK-004 | BLOCKED |
-| TASK-006 | TASK-005 | BLOCKED |
-| TASK-007 | TASK-006 | BLOCKED |
+| TASK-002 | TASK-001 | COMPLETED |
+| TASK-003 | TASK-002 | COMPLETED |
+| TASK-004 | TASK-003 | COMPLETED |
+| TASK-005 | TASK-004 | COMPLETED |
+| TASK-006 | TASK-005 | COMPLETED |
+| TASK-007 | TASK-006 | COMPLETED |
 
 No tasks are marked parallelizable. Although files have distinct target
 responsibilities, each extraction changes the same orchestration shell and
@@ -409,17 +409,17 @@ ordinal split filenames.
 
 ## Completion Criteria
 
-- [ ] `src/workflow/engine/workflow-runner-lifecycle.ts` is below 1000 lines.
-- [ ] Every non-test TypeScript source file under `src` is below 1000 lines.
-- [ ] Responsibility-named modules own setup, session entry, step input, node
+- [x] `src/workflow/engine/workflow-runner-lifecycle.ts` is below 1000 lines.
+- [x] Every non-test TypeScript source file under `src` is below 1000 lines.
+- [x] Responsibility-named modules own setup, session entry, step input, node
       execution, and result finalization behavior.
-- [ ] Public facade imports remain stable.
-- [ ] No Biome suppressions or lint-rule disabling are added.
-- [ ] No source-string, `eval`, `Function`, or `globalThis.Function` runner
+- [x] Public facade imports remain stable.
+- [x] No Biome suppressions or lint-rule disabling are added.
+- [x] No source-string, `eval`, `Function`, or `globalThis.Function` runner
       reconstruction exists.
-- [ ] README and exposed workflow skill references are checked for stale public
+- [x] README and exposed workflow skill references are checked for stale public
       paths or instructions after the split.
-- [ ] Required verification commands pass or any failure is documented with a
+- [x] Required verification commands pass or any failure is documented with a
       concrete blocker.
 
 ## Addressed Review Feedback
@@ -485,3 +485,10 @@ work in the next implementation step.
 **Notes**: Aligned this plan with `impl-plans/PROGRESS.json`: plan status is
 `In Progress`, TASK-001 is `COMPLETED`, TASK-002 is `IN_PROGRESS`, and later
 tasks remain blocked by the sequential lifecycle-shell extraction dependency.
+
+### Session: 2026-05-13 completion closure
+
+**Tasks Completed**: TASK-002, TASK-003, TASK-004, TASK-005, TASK-006, TASK-007.
+**Tasks In Progress**: None.
+**Blockers**: None.
+**Notes**: Completed the semantic split of `src/workflow/engine/workflow-runner-lifecycle.ts` into responsibility-named modules. Verification passed with `bun run format`, `bun run typecheck`, `bun run lint:biome`, `find src -name '*.ts' -not -name '*.test.ts' -print | xargs wc -l | sort -nr | sed -n '1,40p'`, the rejected-pattern scan, and the targeted workflow test command from this plan. A split regression where `llmMessages` was not passed into `finalizeExecutedNode()` caused runtime DB execution rows to be skipped; it was fixed and the previously failing `persists step-addressed execution metadata for shared-node workflow runs` test now passes in the full targeted suite.
