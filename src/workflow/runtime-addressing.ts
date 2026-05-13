@@ -1,7 +1,4 @@
-import {
-  type AgentNodePayload,
-  type WorkflowJson,
-} from "./types";
+import type { AgentNodePayload, WorkflowJson } from "./types";
 
 export interface StepIdentityFields {
   readonly stepId?: string;

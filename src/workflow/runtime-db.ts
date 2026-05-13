@@ -1382,9 +1382,10 @@ export async function saveNodeExecutionToRuntimeDb(
       now,
     );
 
+    const finishStepId = row.stepId;
     const finishLogTarget =
-      row.stepId != null && row.stepId !== "" ? "step" : "node";
-    const finishKey = finishLogTarget === "step" ? row.stepId! : row.nodeId;
+      finishStepId != null && finishStepId !== "" ? "step" : "node";
+    const finishKey = finishLogTarget === "step" ? finishStepId : row.nodeId;
     insertNodeLog(
       db,
       toNodeLogRow({

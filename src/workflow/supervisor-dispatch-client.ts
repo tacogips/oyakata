@@ -983,7 +983,7 @@ async function applyDispatchProposal(input: {
   const { repo, baseOptions, resolverOptions, profile } = input;
   let conversation = input.conversation;
   let managedRuns = [...input.managedRuns];
-  let proposal = input.proposal;
+  const proposal = input.proposal;
 
   const bumpConversation = async (
     patch: Partial<WorkflowSupervisorConversationRecord>,
@@ -1130,8 +1130,9 @@ async function applyDispatchProposal(input: {
           "switch-workflow without managedRunId is ambiguous when multiple active runs exist for the key",
         );
       }
-      if (activeForSwitch.length === 1) {
-        return await applySwitchSelection(activeForSwitch[0]!);
+      const activeSwitchRun = activeForSwitch[0];
+      if (activeSwitchRun !== undefined) {
+        return await applySwitchSelection(activeSwitchRun);
       }
 
       enforceConcurrencyForStart(def, managedRuns, target);

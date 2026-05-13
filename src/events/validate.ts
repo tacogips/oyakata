@@ -521,14 +521,12 @@ function validateSupervisedBinding(
           ) {
             continue;
           }
-          {
-            issues.push(
-              error(
-                `${pathPrefix}.control.intentMapping.commands.${actionName}`,
-                "command token must be a non-empty string or non-empty string array",
-              ),
-            );
-          }
+          issues.push(
+            error(
+              `${pathPrefix}.control.intentMapping.commands.${actionName}`,
+              "command token must be a non-empty string or non-empty string array",
+            ),
+          );
         }
       }
       const inputPath = intent["inputPath"];

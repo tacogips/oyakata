@@ -431,7 +431,12 @@ function assignStableExecutionOrdinals(
   );
   if (allDefined) {
     return [...executions].sort((left, right) => {
-      const ordinalDiff = left.executionOrdinal! - right.executionOrdinal!;
+      const leftOrdinal = left.executionOrdinal;
+      const rightOrdinal = right.executionOrdinal;
+      if (leftOrdinal === undefined || rightOrdinal === undefined) {
+        return left.nodeExecId.localeCompare(right.nodeExecId);
+      }
+      const ordinalDiff = leftOrdinal - rightOrdinal;
       if (ordinalDiff !== 0) {
         return ordinalDiff;
       }

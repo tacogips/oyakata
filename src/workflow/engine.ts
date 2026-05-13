@@ -4058,8 +4058,7 @@ async function runWorkflowInternal(
             ...loopRule,
             maxIterations: loopRule.maxIterations ?? maxLoopIterations,
           };
-          const iteration =
-            (session.loopIterationCounts ?? {})[loopRule.id] ?? 0;
+          const iteration = session.loopIterationCounts?.[loopRule.id] ?? 0;
           const transition = resolveLoopTransition({
             loopRule: effectiveLoopRule,
             output: outputPayload,
@@ -4550,10 +4549,11 @@ async function runWorkflowInternal(
             const contractCandidatePath = hasOutputContract
               ? candidatePath
               : undefined;
+            const outputCandidatePath = contractCandidatePath;
             if (
               hasOutputContract &&
               agentNodePayload !== null &&
-              contractCandidatePath === undefined
+              outputCandidatePath === undefined
             ) {
               throw new Error(
                 "candidate path must exist when node.output is configured",
@@ -4564,19 +4564,26 @@ async function runWorkflowInternal(
               agentNodePayload === null ||
               agentNodePayload.output === undefined
                 ? undefined
-                : {
-                    ...(agentNodePayload.output.description === undefined
-                      ? {}
-                      : { description: agentNodePayload.output.description }),
-                    ...(agentNodePayload.output.jsonSchema === undefined
-                      ? {}
-                      : { jsonSchema: agentNodePayload.output.jsonSchema }),
-                    maxValidationAttempts: maxOutputAttempts,
-                    attempt: outputAttempt,
-                    candidatePath: contractCandidatePath!,
-                    validationErrors: retryValidationFeedback,
-                    publication: buildOutputPublicationPolicy(),
-                  };
+                : (() => {
+                    if (outputCandidatePath === undefined) {
+                      throw new Error(
+                        "candidate path must exist when node.output is configured",
+                      );
+                    }
+                    return {
+                      ...(agentNodePayload.output.description === undefined
+                        ? {}
+                        : { description: agentNodePayload.output.description }),
+                      ...(agentNodePayload.output.jsonSchema === undefined
+                        ? {}
+                        : { jsonSchema: agentNodePayload.output.jsonSchema }),
+                      maxValidationAttempts: maxOutputAttempts,
+                      attempt: outputAttempt,
+                      candidatePath: outputCandidatePath,
+                      validationErrors: retryValidationFeedback,
+                      publication: buildOutputPublicationPolicy(),
+                    };
+                  })();
             const supervisionStall = buildSupervisionStallWatch(
               session,
               options,

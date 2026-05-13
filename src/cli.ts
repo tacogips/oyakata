@@ -894,7 +894,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
             parseError = parsedNumber.error;
             break;
           }
-          const parsed = parsedNumber.value!;
+          const parsed = parsedNumber.value;
+          if (parsed === undefined) {
+            parseError = `${token} requires a numeric value`;
+            break;
+          }
           if (!Number.isInteger(parsed) || parsed < 1) {
             parseError = `invalid --max-concurrency value '${parsed}'; expected a positive integer`;
             break;
@@ -3741,8 +3745,15 @@ export async function runCli(
       return 0;
     }
 
+    const workflowTarget = target;
+    if (workflowTarget === undefined) {
+      io.stderr("scope, command, and target are required");
+      printHelp(io);
+      return 2;
+    }
+
     if (command === "create") {
-      const created = await createWorkflowTemplate(target!, {
+      const created = await createWorkflowTemplate(workflowTarget, {
         ...sharedOptions,
         ...(parsed.options.workerOnly
           ? { templateMode: "worker-only" as const }
@@ -3767,7 +3778,10 @@ export async function runCli(
     }
 
     if (command === "validate") {
-      const loaded = await loadWorkflowFromCatalog(target!, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(
+        workflowTarget,
+        sharedOptions,
+      );
       if (!loaded.ok) {
         if (parsed.options.output === "json") {
           emitJson(io, loaded.error);
@@ -3816,7 +3830,10 @@ export async function runCli(
     }
 
     if (command === "inspect") {
-      const loaded = await loadWorkflowFromCatalog(target!, sharedOptions);
+      const loaded = await loadWorkflowFromCatalog(
+        workflowTarget,
+        sharedOptions,
+      );
       if (!loaded.ok) {
         io.stderr(`inspect failed: ${loaded.error.message}`);
         if (loaded.error.issues) {
@@ -3941,7 +3958,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowName: target!,
+                workflowName: workflowTarget,
                 runtimeVariables,
                 ...buildRemoteExecutionInput(parsed.options),
               },
@@ -4005,7 +4022,7 @@ export async function runCli(
       }
 
       const loadedWorkflow = await loadWorkflowFromCatalog(
-        target!,
+        workflowTarget,
         sharedOptions,
       );
       if (!loadedWorkflow.ok) {
@@ -4028,7 +4045,7 @@ export async function runCli(
         sharedOptions,
       );
 
-      const result = await runWorkflow(target!, {
+      const result = await runWorkflow(workflowTarget, {
         ...workflowRunOptions,
         runtimeVariables,
         ...mockScenarioOptions,
@@ -4086,11 +4103,18 @@ export async function runCli(
   }
 
   if (scope === "session") {
+    const sessionTarget = target;
+    if (sessionTarget === undefined) {
+      io.stderr("scope, command, and target are required");
+      printHelp(io);
+      return 2;
+    }
+
     const sessionOptions =
       await resolveSessionCommandStorageOptions(sharedOptions);
 
     if (command === "progress") {
-      const session = await loadSession(target!, sessionOptions);
+      const session = await loadSession(sessionTarget, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -4166,7 +4190,7 @@ export async function runCli(
 
       try {
         const report = await buildSessionHealthReport({
-          sessionId: target!,
+          sessionId: sessionTarget,
           options: sessionOptions,
           live: parsed.options.live,
           ...(parsed.options.stallTimeoutMs === undefined
@@ -4198,7 +4222,7 @@ export async function runCli(
     }
 
     if (command === "status") {
-      const session = await loadSession(target!, sessionOptions);
+      const session = await loadSession(sessionTarget, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -4251,7 +4275,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowExecutionId: target!,
+                workflowExecutionId: sessionTarget,
                 ...buildRemoteExecutionInput(parsed.options),
               },
             },
@@ -4291,7 +4315,7 @@ export async function runCli(
           return 1;
         }
       }
-      const session = await loadSession(target!, sessionOptions);
+      const session = await loadSession(sessionTarget, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
@@ -4396,7 +4420,7 @@ export async function runCli(
         const result = await continueWorkflowFromHistory({
           ...sessionOptions,
           ...budgetOverrides,
-          sourceWorkflowExecutionId: target!,
+          sourceWorkflowExecutionId: sessionTarget,
           afterStepRunId: afterRun,
           startStepId: startStep,
           ...mockScenarioOptions,
@@ -4404,7 +4428,7 @@ export async function runCli(
 
         if (parsed.options.output === "json") {
           emitJson(io, {
-            sourceWorkflowExecutionId: target!,
+            sourceWorkflowExecutionId: sessionTarget,
             sessionId: result.sessionId,
             status: result.status,
             continuedAfterStepRunId: result.continuedAfterStepRunId,
@@ -4412,7 +4436,7 @@ export async function runCli(
             exitCode: result.exitCode,
           });
         } else {
-          io.stdout(`sourceWorkflowExecutionId: ${target!}`);
+          io.stdout(`sourceWorkflowExecutionId: ${sessionTarget}`);
           io.stdout(`continued session: ${result.sessionId}`);
           io.stdout(
             `continuedAfterStepRunId: ${result.continuedAfterStepRunId}`,
@@ -4463,7 +4487,7 @@ export async function runCli(
             `,
             variables: {
               input: {
-                workflowExecutionId: target!,
+                workflowExecutionId: sessionTarget,
                 stepId: fromStepId,
                 ...buildRemoteExecutionInput(parsed.options),
               },
@@ -4488,14 +4512,14 @@ export async function runCli(
 
           if (parsed.options.output === "json") {
             emitJson(io, {
-              sourceSessionId: target!,
+              sourceSessionId: sessionTarget,
               sessionId,
               status,
               rerunFromStepId: fromStepId,
               exitCode,
             });
           } else {
-            io.stdout(`sourceSessionId: ${target!}`);
+            io.stdout(`sourceSessionId: ${sessionTarget}`);
             io.stdout(`rerun session: ${sessionId}`);
             io.stdout(`rerunFromStepId: ${fromStepId}`);
             io.stdout(`status: ${status}`);
@@ -4509,7 +4533,7 @@ export async function runCli(
         }
       }
 
-      const source = await loadSession(target!, sessionOptions);
+      const source = await loadSession(sessionTarget, sessionOptions);
       if (!source.ok) {
         io.stderr(source.error.message);
         return 1;
@@ -4584,7 +4608,7 @@ export async function runCli(
       try {
         const overview = await listMergedWorkflowExecutionStepRuns({
           ...sessionOptions,
-          workflowExecutionId: target!,
+          workflowExecutionId: sessionTarget,
           ...(filterStepId === undefined ? {} : { filterStepId }),
           ...(statusParsed.value === undefined
             ? {}
@@ -4626,7 +4650,10 @@ export async function runCli(
 
       let payload: WorkflowExecutionExport;
       try {
-        payload = await buildWorkflowExecutionExport(target!, sessionOptions);
+        payload = await buildWorkflowExecutionExport(
+          sessionTarget,
+          sessionOptions,
+        );
       } catch (error: unknown) {
         const message =
           error instanceof Error ? error.message : "unknown error";
@@ -4671,13 +4698,13 @@ export async function runCli(
         );
         return 2;
       }
-      const session = await loadSession(target!, sessionOptions);
+      const session = await loadSession(sessionTarget, sessionOptions);
       if (!session.ok) {
         io.stderr(session.error.message);
         return 1;
       }
 
-      const logs = await listRuntimeNodeLogs(target!, sessionOptions);
+      const logs = await listRuntimeNodeLogs(sessionTarget, sessionOptions);
       const formatBase = parsed.options.format ?? parsed.options.output;
       const format = formatBase === "table" ? "text" : formatBase;
       const serialized = serializeRuntimeNodeLogs(logs, format);
@@ -4691,7 +4718,7 @@ export async function runCli(
           if (parsed.options.output === "json") {
             emitJson(io, {
               filePath: savedPath,
-              sessionId: target!,
+              sessionId: sessionTarget,
               workflowId: session.value.workflowId,
               workflowName: session.value.workflowName,
               logCount: logs.length,

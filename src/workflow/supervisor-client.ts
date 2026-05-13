@@ -574,7 +574,7 @@ export function createWorkflowSupervisorClient(
           const raw = parsed.result;
           if (raw !== undefined && raw !== null && typeof raw === "object") {
             const r = raw as { readonly error?: unknown };
-            if (Object.prototype.hasOwnProperty.call(r, "error")) {
+            if (Object.hasOwn(r, "error")) {
               if (typeof r.error === "string") {
                 throw new Error(
                   r.error.length > 0

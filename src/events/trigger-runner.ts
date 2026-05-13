@@ -712,10 +712,9 @@ export function createWorkflowTriggerRunner(
             engine: workflowTriggerLocalEngineOverrides(options),
           };
           const view =
-            options.supervisorClient === undefined &&
-            options.endpoint === undefined
+            router === undefined
               ? await getLocalSupervisorRunnerPool().dispatch(dispatchInput)
-              : await router!.dispatch(dispatchInput);
+              : await router.dispatch(dispatchInput);
           receipt = await updateEventReceipt(
             {
               record: receipt,
