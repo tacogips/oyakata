@@ -21,6 +21,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
   let workingDirectory: string | undefined;
   let workerOnly = false;
   let output: "text" | "json" | "table" = "text";
+  let structure = false;
   let format: "text" | "json" | "jsonl" | undefined;
   let variablesPath: string | undefined;
   let dryRun = false;
@@ -189,6 +190,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       case "--worker-only":
         workerOnly = true;
+        break;
+      case "--structure":
+        structure = true;
         break;
       case "--variables": {
         const parsedString = parseRequiredStringOption(token, readNext());
@@ -694,6 +698,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(sessionStoreRoot === undefined ? {} : { sessionStoreRoot }),
       ...(workingDirectory === undefined ? {} : { workingDirectory }),
       workerOnly,
+      structure,
       ...(format === undefined ? {} : { format }),
       ...(variablesPath === undefined ? {} : { variablesPath }),
       ...(mockScenarioPath === undefined ? {} : { mockScenarioPath }),

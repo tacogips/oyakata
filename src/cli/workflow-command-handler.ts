@@ -1,7 +1,11 @@
 import { collectWorkflowAddonSourceSummaries } from "../workflow/addon-source-summary";
 import { createWorkflowTemplate } from "../workflow/create";
 import { runWorkflow } from "../workflow/engine";
-import { buildInspectionSummary } from "../workflow/inspect";
+import {
+  buildInspectionSummary,
+  deriveWorkflowStructureRows,
+  type WorkflowStructureRow,
+} from "../workflow/inspect";
 import { loadWorkflowFromCatalog } from "../workflow/load";
 import {
   buildWorkflowCatalogOverview,
@@ -52,6 +56,19 @@ import {
   workflowSourceJson,
   workflowStatusOverviewFromGraphqlJson,
 } from "./workflow-graphql-formatters";
+
+function renderWorkflowStructureLines(
+  rows: readonly WorkflowStructureRow[],
+  options: { readonly indentUnit: string } = { indentUnit: "  " },
+): string[] {
+  if (rows.length === 0) {
+    return ["(none)"];
+  }
+  return rows.flatMap((row) => [
+    `${options.indentUnit.repeat(row.indent)}${row.stepId}`,
+    `${options.indentUnit.repeat(row.indent + 1)}${row.description}`,
+  ]);
+}
 
 export async function runCliWorkflowScope(
   context: RunCliScopeContext,
@@ -427,14 +444,22 @@ export async function runCliWorkflowScope(
         : 1;
     }
 
+    if (parsed.options.structure && parsed.options.output !== "json") {
+      for (const line of renderWorkflowStructureLines(
+        deriveWorkflowStructureRows(loaded.value.bundle.workflow),
+      )) {
+        io.stdout(line);
+      }
+      return 0;
+    }
+
     const loadedWorkflowOptions = optionsForLoadedWorkflow(
       loaded.value,
       sharedOptions,
     );
-    const summary = await buildInspectionSummary(
-      loaded.value,
-      loadedWorkflowOptions,
-    );
+    const summaryBuilder =
+      deps.buildInspectionSummary ?? buildInspectionSummary;
+    const summary = await summaryBuilder(loaded.value, loadedWorkflowOptions);
     if (parsed.options.output === "json") {
       emitJson(io, {
         ...summary,

@@ -13,7 +13,10 @@ import {
   type AutoImprovePolicyInput,
 } from "../workflow/auto-improve-policy";
 import type { createCommunicationService } from "../workflow/communication-service";
-import { buildFanoutGroupSummaries } from "../workflow/inspect";
+import {
+  buildFanoutGroupSummaries,
+  type buildInspectionSummary,
+} from "../workflow/inspect";
 import { loadWorkflowFromCatalog } from "../workflow/load";
 import { computeProjectScopedRootDataDirForScopeRoot } from "../workflow/paths";
 import type {
@@ -68,6 +71,7 @@ export interface CliDependencies {
   readonly waitForEventListenerShutdown?: (
     started: EventListenerHandle,
   ) => Promise<void>;
+  readonly buildInspectionSummary?: typeof buildInspectionSummary;
   readonly fetchImpl?: typeof fetch;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly readStdin?: () => Promise<string>;
@@ -242,6 +246,7 @@ export interface ParsedOptions {
   readonly workingDirectory?: string;
   readonly workerOnly: boolean;
   readonly output: "text" | "json" | "table";
+  readonly structure: boolean;
   readonly format?: "text" | "json" | "jsonl";
   readonly variablesPath?: string;
   readonly mockScenarioPath?: string;

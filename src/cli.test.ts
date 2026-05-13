@@ -301,6 +301,56 @@ async function createManagerlessWorkflowFixture(
   });
 }
 
+async function createMissingDescriptionWorkflowFixture(
+  workflowRoot: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDirectory = path.join(workflowRoot, workflowName);
+  await mkdir(workflowDirectory, { recursive: true });
+
+  await writeJson(path.join(workflowDirectory, "workflow.json"), {
+    workflowId: workflowName,
+    description: "missing description cli fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "step-1",
+    nodes: [
+      {
+        id: "worker-1",
+        nodeFile: "node-worker-1.json",
+      },
+      {
+        id: "worker-2",
+        nodeFile: "node-worker-2.json",
+      },
+    ],
+    steps: [
+      {
+        id: "step-1",
+        nodeId: "worker-1",
+        transitions: [{ toStepId: "step-2" }],
+      },
+      {
+        id: "step-2",
+        nodeId: "worker-2",
+      },
+    ],
+  });
+  await writeJson(path.join(workflowDirectory, "node-worker-1.json"), {
+    id: "worker-1",
+    executionBackend: "codex-agent",
+    model: "gpt-5",
+    promptTemplate: "step 1",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDirectory, "node-worker-2.json"), {
+    id: "worker-2",
+    executionBackend: "codex-agent",
+    model: "gpt-5",
+    promptTemplate: "step 2",
+    variables: {},
+  });
+}
+
 async function createWorkflowCallInspectFixture(
   workflowRoot: string,
   workflowName: string,
@@ -1380,6 +1430,124 @@ describe("runCli", () => {
       expect(textOut).toContain(
         "file-path: divedra workflow run worker-only --variables ./variables.json",
       );
+    });
+  });
+
+  test("workflow inspect --structure prints compact rows without inspection summary", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createManagerlessWorkflowFixture(root, "worker-only");
+      const buildInspectionSummary: NonNullable<
+        CliDependencies["buildInspectionSummary"]
+      > = async () => {
+        throw new Error(
+          "compact structure text must not build inspection summary",
+        );
+      };
+      const buildInspectionSummarySpy = vi.fn(buildInspectionSummary);
+
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "worker-only",
+          "--workflow-definition-dir",
+          root,
+          "--structure",
+        ],
+        capture.io,
+        createCliDeps({ buildInspectionSummary: buildInspectionSummarySpy }),
+      );
+
+      expect(code).toBe(0);
+      expect(buildInspectionSummarySpy).not.toHaveBeenCalled();
+      expect(capture.stdout).toEqual([
+        "step-1",
+        "  Accept the initial worker-only input and produce the first result.",
+        "step-2",
+        "  Finalize the worker-only workflow output.",
+      ]);
+      const output = capture.stdout.join("\n");
+      expect(output).not.toContain("role=");
+      expect(output).not.toContain("runtimeReady");
+      expect(output).not.toContain("nodeRegistryIds");
+      expect(output).not.toContain("workflowId");
+      expect(output).not.toContain("callable");
+    });
+  });
+
+  test("workflow inspect --structure prints missing descriptions as indented dash lines", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createMissingDescriptionWorkflowFixture(root, "missing-desc");
+
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "missing-desc",
+          "--workflow-definition-dir",
+          root,
+          "--structure",
+        ],
+        capture.io,
+      );
+
+      expect(code).toBe(0);
+      expect(capture.stdout).toEqual(["step-1", "  -", "step-2", "  -"]);
+    });
+  });
+
+  test("workflow inspect --structure preserves json inspection output", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createManagerlessWorkflowFixture(root, "worker-only");
+
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "worker-only",
+          "--workflow-definition-dir",
+          root,
+          "--structure",
+          "--output",
+          "json",
+        ],
+        capture.io,
+      );
+
+      expect(code).toBe(0);
+      const parsed = JSON.parse(capture.stdout.join("\n")) as {
+        workflowId: string;
+        callable: { stepId: string; role: string };
+        steps: Array<{ stepId: string; role: string; description?: string }>;
+        nodeRegistryIds: readonly string[];
+        runtime: { ready: boolean };
+      };
+      expect(parsed.workflowId).toBe("worker-only");
+      expect(parsed.callable).toMatchObject({
+        stepId: "step-1",
+        role: "worker",
+      });
+      expect(parsed.steps).toEqual([
+        {
+          stepId: "step-1",
+          role: "worker",
+          description:
+            "Accept the initial worker-only input and produce the first result.",
+        },
+        {
+          stepId: "step-2",
+          role: "worker",
+          description: "Finalize the worker-only workflow output.",
+        },
+      ]);
+      expect(parsed.nodeRegistryIds).toEqual(["worker-1", "worker-2"]);
+      expect(typeof parsed.runtime.ready).toBe("boolean");
     });
   });
 

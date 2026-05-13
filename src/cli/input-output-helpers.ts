@@ -117,6 +117,9 @@ export function printHelp(io: CliIo): void {
     "  workflow usage [name]  Show workflow purpose, compact step overview, and callable manager/entry input/output contracts",
   );
   io.stdout(
+    "  workflow inspect <name> --structure  Show compact indented step ids with description lines",
+  );
+  io.stdout(
     "  workflow run <name> --variables <json|@file|file>  Runtime variables as inline JSON object, explicit @file, or bare JSON file path",
   );
   io.stdout(

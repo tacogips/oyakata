@@ -546,6 +546,40 @@ Current phase-1 responsibilities:
 
 **Phase 2 (optional)** is implemented as an opt-in path: with `WorkflowRunOptions.nestedSuperviserDriver` (CLI `--nested-superviser` plus `--auto-improve`), the engine runs `superviserWorkflowId` as a nested step-addressed workflow and passes a runtime `SuperviserRuntimeControl` handle to native `divedra/*` add-ons for start/status/rerun/load/save on the paired target session. Without that flag, the engine still uses the phase-1 outer `runAutoImproveLoop`. Supervision state records `nestedSuperviserSessionId` when the nested path is used; it is exposed in library/GraphQL inspection. Target-session resume with the nested flag continues the saved nested superviser session when that id is present.
 
+### Repository Lint Policy Boundary
+
+Repository code quality checks use Biome as the primary lint entrypoint. Local
+development, task automation, and CI-oriented commands must keep the same
+effective Biome lint path so repository policies cannot be bypassed by choosing
+`bun run lint:biome`, `bun run lint`, `task lint`, or `task ci`.
+
+The TypeScript source filename policy rejects numbered split-file names of the
+form `part-<digits>.ts` and `part-<digits>.tsx` in the same source path scope
+covered by the current Biome includes. Examples of forbidden source basenames
+include `part-1.ts`, `part-01.ts`, `part-1.tsx`, and `part-01.tsx`.
+Descriptive split names such as `workflow-loader.ts`,
+`node-output-contract.ts`, or `session-partition.ts` remain valid because the
+policy targets only a full path segment basename matching `part-<digits>`.
+
+Biome configuration should remain the preferred home for this policy when the
+installed Biome version can express an exact filename/path rule without changing
+the repository's existing include set or diagnostic behavior. For Biome 2.3.15,
+the local CLI/config surface does not expose a safe native rule for rejecting
+arbitrary path basenames, so the design fallback is a small repository-owned
+check invoked as part of the Biome lint entrypoint. The fallback check must:
+
+- inspect only the repository source paths already covered by Biome includes
+- match path basenames exactly rather than scanning arbitrary path substrings
+- report every forbidden file path and exit non-zero when any are found
+- avoid requiring committed forbidden fixture files; tests should create
+  temporary fixture trees or exercise a pure path-matching helper
+- be wired through all existing Biome lint entrypoints instead of creating a
+  separate optional command that developers can skip accidentally
+
+This rule is a repository naming policy, not an agent-adapter behavior. It has
+no Codex-agent or Cursor-specific runtime mapping; any implementation should
+stay in repository lint scripts/tests rather than in backend adapter modules.
+
 ## Primary Components
 
 ### Workflow Loader and Validator
