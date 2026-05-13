@@ -30,6 +30,7 @@ No active implementation plans remain.
 
 | Plan                                               | Completed  | Design Reference                                                              |
 | -------------------------------------------------- | ---------- | ----------------------------------------------------------------------------- |
+| `workflow-inspect-structure`                       | 2026-05-13 | `command`                                                                     |
 | `nix-precommit-management`                         | 2026-05-07 | `README.md`, `AGENTS.md`                                                      |
 | `chat-task-planning-and-supervisor-collaboration`  | 2026-05-07 | `design-chat-task-planning-lifecycle`, `design-supervisor-chat-collaboration` |
 | `output-destinations-supervisor-memory-foundation` | 2026-05-06 | `design-output-destinations-and-supervisor-memory`                            |

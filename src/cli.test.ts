@@ -1383,6 +1383,89 @@ describe("runCli", () => {
     });
   });
 
+  test("workflow inspect --structure prints compact id and description rows", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createManagerlessWorkflowFixture(root, "worker-only");
+
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "worker-only",
+          "--workflow-definition-dir",
+          root,
+          "--structure",
+        ],
+        capture.io,
+      );
+
+      expect(code).toBe(0);
+      expect(capture.stdout).toEqual([
+        "step-1 Accept the initial worker-only input and produce the first result.",
+        "step-2 Finalize the worker-only workflow output.",
+      ]);
+      const output = capture.stdout.join("\n");
+      expect(output).not.toContain("role=");
+      expect(output).not.toContain("runtimeReady");
+      expect(output).not.toContain("nodeRegistryIds");
+      expect(output).not.toContain("workflowId");
+      expect(output).not.toContain("callable");
+    });
+  });
+
+  test("workflow inspect --structure preserves json inspection output", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createManagerlessWorkflowFixture(root, "worker-only");
+
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "worker-only",
+          "--workflow-definition-dir",
+          root,
+          "--structure",
+          "--output",
+          "json",
+        ],
+        capture.io,
+      );
+
+      expect(code).toBe(0);
+      const parsed = JSON.parse(capture.stdout.join("\n")) as {
+        workflowId: string;
+        callable: { stepId: string; role: string };
+        steps: Array<{ stepId: string; role: string; description?: string }>;
+        nodeRegistryIds: readonly string[];
+        runtime: { ready: boolean };
+      };
+      expect(parsed.workflowId).toBe("worker-only");
+      expect(parsed.callable).toMatchObject({
+        stepId: "step-1",
+        role: "worker",
+      });
+      expect(parsed.steps).toEqual([
+        {
+          stepId: "step-1",
+          role: "worker",
+          description:
+            "Accept the initial worker-only input and produce the first result.",
+        },
+        {
+          stepId: "step-2",
+          role: "worker",
+          description: "Finalize the worker-only workflow output.",
+        },
+      ]);
+      expect(parsed.nodeRegistryIds).toEqual(["worker-1", "worker-2"]);
+      expect(typeof parsed.runtime.ready).toBe("boolean");
+    });
+  });
+
   test("workflow usage lists AI-facing workflow contracts", async () => {
     await withLegacyWorkflowAuthorshipForCli(async () => {
       const root = await makeTempDir();

@@ -16,8 +16,10 @@ import {
   type NodeInputContract,
   type NodeOutputContract,
   type NodeRole,
+  type WorkflowNodeRef,
   type NormalizedWorkflowBundle,
 } from "./types";
+import { deriveWorkflowVisualization } from "./visualization";
 import type {
   FanoutBranchRecord,
   FanoutBranchStatus,
@@ -43,6 +45,12 @@ export interface WorkflowStepSummary {
   readonly stepId: string;
   readonly role: NodeRole;
   readonly description?: string;
+}
+
+export interface WorkflowStructureRow {
+  readonly stepId: string;
+  readonly description: string;
+  readonly indent: number;
 }
 
 export interface FanoutBranchSummary {
@@ -125,6 +133,38 @@ export function deriveWorkflowStepSummaries(
     ...(step.description === undefined
       ? {}
       : { description: step.description }),
+  }));
+}
+
+export function deriveWorkflowStructureRows(
+  workflow: NormalizedWorkflowBundle["workflow"],
+): readonly WorkflowStructureRow[] {
+  const nodeById = new Map(workflow.nodes.map((node) => [node.id, node]));
+  const stepAddressedWorkflow = {
+    ...workflow,
+    nodes: workflow.steps.map((step) => {
+      const sourceNode = nodeById.get(step.id) ?? nodeById.get(step.nodeId);
+      return {
+        ...(sourceNode ?? {
+          nodeFile: step.stepFile ?? `nodes/node-${step.id}.json`,
+        }),
+        id: step.id,
+      } satisfies WorkflowNodeRef;
+    }),
+  };
+  const indentationByStepId = new Map(
+    deriveWorkflowVisualization({ workflow: stepAddressedWorkflow }).map(
+      (node) => [node.id, node.indent],
+    ),
+  );
+
+  return workflow.steps.map((step) => ({
+    stepId: step.id,
+    description:
+      step.description === undefined || step.description.length === 0
+        ? "-"
+        : step.description,
+    indent: indentationByStepId.get(step.id) ?? 0,
   }));
 }
 

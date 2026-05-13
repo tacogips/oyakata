@@ -55,6 +55,8 @@ import {
 import {
   buildFanoutGroupSummaries,
   buildInspectionSummary,
+  deriveWorkflowStructureRows,
+  type WorkflowStructureRow,
 } from "./workflow/inspect";
 import { collectWorkflowAddonSourceSummaries } from "./workflow/addon-source-summary";
 import { loadSession } from "./workflow/session-store";
@@ -300,6 +302,7 @@ interface ParsedOptions {
   readonly workingDirectory?: string;
   readonly workerOnly: boolean;
   readonly output: "text" | "json" | "table";
+  readonly structure: boolean;
   readonly format?: "text" | "json" | "jsonl";
   readonly variablesPath?: string;
   readonly mockScenarioPath?: string;
@@ -648,6 +651,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   let workingDirectory: string | undefined;
   let workerOnly = false;
   let output: "text" | "json" | "table" = "text";
+  let structure = false;
   let format: "text" | "json" | "jsonl" | undefined;
   let variablesPath: string | undefined;
   let dryRun = false;
@@ -816,6 +820,9 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       case "--worker-only":
         workerOnly = true;
+        break;
+      case "--structure":
+        structure = true;
         break;
       case "--variables": {
         const parsedString = parseRequiredStringOption(token, readNext());
@@ -1317,6 +1324,7 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       ...(sessionStoreRoot === undefined ? {} : { sessionStoreRoot }),
       ...(workingDirectory === undefined ? {} : { workingDirectory }),
       workerOnly,
+      structure,
       ...(format === undefined ? {} : { format }),
       ...(variablesPath === undefined ? {} : { variablesPath }),
       ...(mockScenarioPath === undefined ? {} : { mockScenarioPath }),
@@ -1444,6 +1452,9 @@ function printHelp(io: CliIo): void {
   io.stdout("Workflow discovery (usage):");
   io.stdout(
     "  workflow usage [name]  Show workflow purpose, compact step overview, and callable manager/entry input/output contracts",
+  );
+  io.stdout(
+    "  workflow inspect <name> --structure  Show compact indented step id and description rows",
   );
   io.stdout(
     "  workflow run <name> --variables <json|@file|file>  Runtime variables as inline JSON object, explicit @file, or bare JSON file path",
@@ -2784,6 +2795,19 @@ function renderWorkflowUsageCatalogLines(
   return lines;
 }
 
+function renderWorkflowStructureLines(
+  rows: readonly WorkflowStructureRow[],
+  options: { readonly indentUnit: string } = { indentUnit: "  " },
+): string[] {
+  if (rows.length === 0) {
+    return ["(none)"];
+  }
+  return rows.map(
+    (row) =>
+      `${options.indentUnit.repeat(row.indent)}${row.stepId} ${row.description}`,
+  );
+}
+
 function workflowOverviewGraphqlVariables(
   parsed: ParsedOptions,
   statusFilter: string | undefined,
@@ -3842,6 +3866,12 @@ export async function runCli(
           ...summary,
           source: workflowSourceJson(loaded.value.source),
         });
+      } else if (parsed.options.structure) {
+        for (const line of renderWorkflowStructureLines(
+          deriveWorkflowStructureRows(loaded.value.bundle.workflow),
+        )) {
+          io.stdout(line);
+        }
       } else {
         io.stdout(`workflow: ${summary.workflowName}`);
         const sourceLine = formatWorkflowSource(loaded.value.source);
