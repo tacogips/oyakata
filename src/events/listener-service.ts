@@ -16,7 +16,11 @@ import {
   resolveEventSourceHttpPath,
 } from "./http-routes";
 import { createEventReplyDispatcher } from "./reply-dispatcher";
-import type { EventSourceAdapter, RawExternalEvent } from "./source-adapter";
+import type {
+  EventSourceAdapter,
+  EventSourceDiagnostic,
+  RawExternalEvent,
+} from "./source-adapter";
 import type {
   EventConfigLoadOptions,
   EventConfiguration,
@@ -105,6 +109,10 @@ function resolveEventListenerPort(input: {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "unknown error";
+}
+
+function writeEventSourceDiagnostic(diagnostic: EventSourceDiagnostic): void {
+  process.stderr.write(`${JSON.stringify(diagnostic)}\n`);
 }
 
 async function stopEventListenerResources(input: {
@@ -196,6 +204,7 @@ export async function handleEventHttpRequest(
     body = parseRequestJsonBody(bodyText);
     const raw: RawExternalEvent = {
       sourceId: route.source.id,
+      source: route.source,
       receivedAt: input.now().toISOString(),
       headers: requestHeadersToRecord(request.headers),
       body,
@@ -320,6 +329,11 @@ export function createEventListenerService(
                 source,
                 signal: abortController.signal,
                 now,
+                env,
+                ...(options.fetchImpl === undefined
+                  ? {}
+                  : { fetchImpl: options.fetchImpl }),
+                diagnosticSink: writeEventSourceDiagnostic,
                 dispatch: async (event, raw) => {
                   await dispatchEventToMatchingBindings(
                     {

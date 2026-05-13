@@ -419,6 +419,149 @@ Divedra should treat Chat SDK as one adapter family:
 Source config should include only logical names and environment variable names,
 not secret values.
 
+### Element / Matrix
+
+Element is treated as a Matrix chat client, so the event source integrates with
+Matrix protocol surfaces rather than Element-specific UI behavior. The source
+kind is:
+
+- `kind: "matrix"`
+- `provider: "matrix"` by default
+- receive path: Matrix Client-Server `/sync` long polling for configured rooms
+- reply path: Matrix Client-Server `send` API for `m.room.message`
+- normalized event type: `chat.message`
+
+The first implementation slice should support plain Matrix room messages only:
+
+- include `m.room.message` events with text-like `msgtype` values such as
+  `m.text`, `m.notice`, and `m.emote`
+- ignore membership events, reactions, redactions, edits, encrypted events,
+  state events, and attachment-only messages unless a later design explicitly
+  expands the adapter contract
+- filter messages sent by the configured bot user by default so reply dispatch
+  does not trigger a workflow loop
+- map the Matrix room id to `conversation.id`
+- map Matrix thread root or reply target metadata to `conversation.threadId`
+  when available
+- prefer the Matrix `event_id` as `eventId`
+- use `${sourceId}:${roomId}:${event_id}` as the dedupe key
+
+Normalized input should include:
+
+- `text` from `content.body`
+- `html` from `content.formatted_body` when `format` is
+  `org.matrix.custom.html`
+- `roomId`
+- `eventId`
+- `sender`
+- `msgtype`
+- optional `replyToEventId`
+- optional `threadRootEventId`
+
+If `formatted_body` is present without `format: "org.matrix.custom.html"`, the
+adapter should ignore the formatted body and keep only the plain `text` value.
+This prevents unknown Matrix formatting modes from being treated as trusted
+HTML.
+
+Reply target metadata should be stored in `runtimeVariables.event` so the
+existing chat reply worker and reply dispatcher can send Matrix replies without
+workflow code learning Matrix API details. `dispatchChatReply` must construct a
+Matrix `m.room.message` body and send it to:
+
+```text
+/_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}
+```
+
+`txnId` must be derived from the provider-neutral reply idempotency key so retry
+attempts do not duplicate provider messages. If the reply target includes an
+event id, the Matrix message should include `m.relates_to.m.in_reply_to`. If the
+target includes a thread root, the message should include Matrix thread
+relation metadata and still remain a plain text reply when the server does not
+support richer thread display.
+
+Configuration should reference credentials and homeserver values through
+environment variable names. Access tokens, sync tokens, request authorization
+headers, and provider response bodies containing sensitive data must not be
+written to authored config, examples, reply dispatch records, or logs.
+
+Matrix sync state is runtime state, not authored workflow data. If
+`sync.sinceTokenPath` is configured, it must be a safe relative path resolved
+under the event runtime state or artifact root for the source, never an absolute
+path or a path that escapes with `..`. Sync failures should be surfaced through
+operator diagnostics with source id, HTTP status when available, and normalized
+error class only; they must not log authorization headers, access tokens, full
+request URLs with sensitive query data, or raw provider error bodies.
+Non-abort `/sync` failures must not disappear into silent retry loops: each
+failed poll attempt should emit a sanitized diagnostic before bounded retry
+logic continues.
+
+#### Checked-In Matrix Sample And Local Synapse Verification
+
+The Matrix example should be a runnable event-source sample, not only a mocked
+fixture. Keep the authored event config under
+`examples/event-sources/.divedra-events/` so it remains part of the shared
+event-source example root, keep the workflow bundle under
+`examples/matrix-chat-reply/`, and put live Matrix verification support under
+`examples/matrix-chat-reply/local-synapse/`.
+
+Required checked-in assets:
+
+- `examples/event-sources/.divedra-events/sources/team-matrix.json` for the
+  Matrix source config, with homeserver URL and access token referenced through
+  environment variable names.
+- `examples/event-sources/.divedra-events/bindings/matrix-release-chat-to-workflow.json`
+  for receive-to-workflow mapping. This binding must dispatch
+  `workflowName: "matrix-chat-reply"` so the checked-in Matrix sample, event
+  config, and local Synapse verification all exercise the same workflow.
+- `examples/event-sources/.divedra-events/destinations/release-matrix-chat.json`
+  for explicit Matrix reply routing.
+- `examples/event-sources/payloads/matrix-room-message.json` for deterministic
+  no-server normalization checks.
+- `examples/matrix-chat-reply/workflow.json`,
+  `examples/matrix-chat-reply/README.md`, and
+  `examples/matrix-chat-reply/EXPECTED_RESULTS.md` for the sample workflow and
+  operator-facing expected behavior.
+- `examples/matrix-chat-reply/local-synapse/compose.yaml` plus local setup and
+  verification scripts for live Synapse receive/send verification.
+
+The Docker Compose environment should start a localhost-only Synapse homeserver
+with deterministic test configuration. The setup script owns local runtime
+state: it may create a generated homeserver config, register the bot and sender
+users, create or join a test room, and write transient token/room data under an
+ignored runtime directory. Auth tokens and generated homeserver state must not
+be committed.
+
+The live verification script should prove the complete path:
+
+```text
+sender user posts Matrix room message
+  -> team-matrix /sync listener receives m.room.message
+  -> matrix-release-chat-to-workflow dispatches matrix-chat-reply
+  -> divedra/chat-reply-worker emits a provider-neutral chat reply
+  -> release-matrix-chat sends the Matrix reply to the configured room
+  -> verification observes the reply through the local Matrix server
+```
+
+Verification should be deterministic enough for local development: wait for
+Synapse readiness, fail fast when Docker Compose is unavailable, use bounded
+polling for `/sync` and room-message observation, and print exact cleanup
+commands. The sample may remain local-only and should not require a public
+Matrix homeserver, Element UI, or committed credentials.
+
+Recent-change review closure requires these design and rollout invariants:
+
+- the `matrix-release-chat-to-workflow` binding, sample documentation, and
+  sample expected-results file all name `matrix-chat-reply`
+- Matrix `/sync` diagnostics report only source id, HTTP status when available,
+  and normalized error class
+- Matrix diagnostics and tests prove access tokens, authorization headers, full
+  sensitive URLs, and raw provider bodies are not emitted
+- implementation-plan indexes mark `matrix-event-source` and
+  `matrix-send-receive-synapse-sample` as completed, with paths under
+  `impl-plans/completed/`
+- verification preserves the local Synapse receive/send path via
+  `./examples/matrix-chat-reply/local-synapse/run-local-matrix-sample.sh`
+
 ### Slack, Discord, Telegram
 
 Slack, Discord, and Telegram can be configured as Chat SDK-backed sources when
@@ -521,6 +664,28 @@ source adapter:
 }
 ```
 
+```json
+{
+  "id": "team-matrix",
+  "kind": "matrix",
+  "provider": "matrix",
+  "homeserverUrlEnv": "DIVEDRA_MATRIX_HOMESERVER_URL",
+  "accessTokenEnv": "DIVEDRA_MATRIX_ACCESS_TOKEN",
+  "userId": "@divedra-bot:example.org",
+  "rooms": [
+    {
+      "roomId": "!release-room:example.org",
+      "alias": "#release:example.org"
+    }
+  ],
+  "sync": {
+    "pollTimeoutMs": 30000,
+    "sinceTokenPath": "matrix/team-matrix/since.json"
+  },
+  "ignoreOwnMessages": true
+}
+```
+
 ### Binding Config
 
 ```json
@@ -573,6 +738,29 @@ source adapter:
     "dedupeWindowMs": 86400000,
     "maxConcurrentPerKey": 1,
     "concurrencyKey": "{{event.input.file.s3Key}}"
+  }
+}
+```
+
+```json
+{
+  "id": "matrix-release-chat-to-workflow",
+  "sourceId": "team-matrix",
+  "outputDestinations": ["release-matrix-chat"],
+  "match": {
+    "eventType": "chat.message",
+    "conversationId": "!release-room:example.org"
+  },
+  "workflowName": "matrix-chat-reply",
+  "inputMapping": {
+    "mode": "event-input",
+    "mirrorToHumanInput": true
+  },
+  "execution": {
+    "async": true,
+    "dedupeWindowMs": 86400000,
+    "maxConcurrentPerKey": 1,
+    "concurrencyKey": "{{event.sourceId}}:{{event.conversation.id}}:{{event.conversation.threadId}}"
   }
 }
 ```
@@ -830,6 +1018,15 @@ Event config validation should fail when:
 - an S3 repository source configures polling as its receiver mode
 - an S3 repository source configures a root prefix or suffix filter that cannot
   be represented as a safe repository path rule
+- a Matrix source omits `homeserverUrlEnv`, `accessTokenEnv`, `userId`, or at
+  least one room id
+- a Matrix source uses malformed environment variable names for homeserver URL
+  or access token configuration
+- a Matrix source room id does not look like a Matrix room id beginning with
+  `!`, or `userId` does not look like a Matrix user id beginning with `@`
+- Matrix sync timing fields such as `pollTimeoutMs` are non-positive or exceed
+  the adapter's supported long-poll bounds
+- Matrix `sync.sinceTokenPath` is absolute, empty, or contains path traversal
 - `match.eventType` is unsupported by the source adapter capability metadata
 - `inputMapping` references paths not present in the normalized event schema
   when the schema is statically known
@@ -850,13 +1047,15 @@ Event config validation should fail when:
 4. Cron adapter.
 5. S3 repository file-created adapter with metadata-only input.
 6. Generic webhook adapter for local testing.
-7. Chat SDK adapter family for Slack, Discord, and Telegram.
-8. Web chat adapter for AI Elements or other browser chat frontends.
-9. Optional S3 object download-to-data-root support.
-10. Optional reply publisher after workflow completion.
-11. Signal adapter if operational requirements and dependency choice are
+7. Matrix adapter for Element/Matrix room receive normalization and chat reply
+   dispatch.
+8. Chat SDK adapter family for Slack, Discord, and Telegram.
+9. Web chat adapter for AI Elements or other browser chat frontends.
+10. Optional S3 object download-to-data-root support.
+11. Optional reply publisher after workflow completion.
+12. Signal adapter if operational requirements and dependency choice are
     accepted.
-12. Supervised event control path for chat and web app lifecycle commands.
+13. Supervised event control path for chat and web app lifecycle commands.
 
 ## References
 

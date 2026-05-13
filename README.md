@@ -350,6 +350,14 @@ bun run src/main.ts events replies <workflow-execution-id>
 Set `DIVEDRA_EVENTS_READ_ONLY=true` or pass `--read-only` to validate and
 persist event receipts without dispatching workflow execution.
 
+Element/Matrix chat sources use `kind: "matrix"` and read credentials from env
+var names in source config, for example `DIVEDRA_MATRIX_HOMESERVER_URL` and
+`DIVEDRA_MATRIX_ACCESS_TOKEN`. Matrix receive normalizes text-like
+`m.room.message` events to `chat.message`; chat replies send through the Matrix
+Client-Server room send API with the reply idempotency key as the transaction
+id. The first slice excludes encrypted rooms, attachments, reactions, edits,
+redactions, and Application Service transactions.
+
 ## Hooks
 
 Run a hook receiver:
@@ -448,6 +456,8 @@ Workflow and server environment variables:
 - `DIVEDRA_MANAGER_SESSION_ID`
 - `DIVEDRA_EVENT_ROOT`
 - `DIVEDRA_EVENTS_READ_ONLY`
+- `DIVEDRA_MATRIX_HOMESERVER_URL`
+- `DIVEDRA_MATRIX_ACCESS_TOKEN`
 
 ## Example Workflows
 
@@ -462,6 +472,7 @@ Recommended starting points:
 - `node-combinations-showcase`: examples for command, container, and foreach-style workflow lanes.
 - `supervised-mock-retry`: deterministic example for `--auto-improve` retry behavior.
 - `chat-reply-webhook`: event-driven chat reply workflow using the built-in reply worker add-on.
+- `event-sources`: includes webhook, cron, S3, and Element/Matrix source fixtures.
 
 ## Library API
 

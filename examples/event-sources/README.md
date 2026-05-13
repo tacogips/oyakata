@@ -43,6 +43,47 @@ divedra events emit example-reply-webhook \
   --output json
 ```
 
+The `team-matrix` source demonstrates first-slice Element/Matrix chat support.
+Set a Matrix homeserver URL and bot access token through env vars when serving
+or replying to real rooms:
+
+```bash
+export DIVEDRA_MATRIX_HOMESERVER_URL=https://matrix.example
+export DIVEDRA_MATRIX_ACCESS_TOKEN=<matrix-bot-access-token>
+```
+
+For deterministic local receive tests, emit the checked-in Matrix room-message
+fixture without contacting Matrix:
+
+```bash
+divedra events emit team-matrix \
+  --workflow-definition-dir ./examples \
+  --event-root ./examples/event-sources/.divedra-events \
+  --artifact-root ./tmp/event-source-demo/workflow-artifacts \
+  --event-file ./examples/event-sources/payloads/matrix-room-message.json \
+  --output json
+```
+
+The binding `matrix-release-chat-to-workflow` runs the `matrix-chat-reply`
+workflow and sends workflow replies through the explicit
+`release-matrix-chat` chat destination. Matrix support currently
+handles text-like `m.room.message` events from configured rooms and Matrix
+Client-Server room sends; encrypted rooms, attachments, reactions, edits,
+redactions, and Application Service transactions are out of scope for this
+fixture.
+
+For an end-to-end local Matrix verification, run the dedicated sample workflow
+against a Docker Compose Synapse homeserver:
+
+```bash
+./examples/matrix-chat-reply/local-synapse/run-local-matrix-sample.sh
+```
+
+The script follows the Synapse Docker flow of generating a local config,
+starting the homeserver, registering two users, creating a room, serving
+divedra Matrix events, sending an Alice message, and waiting for the divedra
+bot reply in the same room.
+
 Start a workflow control-plane endpoint in another shell when you want fixture
 events to dispatch real workflow executions:
 

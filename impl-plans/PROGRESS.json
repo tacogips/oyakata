@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-07T00:00:00Z",
+  "lastUpdated": "2026-05-13T04:55:00Z",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -480,9 +480,119 @@
     },
     "160": {
       "status": "COMPLETED"
+    },
+    "161": {
+      "status": "COMPLETED"
+    },
+    "162": {
+      "status": "COMPLETED"
+    },
+    "163": {
+      "status": "COMPLETED"
     }
   },
   "plans": {
+    "matrix-recent-change-blocking-fixes": {
+      "phase": 163,
+      "status": "Completed",
+      "path": "impl-plans/completed/matrix-recent-change-blocking-fixes.md",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
+        }
+      }
+    },
+    "matrix-send-receive-synapse-sample": {
+      "phase": 162,
+      "status": "Completed",
+      "path": "impl-plans/completed/matrix-send-receive-synapse-sample.md",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001", "TASK-002"]
+        },
+        "TASK-006": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-003"]
+        }
+      }
+    },
+    "matrix-event-source": {
+      "phase": 161,
+      "status": "Completed",
+      "path": "impl-plans/completed/matrix-event-source.md",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-002"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-002", "TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-006": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004", "TASK-005"]
+        }
+      }
+    },
     "supervisor-natural-language-control": {
       "phase": 149,
       "status": "Completed",

@@ -10,6 +10,7 @@ import type {
 
 export interface RawExternalEvent {
   readonly sourceId: string;
+  readonly source?: EventSourceConfig;
   readonly receivedAt: string;
   readonly headers?: Readonly<Record<string, string>>;
   readonly body: unknown;
@@ -31,12 +32,25 @@ export interface EventSourceStartInput {
   ) => Promise<void>;
   readonly signal: AbortSignal;
   readonly now: () => Date;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly fetchImpl?: typeof fetch;
+  readonly diagnosticSink?: EventSourceDiagnosticSink;
 }
 
 export interface EventSourceHandle {
   readonly sourceId: string;
   stop(): Promise<void>;
 }
+
+export interface EventSourceDiagnostic {
+  readonly sourceId: string;
+  readonly httpStatus?: number;
+  readonly errorClass: string;
+}
+
+export type EventSourceDiagnosticSink = (
+  diagnostic: EventSourceDiagnostic,
+) => void;
 
 export interface EventSourceChatReplyInput {
   readonly source: EventSourceConfig;
