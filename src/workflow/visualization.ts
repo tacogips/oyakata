@@ -94,7 +94,8 @@ export function deriveWorkflowVisualization(args: {
   return orderedVisNodes.map((node) => ({
     id: node.id,
     order: node.order,
-    indent: collectScopesForOrder(node.order, scopeMetadata.loopIntervals).length,
+    indent: collectScopesForOrder(node.order, scopeMetadata.loopIntervals)
+      .length,
     color: (() => {
       const loopScopes = collectScopesForOrder(
         node.order,

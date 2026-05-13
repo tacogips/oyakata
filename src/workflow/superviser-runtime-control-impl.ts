@@ -26,11 +26,11 @@ import type {
   SuperviserControlAuth,
 } from "./types";
 import type { SuperviserRuntimeControl } from "./superviser-control";
-import {
-  resolveNestedSuperviserAddonRerunFromStepId,
-} from "./superviser";
+import { resolveNestedSuperviserAddonRerunFromStepId } from "./superviser";
 
-function stripRunOptionsForSuperviserControlPlane(o: WorkflowRunOptions): WorkflowRunOptions {
+function stripRunOptionsForSuperviserControlPlane(
+  o: WorkflowRunOptions,
+): WorkflowRunOptions {
   const {
     nestedSuperviserDriver: _n,
     superviserControl: _c,

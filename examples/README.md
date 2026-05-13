@@ -127,6 +127,29 @@ bun run src/main.ts workflow inspect chat-reply-webhook --workflow-definition-di
 See `examples/event-sources/README.md` for a local webhook event and reply
 endpoint demo.
 
+### `matrix-chat-reply`
+
+Element/Matrix worker-only workflow showing the same built-in reply add-on
+through a real Matrix receive/send path:
+
+- receives text-like Matrix `m.room.message` events from the `matrix` event
+  source
+- renders a reply from `runtimeVariables.event`
+- sends the reply back to the configured Matrix room through a chat destination
+- includes a Docker Compose Synapse harness under `local-synapse/`
+
+Validate it:
+
+```bash
+bun run src/main.ts workflow validate matrix-chat-reply --workflow-definition-dir ./examples
+```
+
+Run the local Matrix verification:
+
+```bash
+./examples/matrix-chat-reply/local-synapse/run-local-matrix-sample.sh
+```
+
 ### `chat-supervisor-collaboration`
 
 Chat-triggered supervisor collaboration reference:

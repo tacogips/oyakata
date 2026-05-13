@@ -99,7 +99,7 @@ Follow this workflow:
 4. **Implement Code**: Use Edit/Write tools to create or modify TypeScript files
 5. **Run Biome**: Execute `biome check . --diagnostic-level=warn` or `bun run lint:biome` (from the repo root; use `nix develop` / flake shell if `biome` is not on PATH)
    - If Biome fails: Fix diagnostics or adjust configuration only when the user explicitly requests it; do not silence legitimate errors
-6. **Run prettier**: Execute `bunx prettier --write "src/**/*.ts"` after making changes (scope to touched files when preferable)
+6. **Run formatter**: Execute `bun run format` after making changes (scope to touched files with `biome format --write <files>` when preferable)
 7. **Run typecheck**: Execute `bun run typecheck` to verify type correctness
    - If typecheck fails: Investigate the cause, fix the code, and repeat until typecheck passes
 8. **Run tests**: Execute `vitest run` or `bun run test` to verify tests pass
@@ -223,7 +223,7 @@ When writing TypeScript code:
 8. Keep dependencies minimal
 9. Use standard library and Bun APIs when possible
 10. **Always run `biome check . --diagnostic-level=warn` (or `bun run lint:biome`) after making changes**
-11. **Always run `prettier` after making changes**
+11. **Always run the Biome formatter after making changes**
 12. **Ensure typecheck passes without errors**
 
 ### Error Handling Best Practices
@@ -239,6 +239,7 @@ When writing TypeScript code:
 - Never use `any` - use `unknown` and narrow types
 - Always check for `undefined` when using indexed access (enabled by `noUncheckedIndexedAccess`)
 - Use `exactOptionalPropertyTypes` - undefined and optional are different
+- Use string enums for fixed value domains such as config kinds, providers, modes, statuses, and persisted/dispatched categories; do not type these values as plain `string`
 - Use branded types for IDs and other primitives that should not be mixed
 - Prefer `readonly` for data that should not be mutated
 

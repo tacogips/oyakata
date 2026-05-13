@@ -97,9 +97,7 @@ export interface WorkflowSupervisorConversationRepository {
     readonly expectedConversationRevision: number;
     readonly next: WorkflowSupervisorConversationRecord;
   }) => Promise<WorkflowSupervisorConversationRecord | null>;
-  readonly upsertManagedRun: (
-    run: ManagedWorkflowRunRecord,
-  ) => Promise<void>;
+  readonly upsertManagedRun: (run: ManagedWorkflowRunRecord) => Promise<void>;
   readonly listManagedRuns: (
     supervisorConversationId: string,
   ) => Promise<readonly ManagedWorkflowRunRecord[]>;
@@ -357,13 +355,17 @@ export function createRuntimeSupervisorConversationRepository(
       ),
 
     updateDispatchDecisionFromProposed: async (input) =>
-      updateSupervisorDispatchDecisionFromProposedInRuntimeDb(input, loadOptions),
-
-    loadDispatchDecisionBySourceMessage: async (input) => {
-      const row = await loadSupervisorDispatchDecisionBySourceMessageFromRuntimeDb(
+      updateSupervisorDispatchDecisionFromProposedInRuntimeDb(
         input,
         loadOptions,
-      );
+      ),
+
+    loadDispatchDecisionBySourceMessage: async (input) => {
+      const row =
+        await loadSupervisorDispatchDecisionBySourceMessageFromRuntimeDb(
+          input,
+          loadOptions,
+        );
       return row === null ? null : decisionFromRuntime(row);
     },
   };

@@ -18,6 +18,9 @@ Store questions, pending decisions, and items awaiting user approval.
 - `qa-event-supervisor-control.md`: public naming, default restart limit,
   chat command structure, multi-run correlation, and cancellation propagation
   decisions for event-driven workflow supervisor control.
+- `qa-matrix-event-source.md`: receive transport, rich Matrix event scope,
+  reply threading, token/identity, and sync-state retention decisions for
+  Element/Matrix event sources.
 
 ## Adding New Items
 

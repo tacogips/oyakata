@@ -187,4 +187,78 @@ describe("manual event emit", () => {
       },
     });
   });
+
+  test("emits Matrix room message fixtures through normalization", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    const rootDataDir = path.join(root, "data");
+    const eventFile = path.join(root, "matrix-event.json");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "team-matrix.json"), {
+      id: "team-matrix",
+      kind: "matrix",
+      homeserverUrlEnv: "DIVEDRA_MATRIX_HOMESERVER_URL",
+      accessTokenEnv: "DIVEDRA_MATRIX_ACCESS_TOKEN",
+      userId: "@divedra:matrix.example",
+      rooms: [{ roomId: "!release:matrix.example" }],
+    });
+    await writeJson(path.join(eventRoot, "bindings", "matrix-demo.json"), {
+      id: "matrix-demo",
+      sourceId: "team-matrix",
+      workflowName: "demo",
+      match: { eventType: "chat.message" },
+      inputMapping: {
+        mode: "template",
+        template: {
+          request: "{{event.input.text}}",
+          roomId: "{{event.conversation.id}}",
+        },
+      },
+    });
+    await writeJson(eventFile, {
+      room_id: "!release:matrix.example",
+      type: "m.room.message",
+      event_id: "$event-1",
+      sender: "@alice:matrix.example",
+      content: {
+        msgtype: "m.text",
+        body: "Run the release workflow.",
+      },
+    });
+
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    const results = await emitEventFile({
+      sourceId: "team-matrix",
+      eventFile,
+      workflowRoot,
+      eventRoot,
+      rootDataDir,
+      endpoint: "http://example.test/graphql",
+      env: {
+        DIVEDRA_MATRIX_HOMESERVER_URL: "https://matrix.example",
+        DIVEDRA_MATRIX_ACCESS_TOKEN: "secret-token",
+      },
+      fetchImpl,
+      cwd: root,
+      readOnly: true,
+    });
+
+    expect(results[0]?.receipt.status).toBe("skipped");
+    const inputRef = results[0]?.receipt.inputRef;
+    expect(inputRef).toBeDefined();
+    if (inputRef === undefined) {
+      return;
+    }
+    expect(
+      JSON.parse(await readFile(path.join(rootDataDir, inputRef.path), "utf8")),
+    ).toMatchObject({
+      workflowInput: {
+        request: "Run the release workflow.",
+        roomId: "!release:matrix.example",
+      },
+    });
+  });
 });

@@ -427,10 +427,7 @@ describe("history-continuation", () => {
       [parent.sessionId, parent],
       [child.sessionId, child],
     ]);
-    const merged = buildMergedContinuationTimeline(
-      snapshots,
-      child.sessionId,
-    );
+    const merged = buildMergedContinuationTimeline(snapshots, child.sessionId);
     expect(merged.ok).toBe(true);
     if (!merged.ok) {
       return;

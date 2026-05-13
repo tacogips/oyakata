@@ -379,6 +379,107 @@ describe("event configuration", () => {
     );
   });
 
+  test("validates Matrix source configuration", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "team-matrix.json"), {
+      id: "team-matrix",
+      kind: "matrix",
+      provider: "matrix",
+      homeserverUrlEnv: "DIVEDRA_MATRIX_HOMESERVER_URL",
+      accessTokenEnv: "DIVEDRA_MATRIX_ACCESS_TOKEN",
+      userId: "@divedra:matrix.example",
+      rooms: [
+        {
+          roomId: "!release:matrix.example",
+          alias: "#release:matrix.example",
+        },
+      ],
+      sync: {
+        pollTimeoutMs: 30000,
+        sinceTokenPath: "matrix/team-matrix-sync.json",
+      },
+    });
+    await writeJson(path.join(eventRoot, "bindings", "to-demo.json"), {
+      id: "to-demo",
+      sourceId: "team-matrix",
+      workflowName: "demo",
+      inputMapping: {
+        mode: "event-input",
+      },
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      workflowRoot,
+      eventRoot,
+      cwd: root,
+    });
+
+    expect(validation.valid).toBe(true);
+    expect(
+      validation.issues.filter((issue) => issue.severity === "error"),
+    ).toEqual([]);
+  });
+
+  test("rejects malformed Matrix source configuration", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "bad-matrix.json"), {
+      id: "bad-matrix",
+      kind: "matrix",
+      homeserverUrlEnv: "not-loud-enough",
+      accessTokenEnv: "",
+      userId: "divedra",
+      rooms: [
+        {
+          roomId: "release-room",
+          alias: "",
+        },
+      ],
+      sync: {
+        pollTimeoutMs: 10,
+        sinceTokenPath: "../token.json",
+      },
+      ignoreOwnMessages: "yes",
+    });
+    await writeJson(path.join(eventRoot, "bindings", "to-demo.json"), {
+      id: "to-demo",
+      sourceId: "bad-matrix",
+      workflowName: "demo",
+      inputMapping: {
+        mode: "event-input",
+      },
+    });
+
+    const validation = await loadAndValidateEventConfiguration({
+      workflowRoot,
+      eventRoot,
+      cwd: root,
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.issues.map((issue) => issue.path)).toEqual(
+      expect.arrayContaining([
+        "sources.bad-matrix.homeserverUrlEnv",
+        "sources.bad-matrix.accessTokenEnv",
+        "sources.bad-matrix.userId",
+        "sources.bad-matrix.rooms[0].roomId",
+        "sources.bad-matrix.rooms[0].alias",
+        "sources.bad-matrix.sync.pollTimeoutMs",
+        "sources.bad-matrix.sync.sinceTokenPath",
+        "sources.bad-matrix.ignoreOwnMessages",
+      ]),
+    );
+  });
+
   test("rejects malformed supervised command-map configuration", async () => {
     const root = await makeTempDir();
     const workflowRoot = path.join(root, ".divedra");

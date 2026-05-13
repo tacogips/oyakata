@@ -95,7 +95,10 @@ describe("handleApiRequest", () => {
       selectedWorkflow: expect.anything(),
     });
 
-    const rootPage = await handleApiRequest(new Request("http://localhost/"), context);
+    const rootPage = await handleApiRequest(
+      new Request("http://localhost/"),
+      context,
+    );
     expect(rootPage.status).toBe(200);
     expect(rootPage.headers.get("content-type")).toContain("text/html");
     await expect(rootPage.text()).resolves.toContain("workflow overview");

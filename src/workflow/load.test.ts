@@ -145,28 +145,27 @@ describe("loadWorkflowFromDisk", () => {
     expect(result.value.bundle.workflow.workflowId).toBe("actual-id");
   });
 
-  test.each(REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS)(
-    "rejects top-level workflow.%s on step-addressed workflow.json",
-    async (fieldName) => {
-      const workflowRoot = makeTempDir();
-      writeWorkflowBundle({
-        workflowRoot,
-        workflowName: "demo",
-        extraWorkflowFields: {
-          [fieldName]: sampleRemovedTopLevelFieldValue(fieldName),
-        },
-      });
+  test.each(
+    REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  )("rejects top-level workflow.%s on step-addressed workflow.json", async (fieldName) => {
+    const workflowRoot = makeTempDir();
+    writeWorkflowBundle({
+      workflowRoot,
+      workflowName: "demo",
+      extraWorkflowFields: {
+        [fieldName]: sampleRemovedTopLevelFieldValue(fieldName),
+      },
+    });
 
-      const result = await loadWorkflowFromDisk("demo", { workflowRoot });
-      expect(result.ok).toBe(false);
-      if (result.ok) {
-        return;
-      }
+    const result = await loadWorkflowFromDisk("demo", { workflowRoot });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
 
-      expect(result.error.code).toBe("VALIDATION");
-      expect(result.error.issues).toContainEqual(
-        makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
-      );
-    },
-  );
+    expect(result.error.code).toBe("VALIDATION");
+    expect(result.error.issues).toContainEqual(
+      makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
+    );
+  });
 });

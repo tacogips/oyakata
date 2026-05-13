@@ -57,6 +57,27 @@ export interface WebhookSourceConfig extends EventSourceConfigBase {
   readonly replyEndpointEnv?: string;
 }
 
+export interface MatrixSourceRoomConfig extends JsonObject {
+  readonly roomId: string;
+  readonly alias?: string;
+}
+
+export interface MatrixSourceSyncConfig extends JsonObject {
+  readonly pollTimeoutMs?: number;
+  readonly sinceTokenPath?: string;
+}
+
+export interface MatrixSourceConfig extends EventSourceConfigBase {
+  readonly kind: "matrix";
+  readonly provider?: "matrix" | string;
+  readonly homeserverUrlEnv: string;
+  readonly accessTokenEnv: string;
+  readonly userId: string;
+  readonly rooms: readonly MatrixSourceRoomConfig[];
+  readonly sync?: MatrixSourceSyncConfig;
+  readonly ignoreOwnMessages?: boolean;
+}
+
 export interface S3RepositoryEventReceiverConfig extends JsonObject {
   readonly mode: string;
   readonly path?: string;
@@ -77,6 +98,7 @@ export interface S3RepositorySourceConfig extends EventSourceConfigBase {
 
 export type EventSourceConfig =
   | CronSourceConfig
+  | MatrixSourceConfig
   | WebhookSourceConfig
   | S3RepositorySourceConfig
   | EventSourceConfigBase;

@@ -5,7 +5,10 @@ import { afterEach, describe, expect, test } from "vitest";
 import { createWorkflowTemplate } from "../workflow/create";
 import { createSessionState } from "../workflow/session";
 import { saveSession } from "../workflow/session-store";
-import { BROWSER_WORKFLOW_OVERVIEW_RECENT_LIMIT, handleApiRequest } from "./api";
+import {
+  BROWSER_WORKFLOW_OVERVIEW_RECENT_LIMIT,
+  handleApiRequest,
+} from "./api";
 import { startServe } from "./serve";
 
 describe("startServe", () => {
@@ -216,7 +219,9 @@ describe("handleApiRequest workflow overview routes", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       readonly workflows: readonly { readonly workflowName: string }[];
-      readonly selectedWorkflow: { readonly recentExecutions: unknown[] } | null;
+      readonly selectedWorkflow: {
+        readonly recentExecutions: unknown[];
+      } | null;
     };
     expect(body.workflows.length).toBeGreaterThanOrEqual(1);
     expect(body.selectedWorkflow).not.toBeNull();
@@ -286,7 +291,9 @@ describe("handleApiRequest workflow overview routes", () => {
     );
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
-      readonly selectedWorkflow: { readonly recentExecutions: readonly unknown[] };
+      readonly selectedWorkflow: {
+        readonly recentExecutions: readonly unknown[];
+      };
     };
     expect(body.selectedWorkflow.recentExecutions).toHaveLength(
       BROWSER_WORKFLOW_OVERVIEW_RECENT_LIMIT,

@@ -344,6 +344,61 @@ describe("event listener service", () => {
     await listener.stop();
   });
 
+  test("starts enabled Matrix sources with env and fetch context", async () => {
+    const root = await makeTempDir();
+    const workflowRoot = path.join(root, ".divedra");
+    const eventRoot = path.join(root, ".divedra-events");
+    await writeJson(path.join(workflowRoot, "demo", "workflow.json"), {
+      workflowId: "demo",
+    });
+    await writeJson(path.join(eventRoot, "sources", "team-matrix.json"), {
+      id: "team-matrix",
+      kind: "matrix",
+      homeserverUrlEnv: "DIVEDRA_MATRIX_HOMESERVER_URL",
+      accessTokenEnv: "DIVEDRA_MATRIX_ACCESS_TOKEN",
+      userId: "@divedra:matrix.example",
+      rooms: [{ roomId: "!release:matrix.example" }],
+      sync: { pollTimeoutMs: 1000 },
+    });
+
+    let resolveSync: (() => void) | undefined;
+    const syncSeen = new Promise<void>((resolve) => {
+      resolveSync = resolve;
+    });
+    const fetchImpl = vi.fn(async (url, init) => {
+      expect(String(url)).toContain("/_matrix/client/v3/sync?timeout=1000");
+      expect(init?.headers).toMatchObject({
+        authorization: "Bearer secret-token",
+      });
+      resolveSync?.();
+      return new Response(
+        JSON.stringify({ next_batch: "next", rooms: { join: {} } }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    }) as typeof fetch;
+
+    const listener = await createEventListenerService().start({
+      workflowRoot,
+      eventRoot,
+      rootDataDir: path.join(root, "data"),
+      env: {
+        DIVEDRA_MATRIX_HOMESERVER_URL: "https://matrix.example",
+        DIVEDRA_MATRIX_ACCESS_TOKEN: "secret-token",
+      },
+      fetchImpl,
+      cwd: root,
+      port: 0,
+    });
+
+    await syncSeen;
+    expect(listener.sources).toEqual(["team-matrix"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await listener.stop();
+  });
+
   test("stops started adapters when HTTP listener startup fails", async () => {
     const root = await makeTempDir();
     const workflowRoot = path.join(root, ".divedra");
@@ -505,6 +560,15 @@ describe("event listener service", () => {
       readonly init?: RequestInit;
     }> = [];
     const fetchImpl = vi.fn(async (url, init) => {
+      if (String(url).includes("/_matrix/client/v3/sync")) {
+        return new Response(
+          JSON.stringify({ next_batch: "next", rooms: { join: {} } }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
       replyCalls.push({
         url: String(url),
         ...(init === undefined ? {} : { init }),
@@ -525,6 +589,8 @@ describe("event listener service", () => {
         rootDataDir,
         env: {
           DIVEDRA_EXAMPLE_REPLY_ENDPOINT: "https://reply.example.test/listener",
+          DIVEDRA_MATRIX_HOMESERVER_URL: "https://matrix.example",
+          DIVEDRA_MATRIX_ACCESS_TOKEN: "secret-token",
         },
         fetchImpl,
         cwd: process.cwd(),

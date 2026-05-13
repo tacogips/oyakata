@@ -18,6 +18,7 @@ import {
   validateEnvName,
   validateSecretEnvName,
 } from "./validation-utils";
+import { validateMatrixSource } from "./validate-source-matrix";
 import { isValidCronSchedule, isValidTimeZone } from "./adapters/cron";
 import {
   isValidEventHttpPath,
@@ -42,7 +43,12 @@ import type {
   EventSourceConfig,
 } from "./types";
 
-const SUPPORTED_SOURCE_KINDS = new Set(["cron", "webhook", "s3-repository"]);
+const SUPPORTED_SOURCE_KINDS = new Set([
+  "cron",
+  "matrix",
+  "webhook",
+  "s3-repository",
+]);
 
 function validateUniqueIds(
   label: string,
@@ -143,6 +149,10 @@ function validateSource(
         `unsupported source kind '${source.kind}'`,
       ),
     );
+  }
+
+  if (source.kind === "matrix") {
+    validateMatrixSource(source, issues);
   }
 
   if (source.kind === "cron") {
@@ -511,14 +521,12 @@ function validateSupervisedBinding(
           ) {
             continue;
           }
-          {
-            issues.push(
-              error(
-                `${pathPrefix}.control.intentMapping.commands.${actionName}`,
-                "command token must be a non-empty string or non-empty string array",
-              ),
-            );
-          }
+          issues.push(
+            error(
+              `${pathPrefix}.control.intentMapping.commands.${actionName}`,
+              "command token must be a non-empty string or non-empty string array",
+            ),
+          );
         }
       }
       const inputPath = intent["inputPath"];

@@ -8,11 +8,7 @@ import {
   type NodeExecutionMailbox,
   type PromptCompositionUpstreamInput,
 } from "./node-execution-mailbox";
-import {
-  type NodePayload,
-  type WorkflowJson,
-  type WorkflowNodeRef,
-} from "./types";
+import type { NodePayload, WorkflowJson, WorkflowNodeRef } from "./types";
 
 export interface PromptCompositionInput {
   readonly workflow: WorkflowJson;

@@ -1,4 +1,5 @@
 import { createCronEventSourceAdapter } from "./adapters/cron";
+import { createMatrixEventSourceAdapter } from "./adapters/matrix";
 import { createS3RepositoryEventSourceAdapter } from "./adapters/s3-repository";
 import { createWebhookEventSourceAdapter } from "./adapters/webhook";
 import type { EventSourceAdapter } from "./source-adapter";
@@ -38,6 +39,7 @@ export function createEventSourceRegistry(
 export function createDefaultEventSourceRegistry(): EventSourceRegistry {
   const registry = createEventSourceRegistry();
   registry.register(createCronEventSourceAdapter());
+  registry.register(createMatrixEventSourceAdapter());
   registry.register(createWebhookEventSourceAdapter());
   registry.register(createS3RepositoryEventSourceAdapter());
   return registry;

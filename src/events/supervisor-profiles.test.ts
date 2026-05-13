@@ -142,7 +142,10 @@ describe("validateSupervisorProfileAgainstCatalog", () => {
     if (!parsed.ok) {
       return;
     }
-    const issues = validateSupervisorProfileAgainstCatalog(parsed.value, new Set());
+    const issues = validateSupervisorProfileAgainstCatalog(
+      parsed.value,
+      new Set(),
+    );
     expect(issues.length).toBeGreaterThanOrEqual(1);
   });
 

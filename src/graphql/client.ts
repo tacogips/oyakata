@@ -77,9 +77,7 @@ export async function executeGraphqlRequest(
   }
 
   return {
-    ...(Object.prototype.hasOwnProperty.call(body, "data")
-      ? { data: body["data"] }
-      : {}),
+    ...(Object.hasOwn(body, "data") ? { data: body["data"] } : {}),
     ...(errors === undefined ? {} : { errors }),
   };
 }

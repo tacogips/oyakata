@@ -1,5 +1,8 @@
 import { callStep, type CallStepInput } from "./workflow/call-step";
-import { buildFanoutGroupSummaries, type FanoutGroupSummary } from "./workflow/inspect";
+import {
+  buildFanoutGroupSummaries,
+  type FanoutGroupSummary,
+} from "./workflow/inspect";
 import { loadWorkflowFromCatalog } from "./workflow/load";
 import {
   listEventReplyDispatchesFromRuntimeDb,

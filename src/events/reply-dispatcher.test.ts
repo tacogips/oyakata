@@ -2,7 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { createEventSourceRegistry } from "./adapter-registry";
+import {
+  createDefaultEventSourceRegistry,
+  createEventSourceRegistry,
+} from "./adapter-registry";
 import { createEventReplyDispatcher } from "./reply-dispatcher";
 import {
   listEventReplyDispatchesFromRuntimeDb,
@@ -517,6 +520,74 @@ describe("event reply dispatcher", () => {
     });
     expect(deliveredSourceIds).toEqual(["reply-chat"]);
     expect(deliveredConversationIds).toEqual(["peer-conversation"]);
+  });
+
+  test("dispatches Matrix replies without persisting access tokens", async () => {
+    const rootDataDir = await makeTempDir();
+    const calls: RequestInit[] = [];
+    const dispatcher = createEventReplyDispatcher({
+      configuration: {
+        eventRoot: "/events",
+        sources: [
+          {
+            id: "team-matrix",
+            kind: "matrix",
+            provider: "matrix",
+            homeserverUrlEnv: "DIVEDRA_MATRIX_HOMESERVER_URL",
+            accessTokenEnv: "DIVEDRA_MATRIX_ACCESS_TOKEN",
+            userId: "@divedra:matrix.example",
+            rooms: [{ roomId: "!release:matrix.example" }],
+          },
+        ],
+        destinations: [],
+        bindings: [],
+      },
+      registry: createDefaultEventSourceRegistry(),
+      env: {
+        DIVEDRA_MATRIX_HOMESERVER_URL: "https://matrix.example",
+        DIVEDRA_MATRIX_ACCESS_TOKEN: "secret-token",
+      },
+      fetchImpl: async (_url, init) => {
+        calls.push(init ?? {});
+        return new Response(JSON.stringify({ event_id: "$reply-event" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      runtimeOptions: { rootDataDir },
+    });
+
+    const result = await dispatcher.dispatchChatReply({
+      ...makeReplyRequest("matrix-reply-key"),
+      target: {
+        sourceId: "team-matrix",
+        provider: "matrix",
+        eventId: "$event-1",
+        conversationId: "!release:matrix.example",
+      },
+    });
+    const persisted = await loadEventReplyDispatchByIdempotencyKey(
+      "matrix-reply-key",
+      { rootDataDir },
+    );
+
+    expect(result).toEqual({
+      status: "sent",
+      provider: "matrix",
+      providerMessageId: "$reply-event",
+    });
+    expect(calls[0]?.headers).toMatchObject({
+      authorization: "Bearer secret-token",
+    });
+    expect(persisted).toMatchObject({
+      idempotencyKey: "matrix-reply-key",
+      sourceId: "team-matrix",
+      provider: "matrix",
+      status: "sent",
+      providerMessageId: "$reply-event",
+    });
+    expect(persisted?.requestJson).not.toContain("secret-token");
+    expect(JSON.stringify(persisted)).not.toContain("secret-token");
   });
 
   test("fans out destination lists to all enabled chat destinations", async () => {

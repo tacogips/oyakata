@@ -55,7 +55,7 @@ function hasNullableStringField(
   fieldName: string,
 ): boolean {
   return (
-    Object.prototype.hasOwnProperty.call(payload, fieldName) &&
+    Object.hasOwn(payload, fieldName) &&
     (payload[fieldName] === null || typeof payload[fieldName] === "string")
   );
 }

@@ -4194,9 +4194,12 @@ describe("runWorkflow", () => {
       (entry) => entry.transitionWhen.startsWith("fanout-join:"),
     );
     expect(joinCommunication).toBeDefined();
+    if (joinCommunication === undefined) {
+      return;
+    }
     expect(joinCommunication?.toNodeId).toBe("review-result");
     const aggregateRaw = await readFile(
-      path.join(joinCommunication!.payloadRef.artifactDir, "output.json"),
+      path.join(joinCommunication.payloadRef.artifactDir, "output.json"),
       "utf8",
     );
     const aggregate = JSON.parse(aggregateRaw) as {
@@ -4272,6 +4275,9 @@ describe("runWorkflow", () => {
       (entry) => entry.nodeId === "writer",
     );
     expect(writerExecution).toBeDefined();
+    if (writerExecution === undefined) {
+      return;
+    }
     const crossWfArtifactPath = path.join(
       root,
       "artifacts",
@@ -4280,7 +4286,7 @@ describe("runWorkflow", () => {
       result.value.session.sessionId,
       "nodes",
       "writer",
-      writerExecution!.nodeExecId,
+      writerExecution.nodeExecId,
       "workflow-calls",
       "__cw:writer-0.json",
     );
@@ -4613,8 +4619,11 @@ describe("runWorkflow", () => {
       (entry) => entry.transitionWhen.startsWith("fanout-join:"),
     );
     expect(joinCommunication?.toNodeId).toBe("review-result");
+    if (joinCommunication === undefined) {
+      return;
+    }
     const aggregateRaw = await readFile(
-      path.join(joinCommunication!.payloadRef.artifactDir, "output.json"),
+      path.join(joinCommunication.payloadRef.artifactDir, "output.json"),
       "utf8",
     );
     const aggregate = JSON.parse(aggregateRaw) as {
@@ -4631,8 +4640,13 @@ describe("runWorkflow", () => {
       [2, "feature-c"],
     ]);
 
+    const firstReviewerExecution = reviewerExecutions[0];
+    expect(firstReviewerExecution).toBeDefined();
+    if (firstReviewerExecution === undefined) {
+      return;
+    }
     const reviewerInputRaw = await readFile(
-      path.join(reviewerExecutions[0]!.artifactDir, "input.json"),
+      path.join(firstReviewerExecution.artifactDir, "input.json"),
       "utf8",
     );
     const reviewerInput = JSON.parse(reviewerInputRaw) as {
@@ -4649,7 +4663,7 @@ describe("runWorkflow", () => {
 
     const reviewerMailboxMetaRaw = await readFile(
       path.join(
-        reviewerExecutions[0]!.artifactDir,
+        firstReviewerExecution.artifactDir,
         "mailbox",
         "inbox",
         "meta.json",
@@ -4669,7 +4683,7 @@ describe("runWorkflow", () => {
 
     const reviewerMailboxRaw = await readFile(
       path.join(
-        reviewerExecutions[0]!.artifactDir,
+        firstReviewerExecution.artifactDir,
         "mailbox",
         "inbox",
         "input.json",
@@ -4825,7 +4839,11 @@ describe("runWorkflow", () => {
     expect(result.error.message).toContain("fanout group");
     expect(result.error.message).toContain("branch 1");
     expect(result.error.sessionId).toBeDefined();
-    const stored = await loadSession(result.error.sessionId!, {
+    const sessionId = result.error.sessionId;
+    if (sessionId === undefined) {
+      return;
+    }
+    const stored = await loadSession(sessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(stored.ok).toBe(true);
@@ -4872,7 +4890,11 @@ describe("runWorkflow", () => {
       return;
     }
     expect(result.error.sessionId).toBeDefined();
-    const stored = await loadSession(result.error.sessionId!, {
+    const sessionId = result.error.sessionId;
+    if (sessionId === undefined) {
+      return;
+    }
+    const stored = await loadSession(sessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(stored.ok).toBe(true);
@@ -4921,7 +4943,11 @@ describe("runWorkflow", () => {
     }
     expect(result.error.message).toContain("fanout max steps reached (2)");
     expect(result.error.sessionId).toBeDefined();
-    const stored = await loadSession(result.error.sessionId!, {
+    const sessionId = result.error.sessionId;
+    if (sessionId === undefined) {
+      return;
+    }
+    const stored = await loadSession(sessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(stored.ok).toBe(true);
@@ -4997,7 +5023,11 @@ describe("runWorkflow", () => {
     expect(result.error.message).toContain("fanout group");
     expect(result.error.message).toContain("branch 0");
     expect(result.error.sessionId).toBeDefined();
-    const stored = await loadSession(result.error.sessionId!, {
+    const sessionId = result.error.sessionId;
+    if (sessionId === undefined) {
+      return;
+    }
+    const stored = await loadSession(sessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(stored.ok).toBe(true);
@@ -5065,7 +5095,11 @@ describe("runWorkflow", () => {
     expect(result.error.exitCode).toBe(130);
     expect(result.error.message).toContain("cancelled by external request");
     expect(result.error.sessionId).toBeDefined();
-    const stored = await loadSession(result.error.sessionId!, {
+    const sessionId = result.error.sessionId;
+    if (sessionId === undefined) {
+      return;
+    }
+    const stored = await loadSession(sessionId, {
       sessionStoreRoot: path.join(root, "sessions"),
     });
     expect(stored.ok).toBe(true);

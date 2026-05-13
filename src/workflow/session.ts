@@ -431,7 +431,12 @@ function assignStableExecutionOrdinals(
   );
   if (allDefined) {
     return [...executions].sort((left, right) => {
-      const ordinalDiff = left.executionOrdinal! - right.executionOrdinal!;
+      const leftOrdinal = left.executionOrdinal;
+      const rightOrdinal = right.executionOrdinal;
+      if (leftOrdinal === undefined || rightOrdinal === undefined) {
+        return left.nodeExecId.localeCompare(right.nodeExecId);
+      }
+      const ordinalDiff = leftOrdinal - rightOrdinal;
       if (ordinalDiff !== 0) {
         return ordinalDiff;
       }
@@ -738,10 +743,7 @@ function normalizeWorkflowSlug(workflowId: string): string {
 }
 
 export function createSessionId(
-  input: {
-    readonly workflowId?: string;
-    readonly now?: Date;
-  } = {},
+  input: { readonly workflowId?: string; readonly now?: Date } = {},
 ): string {
   const now = input.now ?? new Date();
   const unixTime = String(Math.floor(now.getTime() / 1000));

@@ -53,6 +53,7 @@ export async function emitEventFile(
   const body = JSON.parse(content) as unknown;
   const raw: RawExternalEvent = {
     sourceId: source.id,
+    source,
     receivedAt: new Date().toISOString(),
     body,
   };

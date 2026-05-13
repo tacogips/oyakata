@@ -71,10 +71,7 @@ async function expectPayloadCwd(
   );
 }
 
-async function runGit(
-  cwd: string,
-  args: readonly string[],
-): Promise<string> {
+async function runGit(cwd: string, args: readonly string[]): Promise<string> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
     stdout: "pipe",
@@ -86,9 +83,7 @@ async function runGit(
     proc.exited,
   ]);
   if (exitCode !== 0) {
-    throw new Error(
-      `git ${args.join(" ")} failed with ${exitCode}: ${stderr}`,
-    );
+    throw new Error(`git ${args.join(" ")} failed with ${exitCode}: ${stderr}`);
   }
   return stdout;
 }
@@ -243,7 +238,11 @@ describe("executeNativeNode", () => {
       "artifacts",
       "git-commit-for-push",
     );
-    const pushArtifactDir = path.join(workflowDirectory, "artifacts", "git-push");
+    const pushArtifactDir = path.join(
+      workflowDirectory,
+      "artifacts",
+      "git-push",
+    );
     await mkdir(commitArtifactDir, { recursive: true });
     await mkdir(pushArtifactDir, { recursive: true });
     await writeFile(path.join(repo, "README.md"), "pushed\n", "utf8");
@@ -361,9 +360,9 @@ describe("executeNativeNode", () => {
       (await runGit(repo, ["rev-parse", "HEAD"])).trim(),
     );
     expect(
-      (await runGit(remote, ["rev-parse", "refs/heads/release/test-branch"]))
-        .trim()
-        .length,
+      (
+        await runGit(remote, ["rev-parse", "refs/heads/release/test-branch"])
+      ).trim().length,
     ).toBeGreaterThan(0);
   });
 

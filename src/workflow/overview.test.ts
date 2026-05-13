@@ -24,10 +24,7 @@ function compact(
   overrides: Partial<WorkflowExecutionCompactSummary> &
     Pick<
       WorkflowExecutionCompactSummary,
-      | "workflowExecutionId"
-      | "workflowName"
-      | "status"
-      | "startedAt"
+      "workflowExecutionId" | "workflowName" | "status" | "startedAt"
     >,
 ): WorkflowExecutionCompactSummary {
   return {
@@ -507,9 +504,7 @@ describe("buildWorkflowCatalogOverview", () => {
     expect(dupRows).toHaveLength(2);
     const scopes = [...new Set(dupRows.map((r) => r.sourceScope))].sort();
     expect(scopes).toEqual(["project", "user"]);
-    const projectRow = dupRows.find(
-      (entry) => entry.sourceScope === "project",
-    );
+    const projectRow = dupRows.find((entry) => entry.sourceScope === "project");
     expect(projectRow?.description).toBe("from project");
     expect(projectRow?.aggregateStatus).toBe("completed");
     expect(projectRow?.activeExecutionCount).toBe(0);
@@ -722,9 +717,7 @@ describe("buildWorkflowStatusOverview", () => {
 
 describe("parseWorkflowOverviewAggregateStatusFilter", () => {
   it("accepts empty and valid statuses", () => {
-    expect(parseWorkflowOverviewAggregateStatusFilter(undefined).ok).toBe(
-      true,
-    );
+    expect(parseWorkflowOverviewAggregateStatusFilter(undefined).ok).toBe(true);
     const running = parseWorkflowOverviewAggregateStatusFilter("running");
     expect(running.ok).toBe(true);
     if (running.ok) {

@@ -196,7 +196,9 @@ describe("recordWorkflowPatchRevision", () => {
     if (readResult.ok) {
       return;
     }
-    expect(readResult.error.message).toContain("failed reading patch revisions");
+    expect(readResult.error.message).toContain(
+      "failed reading patch revisions",
+    );
 
     const recordResult = await recordWorkflowPatchRevision({
       artifactRoot,
@@ -209,7 +211,9 @@ describe("recordWorkflowPatchRevision", () => {
     if (recordResult.ok) {
       return;
     }
-    expect(recordResult.error.message).toContain("failed reading patch revisions");
+    expect(recordResult.error.message).toContain(
+      "failed reading patch revisions",
+    );
     expect(await readFile(revisionsPath, "utf8")).toBe("{not-json");
   });
 });

@@ -60,8 +60,10 @@ describe("event source registry", () => {
 
     expect(registry.list().map((adapter) => adapter.kind)).toEqual([
       "cron",
+      "matrix",
       "s3-repository",
       "webhook",
     ]);
+    expect(registry.get("matrix")?.capabilities.chatReply).toBe(true);
   });
 });

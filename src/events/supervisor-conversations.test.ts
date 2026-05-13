@@ -284,7 +284,8 @@ describe("createRuntimeSupervisorConversationRepository", () => {
         profileRevision: "rev-1",
         conversationRevision: 1,
         status: "proposed",
-        proposalJson: '{"action":"no-op","reason":"__dispatch_claim__","confidence":1}',
+        proposalJson:
+          '{"action":"no-op","reason":"__dispatch_claim__","confidence":1}',
         createdAt: now,
         updatedAt: now,
       }),

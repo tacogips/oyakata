@@ -295,7 +295,7 @@ bun run typecheck
 tsc --noEmit
 
 # Format check (Prettier; Biome formatter is disabled in this repo)
-bunx prettier --check "src/**/*.ts"
+biome format src
 ```
 
 ## Test Execution Guidelines

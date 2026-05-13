@@ -56,6 +56,21 @@ Chat destinations may optionally pin a provider-side target:
 }
 ```
 
+Matrix chat destinations use the same `chat` destination kind. The Matrix
+transport is selected by the referenced source adapter:
+
+```json
+{
+  "id": "release-matrix-chat",
+  "kind": "chat",
+  "sourceId": "team-matrix",
+  "target": {
+    "provider": "matrix",
+    "conversationId": "!release-room:example.org"
+  }
+}
+```
+
 When `target` is omitted, the destination replies to the inbound event conversation. When `target` is set, the destination addresses another chat conversation, which allows supervisor workflows to communicate with each other through normal event/destination plumbing.
 
 The current foundation resolves chat delivery targets as follows:
@@ -80,6 +95,22 @@ Supervisor event handling is deterministic:
 The supervisor remains the owner of command/event handling. LLM calls may classify ambiguous text or select task-routing proposals, but they do not own listener lifecycle, destination selection, receipt updates, or control action execution.
 
 External outputs carry `eventOutputDestinations` through runtime variables into business-final, progress, control-status, supervisor-dispatch, and chat-reply worker dispatch paths. Chat delivery fans out across enabled chat destinations when a destination list is present. Fanout is sequential to preserve authored destination order and stable audit behavior.
+
+For Matrix-backed chat destinations, the output publisher should pass the same
+provider-neutral `ChatReplyDispatchRequest` contract to the Matrix source
+adapter. The destination layer resolves the source and target only; Matrix
+message formatting, access-token lookup, transaction id construction, and
+Client-Server API calls stay inside the Matrix adapter. Reply dispatch records
+must persist the destination id, provider message id or event id, status, and
+redacted request metadata without storing access tokens or authorization
+headers.
+
+The provider-neutral target passed to Matrix must retain enough context for
+idempotent replies: source id, provider, Matrix room id as `conversationId`,
+optional inbound event id, optional thread id, and the reply idempotency key.
+Adapters may derive provider transaction ids from that idempotency key, but the
+publisher must not pre-format Matrix relation payloads or expose Matrix-specific
+request bodies outside the adapter boundary.
 
 ### Chat Task Lifecycle Replies
 
@@ -134,6 +165,41 @@ The compatibility fallback to an inbound source-backed chat target is a
 transport bridge only. It preserves existing behavior when no destination id is
 configured, but it is not the primary contract for new event integrations.
 
+Matrix should follow the explicit destination contract whenever examples or
+bindings can name a destination. The inbound source-backed fallback remains
+valid for simple chat-reply-worker flows, but new Matrix examples should include
+an explicit `chat` destination so receive and send behavior are independently
+inspectable.
+
+### Matrix Local Sample Reply Verification
+
+The Matrix send/receive sample should verify outbound delivery through the
+normal destination publisher and Matrix source adapter boundary. It should not
+special-case Matrix sends inside the workflow or script around the
+`divedra/chat-reply-worker` add-on.
+
+The expected local sample mapping is:
+
+- source: `examples/event-sources/.divedra-events/sources/team-matrix.json`
+- binding:
+  `examples/event-sources/.divedra-events/bindings/matrix-release-chat-to-workflow.json`
+- destination:
+  `examples/event-sources/.divedra-events/destinations/release-matrix-chat.json`
+- workflow: `examples/chat-reply-webhook`
+- live verification root: `examples/event-sources/matrix/`
+
+The verification should assert that a Matrix reply dispatch record is written
+with `destinationId = "release-matrix-chat"`, `provider = "matrix"`, and a sent
+status or provider event id from the local Synapse server. The record may include
+redacted request metadata, destination id, source id, conversation id, and
+idempotency key. It must not persist Matrix access tokens, authorization
+headers, generated local passwords, or raw response bodies that could contain
+credentials.
+
+If live verification exposes a Matrix send or receive bug, fix the shared
+Matrix adapter or reply dispatcher so the example and production path continue
+to use the same code. Do not introduce an example-only send path.
+
 ### External Output Kinds
 
 External output publications use distinct kinds so runtime behavior and
@@ -180,7 +246,8 @@ The foundation adds only contract types for memory and persona. No runtime compo
 
 ## Codex Reference Mapping
 
-The local `../../codex-agent` repository is used as a behavioral reference only:
+This output-destination foundation previously used the local `../../codex-agent`
+repository as a behavioral reference only:
 
 - `../../codex-agent/src/types/rollout.ts` shows discriminated event message contracts with generic fallback for unknown event types.
 - `../../codex-agent/src/sdk/agent-runner.ts` shows normalized stream events separated from raw session messages.
@@ -189,13 +256,26 @@ The local `../../codex-agent` repository is used as a behavioral reference only:
 
 Divedra intentionally diverges by routing external event outputs through repository-local event adapters, runtime receipts, and workflow/supervisor contracts instead of mirroring Codex CLI session streams directly.
 
+The Matrix send/receive sample issue has no Codex-reference input. Step 4 should
+therefore treat the repository-local event-source and output-destination design
+as the implementation source of truth, keep `codexAgentReferences` empty, and
+avoid introducing new codex-agent or Cursor-specific adapter behavior for this
+scope.
+
 ## Review Decisions
 
-- Keep `workflowMode` as `design-plan-only`; this run reviews and improves documents without committing or pushing.
-- Keep this as a single design path because output destinations, supervisor routing, node memory/persona contracts, and chat dispatch share the same runtime variable and publisher boundaries.
+- Keep `workflowMode` as `issue-resolution`; this scope requires checked-in
+  Matrix send/receive sample assets and Docker Compose local Synapse
+  verification, not a documentation-only handoff.
+- Keep this as a single design path because the Matrix receive binding,
+  explicit chat destination, chat reply worker, and Matrix reply dispatch share
+  the same event-source and output-destination boundaries.
 - Preserve deterministic supervisor ownership. LLM-backed analysis remains an explicit resolver path for ambiguous commands or task routing.
-- Treat `s3-backup` destinations as validated configuration only until non-chat delivery, retry, and audit behavior are designed and implemented.
-- Keep the completed implementation plan completed, but record this review as a documentation clarification pass rather than a new implementation scope.
+- Treat `s3-backup` destinations as unrelated existing foundation scope; the
+  current issue should not expand non-chat delivery behavior.
+- Treat earlier completed Matrix foundation plans as historical context only.
+  They do not close this issue, because Step 4 must still plan the Matrix
+  sample workflow/config/scripts/docs and live Docker Compose verification.
 - Treat workflow output mail as internal execution data only. Supervisor chat
   replies and workflow business-final event outputs must be modeled as explicit
   external-output publications before any destination delivery occurs.
