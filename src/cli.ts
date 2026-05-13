@@ -1455,7 +1455,7 @@ function printHelp(io: CliIo): void {
     "  workflow usage [name]  Show workflow purpose, compact step overview, and callable manager/entry input/output contracts",
   );
   io.stdout(
-    "  workflow inspect <name> --structure  Show compact indented step id and description rows",
+    "  workflow inspect <name> --structure  Show compact indented step ids with description lines",
   );
   io.stdout(
     "  workflow run <name> --variables <json|@file|file>  Runtime variables as inline JSON object, explicit @file, or bare JSON file path",
@@ -2803,10 +2803,10 @@ function renderWorkflowStructureLines(
   if (rows.length === 0) {
     return ["(none)"];
   }
-  return rows.map(
-    (row) =>
-      `${options.indentUnit.repeat(row.indent)}${row.stepId} ${row.description}`,
-  );
+  return rows.flatMap((row) => [
+    `${options.indentUnit.repeat(row.indent)}${row.stepId}`,
+    `${options.indentUnit.repeat(row.indent + 1)}${row.description}`,
+  ]);
 }
 
 function workflowOverviewGraphqlVariables(

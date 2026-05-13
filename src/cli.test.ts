@@ -301,6 +301,56 @@ async function createManagerlessWorkflowFixture(
   });
 }
 
+async function createMissingDescriptionWorkflowFixture(
+  workflowRoot: string,
+  workflowName: string,
+): Promise<void> {
+  const workflowDirectory = path.join(workflowRoot, workflowName);
+  await mkdir(workflowDirectory, { recursive: true });
+
+  await writeJson(path.join(workflowDirectory, "workflow.json"), {
+    workflowId: workflowName,
+    description: "missing description cli fixture",
+    defaults: { maxLoopIterations: 3, nodeTimeoutMs: 120000 },
+    entryStepId: "step-1",
+    nodes: [
+      {
+        id: "worker-1",
+        nodeFile: "node-worker-1.json",
+      },
+      {
+        id: "worker-2",
+        nodeFile: "node-worker-2.json",
+      },
+    ],
+    steps: [
+      {
+        id: "step-1",
+        nodeId: "worker-1",
+        transitions: [{ toStepId: "step-2" }],
+      },
+      {
+        id: "step-2",
+        nodeId: "worker-2",
+      },
+    ],
+  });
+  await writeJson(path.join(workflowDirectory, "node-worker-1.json"), {
+    id: "worker-1",
+    executionBackend: "codex-agent",
+    model: "gpt-5",
+    promptTemplate: "step 1",
+    variables: {},
+  });
+  await writeJson(path.join(workflowDirectory, "node-worker-2.json"), {
+    id: "worker-2",
+    executionBackend: "codex-agent",
+    model: "gpt-5",
+    promptTemplate: "step 2",
+    variables: {},
+  });
+}
+
 async function createWorkflowCallInspectFixture(
   workflowRoot: string,
   workflowName: string,
@@ -1413,8 +1463,10 @@ describe("runCli", () => {
       expect(code).toBe(0);
       expect(buildInspectionSummarySpy).not.toHaveBeenCalled();
       expect(capture.stdout).toEqual([
-        "step-1 Accept the initial worker-only input and produce the first result.",
-        "step-2 Finalize the worker-only workflow output.",
+        "step-1",
+        "  Accept the initial worker-only input and produce the first result.",
+        "step-2",
+        "  Finalize the worker-only workflow output.",
       ]);
       const output = capture.stdout.join("\n");
       expect(output).not.toContain("role=");
@@ -1422,6 +1474,29 @@ describe("runCli", () => {
       expect(output).not.toContain("nodeRegistryIds");
       expect(output).not.toContain("workflowId");
       expect(output).not.toContain("callable");
+    });
+  });
+
+  test("workflow inspect --structure prints missing descriptions as indented dash lines", async () => {
+    await withLegacyWorkflowAuthorshipForCli(async () => {
+      const root = await makeTempDir();
+      await createMissingDescriptionWorkflowFixture(root, "missing-desc");
+
+      const capture = createIoCapture();
+      const code = await runCli(
+        [
+          "workflow",
+          "inspect",
+          "missing-desc",
+          "--workflow-definition-dir",
+          root,
+          "--structure",
+        ],
+        capture.io,
+      );
+
+      expect(code).toBe(0);
+      expect(capture.stdout).toEqual(["step-1", "  -", "step-2", "  -"]);
     });
   });
 

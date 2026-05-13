@@ -114,10 +114,12 @@ bun run src/main.ts workflow status <workflow-name> --workflow-definition-dir ./
 
 Use `workflow inspect <workflow-name> --structure` only after you have selected
 a workflow and need a compact human-facing structure view. The structure view
-prints each step id and description only, with indentation where the workflow
-graph exposes nesting. Text `--structure` output is rendered directly from the
-loaded workflow bundle after validation, so it avoids the full inspection
-summary and runtime readiness checks that compact output does not display:
+prints each step id on its own line, followed by the step description or `-` on
+the next line indented one level deeper. It preserves indentation where the
+workflow graph exposes nesting. Text `--structure` output is rendered directly
+from the loaded workflow bundle after validation, so it avoids the full
+inspection summary and runtime readiness checks that compact output does not
+display:
 
 ```bash
 bun run src/main.ts workflow inspect <workflow-name> \

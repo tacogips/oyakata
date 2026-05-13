@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-13T05:09:00Z",
+  "lastUpdated": "2026-05-13T06:06:27Z",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -482,6 +482,9 @@
       "status": "COMPLETED"
     },
     "161": {
+      "status": "COMPLETED"
+    },
+    "162": {
       "status": "COMPLETED"
     }
   },
@@ -4322,6 +4325,34 @@
           "status": "Completed",
           "parallelizable": false,
           "deps": ["TASK-001", "TASK-002", "TASK-003", "TASK-004"]
+        }
+      }
+    },
+    "workflow-inspect-structure-description-lines": {
+      "phase": 162,
+      "status": "Completed",
+      "path": "impl-plans/active/workflow-inspect-structure-description-lines.md",
+      "designReference": "design-docs/specs/command.md:30-37,141",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-001", "TASK-002", "TASK-003"]
         }
       }
     }

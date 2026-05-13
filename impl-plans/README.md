@@ -24,7 +24,9 @@ impl-plans/
 
 ## Active Plans
 
-No active implementation plans remain.
+| Plan                                           | Created    | Design Reference |
+| ---------------------------------------------- | ---------- | ---------------- |
+| `workflow-inspect-structure-description-lines` | 2026-05-13 | `command`        |
 
 ## Recently Completed
 
