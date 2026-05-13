@@ -139,6 +139,129 @@ Current compatibility-removal sequence (see
 - node ids remain reusable payload registry identifiers, not execution
   addresses
 
+### TypeScript Source Module Size Boundary
+
+Biome `lint/nursery/noExcessiveLinesPerFile` is an architectural guardrail for
+the source tree, not a reason to change runtime behavior. Non-test TypeScript
+source files should stay below the configured 1000-line maximum by splitting
+large implementation files along existing responsibility boundaries while
+preserving public import paths where practical.
+
+Earlier oversized source files have already been split into semantic modules
+and now remain as small facades where their public import paths still matter.
+The current lint issue target is:
+
+- `src/workflow/engine/workflow-runner-lifecycle.ts`
+
+Module splits should follow these boundaries:
+
+- keep facade files only when they preserve existing caller imports and keep
+  those facades small enough to satisfy Biome
+- name extracted files by responsibility, such as command routing, GraphQL
+  resolver groups, validation domains, runtime persistence stores, supervisor
+  dispatch transport, native add-on command handling, and event trigger
+  execution
+- avoid moving unrelated behavior only to satisfy a line count; each extracted
+  module should have a coherent owner and a narrow import surface
+- keep shared type definitions in existing shared modules when already present,
+  and introduce a local `types` or `shared` module only when multiple extracted
+  files need the same contract
+- preserve initialization order, side-effect timing, and adapter/backend
+  dispatch semantics when extracting helpers from workflow runtime modules
+- do not update repository skill or user documentation unless a documented file
+  path, module responsibility, or workflow instruction becomes stale after the
+  split
+
+Validation for this boundary is layered:
+
+- `bun run lint:biome` must pass and must not report
+  `noExcessiveLinesPerFile` for non-test TypeScript sources
+- `bun run typecheck` must pass after import and type-boundary changes
+- focused tests must cover each touched area with broad blast radius, especially
+  CLI command dispatch, event trigger execution, GraphQL schema/resolvers,
+  workflow engine execution, direct step calls, native node execution, add-on
+  resolution, runtime DB persistence, supervisor client dispatch, and workflow
+  validation
+- full tests should be run when module extraction crosses multiple workflow
+  runtime areas or when focused coverage does not exercise the changed public
+  surface
+
+#### Workflow Runner Module Split
+
+`src/workflow/engine/workflow-runner-lifecycle.ts` is the remaining oversized
+workflow engine source file and should be split without changing the public
+workflow engine surface. `src/workflow/engine.ts` remains the stable facade,
+`src/workflow/engine/workflow-runner.ts` remains a small internal facade for the
+runner contract, and `src/workflow/engine/auto-improve-and-runner.ts` remains
+the public runner entrypoint that exports `runWorkflow()` and delegates to the
+internal runner. The extracted files must use responsibility-based names, not
+ordinal or `part-NN` names, and must not add Biome suppression comments.
+
+The split should preserve `runWorkflowInternal()` as the orchestration contract
+inside the lifecycle shell while moving cohesive internal responsibilities
+behind narrow local modules:
+
+- run setup (`run-setup.ts`): working-directory resolution, mutually exclusive
+  entry-mode validation, source-session preload for resume/rerun/continuation,
+  workflow bundle loading and auto-improve execution-copy reload, runtime
+  readiness, adapter selection, cancellation probing, manager session store
+  creation, and static runtime maps derived from the loaded workflow
+- session entry (`session-entry.ts`): fresh run, resume, rerun,
+  history-linked continuation, auto-improve supervision state attachment,
+  bootstrap human input communication, nested superviser handoff, and early
+  paused/completed return handling
+- step input (`step-input.ts`): missing-step failures, optional-step decision
+  gating, scenario/dry-run payload resolution, execution id and artifact
+  directory setup, workflow-run event emission, upstream/latest-output mailbox
+  input resolution, prompt/input assembly, and output-contract candidate path
+  preparation
+- node execution (`node-execution.ts`): user-action pauses, optional skips,
+  agent/native execution, manager control-plane environment setup, timeout and
+  stall policy, output-contract candidate attempts, schema validation,
+  process/LLM log capture, backend session persistence, and execution-log
+  normalization
+- result finalization (`result-finalization.ts`): input/output/meta/handoff
+  artifact writing, runtime DB persistence, manager session finalization,
+  optional manager decisions, completion-rule evaluation, communication
+  consumption, edge and loop transition selection, local fanout dispatch,
+  cross-workflow dispatch, retry queue updates, workflow output runtime
+  variable updates, terminal failure mapping, and final external output
+  publication
+
+The lifecycle shell should be responsible only for sequencing these phase
+helpers, owning the queue loop, and carrying the typed runner context from one
+phase to the next. Shared mutable values that cross phase boundaries should be
+explicit fields on local context records; extracted modules should not depend
+on hidden lexical state, generated source strings, `eval`, `Function`, or
+`globalThis.Function`.
+
+Existing semantic helper modules under `src/workflow/engine/` should remain the
+preferred owners for behavior they already encapsulate:
+
+- `types-and-session-state.ts` for shared runner primitives, failure helpers,
+  timestamps, ids, output validation helper paths, optional decisions, and
+  session persistence helpers
+- `mailbox-communication-artifacts.ts` for mailbox indexes, communication
+  artifacts, session cloning, supervision-state cloning, and output payload
+  reads
+- `cross-workflow-dispatch.ts` for manager optional decisions and published
+  workflow-result lookup
+- `fanout-dispatch.ts` for local fanout and cross-workflow transition execution
+- `auto-improve-and-runner.ts` for public `runWorkflow()` and nested superviser
+  driver integration
+
+New local modules are acceptable only when the extracted responsibility does
+not belong in one of those existing owners. Suggested names should describe the
+runtime boundary directly, for example `run-setup.ts`,
+`session-entry.ts`, `step-input.ts`, `node-execution.ts`, or
+`result-finalization.ts`.
+
+Verification for the workflow-runner split must include:
+
+- `bun run lint:biome`
+- `bun run typecheck`
+- `bun test src/workflow/engine.test.ts src/workflow/call-step.test.ts src/workflow/call-step-impl-execution.test.ts src/workflow/call-step-impl-failures.test.ts src/workflow/history-continuation.test.ts src/workflow/manager-control.test.ts src/workflow/manager-message-service.test.ts src/workflow/manager-session-store.test.ts src/workflow/superviser.test.ts src/workflow/auto-improve-policy.test.ts src/workflow/supervisor-runner-pool.test.ts`
+
 ## Core Architectural Boundaries
 
 ### Workflow Definition Boundary

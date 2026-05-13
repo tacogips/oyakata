@@ -9,7 +9,10 @@
     "includes": ["src/**/*.ts", "src/**/*.tsx", "vitest.config.ts"]
   },
   "formatter": {
-    "enabled": false
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 80
   },
   "linter": {
     "enabled": true,
@@ -17,7 +20,7 @@
       "recommended": true,
       "nursery": {
         "noExcessiveLinesPerFile": {
-          "level": "warn",
+          "level": "error",
           "options": {
             "maxLines": 1000,
             "skipBlankLines": false

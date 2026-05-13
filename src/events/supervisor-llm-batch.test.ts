@@ -95,11 +95,12 @@ describe("planSupervisedLlmBindingsDispatch", () => {
   });
 
   test("disambiguates destructive fanout when event text names one workflow", async () => {
-    vi.spyOn(supervisorIntent, "resolveSupervisorIntentAsync").mockImplementation(
-      async () => {
-        return { outcome: "action", action: "stop" };
-      },
-    );
+    vi.spyOn(
+      supervisorIntent,
+      "resolveSupervisorIntentAsync",
+    ).mockImplementation(async () => {
+      return { outcome: "action", action: "stop" };
+    });
 
     const plan = await planSupervisedLlmBindingsDispatch({
       bindings: [
@@ -112,14 +113,22 @@ describe("planSupervisedLlmBindingsDispatch", () => {
 
     expect(plan.kind).toBe("ready");
     if (plan.kind !== "ready") return;
-    expect(plan.intents.get("b1")).toEqual({ outcome: "action", action: "stop" });
+    expect(plan.intents.get("b1")).toEqual({
+      outcome: "action",
+      action: "stop",
+    });
     const b2Intent = plan.intents.get("b2");
     expect(b2Intent?.outcome).toBe("skip");
-    expect(b2Intent?.outcome === "skip" ? b2Intent.reason : "").toContain("wf-alpha");
+    expect(b2Intent?.outcome === "skip" ? b2Intent.reason : "").toContain(
+      "wf-alpha",
+    );
   });
 
   test("allows destructive fanout when every binding opts into multi-target", async () => {
-    vi.spyOn(supervisorIntent, "resolveSupervisorIntentAsync").mockResolvedValue({
+    vi.spyOn(
+      supervisorIntent,
+      "resolveSupervisorIntentAsync",
+    ).mockResolvedValue({
       outcome: "action",
       action: "stop",
     });
@@ -135,7 +144,13 @@ describe("planSupervisedLlmBindingsDispatch", () => {
 
     expect(plan.kind).toBe("ready");
     if (plan.kind !== "ready") return;
-    expect(plan.intents.get("b1")).toEqual({ outcome: "action", action: "stop" });
-    expect(plan.intents.get("b2")).toEqual({ outcome: "action", action: "stop" });
+    expect(plan.intents.get("b1")).toEqual({
+      outcome: "action",
+      action: "stop",
+    });
+    expect(plan.intents.get("b2")).toEqual({
+      outcome: "action",
+      action: "stop",
+    });
   });
 });

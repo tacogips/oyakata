@@ -190,7 +190,10 @@ export async function buildBrowserWorkflowOverviewViewModel(
                   context.fixedResolvedWorkflowSource,
               }),
         };
-  const selectedRow = selectDefaultWorkflowOverviewRow(workflows, selectOptions);
+  const selectedRow = selectDefaultWorkflowOverviewRow(
+    workflows,
+    selectOptions,
+  );
   if (selectedRow === null) {
     return ok({ workflows, selectedWorkflow: null });
   }
@@ -252,9 +255,8 @@ export async function handleApiRequest(
     }
 
     async function overviewJson(): Promise<Response> {
-      const built = await buildBrowserWorkflowOverviewViewModel(
-        normalizedContext,
-      );
+      const built =
+        await buildBrowserWorkflowOverviewViewModel(normalizedContext);
       if (!built.ok) {
         return json({ error: built.error.message }, 500);
       }

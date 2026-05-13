@@ -33,7 +33,6 @@
           # TypeScript tooling
           pkgs-unstable.typescript
           pkgs-unstable.typescript-language-server
-          nodePackages.prettier
 
           # Rust-based JS/TS linter used by repository lint tasks.
           pkgs-unstable.biome

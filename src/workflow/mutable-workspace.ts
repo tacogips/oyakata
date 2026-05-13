@@ -148,7 +148,9 @@ function isNodeErrorWithCode(
 
 async function loadPatchRevisionRecords(
   filePath: string,
-): Promise<Result<readonly WorkflowPatchRevisionRecord[], MutableWorkspaceFailure>> {
+): Promise<
+  Result<readonly WorkflowPatchRevisionRecord[], MutableWorkspaceFailure>
+> {
   try {
     const raw = await readFile(filePath, "utf8");
     const parsed: unknown = JSON.parse(raw) as unknown;

@@ -24,7 +24,9 @@ impl-plans/
 
 ## Active Plans
 
-No active implementation plans remain.
+| Plan                                     | Created    | Design Reference                                      |
+| ---------------------------------------- | ---------- | ----------------------------------------------------- |
+| `workflow-runner-module-split`           | 2026-05-13 | `architecture#workflow-runner-module-split`           |
 
 ## Recently Completed
 

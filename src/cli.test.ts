@@ -2415,24 +2415,22 @@ describe("runCli", () => {
       value: "/missing/variables.json",
       expected: "ENOENT",
     },
-  ])(
-    "workflow run rejects invalid runtime variables: $name",
-    async ({ value, expected }) => {
-      const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
-      const capture = createIoCapture();
-      const code = await runCli(
-        ["workflow", "run", "demo", "--variables", value],
-        capture.io,
-      );
+  ])("workflow run rejects invalid runtime variables: $name", async ({
+    value,
+    expected,
+  }) => {
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["workflow", "run", "demo", "--variables", value],
+      capture.io,
+    );
 
-      expect(code).toBe(1);
-      expect(capture.stderr.join("\n")).toContain(
-        "failed to parse --variables",
-      );
-      expect(capture.stderr.join("\n")).toContain(expected);
-      expect(runWorkflowSpy).not.toHaveBeenCalled();
-    },
-  );
+    expect(code).toBe(1);
+    expect(capture.stderr.join("\n")).toContain("failed to parse --variables");
+    expect(capture.stderr.join("\n")).toContain(expected);
+    expect(runWorkflowSpy).not.toHaveBeenCalled();
+  });
 
   test("workflow run rejects non-object runtime variables files", async () => {
     const root = await makeTempDir();
@@ -4666,20 +4664,20 @@ describe("runCli", () => {
       value: "-1",
       expected: "invalid --max-concurrency",
     },
-  ])(
-    "workflow run rejects invalid --max-concurrency: $name",
-    async ({ value, expected }) => {
-      const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
-      const capture = createIoCapture();
-      const code = await runCli(
-        ["workflow", "run", "demo", "--max-concurrency", value],
-        capture.io,
-      );
-      expect(code).toBe(2);
-      expect(capture.stderr.join("\n")).toContain(expected);
-      expect(runWorkflowSpy).not.toHaveBeenCalled();
-    },
-  );
+  ])("workflow run rejects invalid --max-concurrency: $name", async ({
+    value,
+    expected,
+  }) => {
+    const runWorkflowSpy = vi.spyOn(workflowEngine, "runWorkflow");
+    const capture = createIoCapture();
+    const code = await runCli(
+      ["workflow", "run", "demo", "--max-concurrency", value],
+      capture.io,
+    );
+    expect(code).toBe(2);
+    expect(capture.stderr.join("\n")).toContain(expected);
+    expect(runWorkflowSpy).not.toHaveBeenCalled();
+  });
 
   test("session step-runs rejects graphql transport", async () => {
     const capture = createIoCapture();

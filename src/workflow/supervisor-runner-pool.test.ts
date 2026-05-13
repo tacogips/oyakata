@@ -177,12 +177,12 @@ describe("createSupervisorRunnerPool", () => {
     const liveHandle = pool.lookupHandle({ supervisedRunId: "run-1" });
     expect(liveHandle?.runnerPoolRunId).toBe("pool-live");
 
-    (
-      client.dispatchCommand as ReturnType<typeof vi.fn>
-    ).mockImplementationOnce(async () => ({
-      ...runningView,
-      commandResult: { kind: "status", targetStatus: "running" },
-    }));
+    (client.dispatchCommand as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      async () => ({
+        ...runningView,
+        commandResult: { kind: "status", targetStatus: "running" },
+      }),
+    );
     await pool.dispatch({
       command: { ...command, commandId: "cmd-status", action: "status" },
       binding,

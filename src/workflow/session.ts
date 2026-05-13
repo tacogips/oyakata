@@ -743,10 +743,7 @@ function normalizeWorkflowSlug(workflowId: string): string {
 }
 
 export function createSessionId(
-  input: {
-    readonly workflowId?: string;
-    readonly now?: Date;
-  } = {},
+  input: { readonly workflowId?: string; readonly now?: Date } = {},
 ): string {
   const now = input.now ?? new Date();
   const unixTime = String(Math.floor(now.getTime() / 1000));

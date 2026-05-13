@@ -147,7 +147,10 @@ export function parseWorkflowSupervisorProfile(
 
   const supervisorProfileId = readNonEmptyString(value, "supervisorProfileId");
   if (supervisorProfileId === undefined) {
-    return { ok: false, error: "supervisorProfileId must be a non-empty string" };
+    return {
+      ok: false,
+      error: "supervisorProfileId must be a non-empty string",
+    };
   }
 
   const profileRevision = readNonEmptyString(value, "profileRevision");
@@ -299,7 +302,9 @@ export function parseWorkflowSupervisorProfile(
       );
       concurrency = {
         mode: mode as ManagedWorkflowConcurrencyMode,
-        ...(requiresAlias === undefined ? {} : { requiresAliasForParallelRuns: requiresAlias }),
+        ...(requiresAlias === undefined
+          ? {}
+          : { requiresAliasForParallelRuns: requiresAlias }),
       };
     }
 
@@ -346,7 +351,9 @@ export function parseWorkflowSupervisorProfile(
       ...(dispatchExamples === undefined ? {} : { dispatchExamples }),
       ...(inputContract === undefined
         ? {}
-        : { inputContract: inputContract as Readonly<Record<string, unknown>> }),
+        : {
+            inputContract: inputContract as Readonly<Record<string, unknown>>,
+          }),
       ...(allowedActions === undefined ? {} : { allowedActions }),
       ...(concurrency === undefined ? {} : { concurrency }),
       ...(lifecycle === undefined ? {} : { lifecycle }),
@@ -357,7 +364,10 @@ export function parseWorkflowSupervisorProfile(
   const daRaw = value["directAnswerPolicy"];
   if (daRaw !== undefined) {
     if (!isJsonObject(daRaw)) {
-      return { ok: false, error: "directAnswerPolicy must be an object when set" };
+      return {
+        ok: false,
+        error: "directAnswerPolicy must be an object when set",
+      };
     }
     const enabled = daRaw["enabled"];
     if (typeof enabled !== "boolean") {
@@ -374,7 +384,8 @@ export function parseWorkflowSupervisorProfile(
       if (!Array.isArray(kindsRaw)) {
         return {
           ok: false,
-          error: "directAnswerPolicy.allowedDecisionKinds must be an array when set",
+          error:
+            "directAnswerPolicy.allowedDecisionKinds must be an array when set",
         };
       }
       const kinds: SupervisorDirectAnswerDecisionKind[] = [];
@@ -404,11 +415,11 @@ export function parseWorkflowSupervisorProfile(
         error: "conversationPolicy must be an object when set",
       };
     }
-    const maxRuns = readOptionalNumber(convRaw, "maxActiveManagedRunsPerConversation");
-    if (
-      maxRuns !== undefined &&
-      (!Number.isInteger(maxRuns) || maxRuns < 1)
-    ) {
+    const maxRuns = readOptionalNumber(
+      convRaw,
+      "maxActiveManagedRunsPerConversation",
+    );
+    if (maxRuns !== undefined && (!Number.isInteger(maxRuns) || maxRuns < 1)) {
       return {
         ok: false,
         error:
@@ -444,7 +455,9 @@ export function parseWorkflowSupervisorProfile(
     );
     const allowStatusFanout = readOptionalBoolean(convRaw, "allowStatusFanout");
     conversationPolicy = {
-      ...(maxRuns === undefined ? {} : { maxActiveManagedRunsPerConversation: maxRuns }),
+      ...(maxRuns === undefined
+        ? {}
+        : { maxActiveManagedRunsPerConversation: maxRuns }),
       ...(minConf === undefined ? {} : { llmDecisionMinConfidence: minConf }),
       ...(defaultAction === undefined
         ? {}
@@ -478,9 +491,7 @@ export function parseWorkflowSupervisorProfile(
 
 function validateSupervisorProfileSemantics(
   profile: WorkflowSupervisorProfile,
-):
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: string } {
+): { readonly ok: true } | { readonly ok: false; readonly error: string } {
   const direct = profile.directAnswerPolicy;
   const hasManaged = profile.managedWorkflows.length > 0;
   if (!hasManaged) {
@@ -493,7 +504,11 @@ function validateSupervisorProfileSemantics(
     }
   }
 
-  if (direct !== undefined && !direct.enabled && direct.allowedDecisionKinds !== undefined) {
+  if (
+    direct !== undefined &&
+    !direct.enabled &&
+    direct.allowedDecisionKinds !== undefined
+  ) {
     if (direct.allowedDecisionKinds.length > 0) {
       return {
         ok: false,
@@ -505,17 +520,17 @@ function validateSupervisorProfileSemantics(
 
   for (const mw of profile.managedWorkflows) {
     const conc = mw.concurrency;
-    if (conc?.mode === "multiple-active" && conc.requiresAliasForParallelRuns !== true) {
+    if (
+      conc?.mode === "multiple-active" &&
+      conc.requiresAliasForParallelRuns !== true
+    ) {
       return {
         ok: false,
         error: `managed workflow '${mw.key}': multiple-active concurrency should set requiresAliasForParallelRuns=true`,
       };
     }
     const life = mw.lifecycle;
-    if (
-      life?.stopOnSwitch === true &&
-      life?.startOnSwitch === true
-    ) {
+    if (life?.stopOnSwitch === true && life?.startOnSwitch === true) {
       return {
         ok: false,
         error: `managed workflow '${mw.key}': lifecycle.stopOnSwitch and startOnSwitch cannot both be true`,

@@ -1814,9 +1814,7 @@ describe("createGraphqlSchema", () => {
       options,
     );
 
-    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty(
-      "autoImprove",
-    );
+    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty("autoImprove");
   });
 
   test("rerunWorkflowExecution normalizes auto-improve into runWorkflow", async () => {
@@ -1932,9 +1930,7 @@ describe("createGraphqlSchema", () => {
       options,
     );
 
-    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty(
-      "autoImprove",
-    );
+    expect(runWorkflowSpy.mock.calls[0]?.[1]).not.toHaveProperty("autoImprove");
   });
 
   test("exposes worker-only workflows without requiring an authored manager id", async () => {

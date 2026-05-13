@@ -371,13 +371,23 @@ function ensureSchema(db: Database): void {
   // Migrate from older column names to manager_step_id
   if (!managerSessionColumns.has("manager_step_id")) {
     if (managerSessionColumns.has("manager_runtime_id")) {
-      db.exec("ALTER TABLE manager_sessions RENAME COLUMN manager_runtime_id TO manager_step_id");
-      db.exec("ALTER TABLE manager_messages RENAME COLUMN manager_runtime_id TO manager_step_id");
+      db.exec(
+        "ALTER TABLE manager_sessions RENAME COLUMN manager_runtime_id TO manager_step_id",
+      );
+      db.exec(
+        "ALTER TABLE manager_messages RENAME COLUMN manager_runtime_id TO manager_step_id",
+      );
     } else if (managerSessionColumns.has("manager_node_id")) {
-      db.exec("ALTER TABLE manager_sessions RENAME COLUMN manager_node_id TO manager_step_id");
-      db.exec("ALTER TABLE manager_messages RENAME COLUMN manager_node_id TO manager_step_id");
+      db.exec(
+        "ALTER TABLE manager_sessions RENAME COLUMN manager_node_id TO manager_step_id",
+      );
+      db.exec(
+        "ALTER TABLE manager_messages RENAME COLUMN manager_node_id TO manager_step_id",
+      );
     } else {
-      throw new Error("manager_sessions table is missing manager_step_id, manager_runtime_id, and manager_node_id columns; table may be corrupted or created with unexpected schema");
+      throw new Error(
+        "manager_sessions table is missing manager_step_id, manager_runtime_id, and manager_node_id columns; table may be corrupted or created with unexpected schema",
+      );
     }
   }
 }

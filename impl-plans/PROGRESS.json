@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-13T04:55:00Z",
+  "lastUpdated": "2026-05-13T09:15:00Z",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -489,9 +489,106 @@
     },
     "163": {
       "status": "COMPLETED"
+    },
+    "164": {
+      "status": "COMPLETED"
+    },
+    "165": {
+      "status": "IN_PROGRESS"
     }
   },
   "plans": {
+    "workflow-runner-module-split": {
+      "phase": 165,
+      "status": "In Progress",
+      "path": "impl-plans/active/workflow-runner-module-split.md",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "In Progress",
+          "parallelizable": false,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Not Started",
+          "parallelizable": false,
+          "deps": ["TASK-002"]
+        },
+        "TASK-004": {
+          "status": "Not Started",
+          "parallelizable": false,
+          "deps": ["TASK-003"]
+        },
+        "TASK-005": {
+          "status": "Not Started",
+          "parallelizable": false,
+          "deps": ["TASK-004"]
+        },
+        "TASK-006": {
+          "status": "Not Started",
+          "parallelizable": false,
+          "deps": ["TASK-005"]
+        }
+      }
+    },
+    "typescript-source-module-size-boundary": {
+      "phase": 164,
+      "status": "Completed",
+      "path": "impl-plans/active/typescript-source-module-size-boundary.md",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-005": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-006": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": ["TASK-001"]
+        },
+        "TASK-007": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": ["TASK-004", "TASK-005", "TASK-006"]
+        },
+        "TASK-008": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-002",
+            "TASK-003",
+            "TASK-004",
+            "TASK-005",
+            "TASK-006",
+            "TASK-007"
+          ]
+        }
+      }
+    },
     "matrix-recent-change-blocking-fixes": {
       "phase": 163,
       "status": "Completed",

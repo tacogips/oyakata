@@ -352,23 +352,22 @@ describe("validateWorkflowBundle", () => {
     );
   });
 
-  test.each(REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS)(
-    "rejects top-level workflow.%s on step-addressed bundles",
-    (fieldName) => {
-      const raw = makeStepAddressedRaw();
-      raw.workflow[fieldName] = sampleRemovedTopLevelFieldValue(fieldName);
+  test.each(
+    REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  )("rejects top-level workflow.%s on step-addressed bundles", (fieldName) => {
+    const raw = makeStepAddressedRaw();
+    raw.workflow[fieldName] = sampleRemovedTopLevelFieldValue(fieldName);
 
-      const result = validateWorkflowBundle(raw);
-      expect(result.ok).toBe(false);
-      if (result.ok) {
-        return;
-      }
+    const result = validateWorkflowBundle(raw);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
 
-      expect(result.error).toContainEqual(
-        makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
-      );
-    },
-  );
+    expect(result.error).toContainEqual(
+      makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
+    );
+  });
 
   test("rejects unsupported node registry fields on step-addressed bundles", () => {
     const raw = makeStepAddressedRaw();

@@ -144,44 +144,43 @@ describe("saveWorkflowToDisk", () => {
     expect(workflowJsonText).not.toContain('"entryNodeId"');
   });
 
-  test.each(REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS)(
-    "rejects top-level workflow.%s on step-addressed save input",
-    async (fieldName) => {
-      const workflowRoot = await makeTempDir();
-      const created = await createWorkflowTemplate("demo", { workflowRoot });
-      expect(created.ok).toBe(true);
-      if (!created.ok) {
-        return;
-      }
+  test.each(
+    REJECTED_AUTHORED_STEP_ADDRESSED_DISALLOWED_TOP_LEVEL_KEYS,
+  )("rejects top-level workflow.%s on step-addressed save input", async (fieldName) => {
+    const workflowRoot = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", { workflowRoot });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      return;
+    }
 
-      const loaded = await loadWorkflowFromDisk("demo", { workflowRoot });
-      expect(loaded.ok).toBe(true);
-      if (!loaded.ok) {
-        return;
-      }
+    const loaded = await loadWorkflowFromDisk("demo", { workflowRoot });
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) {
+      return;
+    }
 
-      const saved = await saveWorkflowToDisk(
-        "demo",
-        {
-          workflow: {
-            ...loaded.value.bundle.workflow,
-            [fieldName]: sampleRemovedTopLevelFieldValue(fieldName),
-          } as typeof loaded.value.bundle.workflow,
-          nodePayloads: loaded.value.bundle.nodePayloads,
-        },
-        { workflowRoot },
-      );
-      expect(saved.ok).toBe(false);
-      if (saved.ok) {
-        return;
-      }
+    const saved = await saveWorkflowToDisk(
+      "demo",
+      {
+        workflow: {
+          ...loaded.value.bundle.workflow,
+          [fieldName]: sampleRemovedTopLevelFieldValue(fieldName),
+        } as typeof loaded.value.bundle.workflow,
+        nodePayloads: loaded.value.bundle.nodePayloads,
+      },
+      { workflowRoot },
+    );
+    expect(saved.ok).toBe(false);
+    if (saved.ok) {
+      return;
+    }
 
-      expect(saved.error.code).toBe("VALIDATION");
-      expect(saved.error.issues).toContainEqual(
-        makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
-      );
-    },
-  );
+    expect(saved.error.code).toBe("VALIDATION");
+    expect(saved.error.issues).toContainEqual(
+      makeStepAddressedAuthoredWorkflowFieldIssue(fieldName),
+    );
+  });
 
   test("preserves authored node registry kind and repeat fields when saving a normalized workflow", async () => {
     const workflowRoot = await makeTempDir();

@@ -823,7 +823,11 @@ describe("callStep", () => {
     }
     expect(result.error.message).toContain("execution mailbox for step");
     expect(result.error.message).not.toContain("execution mailbox at");
-    expect(result.error.session.lastError).toContain("execution mailbox for step");
-    expect(result.error.session.lastError).not.toContain("execution mailbox at");
+    expect(result.error.session.lastError).toContain(
+      "execution mailbox for step",
+    );
+    expect(result.error.session.lastError).not.toContain(
+      "execution mailbox at",
+    );
   });
 });
