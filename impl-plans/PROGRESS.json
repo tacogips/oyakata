@@ -532,6 +532,11 @@
           "status": "Not Started",
           "parallelizable": false,
           "deps": ["TASK-005"]
+        },
+        "TASK-007": {
+          "status": "Not Started",
+          "parallelizable": false,
+          "deps": ["TASK-006"]
         }
       }
     },

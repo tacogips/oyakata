@@ -1,6 +1,6 @@
 # Workflow Runner Module Split Implementation Plan
 
-**Status**: Ready
+**Status**: In Progress
 **Design Reference**: `design-docs/specs/architecture.md#workflow-runner-module-split`
 **Created**: 2026-05-13
 **Last Updated**: 2026-05-13
@@ -45,7 +45,7 @@ reference behavior was available for comparison.
 
 #### `src/workflow/engine/workflow-runner-lifecycle.ts`
 
-**Status**: COMPLETED
+**Status**: NOT_STARTED
 
 ```typescript
 export async function runWorkflowInternal(
@@ -68,7 +68,7 @@ export async function runWorkflowInternal(
 
 #### `src/workflow/engine/workflow-runner-context.ts`
 
-**Status**: NOT_STARTED
+**Status**: IN_PROGRESS
 
 ```typescript
 interface WorkflowRunnerBaseContext {
@@ -97,7 +97,7 @@ interface WorkflowRunnerLoadedContext extends WorkflowRunnerBaseContext {
 
 #### `src/workflow/engine/run-setup.ts`
 
-**Status**: NOT_STARTED
+**Status**: IN_PROGRESS
 
 ```typescript
 interface PrepareWorkflowRunInput {
@@ -234,8 +234,8 @@ async function finalizeStepResult(
 | Module | File Path | Status | Tests |
 | --- | --- | --- | --- |
 | Orchestration shell | `src/workflow/engine/workflow-runner-lifecycle.ts` | NOT_STARTED | Targeted workflow engine tests |
-| Shared context | `src/workflow/engine/workflow-runner-context.ts` | NOT_STARTED | Typecheck and targeted workflow engine tests |
-| Run setup | `src/workflow/engine/run-setup.ts` | NOT_STARTED | Targeted workflow engine tests |
+| Shared context | `src/workflow/engine/workflow-runner-context.ts` | IN_PROGRESS | Typecheck and targeted workflow engine tests |
+| Run setup | `src/workflow/engine/run-setup.ts` | IN_PROGRESS | Targeted workflow engine tests |
 | Session entry | `src/workflow/engine/session-entry.ts` | NOT_STARTED | Resume/rerun/continuation tests |
 | Step input | `src/workflow/engine/step-input.ts` | NOT_STARTED | Call-step and mailbox-adjacent tests |
 | Node execution | `src/workflow/engine/node-execution.ts` | NOT_STARTED | Call-step implementation and manager-control tests |
@@ -245,7 +245,7 @@ async function finalizeStepResult(
 
 ### TASK-001: Baseline Inspection And Rejected Pattern Guard
 
-**Status**: NOT_STARTED
+**Status**: COMPLETED
 **Parallelizable**: No
 **Deliverables**:
 
@@ -260,7 +260,7 @@ async function finalizeStepResult(
 
 ### TASK-002: Extract Run Setup
 
-**Status**: NOT_STARTED
+**Status**: IN_PROGRESS
 **Parallelizable**: No
 **Depends On**: TASK-001
 **Deliverables**:
@@ -378,7 +378,7 @@ async function finalizeStepResult(
 | Task | Depends On | Status |
 | --- | --- | --- |
 | TASK-001 | None | COMPLETED |
-| TASK-002 | TASK-001 | READY |
+| TASK-002 | TASK-001 | IN_PROGRESS |
 | TASK-003 | TASK-002 | BLOCKED |
 | TASK-004 | TASK-003 | BLOCKED |
 | TASK-005 | TASK-004 | BLOCKED |
@@ -436,13 +436,13 @@ ordinal split filenames.
 
 ### Session: 2026-05-13
 
-**Tasks Completed**: Planning only.
-**Tasks In Progress**: None.
+**Tasks Completed**: Step 4 implementation-plan creation.
+**Tasks In Progress**: TASK-001 baseline inspection was scheduled for Step 6.
 **Blockers**: None for implementation planning.
-**Notes**: Replaced the prior recovery note with an actionable Step 4
-implementation plan tied to the accepted architecture design and Step 3 review
-feedback. Later implementation sessions must update task statuses, completion
-criteria, line-count results, and verification outcomes here before handoff.
+**Notes**: Created an actionable Step 4 implementation plan tied to the
+accepted architecture design and Step 3 review feedback. Later implementation
+sessions must update task statuses, completion criteria, line-count results,
+and verification outcomes here before handoff.
 
 ### Session: 2026-05-13 Step 6 implementation baseline
 
@@ -475,3 +475,13 @@ The rejected-pattern scan found no implementation blockers in
 guardrail text. `bun run lint:biome` was run and failed only with
 `lint/nursery/noExcessiveLinesPerFile` for
 `src/workflow/engine/workflow-runner-lifecycle.ts`.
+
+### Session: 2026-05-13 Step 4 plan consistency refresh
+
+**Tasks Completed**: TASK-001 remains completed from the recorded baseline.
+**Tasks In Progress**: TASK-002 is ready for immediate TypeScript extraction
+work in the next implementation step.
+**Blockers**: None for implementation-plan handoff.
+**Notes**: Aligned this plan with `impl-plans/PROGRESS.json`: plan status is
+`In Progress`, TASK-001 is `COMPLETED`, TASK-002 is `IN_PROGRESS`, and later
+tasks remain blocked by the sequential lifecycle-shell extraction dependency.

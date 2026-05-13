@@ -153,6 +153,12 @@ The current lint issue target is:
 
 - `src/workflow/engine/workflow-runner-lifecycle.ts`
 
+For the issue-resolution workflow "Split only workflow-runner-lifecycle.ts
+below 1000 lines", this boundary is implementation work, not planning-only
+work. The implementation must make real TypeScript extractions from
+`src/workflow/engine/workflow-runner-lifecycle.ts`; implementation-plan-only or
+progress-log-only updates do not satisfy the design intent.
+
 Module splits should follow these boundaries:
 
 - keep facade files only when they preserve existing caller imports and keep
@@ -174,6 +180,8 @@ Module splits should follow these boundaries:
 
 Validation for this boundary is layered:
 
+- after formatting, no non-test TypeScript source file under `src/` may exceed
+  1000 lines
 - `bun run lint:biome` must pass and must not report
   `noExcessiveLinesPerFile` for non-test TypeScript sources
 - `bun run typecheck` must pass after import and type-boundary changes
@@ -228,6 +236,15 @@ behind narrow local modules:
   variable updates, terminal failure mapping, and final external output
   publication
 
+The existing placeholder files `run-setup.ts`, `session-entry.ts`,
+`step-input.ts`, and `node-execution.ts` are reserved for these real extracted
+responsibilities. They should either be replaced with the corresponding
+implementation or superseded by better responsibility-named modules in the same
+engine directory. Empty marker interfaces or other placeholders are not
+acceptable as the final state. `result-finalization.ts` is already a real
+extracted module and should remain responsibility-owned rather than being
+folded back into the lifecycle shell.
+
 The lifecycle shell should be responsible only for sequencing these phase
 helpers, owning the queue loop, and carrying the typed runner context from one
 phase to the next. Shared mutable values that cross phase boundaries should be
@@ -256,10 +273,19 @@ runtime boundary directly, for example `run-setup.ts`,
 `session-entry.ts`, `step-input.ts`, `node-execution.ts`, or
 `result-finalization.ts`.
 
+Large additions should not be moved into already near-limit files outside the
+target engine split. Known near-limit files at the time this issue was triaged
+include `src/workflow/call-step-impl/direct-step-execution.ts` and
+`src/workflow/supervisor-client/workflow-supervisor-client-factory.ts`; those
+modules may be imported from when appropriate, but they are not expansion
+targets for this lifecycle split.
+
 Verification for the workflow-runner split must include:
 
+- `bun run format`
 - `bun run lint:biome`
 - `bun run typecheck`
+- `find src -path '*test*' -prune -o -name '*.ts' -print0 | xargs -0 wc -l | sort -nr | head`
 - `bun test src/workflow/engine.test.ts src/workflow/call-step.test.ts src/workflow/call-step-impl-execution.test.ts src/workflow/call-step-impl-failures.test.ts src/workflow/history-continuation.test.ts src/workflow/manager-control.test.ts src/workflow/manager-message-service.test.ts src/workflow/manager-session-store.test.ts src/workflow/superviser.test.ts src/workflow/auto-improve-policy.test.ts src/workflow/supervisor-runner-pool.test.ts`
 
 ## Core Architectural Boundaries
