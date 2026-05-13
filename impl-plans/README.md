@@ -26,6 +26,7 @@ impl-plans/
 
 | Plan                                           | Created    | Design Reference |
 | ---------------------------------------------- | ---------- | ---------------- |
+| `reject-numbered-part-filenames-biome-lint`    | 2026-05-13 | `architecture`   |
 | `workflow-inspect-structure-description-lines` | 2026-05-13 | `command`        |
 
 ## Recently Completed

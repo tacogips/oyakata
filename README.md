@@ -73,6 +73,17 @@ opening an interactive shell, run `task install-git-hooks`.
 GitHub Actions also runs `gitleaks` on `push` and `pull_request` as a repo-side
 backstop in case a local hook was not installed yet.
 
+## Development Checks
+
+`bun run lint:biome` is the shared Biome lint path for local development, task
+automation, and CI checks. It runs Biome with the repository's configured
+diagnostic level and also rejects source files named `part-<digits>.ts` or
+`part-<digits>.tsx`. When splitting code, use descriptive source filenames such
+as `workflow-loader.ts`, `node-output-contract.ts`, or
+`session-partition.ts`. The filename policy is implemented by
+`bun run check:source-filenames`; run the shared `lint:biome` script instead of
+calling `biome check` directly when validating repository changes.
+
 ## Workflow Locations
 
 By default, divedra looks for workflow bundles in scoped catalogs:
