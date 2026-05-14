@@ -126,6 +126,71 @@ records. These semantics preserve public API compatibility by adding stricter
 target resolution and clearer failures without changing existing successful
 call shapes.
 
+#### Supervisor Runner-Pool Multi-Run Review Contract
+
+Follow-up work on the supervisor runner pool should treat commit
+`b2b00b592360aa326b59766b1c157f78c3a548d8` as the accepted baseline. The review
+target is correctness around concurrent and historical supervised runs, not a
+rewrite of the supervision model.
+
+Multi-run lookup rules:
+
+- `runnerPoolRunId`, `supervisedRunId`, and `workflowExecutionId` are strong
+  identifiers. If more than one strong identifier is supplied, they must resolve
+  to the same active handle or fail rather than silently picking one.
+- `workflowKey`, `alias`, and source/binding/correlation lookup are convenience
+  identifiers. They may locate a single active run, but ambiguous active matches
+  must be surfaced as explicit ambiguous-target failures for lookup, wait, and
+  cancellation.
+- `idempotencyKey` remains a persisted command replay key, not a live
+  runner-pool handle key. Adding runner-pool ids must not change existing
+  idempotency request or response compatibility.
+- Completed, failed, stopped, or restarted-process runs may still be inspected
+  through durable supervised-run/session records by their durable ids, but live
+  wait and cancellation require an active in-process handle.
+
+GraphQL request-boundary rules:
+
+- `dispatchSupervisedWorkflowCommand` returns `runnerPoolRunId` only when the
+  server process has an active runner-pool handle for the async run.
+- `supervisedWorkflowRun(input: { runnerPoolRunId })` must resolve through the
+  same server-process runner pool. It must not fall back to "latest run" or a
+  process-global convenience lookup when the runner-pool id is missing,
+  unknown, expired, or from another process.
+- GraphQL lookup inputs should preserve the same precedence as the core
+  supervisor-client lookup: runner-pool id first, then supervised run id,
+  workflow execution id, workflow key, alias, correlation tuple, and finally
+  idempotency replay lookup when explicitly provided.
+- Cross-request behavior is intentionally process-local for
+  `runnerPoolRunId`. Durable cross-process inspection should use
+  `supervisedRunId` or `workflowExecutionId`.
+
+Public surface and package-boundary rules:
+
+- The runner-pool implementation and lookup semantics belong to the core
+  supervisor-client surface. CLI, server, event-source, and GraphQL adapters may
+  translate transport inputs, but they must not maintain independent live-run
+  pools with different ambiguity, wait, or cancellation behavior.
+- `src/lib.ts` and the `divedra-core` package boundary should expose the stable
+  supervisor-client and runner-pool types needed by embedders. Deep imports from
+  `src/workflow/*` remain internal unless intentionally re-exported.
+- `codex-agent` and any Cursor CLI integration remain backend adapters. They do
+  not define runner-pool lifecycle semantics, and Cursor-specific behavior must
+  stay isolated from provider-neutral supervisor-client contracts.
+
+Verification for this contract should include targeted tests for:
+
+- two active runs sharing a workflow key or alias and failing ambiguous
+  convenience lookup
+- successful strongest-id lookup by `runnerPoolRunId`, `supervisedRunId`, and
+  `workflowExecutionId`
+- GraphQL dispatch followed by a separate `supervisedWorkflowRun` request using
+  the returned `runnerPoolRunId`
+- wait and cancel behavior for active, terminal, unknown, and process-local-only
+  runner-pool ids
+- idempotency replay compatibility for existing supervised command ids
+- package export parity for root and core supervision surfaces
+
 Current compatibility-removal sequence (see
 `impl-plans/workflow-legacy-compatibility-removal.md`):
 

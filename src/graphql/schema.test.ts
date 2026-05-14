@@ -3008,6 +3008,56 @@ describe("createGraphqlSchema", () => {
       dispatchPayload.supervisedRun.supervisedRunId,
     );
     expect(snapshotByExecutionId.activeTargetStatus).toBe("running");
+
+    expect(dispatchPayload.runnerPoolRunId).toMatch(/^spr-/);
+    const runnerPoolRunId = dispatchPayload.runnerPoolRunId;
+    if (runnerPoolRunId === undefined) {
+      return;
+    }
+    const snapshotByRunnerPoolWithIgnoredPartialCorrelation =
+      await schema.query.supervisedWorkflowRun(
+        {
+          runnerPoolRunId,
+          sourceId: "ignored-partial-source",
+        },
+        options,
+      );
+    expect(
+      snapshotByRunnerPoolWithIgnoredPartialCorrelation.supervisedRun
+        .supervisedRunId,
+    ).toBe(dispatchPayload.supervisedRun.supervisedRunId);
+
+    const secondDispatchPayload =
+      await schema.mutation.dispatchSupervisedWorkflowCommand(
+        {
+          command: {
+            commandId: "cmd-sup-2",
+            sourceId: "src-1",
+            bindingId: "bind-sup-1",
+            correlationKey: "corr-2",
+            action: "start",
+            targetWorkflowName: "demo",
+            receivedEventReceiptId: "rcpt-2",
+          },
+          binding,
+        },
+        options,
+      );
+    const secondActiveSessionId =
+      secondDispatchPayload.supervisedRun.activeTargetExecutionId;
+    expect(secondActiveSessionId).toMatch(/^div-demo-/);
+    if (secondActiveSessionId === undefined) {
+      return;
+    }
+    await expect(
+      schema.query.supervisedWorkflowRun(
+        {
+          runnerPoolRunId,
+          workflowExecutionId: secondActiveSessionId,
+        },
+        options,
+      ),
+    ).rejects.toThrow(/lookup target is ambiguous/);
   });
 
   test("dispatchSupervisedWorkflowCommand rejects non-object runtimeVariables", async () => {

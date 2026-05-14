@@ -379,7 +379,10 @@ GraphQL supervised dispatch returns `runnerPoolRunId` on
 still alive to target the active in-process run across later HTTP requests. For
 durable inspection after terminal completion or process restart, query by
 `supervisedRunId`, `workflowExecutionId`, workflow key/alias, or
-source/binding/correlation data.
+source/binding/correlation data. If a GraphQL lookup supplies multiple strong
+ids, such as `runnerPoolRunId` plus `workflowExecutionId`, they must identify
+the same active run; conflicting strong ids fail through the shared runner-pool
+ambiguity checks.
 
 Remote-capable CLI operations include `workflow list`, `workflow status`,
 `workflow run`, `session resume`, and `session rerun`. Detailed execution
@@ -606,7 +609,10 @@ The core supervision surface is exported from both `divedra` and
 `cancel`, `wait`, `lookupHandle`, and `lookupHandles` for in-process supervised
 workflow runs. Strong ids (`runnerPoolRunId`, `supervisedRunId`,
 `workflowExecutionId`) should be preferred over workflow aliases or correlation
-keys when more than one run can be active.
+keys when more than one run can be active. If callers provide more than one
+strong id, all supplied ids must resolve to the same active handle. Workflow
+aliases, workflow keys, and source/binding/correlation lookup are convenience
+routes and can fail when more than one active run matches.
 
 ## Development Commands
 
