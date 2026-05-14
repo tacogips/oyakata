@@ -2944,6 +2944,9 @@ describe("createGraphqlSchema", () => {
     const activeSessionId =
       dispatchPayload.supervisedRun.activeTargetExecutionId;
     expect(activeSessionId).toMatch(/^div-demo-/);
+    if (activeSessionId === undefined) {
+      return;
+    }
     expect(runWorkflowSpy).toHaveBeenCalledWith(
       "demo",
       expect.objectContaining({ sessionId: activeSessionId }),
@@ -2952,7 +2955,7 @@ describe("createGraphqlSchema", () => {
     const savedAfter = await saveSession(
       {
         ...createSessionState({
-          sessionId: activeSessionId ?? "missing-active-session",
+          sessionId: activeSessionId,
           workflowName: "demo",
           workflowId: "demo",
           initialNodeId: "divedra-manager",
@@ -2977,6 +2980,34 @@ describe("createGraphqlSchema", () => {
       dispatchPayload.supervisedRun.supervisedRunId,
     );
     expect(snapshot.activeTargetStatus).toBe("running");
+
+    const snapshotByCorrelationWithNewIdempotency =
+      await schema.query.supervisedWorkflowRun(
+        {
+          sourceId: "src-1",
+          bindingId: "bind-sup-1",
+          correlationKey: "corr-1",
+          idempotencyKey: "new-gql-status-idem",
+        },
+        options,
+      );
+    expect(
+      snapshotByCorrelationWithNewIdempotency.supervisedRun.supervisedRunId,
+    ).toBe(dispatchPayload.supervisedRun.supervisedRunId);
+    expect(snapshotByCorrelationWithNewIdempotency.activeTargetStatus).toBe(
+      "running",
+    );
+
+    const snapshotByExecutionId = await schema.query.supervisedWorkflowRun(
+      {
+        workflowExecutionId: activeSessionId,
+      },
+      options,
+    );
+    expect(snapshotByExecutionId.supervisedRun.supervisedRunId).toBe(
+      dispatchPayload.supervisedRun.supervisedRunId,
+    );
+    expect(snapshotByExecutionId.activeTargetStatus).toBe("running");
   });
 
   test("dispatchSupervisedWorkflowCommand rejects non-object runtimeVariables", async () => {

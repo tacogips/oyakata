@@ -69,10 +69,12 @@ function createDeferred<T>(): {
 
 function buildClient(input?: {
   readonly asyncTask?: Promise<SupervisedWorkflowView>;
+  readonly view?: SupervisedWorkflowView;
 }): WorkflowSupervisorClient {
+  const view = input?.view ?? runningView;
   const stoppedView: SupervisedWorkflowView = {
     supervisedRun: {
-      ...runningView.supervisedRun,
+      ...view.supervisedRun,
       status: "stopped",
       updatedAt: "2026-05-06T00:01:00.000Z",
     },
@@ -81,14 +83,15 @@ function buildClient(input?: {
     dispatchCommand: vi.fn(async (dispatchInput) => {
       if (input?.asyncTask !== undefined) {
         dispatchInput.engine?.onAsyncRun?.({
-          supervisedRunId: "run-1",
-          workflowExecutionId: "session-1",
+          supervisedRunId: view.supervisedRun.supervisedRunId,
+          workflowExecutionId:
+            view.supervisedRun.activeTargetExecutionId ?? "session-1",
           task: input.asyncTask,
         });
       }
-      return runningView;
+      return view;
     }),
-    status: vi.fn(async () => runningView),
+    status: vi.fn(async () => view),
     stop: vi.fn(async () => stoppedView),
     start: vi.fn(),
     restart: vi.fn(),
@@ -128,7 +131,7 @@ describe("createSupervisorRunnerPool", () => {
     const pool = createSupervisorRunnerPool({ client: buildClient() });
 
     await expect(pool.cancel({ supervisedRunId: "missing" })).rejects.toThrow(
-      /no active in-process supervisor runner-pool handle/,
+      /no active in-process supervisor runner-pool handle.*cancel/,
     );
   });
 
@@ -159,6 +162,30 @@ describe("createSupervisorRunnerPool", () => {
     await expect(waitResult).resolves.toEqual(completedView);
     expect(settled).toBe(true);
     expect(pool.lookupHandle({ supervisedRunId: "run-1" })).toBeUndefined();
+  });
+
+  test("successful async completion prunes handles without wait", async () => {
+    const deferred = createDeferred<SupervisedWorkflowView>();
+    const pool = createSupervisorRunnerPool({
+      client: buildClient({ asyncTask: deferred.promise }),
+      newRunnerPoolRunId: () => "pool-unobserved",
+    });
+
+    await pool.dispatch({
+      command,
+      binding,
+      runtimeVariables: {},
+    });
+    expect(pool.lookupHandle({ supervisedRunId: "run-1" })).toBeDefined();
+
+    deferred.resolve(completedView);
+    await deferred.promise;
+    await Promise.resolve();
+
+    expect(pool.lookupHandle({ supervisedRunId: "run-1" })).toBeUndefined();
+    await expect(pool.cancel({ supervisedRunId: "run-1" })).rejects.toThrow(
+      /no active in-process supervisor runner-pool handle.*cancel/,
+    );
   });
 
   test("does not replace a live async handle with inspection dispatches", async () => {
@@ -193,5 +220,125 @@ describe("createSupervisorRunnerPool", () => {
     const waitResult = liveHandle?.wait();
     deferred.resolve(completedView);
     await expect(waitResult).resolves.toEqual(completedView);
+  });
+
+  test("rejects ambiguous mutating convenience lookups and honors strong ids", async () => {
+    const first = createDeferred<SupervisedWorkflowView>();
+    const second = createDeferred<SupervisedWorkflowView>();
+    const secondView: SupervisedWorkflowView = {
+      ...runningView,
+      supervisedRun: {
+        ...runningView.supervisedRun,
+        supervisedRunId: "run-2",
+        activeTargetExecutionId: "session-2",
+      },
+    };
+    const firstClient = buildClient({
+      asyncTask: first.promise,
+      view: runningView,
+    });
+    const secondClient = buildClient({
+      asyncTask: second.promise,
+      view: secondView,
+    });
+    const dispatchClient: WorkflowSupervisorClient = {
+      ...firstClient,
+      dispatchCommand: vi
+        .fn()
+        .mockImplementationOnce(firstClient.dispatchCommand)
+        .mockImplementationOnce(secondClient.dispatchCommand),
+      status: vi.fn(async (lookup) =>
+        lookup.supervisedRunId === "run-2" ? secondView : runningView,
+      ),
+      stop: vi.fn(async (lookup) => ({
+        supervisedRun: {
+          ...(lookup.supervisedRunId === "run-2"
+            ? secondView.supervisedRun
+            : runningView.supervisedRun),
+          status: "stopped" as const,
+          updatedAt: "2026-05-06T00:01:00.000Z",
+        },
+      })),
+    };
+    let sequence = 0;
+    const pool = createSupervisorRunnerPool({
+      client: dispatchClient,
+      newRunnerPoolRunId: () => {
+        sequence += 1;
+        return `pool-${sequence}`;
+      },
+    });
+
+    await pool.dispatch({ command, binding, runtimeVariables: {} });
+    await pool.dispatch({
+      command: { ...command, commandId: "cmd-2" },
+      binding,
+      runtimeVariables: {},
+    });
+
+    await expect(pool.cancel({ workflowKey: "workflow-a" })).rejects.toThrow(
+      /ambiguous.*pool-1, pool-2/,
+    );
+    await expect(
+      pool.cancel({
+        sourceId: "source-1",
+        bindingId: "binding-1",
+        correlationKey: "conv-1",
+      }),
+    ).rejects.toThrow(/ambiguous.*pool-1, pool-2/);
+    await expect(
+      pool.cancel({
+        supervisedRunId: "missing-run",
+        sourceId: "source-1",
+        bindingId: "binding-1",
+        correlationKey: "conv-1",
+      }),
+    ).rejects.toThrow(
+      /no active in-process supervisor runner-pool handle.*cancel/,
+    );
+    expect(dispatchClient.stop).toHaveBeenCalledTimes(0);
+
+    await expect(
+      pool.cancel({ workflowExecutionId: "session-2" }),
+    ).resolves.toMatchObject({
+      supervisedRun: { supervisedRunId: "run-2", status: "stopped" },
+    });
+    expect(pool.lookupHandle({ runnerPoolRunId: "pool-1" })).toMatchObject({
+      supervisedRunId: "run-1",
+    });
+
+    first.resolve(completedView);
+    second.resolve({
+      ...completedView,
+      supervisedRun: {
+        ...secondView.supervisedRun,
+        status: "completed",
+        updatedAt: "2026-05-06T00:02:00.000Z",
+      },
+      activeTargetStatus: "completed",
+    });
+  });
+
+  test("pool wait returns durable terminal status after live handle pruning", async () => {
+    const deferred = createDeferred<SupervisedWorkflowView>();
+    const client = buildClient({ asyncTask: deferred.promise });
+    const pool = createSupervisorRunnerPool({
+      client,
+      newRunnerPoolRunId: () => "pool-wait",
+    });
+
+    await pool.dispatch({ command, binding, runtimeVariables: {} });
+    deferred.resolve(completedView);
+
+    await expect(pool.wait({ supervisedRunId: "run-1" })).resolves.toEqual(
+      completedView,
+    );
+    expect(pool.lookupHandle({ supervisedRunId: "run-1" })).toBeUndefined();
+    (client.status as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      completedView,
+    );
+    await expect(
+      pool.wait({ workflowExecutionId: "session-1" }),
+    ).resolves.toEqual(completedView);
   });
 });

@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { getSupervisionSummary } from "./lib";
+import {
+  createSupervisorRunnerPool as createRootSupervisorRunnerPool,
+  getSupervisionSummary,
+} from "./lib";
 import { createSessionState } from "./workflow/session";
+import {
+  createSupervisorRunnerPool as createCoreSupervisorRunnerPool,
+  type SupervisorRunnerPool as CoreSupervisorRunnerPool,
+} from "../packages/divedra-core/src/index";
 
 describe("getSupervisionSummary", () => {
   test("returns undefined when the session has no supervision block", () => {
@@ -121,5 +128,28 @@ describe("getSupervisionSummary", () => {
     const summary = getSupervisionSummary(session);
     expect(summary?.latestRemediationId).toBe("r2");
     expect(summary?.workflowPatchCount).toBe(2);
+  });
+});
+
+describe("public supervision exports", () => {
+  test("root and divedra-core expose the runner-pool surface", () => {
+    expect(createRootSupervisorRunnerPool).toBe(createCoreSupervisorRunnerPool);
+    const methods = [
+      "dispatch",
+      "lookup",
+      "cancel",
+      "wait",
+      "lookupHandle",
+      "lookupHandles",
+    ] as const;
+    const assertSurface = (
+      pool: CoreSupervisorRunnerPool,
+    ): CoreSupervisorRunnerPool => {
+      for (const method of methods) {
+        expect(typeof pool[method]).toBe("function");
+      }
+      return pool;
+    };
+    expect(assertSurface).toBeTypeOf("function");
   });
 });

@@ -329,9 +329,8 @@ export async function reconcileTerminalSupervisedRunRecord(
   } else {
     nextStatus = "stopped";
   }
-  const { activeTargetExecutionId: _omit, ...persistable } = record;
   const updated: EventSupervisedRunRecord = {
-    ...persistable,
+    ...record,
     status: nextStatus,
     updatedAt: nowIso(),
   };

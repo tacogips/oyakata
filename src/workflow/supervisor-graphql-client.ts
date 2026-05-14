@@ -243,20 +243,38 @@ function nowIso(): string {
 }
 
 function lookupForGraphqlQuery(input: SupervisedWorkflowLookup): Readonly<{
+  runnerPoolRunId?: string;
   supervisedRunId?: string;
+  workflowExecutionId?: string;
+  workflowKey?: string;
+  alias?: string;
   sourceId?: string;
   bindingId?: string;
   correlationKey?: string;
+  idempotencyKey?: string;
 }> {
   return {
+    ...(input.runnerPoolRunId === undefined
+      ? {}
+      : { runnerPoolRunId: input.runnerPoolRunId }),
     ...(input.supervisedRunId === undefined
       ? {}
       : { supervisedRunId: input.supervisedRunId }),
+    ...(input.workflowExecutionId === undefined
+      ? {}
+      : { workflowExecutionId: input.workflowExecutionId }),
+    ...(input.workflowKey === undefined
+      ? {}
+      : { workflowKey: input.workflowKey }),
+    ...(input.alias === undefined ? {} : { alias: input.alias }),
     ...(input.sourceId === undefined ? {} : { sourceId: input.sourceId }),
     ...(input.bindingId === undefined ? {} : { bindingId: input.bindingId }),
     ...(input.correlationKey === undefined
       ? {}
       : { correlationKey: input.correlationKey }),
+    ...(input.idempotencyKey === undefined
+      ? {}
+      : { idempotencyKey: input.idempotencyKey }),
   };
 }
 

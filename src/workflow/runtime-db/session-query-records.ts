@@ -585,6 +585,128 @@ export async function loadEventSupervisedRunRowById(
     };
   });
 }
+export async function loadEventSupervisedRunRowByActiveTargetExecutionId(
+  activeTargetExecutionId: string,
+  options: LoadOptions = {},
+): Promise<RuntimeEventSupervisedRunSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          supervised_run_id, source_id, binding_id, correlation_key,
+          supervisor_workflow_name, supervisor_execution_id, target_workflow_name,
+          active_target_execution_id, status, restart_count, max_restarts_on_failure,
+          auto_improve_enabled, artifact_dir, created_at, updated_at
+         FROM event_supervised_runs
+         WHERE active_target_execution_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+      )
+      .get(activeTargetExecutionId) as {
+      readonly supervised_run_id: string;
+      readonly source_id: string;
+      readonly binding_id: string;
+      readonly correlation_key: string;
+      readonly supervisor_workflow_name: string;
+      readonly supervisor_execution_id: string | null;
+      readonly target_workflow_name: string;
+      readonly active_target_execution_id: string | null;
+      readonly status: string;
+      readonly restart_count: number;
+      readonly max_restarts_on_failure: number;
+      readonly auto_improve_enabled: number;
+      readonly artifact_dir: string;
+      readonly created_at: string;
+      readonly updated_at: string;
+    } | null;
+    if (row === null) {
+      return null;
+    }
+    return {
+      supervisedRunId: row.supervised_run_id,
+      sourceId: row.source_id,
+      bindingId: row.binding_id,
+      correlationKey: row.correlation_key,
+      supervisorWorkflowName: row.supervisor_workflow_name,
+      ...(row.supervisor_execution_id === null
+        ? {}
+        : { supervisorExecutionId: row.supervisor_execution_id }),
+      targetWorkflowName: row.target_workflow_name,
+      ...(row.active_target_execution_id === null
+        ? {}
+        : { activeTargetExecutionId: row.active_target_execution_id }),
+      status: row.status,
+      restartCount: row.restart_count,
+      maxRestartsOnFailure: row.max_restarts_on_failure,
+      autoImproveEnabled: row.auto_improve_enabled !== 0,
+      artifactDir: row.artifact_dir,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
+export async function loadEventSupervisedRunRowByCommandId(
+  commandId: string,
+  options: LoadOptions = {},
+): Promise<RuntimeEventSupervisedRunSaveInput | null> {
+  return withDatabase(options, (db) => {
+    const row = db
+      .query(
+        `SELECT
+          r.supervised_run_id, r.source_id, r.binding_id, r.correlation_key,
+          r.supervisor_workflow_name, r.supervisor_execution_id,
+          r.target_workflow_name, r.active_target_execution_id, r.status,
+          r.restart_count, r.max_restarts_on_failure, r.auto_improve_enabled,
+          r.artifact_dir, r.created_at, r.updated_at
+         FROM event_supervisor_commands c
+         JOIN event_supervised_runs r
+           ON r.supervised_run_id = c.supervised_run_id
+         WHERE c.command_id = ?
+         LIMIT 1`,
+      )
+      .get(commandId) as {
+      readonly supervised_run_id: string;
+      readonly source_id: string;
+      readonly binding_id: string;
+      readonly correlation_key: string;
+      readonly supervisor_workflow_name: string;
+      readonly supervisor_execution_id: string | null;
+      readonly target_workflow_name: string;
+      readonly active_target_execution_id: string | null;
+      readonly status: string;
+      readonly restart_count: number;
+      readonly max_restarts_on_failure: number;
+      readonly auto_improve_enabled: number;
+      readonly artifact_dir: string;
+      readonly created_at: string;
+      readonly updated_at: string;
+    } | null;
+    if (row === null) {
+      return null;
+    }
+    return {
+      supervisedRunId: row.supervised_run_id,
+      sourceId: row.source_id,
+      bindingId: row.binding_id,
+      correlationKey: row.correlation_key,
+      supervisorWorkflowName: row.supervisor_workflow_name,
+      ...(row.supervisor_execution_id === null
+        ? {}
+        : { supervisorExecutionId: row.supervisor_execution_id }),
+      targetWorkflowName: row.target_workflow_name,
+      ...(row.active_target_execution_id === null
+        ? {}
+        : { activeTargetExecutionId: row.active_target_execution_id }),
+      status: row.status,
+      restartCount: row.restart_count,
+      maxRestartsOnFailure: row.max_restarts_on_failure,
+      autoImproveEnabled: row.auto_improve_enabled !== 0,
+      artifactDir: row.artifact_dir,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  });
+}
 export async function findEventSupervisorCommandResultJson(
   commandId: string,
   options: LoadOptions = {},

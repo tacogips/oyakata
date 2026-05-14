@@ -84,7 +84,11 @@ export interface StartSupervisedWorkflowInput extends LoadOptions {
 }
 
 export interface StopSupervisedWorkflowInput extends LoadOptions {
+  readonly runnerPoolRunId?: string;
   readonly supervisedRunId?: string;
+  readonly workflowExecutionId?: string;
+  readonly alias?: string;
+  readonly workflowKey?: string;
   readonly sourceId?: string;
   readonly bindingId?: string;
   readonly correlationKey?: string;
@@ -93,7 +97,11 @@ export interface StopSupervisedWorkflowInput extends LoadOptions {
 }
 
 export interface RestartSupervisedWorkflowInput extends LoadOptions {
+  readonly runnerPoolRunId?: string;
   readonly supervisedRunId?: string;
+  readonly workflowExecutionId?: string;
+  readonly alias?: string;
+  readonly workflowKey?: string;
   readonly sourceId?: string;
   readonly bindingId?: string;
   readonly correlationKey?: string;
@@ -119,7 +127,11 @@ export interface SupervisedWorkflowLookup extends LoadOptions {
 }
 
 export interface SubmitSupervisedWorkflowInput extends LoadOptions {
+  readonly runnerPoolRunId?: string;
   readonly supervisedRunId?: string;
+  readonly workflowExecutionId?: string;
+  readonly alias?: string;
+  readonly workflowKey?: string;
   readonly sourceId?: string;
   readonly bindingId?: string;
   readonly correlationKey?: string;

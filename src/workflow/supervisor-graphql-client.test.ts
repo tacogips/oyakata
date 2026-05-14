@@ -46,6 +46,34 @@ function buildSuccessfulPayload() {
   };
 }
 
+function buildSupervisedWorkflowRunPayload() {
+  return {
+    data: {
+      supervisedWorkflowRun:
+        buildSuccessfulPayload().data.dispatchSupervisedWorkflowCommand,
+    },
+  };
+}
+
+function parseRequestBody(call: unknown): {
+  readonly query?: string;
+  readonly variables?: {
+    readonly input?: Record<string, unknown>;
+  };
+} {
+  const tuple = call as readonly [unknown, RequestInit | undefined];
+  const rawBody = tuple[1]?.body;
+  if (typeof rawBody !== "string") {
+    throw new Error("expected string request body");
+  }
+  return JSON.parse(rawBody) as {
+    readonly query?: string;
+    readonly variables?: {
+      readonly input?: Record<string, unknown>;
+    };
+  };
+}
+
 describe("createWorkflowSupervisorGraphqlClient", () => {
   test("uses idempotencyKey as the remote supervisor command id", async () => {
     const fetchImpl = vi.fn(
@@ -120,22 +148,14 @@ describe("createWorkflowSupervisorGraphqlClient", () => {
     ).rejects.toThrow(/restartCount must be a finite number/i);
   });
 
-  test("status lookup omits idempotencyKey from GraphQL query variables", async () => {
+  test("status lookup preserves all GraphQL lookup variables", async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            data: {
-              supervisedWorkflowRun:
-                buildSuccessfulPayload().data.dispatchSupervisedWorkflowCommand,
-            },
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify(buildSupervisedWorkflowRunPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify(buildSuccessfulPayload()), {
@@ -150,26 +170,105 @@ describe("createWorkflowSupervisorGraphqlClient", () => {
     });
 
     await client.status({
+      runnerPoolRunId: "pool-1",
+      sourceId: "source-1",
+      bindingId: "binding-1",
+      correlationKey: "corr-1",
+      workflowExecutionId: "sess-1",
+      workflowKey: "demo-key",
+      alias: "demo-alias",
+      idempotencyKey: "stable-graphql-status",
+    });
+
+    const parsed = parseRequestBody(fetchImpl.mock.calls[0]);
+    expect(parsed.variables?.input).toEqual({
+      runnerPoolRunId: "pool-1",
+      workflowExecutionId: "sess-1",
+      workflowKey: "demo-key",
+      alias: "demo-alias",
       sourceId: "source-1",
       bindingId: "binding-1",
       correlationKey: "corr-1",
       idempotencyKey: "stable-graphql-status",
     });
+  });
 
-    const firstCall = fetchImpl.mock.calls[0];
-    const rawBody = firstCall?.[1]?.body;
-    if (typeof rawBody !== "string") {
-      throw new Error("expected string request body");
-    }
-    const parsed = JSON.parse(rawBody) as {
-      readonly variables?: {
-        readonly input?: Record<string, unknown>;
-      };
-    };
-    expect(parsed.variables?.input).toEqual({
-      sourceId: "source-1",
-      bindingId: "binding-1",
-      correlationKey: "corr-1",
+  test("stop restart and submitInput preserve strong GraphQL lookup ids", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSupervisedWorkflowRunPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessfulPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSupervisedWorkflowRunPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessfulPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSupervisedWorkflowRunPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(buildSuccessfulPayload()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    const client = createWorkflowSupervisorGraphqlClient({
+      endpoint: "http://example.test/graphql",
+      fetchImpl,
+    });
+
+    await client.stop({
+      runnerPoolRunId: "pool-stop",
+      workflowExecutionId: "sess-stop",
+      idempotencyKey: "idem-stop",
+    });
+    await client.restart({
+      runnerPoolRunId: "pool-restart",
+      workflowExecutionId: "sess-restart",
+      idempotencyKey: "idem-restart",
+    });
+    await client.submitInput({
+      runnerPoolRunId: "pool-input",
+      workflowExecutionId: "sess-input",
+      idempotencyKey: "idem-input",
+      runtimeVariables: { humanInput: { text: "continue" } },
+    });
+
+    expect(parseRequestBody(fetchImpl.mock.calls[0]).variables?.input).toEqual({
+      runnerPoolRunId: "pool-stop",
+      workflowExecutionId: "sess-stop",
+      idempotencyKey: "idem-stop",
+    });
+    expect(parseRequestBody(fetchImpl.mock.calls[2]).variables?.input).toEqual({
+      runnerPoolRunId: "pool-restart",
+      workflowExecutionId: "sess-restart",
+      idempotencyKey: "idem-restart",
+    });
+    expect(parseRequestBody(fetchImpl.mock.calls[4]).variables?.input).toEqual({
+      runnerPoolRunId: "pool-input",
+      workflowExecutionId: "sess-input",
+      idempotencyKey: "idem-input",
     });
   });
 

@@ -54,6 +54,7 @@ import {
   resolveRerunFromStepId,
   viewFrom,
 } from "./supervisor-client-helpers";
+import { resolveSupervisedWorkflowLookupRecord } from "./workflow-supervisor-client-lookup";
 
 export function createWorkflowSupervisorClient(
   baseOptions: LoadOptions = {},
@@ -62,51 +63,8 @@ export function createWorkflowSupervisorClient(
   async function resolveLookupRecord(
     input: SupervisedWorkflowLookup,
   ): Promise<EventSupervisedRunRecord> {
-    if (
-      input.supervisedRunId !== undefined &&
-      input.supervisedRunId.length > 0
-    ) {
-      const byId = await repo.loadById(input.supervisedRunId);
-      if (byId === null) {
-        throw new Error(`unknown supervised run '${input.supervisedRunId}'`);
-      }
-      return await reconcileTerminalSupervisedRunRecord(
-        byId,
-        repo,
-        baseOptions,
-      );
-    }
-    if (
-      input.sourceId === undefined ||
-      input.bindingId === undefined ||
-      input.correlationKey === undefined
-    ) {
-      throw new Error(
-        "supervised workflow lookup requires supervisedRunId or sourceId+bindingId+correlationKey",
-      );
-    }
-    const sourceId = requireNonEmptyLookupValue(
-      input.sourceId,
-      "input.sourceId",
-    );
-    const bindingId = requireNonEmptyLookupValue(
-      input.bindingId,
-      "input.bindingId",
-    );
-    const correlationKey = requireNonEmptyLookupValue(
-      input.correlationKey,
-      "input.correlationKey",
-    );
-    const latest = await repo.findLatestByCorrelation({
-      sourceId,
-      bindingId,
-      correlationKey,
-    });
-    if (latest === null) {
-      throw new Error("no supervised run matches the lookup");
-    }
-    return await reconcileTerminalSupervisedRunRecord(
-      latest,
+    return await resolveSupervisedWorkflowLookupRecord(
+      input,
       repo,
       baseOptions,
     );

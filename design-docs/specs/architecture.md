@@ -105,6 +105,27 @@ inbox, logs, export, or other inspection dispatch that does not invoke
 This preserves later wait, cancel, and resume semantics for the original active
 run while still allowing inspection commands to return fresh persisted state.
 
+Run-pool targeting must be strongest-id first. Public callers that have a
+runner-pool run id, supervised run id, or workflow execution/session id should
+use that id for wait, cancel, status, progress, input, resume, restart, and
+rerun operations. Alias, workflow key, and correlation-key lookup are
+convenience routes only; when they match more than one active run, mutating
+operations must fail with an explicit ambiguous-target result instead of
+choosing arbitrarily. Read-only status may return a list or require the caller
+to refine the target, but it must not collapse multiple active runs into one
+answer.
+
+Cancellation and wait semantics are split between live process control and
+durable inspection. Cancellation is a live-handle operation: it must target only
+the matching active in-process run, reconcile the supervised-run/session records
+to `stopped` or the terminal engine status, and report a not-live result when
+only durable records remain. Wait may block on the active in-process handle and
+prune that handle from live indexes after terminal completion, while subsequent
+status/progress queries continue through persisted supervised-run and session
+records. These semantics preserve public API compatibility by adding stricter
+target resolution and clearer failures without changing existing successful
+call shapes.
+
 Current compatibility-removal sequence (see
 `impl-plans/workflow-legacy-compatibility-removal.md`):
 
@@ -1073,6 +1094,24 @@ Boundary rules:
 - examples under `examples/` remain runnable with
   `--workflow-definition-dir ./examples`; example workflow JSON and prompt
   paths must not depend on repository-internal source paths
+
+Supervisor runner-pool package boundary:
+
+- runner-pool lifecycle types, client request/response shapes, and the
+  deterministic in-process pool implementation belong to `divedra-core`
+- `src/lib.ts` and `packages/divedra-core/src/index.ts` should expose the same
+  stable supervision client surface needed by embedders without requiring deep
+  imports from `src/workflow/*`
+- `divedra` remains a compatibility facade and CLI package; it may re-export
+  core supervision APIs but must not own independent runner-pool state
+- GraphQL, event-source, and CLI adapters may translate transport-specific
+  commands into core supervisor-client operations, but process/run-pool
+  management remains keyed by the core ids: `runnerPoolRunId`,
+  `supervisedRunId`, `workflowExecutionId`, workflow key/alias, and correlation
+  key
+- Cursor CLI behavior, if present, remains isolated behind its adapter module;
+  it must not change codex-agent runner-pool semantics or the provider-neutral
+  supervisor-client contract
 - generated declarations, copied prompt assets, native add-on assets, and CLI
   executable shims must be produced by package-local build steps orchestrated
   from the root task scripts

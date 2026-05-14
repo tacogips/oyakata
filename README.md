@@ -81,7 +81,8 @@ typecheck commands for the workspace.
 
 - `packages/divedra-core` exposes the core workflow runtime, session/runtime DB,
   supervisor, manager control, catalog, inspection, shared library contracts,
-  and filesystem helpers used by the runtime.
+  deterministic supervisor runner-pool lifecycle APIs, and filesystem helpers
+  used by the runtime.
 - `packages/divedra-addons` exposes built-in node add-on registries and native
   add-on execution helpers. It depends inward on `divedra-core`; core does not
   export native add-on execution or add-on registry construction.
@@ -104,6 +105,8 @@ CLI, GraphQL, event-source, and HTTP server code remain in the compatibility
 package for this stage because those areas currently share command dispatch and
 transport wiring. They can become separate packages after their imports depend
 only on core contracts and no longer require compatibility-facade internals.
+Runner-pool state is owned by core supervision code; the `divedra` package is a
+compatibility facade and must not maintain a separate supervisor run pool.
 
 ## Development Checks
 
@@ -261,6 +264,17 @@ Workflow bundles can set supervision defaults in `workflow.defaults.supervision`
 and long-running steps can override stall detection with `steps[].stallTimeoutMs`
 or node payload `stallTimeoutMs`; CLI flags still take precedence.
 
+Supervised event and GraphQL runs are tracked by a deterministic in-process
+runner pool. Use `runnerPoolRunId`, `supervisedRunId`, or
+`workflowExecutionId` as the strongest identifiers for live wait, cancel, and
+status operations. `workflowKey`, `alias`, and correlation-key lookup remain
+convenience routes; mutating operations reject ambiguous active matches instead
+of choosing one arbitrarily. Waiting and cancellation require a live
+in-process handle. After a handle reaches a terminal state or the process is
+restarted, durable status and progress inspection continue through persisted
+supervised-run/session records, but live `runnerPoolRunId` lookup is no longer
+durable.
+
 ## Session Operations
 
 After a workflow starts, keep the returned `sessionId` / workflow execution id.
@@ -358,6 +372,14 @@ Endpoint-backed `workflow run` uses the same default supervised recovery policy
 as local execution. Pass `--no-auto-improve` when the remote GraphQL
 `executeWorkflow` start must receive lifecycle-only supervision
 (`maxWorkflowPatches: 0`).
+
+GraphQL supervised dispatch returns `runnerPoolRunId` on
+`dispatchSupervisedWorkflowCommand`. Use that id with
+`supervisedWorkflowRun(input: { runnerPoolRunId })` while the server process is
+still alive to target the active in-process run across later HTTP requests. For
+durable inspection after terminal completion or process restart, query by
+`supervisedRunId`, `workflowExecutionId`, workflow key/alias, or
+source/binding/correlation data.
 
 Remote-capable CLI operations include `workflow list`, `workflow status`,
 `workflow run`, `session resume`, and `session rerun`. Detailed execution
@@ -540,6 +562,7 @@ execution and inspection helpers.
 Common entry points:
 
 - `createWorkflowExecutionClient()`
+- `createSupervisorRunnerPool()`
 - `executeWorkflow()`
 - `resumeWorkflow()`
 - `rerunWorkflow()`
@@ -577,6 +600,13 @@ console.log(runtime.session.status);
 
 Use `createWorkflowExecutionClient()` when the same integration should work
 locally or through a GraphQL endpoint.
+
+The core supervision surface is exported from both `divedra` and
+`divedra-core`. `createSupervisorRunnerPool()` provides `dispatch`, `lookup`,
+`cancel`, `wait`, `lookupHandle`, and `lookupHandles` for in-process supervised
+workflow runs. Strong ids (`runnerPoolRunId`, `supervisedRunId`,
+`workflowExecutionId`) should be preferred over workflow aliases or correlation
+keys when more than one run can be active.
 
 ## Development Commands
 
