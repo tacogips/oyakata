@@ -4502,6 +4502,9 @@ describe("runWorkflow", () => {
         (execution) => execution.nodeId === "review-result",
       ),
     ).toBe(false);
+    expect(stored.value.nodeExecutionCounter).toBe(1);
+    expect(stored.value.nodeExecutionCounts["writer"]).toBe(1);
+    expect(stored.value.nodeExecutionCounts["review-result"]).toBeUndefined();
   });
 
   test("maxConcurrency cap clamps authored fanout concurrency and persists as group concurrency 1", async () => {

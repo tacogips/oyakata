@@ -214,9 +214,11 @@ export async function finalizeStepTransitions(input) {
       session: {
         ...session,
         nodeExecutionCounter: currentNodeExecutionCounter,
+        nodeExecutionCounts: currentNodeExecutionCounts,
         nodeExecutions: currentNodeExecutions,
         communicationCounter: currentCommunicationCounter,
         communications: currentCommunications,
+        nodeBackendSessions: currentNodeBackendSessions,
         runtimeVariables: currentRuntimeVariables,
         ...(currentFanoutGroups === undefined
           ? {}
@@ -330,8 +332,29 @@ export async function finalizeStepTransitions(input) {
         ),
       );
     }
-    await saveSession(paused, options);
-    return ok({ session: paused, exitCode: 4 });
+    const pausedFanoutGroups =
+      crossWorkflowDispatchResult.value.fanoutGroups ??
+      paused.fanoutGroups ??
+      currentFanoutGroups;
+    const pausedSession: WorkflowSessionState = {
+      ...paused,
+      queue: [],
+      status: "paused",
+      currentNodeId: nodeId,
+      nodeExecutionCounter: currentNodeExecutionCounter,
+      nodeExecutionCounts: currentNodeExecutionCounts,
+      nodeExecutions: currentNodeExecutions,
+      loopIterationCounts: updatedLoopIterationCounts,
+      communicationCounter: currentCommunicationCounter,
+      communications: currentCommunications,
+      nodeBackendSessions: currentNodeBackendSessions,
+      runtimeVariables: currentRuntimeVariables,
+      ...(pausedFanoutGroups === undefined
+        ? {}
+        : { fanoutGroups: pausedFanoutGroups }),
+    };
+    await saveSession(pausedSession, options);
+    return ok({ session: pausedSession, exitCode: 4 });
   }
   const transitions = [
     ...session.transitions,
