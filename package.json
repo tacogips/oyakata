@@ -1,7 +1,11 @@
 {
-  "name": "divedra",
+  "name": "divedra-workspace",
   "version": "0.1.0",
   "description": "TypeScript/Bun workflow runtime for cooperative multi-agent execution",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "type": "module",
   "main": "dist/lib.js",
   "module": "dist/lib.js",
@@ -20,7 +24,7 @@
   "scripts": {
     "dev": "bun run --watch src/main.ts",
     "build": "bun run build:server",
-    "build:server": "bun build src/main.ts src/lib.ts --outdir dist --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly && rm -rf dist/prompts && cp -R src/workflow/prompts dist/prompts",
+    "build:server": "bun build src/main.ts src/lib.ts --outdir dist --target bun && bun build packages/divedra-core/src/index.ts --outfile packages/divedra-core/dist/core-runtime.js --target bun --minify && bun build packages/divedra-addons/src/index.ts --outfile packages/divedra-addons/dist/index.js --target bun && bun build packages/divedra/src/index.ts --outfile packages/divedra/dist/lib.js --target bun && bun build packages/divedra/src/cli.ts --outfile packages/divedra/dist/cli.js --target bun && bun build packages/divedra/src/bin.ts --outfile packages/divedra/dist/main.js --target bun && tsc -p tsconfig.build.json --emitDeclarationOnly && bun run scripts/sync-package-declarations.ts && rm -rf dist/prompts packages/divedra/dist/prompts packages/divedra-core/dist/prompts packages/divedra-addons/dist/prompts && cp -R src/workflow/prompts dist/prompts && cp -R src/workflow/prompts packages/divedra/dist/prompts && cp -R src/workflow/prompts packages/divedra-core/dist/prompts && cp -R src/workflow/prompts packages/divedra-addons/dist/prompts",
     "typecheck:server": "tsc --noEmit",
     "start": "bun run src/main.ts",
     "test": "bash ./scripts/run-bun-tests.sh",

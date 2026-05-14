@@ -11,7 +11,7 @@ const {
   buildAdapterDivedraHookContext,
   normalizeOutputContractEnvelope,
   executeAdapterWithTimeout,
-  executeNativeNodeWithTimeout,
+  executePackageNodeWithTimeout,
   DispatchingNodeAdapter,
   claimFanoutStepBudget,
   loadContinuationRelatedSnapshots,

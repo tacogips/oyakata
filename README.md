@@ -73,6 +73,38 @@ opening an interactive shell, run `task install-git-hooks`.
 GitHub Actions also runs `gitleaks` on `push` and `pull_request` as a repo-side
 backstop in case a local hook was not installed yet.
 
+## Package Architecture
+
+The repository is a Bun workspace with package roots under `packages/*`. The
+root `package.json` stays private and orchestrates shared build, test, lint, and
+typecheck commands for the workspace.
+
+- `packages/divedra-core` exposes the core workflow runtime, session/runtime DB,
+  supervisor, manager control, catalog, inspection, shared library contracts,
+  and filesystem helpers used by the runtime.
+- `packages/divedra-addons` exposes built-in node add-on registries and native
+  add-on execution helpers. It depends inward on `divedra-core`; core does not
+  export native add-on execution or add-on registry construction.
+- `packages/divedra` is the compatibility facade named `divedra`; it preserves
+  the current `import "divedra"` library surface, `./cli` export, and CLI binary
+  behavior. The `divedra/cli` export is import-safe and exposes `runCli` without
+  starting the command or mutating `process.exitCode`; executable startup lives
+  in the package `bin` wrapper.
+
+Use the root commands for repository development and verification:
+
+```bash
+bun run build
+bun run typecheck
+bun run lint:biome
+bun run test
+```
+
+CLI, GraphQL, event-source, and HTTP server code remain in the compatibility
+package for this stage because those areas currently share command dispatch and
+transport wiring. They can become separate packages after their imports depend
+only on core contracts and no longer require compatibility-facade internals.
+
 ## Development Checks
 
 `bun run lint:biome` is the shared Biome lint path for local development, task

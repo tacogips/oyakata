@@ -16,7 +16,7 @@ import {
 } from "../adapter";
 import {
   executeAdapterWithTimeout,
-  executeNativeNodeWithTimeout,
+  executePackageNodeWithTimeout,
 } from "../adapter-execution";
 import { DispatchingNodeAdapter } from "../adapters/dispatch";
 import { claimFanoutStepBudget } from "../engine-fanout";
@@ -164,7 +164,7 @@ export const workflowRunnerDeps = {
   buildAdapterDivedraHookContext,
   normalizeOutputContractEnvelope,
   executeAdapterWithTimeout,
-  executeNativeNodeWithTimeout,
+  executePackageNodeWithTimeout,
   DispatchingNodeAdapter,
   claimFanoutStepBudget,
   loadContinuationRelatedSnapshots,

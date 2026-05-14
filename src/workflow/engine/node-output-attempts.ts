@@ -11,7 +11,7 @@ const {
   buildAdapterDivedraHookContext,
   normalizeOutputContractEnvelope,
   executeAdapterWithTimeout,
-  executeNativeNodeWithTimeout,
+  executePackageNodeWithTimeout,
   DispatchingNodeAdapter,
   claimFanoutStepBudget,
   loadContinuationRelatedSnapshots,
@@ -322,7 +322,7 @@ export async function resolveNodeExecutionOutput(input) {
                 timeoutMs,
                 supervisionStall,
               )
-            : await executeNativeNodeWithTimeout({
+            : await executePackageNodeWithTimeout({
                 workflowDirectory: loaded.value.workflowDirectory,
                 workflowWorkingDirectory,
                 artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,

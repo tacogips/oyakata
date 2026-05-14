@@ -1,8 +1,8 @@
 import path from "node:path";
 import {
-  createAsyncNodeAddonRegistry,
-  createNodeAddonRegistry,
-} from "../node-addons";
+  createBoundaryAsyncNodeAddonRegistry,
+  createBoundaryNodeAddonRegistry,
+} from "../addon-package-boundary";
 import { isSafeWorkflowName } from "../paths";
 import {
   DEFAULT_MAX_LOOP_ITERATIONS,
@@ -590,7 +590,7 @@ export function resolveSyncNodeAddonResolvers(
     ? options.nodeAddonResolvers
     : [
         ...(options.nodeAddonResolvers ?? []),
-        createNodeAddonRegistry(options.nodeAddons),
+        createBoundaryNodeAddonRegistry(options.nodeAddons),
       ];
 }
 export function resolveAsyncNodeAddonResolvers(
@@ -601,7 +601,7 @@ export function resolveAsyncNodeAddonResolvers(
     ...(options.asyncNodeAddonResolvers ?? []),
   ];
   if (options.nodeAddons !== undefined && options.nodeAddons.length > 0) {
-    resolvers.push(createAsyncNodeAddonRegistry(options.nodeAddons));
+    resolvers.push(createBoundaryAsyncNodeAddonRegistry(options.nodeAddons));
   }
   return resolvers.length === 0 ? undefined : resolvers;
 }

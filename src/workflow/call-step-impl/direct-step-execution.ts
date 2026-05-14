@@ -13,7 +13,7 @@ import {
 } from "../adapter";
 import {
   executeAdapterWithTimeout,
-  executeNativeNodeWithTimeout,
+  executePackageNodeWithTimeout,
 } from "../adapter-execution";
 import { DispatchingNodeAdapter } from "../adapters/dispatch";
 import { assembleNodeInput } from "../input-assembly";
@@ -627,7 +627,7 @@ export class ExecutionDispatcher {
                 timeoutMs,
                 supervisionStall,
               )
-            : await executeNativeNodeWithTimeout({
+            : await executePackageNodeWithTimeout({
                 workflowDirectory: loaded.value.workflowDirectory,
                 workflowWorkingDirectory,
                 artifactWorkflowRoot: loaded.value.artifactWorkflowRoot,

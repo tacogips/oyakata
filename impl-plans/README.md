@@ -26,6 +26,7 @@ impl-plans/
 
 | Plan | Created | Design Reference |
 | ---- | ------- | ---------------- |
+| `active/package-boundary-architecture` | 2026-05-14 | `architecture#package-boundary-architecture` |
 
 ## Recently Completed
 

@@ -3,9 +3,9 @@ import {
   synthesizeInlineNodeFile,
 } from "../authored-node";
 import {
-  resolveNodeAddonPayload,
-  resolveNodeAddonPayloadAsync,
-} from "../node-addons";
+  resolveBoundaryNodeAddonPayloadAsync,
+  resolveBoundaryNodeAddonPayloadSync,
+} from "../addon-package-boundary";
 import { err, ok, type Result } from "../result";
 import type {
   AsyncNodeAddonPayloadResolver,
@@ -53,7 +53,7 @@ export function buildStepAddressedNodePayloadsSync(input: {
   nodeRegistry.forEach((node, index) => {
     const usage = nodeRoleUsage.get(node.id);
     if (node.addon !== undefined) {
-      const resolved = resolveNodeAddonPayload({
+      const resolved = resolveBoundaryNodeAddonPayloadSync({
         nodeId: node.id,
         addon: node.addon,
         path: `workflow.nodes[${index}].addon`,
@@ -158,7 +158,7 @@ export async function buildStepAddressedNodePayloadsAsync(input: {
   for (const [index, node] of nodeRegistry.entries()) {
     const usage = nodeRoleUsage.get(node.id);
     if (node.addon !== undefined) {
-      const resolved = await resolveNodeAddonPayloadAsync({
+      const resolved = await resolveBoundaryNodeAddonPayloadAsync({
         nodeId: node.id,
         addon: node.addon,
         path: `workflow.nodes[${index}].addon`,
@@ -271,7 +271,7 @@ export function validateWorkflowBundleDetailed(
   } else if (workflow !== null) {
     workflow.nodes.forEach((node, index) => {
       if (node.addon !== undefined) {
-        const resolved = resolveNodeAddonPayload({
+        const resolved = resolveBoundaryNodeAddonPayloadSync({
           nodeId: node.id,
           addon: node.addon,
           path: `workflow.nodes[${index}].addon`,
@@ -379,7 +379,7 @@ export async function validateWorkflowBundleDetailedAsync(
   } else if (workflow !== null) {
     for (const [index, node] of workflow.nodes.entries()) {
       if (node.addon !== undefined) {
-        const resolved = await resolveNodeAddonPayloadAsync({
+        const resolved = await resolveBoundaryNodeAddonPayloadAsync({
           nodeId: node.id,
           addon: node.addon,
           path: `workflow.nodes[${index}].addon`,

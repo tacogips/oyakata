@@ -1014,11 +1014,96 @@ Scope enforcement:
 
 Manager sessions are minted per manager-step execution and expire when that execution finishes.
 
+## Package Boundary Architecture
+
+Issue-resolution workflow `design-and-implement-review-loop` for "Split
+divedra TypeScript packages" introduces package boundaries without changing the
+existing CLI or library contract. The current single package publishes
+`dist/lib.js` as `import "divedra"` and `dist/main.js` as the CLI entrypoint;
+the split must preserve those entrypoints through compatibility facades while
+moving implementation ownership into workspace packages.
+
+The package graph should use Bun workspaces and flake-provided tooling only.
+Repository commands must continue to work through `nix develop --command ...`
+or the flake app, and must not assume globally installed Bun, TypeScript,
+Biome, Vitest, or Task.
+
+Required packages:
+
+- `divedra-core`: owns workflow definitions, validation, execution engine,
+  runtime DB/session artifacts, mailbox contracts, supervisor primitives,
+  backend adapter dispatch contracts, and the public library API currently
+  exposed through `src/lib.ts`.
+- `divedra-addons`: owns built-in node add-on catalog resolution, native
+  add-on execution, add-on configuration validation, and any reusable add-on
+  types that should not force downstream callers to depend on the CLI/server
+  surface.
+- `divedra`: remains the compatibility package name and published CLI/library
+  facade. It re-exports the stable library surface from `divedra-core` and
+  keeps the `./cli` export/bin behavior compatible with current callers.
+
+Additional package candidates should be evaluated during implementation:
+
+- `divedra-cli`: separate when CLI parsing, command handlers, help text, and
+  process I/O can depend on `divedra-core` without creating reverse imports.
+  If split, `divedra` should keep a CLI shim that delegates to this package.
+- `divedra-graphql`: separate when GraphQL schema/client/server resolver code
+  can depend only on `divedra-core` and optional server transport helpers.
+- `divedra-events`: separate when external event source parsing, receipts,
+  listener service, and supervisor chat dispatch can depend on core runtime
+  contracts without importing CLI-only behavior.
+- `divedra-server`: separate only if HTTP serving and GraphQL endpoint wiring
+  become independently reusable; otherwise keep server transport with the CLI
+  package to avoid over-splitting.
+
+Boundary rules:
+
+- dependencies point inward toward `divedra-core`; `divedra-core` must not
+  import CLI, server, GraphQL endpoint, event listener, or add-on package code
+  except through narrow type-only contracts that belong in core
+- add-on resolution may depend on core workflow types, but core workflow
+  validation must access built-in add-ons through explicit registries instead
+  of hard-coded package-local imports that prevent package reuse
+- backend-specific behavior for `codex-agent`, `claude-code-agent`,
+  `official/openai-sdk`, `official/anthropic-sdk`, and `cursor-cli-agent`
+  remains behind adapter modules; Cursor CLI behavior must stay isolated to the
+  Cursor adapter and must not alter Codex adapter semantics
+- package exports expose stable entrypoints only; deep internal imports across
+  package boundaries are disallowed unless explicitly exported for extension
+- examples under `examples/` remain runnable with
+  `--workflow-definition-dir ./examples`; example workflow JSON and prompt
+  paths must not depend on repository-internal source paths
+- generated declarations, copied prompt assets, native add-on assets, and CLI
+  executable shims must be produced by package-local build steps orchestrated
+  from the root task scripts
+- test and build commands must run from the root and from affected package
+  scopes using flake-defined tooling
+
+Rollout should be staged. First introduce workspace metadata, package-local
+entrypoints, and compatibility facades without behavior changes. Then move
+implementation files by ownership, replacing relative imports with package
+imports only after the receiving package exports the needed surface. Finally,
+align examples, README command snippets, Taskfile tasks, `tsconfig` project
+references or build configs, Vitest configuration, and flake packaging.
+
+Compatibility validation for the package split:
+
+- `nix develop --command bun install --frozen-lockfile`
+- `nix develop --command bun run typecheck`
+- `nix develop --command bun test`
+- `nix develop --command task test`
+- `nix develop --command task build`
+- `nix build .#default`
+- `nix run . -- workflow list --workflow-definition-dir ./examples`
+
 ## Current Limitations
 
 - the main runtime remains queue-based; the local `call-step` path is not the whole orchestration model
 - runtime/tooling cleanup is still needed in older internal documents that describe removed branch/loop or structural sub-workflow authoring
 - some supporting materials still assume node-centric naming even though authored execution is step-addressed
+- the repository is still physically a single Bun package until the package
+  split implementation moves source files, package metadata, and build/test
+  configuration into workspace packages
 
 ## References
 

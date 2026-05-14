@@ -6,14 +6,17 @@ import {
   type AdapterProcessLog,
   type NodeAdapter,
 } from "./adapter";
-import {
-  executeNativeNode,
-  type NativeNodeExecutionInput,
-} from "./native-node-executor";
+import type { NodeExecutionMailbox } from "./node-execution-mailbox";
 import { loadRuntimeSessionSummary } from "./runtime-db";
 import { err, ok, type Result } from "./result";
 import { formatSupervisionStallError } from "./superviser";
-import type { SupervisionStallWatch } from "./types";
+import type {
+  ChatReplyDispatcher,
+  NodePayload,
+  SupervisionStallWatch,
+  WorkflowDefaults,
+} from "./types";
+import type { SuperviserRuntimeControl } from "./superviser-control";
 
 export interface AdapterExecutionFailure {
   readonly code: AdapterFailureCode;
@@ -73,6 +76,64 @@ type SupervisionStallController = {
   readonly clear: () => void;
   readonly promise: Promise<never>;
 };
+
+interface PackageNodeExecutionInput {
+  readonly workflowDirectory: string;
+  readonly workflowWorkingDirectory: string;
+  readonly artifactWorkflowRoot: string;
+  readonly workflowId: string;
+  readonly workflowDescription: string;
+  readonly workflowExecutionId: string;
+  readonly nodeId: string;
+  readonly nodeExecId: string;
+  readonly node: NodePayload;
+  readonly workflowDefaults: WorkflowDefaults;
+  readonly runtimeVariables: Readonly<Record<string, unknown>>;
+  readonly mergedVariables: Readonly<Record<string, unknown>>;
+  readonly arguments: Readonly<Record<string, unknown>> | null;
+  readonly artifactDir: string;
+  readonly executionMailbox: NodeExecutionMailbox;
+  readonly chatReplyDispatcher?: ChatReplyDispatcher;
+  readonly env?: Readonly<Record<string, string | undefined>>;
+  readonly superviserControl?: SuperviserRuntimeControl;
+}
+
+type NativeNodeExecutor = (
+  input: PackageNodeExecutionInput,
+  options: {
+    readonly timeoutMs: number;
+    readonly signal: AbortSignal;
+  },
+) => Promise<AdapterExecutionOutput>;
+
+const nativeNodeExecutorExportName = ["execute", "Native", "Node"].join("");
+const addonEntrypointCandidates = [
+  "../packages/divedra-addons/dist/index.js",
+  "../../packages/divedra-addons/dist/index.js",
+  "../../divedra-addons/dist/index.js",
+] as const;
+
+async function loadPackageNodeExecutor(): Promise<NativeNodeExecutor> {
+  let lastError: unknown;
+  for (const candidate of addonEntrypointCandidates) {
+    try {
+      const module = (await import(
+        new URL(candidate, import.meta.url).href
+      )) as Readonly<Record<string, unknown>>;
+      const executor = module[nativeNodeExecutorExportName];
+      if (typeof executor === "function") {
+        return executor as NativeNodeExecutor;
+      }
+    } catch (error: unknown) {
+      lastError = error;
+    }
+  }
+  const reason = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new AdapterExecutionError(
+    "provider_error",
+    `unable to load add-on node executor${reason}`,
+  );
+}
 
 function attachSupervisionStallToAbort(
   controller: AbortController,
@@ -178,8 +239,8 @@ export async function executeAdapterWithTimeout(
   }
 }
 
-export async function executeNativeNodeWithTimeout(
-  input: NativeNodeExecutionInput & {
+export async function executePackageNodeWithTimeout(
+  input: PackageNodeExecutionInput & {
     readonly timeoutMs: number;
     readonly supervisionStall?: SupervisionStallWatch;
   },
@@ -197,8 +258,9 @@ export async function executeNativeNodeWithTimeout(
     : undefined;
 
   try {
+    const executePackageNode = await loadPackageNodeExecutor();
     const output = await Promise.race([
-      executeNativeNode(rest, {
+      executePackageNode(rest, {
         timeoutMs: input.timeoutMs,
         signal: controller.signal,
       }),

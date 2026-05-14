@@ -28,7 +28,7 @@ Thumbs.db
 # Nix
 .direnv/
 result
-result-*
+/result-*
 /.pre-commit-config.yaml
 
 # Logs
