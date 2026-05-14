@@ -23,9 +23,13 @@ export interface SupervisorRunnerPool {
   }): Promise<SupervisedWorkflowView>;
   lookup(lookup: SupervisedWorkflowLookup): Promise<SupervisedWorkflowView>;
   cancel(lookup: SupervisedWorkflowLookup): Promise<SupervisedWorkflowView>;
+  wait(lookup: SupervisedWorkflowLookup): Promise<SupervisedWorkflowView>;
   lookupHandle(
     lookup: SupervisedWorkflowLookup,
   ): SupervisorRunnerPoolHandle | undefined;
+  lookupHandles(
+    lookup: SupervisedWorkflowLookup,
+  ): readonly SupervisorRunnerPoolHandle[];
 }
 
 function indexKey(
@@ -63,11 +67,19 @@ function isTerminalSupervisedView(view: SupervisedWorkflowView): boolean {
   );
 }
 
+type SupervisorTargetResolution =
+  | { readonly kind: "single"; readonly handle: SupervisorRunnerPoolHandle }
+  | {
+      readonly kind: "ambiguous";
+      readonly matchedRunIds: readonly string[];
+    }
+  | { readonly kind: "not-found" };
+
 export function createSupervisorRunnerPool(input: {
   readonly client: WorkflowSupervisorClient;
   readonly newRunnerPoolRunId?: () => string;
 }): SupervisorRunnerPool {
-  const byKey = new Map<string, SupervisorRunnerPoolHandle>();
+  const byKey = new Map<string, Map<string, SupervisorRunnerPoolHandle>>();
   let sequence = 0;
 
   function nextRunnerPoolRunId(): string {
@@ -80,10 +92,20 @@ export function createSupervisorRunnerPool(input: {
 
   function removeHandle(handle: SupervisorRunnerPoolHandle): void {
     for (const [key, existing] of byKey) {
-      if (existing.runnerPoolRunId === handle.runnerPoolRunId) {
+      existing.delete(handle.runnerPoolRunId);
+      if (existing.size === 0) {
         byKey.delete(key);
       }
     }
+  }
+
+  function addHandleKey(key: string, handle: SupervisorRunnerPoolHandle): void {
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      byKey.set(key, new Map([[handle.runnerPoolRunId, handle]]));
+      return;
+    }
+    existing.set(handle.runnerPoolRunId, handle);
   }
 
   function storeHandle(
@@ -121,9 +143,16 @@ export function createSupervisorRunnerPool(input: {
         return stopped;
       },
     };
-    void task.catch(() => {
-      removeHandle(handle);
-    });
+    void task.then(
+      (finalView) => {
+        if (isTerminalSupervisedView(finalView)) {
+          removeHandle(handle);
+        }
+      },
+      () => {
+        removeHandle(handle);
+      },
+    );
     const keys = [
       indexKey("runnerPoolRunId", runnerPoolRunId),
       indexKey("supervisedRunId", supervisedRunId),
@@ -132,27 +161,121 @@ export function createSupervisorRunnerPool(input: {
       indexKey("workflowKey", view.supervisedRun.targetWorkflowName),
     ].filter((key): key is string => key !== undefined);
     for (const key of keys) {
-      byKey.set(key, handle);
+      addHandleKey(key, handle);
     }
+  }
+
+  function handlesForKey(
+    key: string | undefined,
+  ): readonly SupervisorRunnerPoolHandle[] {
+    if (key === undefined) {
+      return [];
+    }
+    return [...(byKey.get(key)?.values() ?? [])];
+  }
+
+  function uniqueHandles(
+    handles: readonly SupervisorRunnerPoolHandle[],
+  ): readonly SupervisorRunnerPoolHandle[] {
+    return [
+      ...new Map(
+        handles.map((handle) => [handle.runnerPoolRunId, handle] as const),
+      ).values(),
+    ];
+  }
+
+  function resolveTarget(
+    lookup: SupervisedWorkflowLookup,
+  ): SupervisorTargetResolution {
+    const strongKeys = [
+      indexKey("runnerPoolRunId", lookup.runnerPoolRunId),
+      indexKey("supervisedRunId", lookup.supervisedRunId),
+      indexKey("workflowExecutionId", lookup.workflowExecutionId),
+    ].filter((key): key is string => key !== undefined);
+    let strongHandle: SupervisorRunnerPoolHandle | undefined;
+    for (const key of strongKeys) {
+      const handles = handlesForKey(key);
+      if (handles.length === 0) {
+        return { kind: "not-found" };
+      }
+      if (handles.length === 1) {
+        const handle = handles[0];
+        if (handle !== undefined) {
+          if (
+            strongHandle !== undefined &&
+            strongHandle.runnerPoolRunId !== handle.runnerPoolRunId
+          ) {
+            return {
+              kind: "ambiguous",
+              matchedRunIds: [
+                strongHandle.runnerPoolRunId,
+                handle.runnerPoolRunId,
+              ],
+            };
+          }
+          strongHandle = handle;
+        }
+      }
+      if (handles.length > 1) {
+        return {
+          kind: "ambiguous",
+          matchedRunIds: handles.map((handle) => handle.runnerPoolRunId),
+        };
+      }
+    }
+    if (strongHandle !== undefined) {
+      return { kind: "single", handle: strongHandle };
+    }
+    const convenienceHandles = uniqueHandles([
+      ...handlesForKey(indexKey("workflowKey", lookup.workflowKey)),
+      ...handlesForKey(indexKey("workflowKey", lookup.alias)),
+      ...handlesForKey(correlationIndexKey(lookup)),
+    ]);
+    if (convenienceHandles.length === 0) {
+      return { kind: "not-found" };
+    }
+    if (convenienceHandles.length === 1) {
+      const handle = convenienceHandles[0];
+      if (handle !== undefined) {
+        return { kind: "single", handle };
+      }
+    }
+    return {
+      kind: "ambiguous",
+      matchedRunIds: convenienceHandles.map((handle) => handle.runnerPoolRunId),
+    };
   }
 
   function findHandle(
     lookup: SupervisedWorkflowLookup,
   ): SupervisorRunnerPoolHandle | undefined {
-    const keys = [
-      indexKey("runnerPoolRunId", lookup.runnerPoolRunId),
-      indexKey("supervisedRunId", lookup.supervisedRunId),
-      indexKey("workflowExecutionId", lookup.workflowExecutionId),
-      indexKey("workflowKey", lookup.workflowKey ?? lookup.alias),
-      correlationIndexKey(lookup),
-    ].filter((key): key is string => key !== undefined);
-    for (const key of keys) {
-      const handle = byKey.get(key);
-      if (handle !== undefined) {
-        return handle;
-      }
+    const resolution = resolveTarget(lookup);
+    return resolution.kind === "single" ? resolution.handle : undefined;
+  }
+
+  function findHandles(
+    lookup: SupervisedWorkflowLookup,
+  ): readonly SupervisorRunnerPoolHandle[] {
+    const resolution = resolveTarget(lookup);
+    if (resolution.kind !== "single") {
+      return [];
     }
-    return undefined;
+    return [resolution.handle];
+  }
+
+  function ambiguousTargetError(
+    action: "lookup" | "cancel" | "wait",
+    matchedRunIds: readonly string[],
+  ): Error {
+    return new Error(
+      `${action} target is ambiguous for active supervisor runner-pool handles; use runnerPoolRunId, supervisedRunId, or workflowExecutionId (${matchedRunIds.join(", ")})`,
+    );
+  }
+
+  function notLiveError(action: "cancel" | "wait"): Error {
+    return new Error(
+      `no active in-process supervisor runner-pool handle matches the lookup for ${action}`,
+    );
   }
 
   return {
@@ -174,17 +297,43 @@ export function createSupervisorRunnerPool(input: {
       return view;
     },
     async lookup(lookup): Promise<SupervisedWorkflowView> {
+      const resolution = resolveTarget(lookup);
+      if (resolution.kind === "ambiguous") {
+        throw ambiguousTargetError("lookup", resolution.matchedRunIds);
+      }
+      if (resolution.kind === "single") {
+        return await input.client.status({
+          ...lookup,
+          supervisedRunId: resolution.handle.supervisedRunId,
+        });
+      }
       return await input.client.status(lookup);
     },
     async cancel(lookup): Promise<SupervisedWorkflowView> {
-      const handle = findHandle(lookup);
-      if (handle === undefined) {
-        throw new Error(
-          "no active in-process supervisor runner-pool handle matches the lookup",
-        );
+      const resolution = resolveTarget(lookup);
+      if (resolution.kind === "ambiguous") {
+        throw ambiguousTargetError("cancel", resolution.matchedRunIds);
       }
-      return await handle.cancel();
+      if (resolution.kind === "not-found") {
+        throw notLiveError("cancel");
+      }
+      return await resolution.handle.cancel();
+    },
+    async wait(lookup): Promise<SupervisedWorkflowView> {
+      const resolution = resolveTarget(lookup);
+      if (resolution.kind === "ambiguous") {
+        throw ambiguousTargetError("wait", resolution.matchedRunIds);
+      }
+      if (resolution.kind === "not-found") {
+        const view = await input.client.status(lookup);
+        if (isTerminalSupervisedView(view)) {
+          return view;
+        }
+        throw notLiveError("wait");
+      }
+      return await resolution.handle.wait();
     },
     lookupHandle: findHandle,
+    lookupHandles: findHandles,
   };
 }

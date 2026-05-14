@@ -422,15 +422,21 @@ export interface DispatchSupervisedWorkflowCommandInput {
 
 export interface SupervisedWorkflowGraphqlPayload {
   readonly supervisedRun: EventSupervisedRunRecord;
+  readonly runnerPoolRunId?: string;
   readonly activeTargetStatus?: WorkflowSessionState["status"];
   readonly commandResult?: Readonly<Record<string, unknown>>;
 }
 
 export interface SupervisedWorkflowLookupGraphqlInput {
+  readonly runnerPoolRunId?: string;
   readonly supervisedRunId?: string;
+  readonly workflowExecutionId?: string;
+  readonly workflowKey?: string;
+  readonly alias?: string;
   readonly sourceId?: string;
   readonly bindingId?: string;
   readonly correlationKey?: string;
+  readonly idempotencyKey?: string;
 }
 
 export interface DispatchSupervisorChatGraphqlInput {

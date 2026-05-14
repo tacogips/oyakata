@@ -561,4 +561,174 @@ describe("GraphQL HTTP transport", () => {
       },
     });
   });
+
+  test("exposes strong supervisor runner-pool lookup fields over /graphql", async () => {
+    const response = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `
+            query SupervisedWorkflowLookupFields {
+              __type(name: "SupervisedWorkflowLookupGraphqlInput") {
+                inputFields {
+                  name
+                }
+              }
+            }
+          `,
+        }),
+      }),
+      {},
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        __type: {
+          inputFields: expect.arrayContaining([
+            { name: "runnerPoolRunId" },
+            { name: "supervisedRunId" },
+            { name: "workflowExecutionId" },
+            { name: "workflowKey" },
+            { name: "alias" },
+            { name: "sourceId" },
+            { name: "bindingId" },
+            { name: "correlationKey" },
+            { name: "idempotencyKey" },
+          ]),
+        },
+      },
+    });
+  });
+
+  test("keeps supervisor runner-pool handles across HTTP GraphQL requests", async () => {
+    const root = await makeTempDir();
+    const created = await createWorkflowTemplate("demo", {
+      workflowRoot: root,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) {
+      throw new Error(created.error.message);
+    }
+    const options = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      rootDataDir: path.join(root, "data"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      cwd: root,
+    };
+    vi.spyOn(workflowEngine, "runWorkflow").mockImplementation(
+      async (_workflowName, runOptions) => {
+        const sessionId =
+          (runOptions as { readonly sessionId?: string }).sessionId ??
+          "sess-http-runner-pool";
+        const session = {
+          ...createSessionState({
+            sessionId,
+            workflowName: "demo",
+            workflowId: "demo",
+            initialNodeId: "divedra-manager",
+            runtimeVariables: {},
+          }),
+          status: "running" as const,
+        };
+        const saved = await saveSession(session, options);
+        expect(saved.ok).toBe(true);
+        return { ok: true, value: { session, exitCode: 0 } };
+      },
+    );
+
+    const dispatchResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: `
+            mutation DispatchSupervised($input: DispatchSupervisedWorkflowCommandInput!) {
+              dispatchSupervisedWorkflowCommand(input: $input) {
+                runnerPoolRunId
+                supervisedRun
+                activeTargetStatus
+              }
+            }
+          `,
+          variables: {
+            input: {
+              command: {
+                commandId: "cmd-http-runner-pool",
+                sourceId: "src-http-runner-pool",
+                bindingId: "bind-http-runner-pool",
+                correlationKey: "corr-http-runner-pool",
+                action: "start",
+                targetWorkflowName: "demo",
+                receivedEventReceiptId: "rcpt-http-runner-pool",
+              },
+              binding: {
+                id: "bind-http-runner-pool",
+                sourceId: "src-http-runner-pool",
+                workflowName: "demo",
+                inputMapping: { mode: "event-input" },
+                execution: {
+                  mode: "supervised",
+                  async: true,
+                  control: { intentMapping: { mode: "structured-only" } },
+                },
+              },
+            },
+          },
+        }),
+      }),
+      { ...options },
+    );
+    expect(dispatchResponse.status).toBe(200);
+    const dispatchPayload = (await dispatchResponse.json()) as {
+      readonly data?: {
+        readonly dispatchSupervisedWorkflowCommand?: {
+          readonly runnerPoolRunId?: string;
+          readonly supervisedRun?: { readonly supervisedRunId?: string };
+        };
+      };
+    };
+    const runnerPoolRunId =
+      dispatchPayload.data?.dispatchSupervisedWorkflowCommand?.runnerPoolRunId;
+    expect(runnerPoolRunId).toMatch(/^spr-/);
+    const supervisedRunId =
+      dispatchPayload.data?.dispatchSupervisedWorkflowCommand?.supervisedRun
+        ?.supervisedRunId;
+
+    const lookupResponse = await handleGraphqlRequest(
+      new Request("http://localhost/graphql", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: `
+            query SupervisedByRunnerPool($input: SupervisedWorkflowLookupGraphqlInput!) {
+              supervisedWorkflowRun(input: $input) {
+                runnerPoolRunId
+                supervisedRun
+                activeTargetStatus
+              }
+            }
+          `,
+          variables: {
+            input: { runnerPoolRunId },
+          },
+        }),
+      }),
+      { ...options },
+    );
+    expect(lookupResponse.status).toBe(200);
+    await expect(lookupResponse.json()).resolves.toMatchObject({
+      data: {
+        supervisedWorkflowRun: {
+          runnerPoolRunId,
+          supervisedRun: { supervisedRunId },
+          activeTargetStatus: "running",
+        },
+      },
+    });
+  });
 });

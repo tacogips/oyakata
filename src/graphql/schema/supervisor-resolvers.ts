@@ -1,9 +1,7 @@
 import { resolveEventRoot } from "../../events/config";
 import { dispatchSupervisorChat } from "../../events/dispatch-supervisor-chat";
-import { createEventSupervisedRunRepository } from "../../events/supervised-runs";
 import { createRuntimeSupervisorConversationRepository } from "../../events/supervisor-conversations";
 import type {
-  EventSupervisedRunRecord,
   EventSupervisorAction,
   EventSupervisorCommand,
   ExternalEventEnvelope,
@@ -11,11 +9,7 @@ import type {
 import { assertSupervisedBindingGraphqlPolicy } from "../../events/validate";
 import type { WorkflowSessionState } from "../../workflow/session";
 import { loadSession, saveSession } from "../../workflow/session-store";
-import {
-  createWorkflowSupervisorClient,
-  reconcileTerminalSupervisedRunForCorrelation,
-  reconcileTerminalSupervisedRunRecord,
-} from "../../workflow/supervisor-client";
+import { createWorkflowSupervisorClient } from "../../workflow/supervisor-client";
 import { createWorkflowSupervisorDispatchClient } from "../../workflow/supervisor-dispatch-client";
 import { createSupervisorRunnerPool } from "../../workflow/supervisor-runner-pool";
 import type {
@@ -99,55 +93,198 @@ export function parseExternalEventEnvelopeFromGraphql(
   } as ExternalEventEnvelope;
 }
 export type ParsedSupervisedWorkflowLookup =
+  | { readonly kind: "runner-pool"; readonly runnerPoolRunId: string }
   | { readonly kind: "id"; readonly supervisedRunId: string }
+  | {
+      readonly kind: "workflow-execution";
+      readonly workflowExecutionId: string;
+    }
+  | { readonly kind: "workflow-key"; readonly workflowKey: string }
+  | { readonly kind: "alias"; readonly alias: string }
   | {
       readonly kind: "correlation";
       readonly sourceId: string;
       readonly bindingId: string;
       readonly correlationKey: string;
-    };
-export const supervisorRunnerPoolsByContext = new WeakMap<
-  object,
+    }
+  | { readonly kind: "idempotency"; readonly idempotencyKey: string };
+export const supervisorRunnerPoolsByRuntimeKey = new Map<
+  string,
   ReturnType<typeof createSupervisorRunnerPool>
 >();
+export function graphqlSupervisorRunnerPoolKey(
+  context: GraphqlRequestContext,
+): string {
+  return JSON.stringify({
+    workflowRoot: context.workflowRoot ?? null,
+    artifactRoot: context.artifactRoot ?? null,
+    rootDataDir: context.rootDataDir ?? null,
+    sessionStoreRoot: context.sessionStoreRoot ?? null,
+    cwd: context.cwd ?? null,
+    eventRoot: context.eventRoot ?? null,
+    fixedWorkflowName: context.fixedWorkflowName ?? null,
+    fixedResolvedWorkflowSource: context.fixedResolvedWorkflowSource ?? null,
+  });
+}
 export function getGraphqlSupervisorRunnerPool(
   context: GraphqlRequestContext,
 ): ReturnType<typeof createSupervisorRunnerPool> {
-  const key = context as object;
-  const existing = supervisorRunnerPoolsByContext.get(key);
+  const key = graphqlSupervisorRunnerPoolKey(context);
+  const existing = supervisorRunnerPoolsByRuntimeKey.get(key);
   if (existing !== undefined) {
     return existing;
   }
   const pool = createSupervisorRunnerPool({
     client: createWorkflowSupervisorClient(context),
   });
-  supervisorRunnerPoolsByContext.set(key, pool);
+  supervisorRunnerPoolsByRuntimeKey.set(key, pool);
   return pool;
 }
 export function parseSupervisedWorkflowLookupGraphqlInput(
   input: SupervisedWorkflowLookupGraphqlInput,
 ): ParsedSupervisedWorkflowLookup {
+  const lookup = parseSupervisedWorkflowLookupForRunnerPool(input);
+  if (lookup.runnerPoolRunId !== undefined) {
+    return { kind: "runner-pool", runnerPoolRunId: lookup.runnerPoolRunId };
+  }
+  if (lookup.supervisedRunId !== undefined) {
+    return { kind: "id", supervisedRunId: lookup.supervisedRunId };
+  }
+  if (lookup.workflowExecutionId !== undefined) {
+    return {
+      kind: "workflow-execution",
+      workflowExecutionId: lookup.workflowExecutionId,
+    };
+  }
+  if (lookup.workflowKey !== undefined) {
+    return { kind: "workflow-key", workflowKey: lookup.workflowKey };
+  }
+  if (lookup.alias !== undefined) {
+    return { kind: "alias", alias: lookup.alias };
+  }
+  if (
+    lookup.sourceId !== undefined &&
+    lookup.bindingId !== undefined &&
+    lookup.correlationKey !== undefined
+  ) {
+    return {
+      kind: "correlation",
+      sourceId: lookup.sourceId,
+      bindingId: lookup.bindingId,
+      correlationKey: lookup.correlationKey,
+    };
+  }
+  if (lookup.idempotencyKey !== undefined) {
+    return { kind: "idempotency", idempotencyKey: lookup.idempotencyKey };
+  }
+  throw new Error(
+    "supervised workflow lookup requires supervisedRunId or sourceId+bindingId+correlationKey",
+  );
+}
+function parseSupervisedWorkflowLookupForRunnerPool(
+  input: SupervisedWorkflowLookupGraphqlInput,
+): SupervisedWorkflowLookupGraphqlInput {
+  const runnerPoolRunId = requireOptionalSupervisorString(
+    input.runnerPoolRunId,
+    "input.runnerPoolRunId",
+  );
   const runIdRaw = input.supervisedRunId;
-  const runId =
+  const supervisedRunId =
     typeof runIdRaw === "string" && runIdRaw.trim().length > 0
       ? runIdRaw.trim()
       : undefined;
-  if (runId !== undefined) {
-    return { kind: "id", supervisedRunId: runId };
-  }
-  const sourceId = requireNonEmptySupervisorString(
-    input.sourceId,
-    "input.sourceId",
+  const workflowExecutionId = requireOptionalSupervisorString(
+    input.workflowExecutionId,
+    "input.workflowExecutionId",
   );
-  const bindingId = requireNonEmptySupervisorString(
+  const workflowKey = requireOptionalSupervisorString(
+    input.workflowKey,
+    "input.workflowKey",
+  );
+  const alias = requireOptionalSupervisorString(input.alias, "input.alias");
+  const hasCorrelationLookup =
+    input.sourceId !== undefined ||
+    input.bindingId !== undefined ||
+    input.correlationKey !== undefined;
+  const hasLookupBeforeCorrelation =
+    runnerPoolRunId !== undefined ||
+    supervisedRunId !== undefined ||
+    workflowExecutionId !== undefined ||
+    workflowKey !== undefined ||
+    alias !== undefined;
+  let sourceId: string | undefined;
+  let bindingId: string | undefined;
+  let correlationKey: string | undefined;
+  if (
+    hasCorrelationLookup &&
+    (input.sourceId === undefined ||
+      input.bindingId === undefined ||
+      input.correlationKey === undefined) &&
+    !hasLookupBeforeCorrelation
+  ) {
+    sourceId = requireNonEmptySupervisorString(
+      input.sourceId,
+      "input.sourceId",
+    );
+    bindingId = requireNonEmptySupervisorString(
+      input.bindingId,
+      "input.bindingId",
+    );
+    correlationKey = requireNonEmptySupervisorString(
+      input.correlationKey,
+      "input.correlationKey",
+    );
+  }
+  if (
+    hasCorrelationLookup &&
+    input.sourceId !== undefined &&
+    input.bindingId !== undefined &&
+    input.correlationKey !== undefined
+  ) {
+    sourceId = requireNonEmptySupervisorString(
+      input.sourceId,
+      "input.sourceId",
+    );
+    bindingId = requireNonEmptySupervisorString(
+      input.bindingId,
+      "input.bindingId",
+    );
+    correlationKey = requireNonEmptySupervisorString(
+      input.correlationKey,
+      "input.correlationKey",
+    );
+  }
+  const idempotencyKey = requireOptionalSupervisorString(
+    input.idempotencyKey,
+    "input.idempotencyKey",
+  );
+  if (
+    hasLookupBeforeCorrelation ||
+    sourceId !== undefined ||
+    idempotencyKey !== undefined
+  ) {
+    return {
+      ...(runnerPoolRunId === undefined ? {} : { runnerPoolRunId }),
+      ...(supervisedRunId === undefined ? {} : { supervisedRunId }),
+      ...(workflowExecutionId === undefined ? {} : { workflowExecutionId }),
+      ...(workflowKey === undefined ? {} : { workflowKey }),
+      ...(alias === undefined ? {} : { alias }),
+      ...(sourceId === undefined ? {} : { sourceId }),
+      ...(bindingId === undefined ? {} : { bindingId }),
+      ...(correlationKey === undefined ? {} : { correlationKey }),
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    };
+  }
+  sourceId = requireNonEmptySupervisorString(input.sourceId, "input.sourceId");
+  bindingId = requireNonEmptySupervisorString(
     input.bindingId,
     "input.bindingId",
   );
-  const correlationKey = requireNonEmptySupervisorString(
+  correlationKey = requireNonEmptySupervisorString(
     input.correlationKey,
     "input.correlationKey",
   );
-  return { kind: "correlation", sourceId, bindingId, correlationKey };
+  return { sourceId, bindingId, correlationKey };
 }
 export function parseEventSupervisorCommandFromGraphql(
   raw: EventSupervisorCommandInput,
@@ -220,42 +357,25 @@ export async function supervisedWorkflowRunQuery(
   input: SupervisedWorkflowLookupGraphqlInput,
   context: GraphqlRequestContext,
 ): Promise<SupervisedWorkflowGraphqlPayload> {
-  const parsed = parseSupervisedWorkflowLookupGraphqlInput(input);
-  const repo = createEventSupervisedRunRepository(context);
-  let record: EventSupervisedRunRecord | null = null;
-  if (parsed.kind === "id") {
-    record = await repo.loadById(parsed.supervisedRunId);
-  } else {
-    await reconcileTerminalSupervisedRunForCorrelation(
-      {
-        sourceId: parsed.sourceId,
-        bindingId: parsed.bindingId,
-        correlationKey: parsed.correlationKey,
-      },
-      repo,
-      context,
-    );
-    record = await repo.findLatestByCorrelation({
-      sourceId: parsed.sourceId,
-      bindingId: parsed.bindingId,
-      correlationKey: parsed.correlationKey,
-    });
-  }
-  if (record === null) {
-    throw new Error("no supervised run matches the lookup");
-  }
-  record = await reconcileTerminalSupervisedRunRecord(record, repo, context);
-  let activeTargetStatus: WorkflowSessionState["status"] | undefined;
-  const targetId = record.activeTargetExecutionId;
-  if (targetId !== undefined) {
-    const loaded = await loadSession(targetId, context);
-    if (loaded.ok) {
-      activeTargetStatus = loaded.value.status;
-    }
-  }
+  const lookup = parseSupervisedWorkflowLookupForRunnerPool(input);
+  const pool = getGraphqlSupervisorRunnerPool(context);
+  const view = await pool.lookup(lookup);
+  const handle = pool.lookupHandle(lookup);
   return {
-    supervisedRun: record,
-    ...(activeTargetStatus === undefined ? {} : { activeTargetStatus }),
+    supervisedRun: view.supervisedRun,
+    ...(handle === undefined
+      ? {}
+      : { runnerPoolRunId: handle.runnerPoolRunId }),
+    ...(view.activeTargetStatus === undefined
+      ? {}
+      : { activeTargetStatus: view.activeTargetStatus }),
+    ...(view.commandResult === undefined
+      ? {}
+      : {
+          commandResult: view.commandResult as unknown as Readonly<
+            Record<string, unknown>
+          >,
+        }),
   };
 }
 export async function dispatchSupervisedWorkflowCommandMutation(
@@ -307,14 +427,21 @@ export async function dispatchSupervisedWorkflowCommandMutation(
           ...(defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs }),
           ...(maxConcurrency === undefined ? {} : { maxConcurrency }),
         };
-  const view = await getGraphqlSupervisorRunnerPool(context).dispatch({
+  const pool = getGraphqlSupervisorRunnerPool(context);
+  const view = await pool.dispatch({
     command,
     binding,
     runtimeVariables,
     ...(engine === undefined ? {} : { engine }),
   });
+  const handle = pool.lookupHandle({
+    supervisedRunId: view.supervisedRun.supervisedRunId,
+  });
   return {
     supervisedRun: view.supervisedRun,
+    ...(handle === undefined
+      ? {}
+      : { runnerPoolRunId: handle.runnerPoolRunId }),
     ...(view.activeTargetStatus === undefined
       ? {}
       : { activeTargetStatus: view.activeTargetStatus }),

@@ -484,6 +484,7 @@ export const GRAPHQL_SCHEMA_TEXT = `
 
   type SupervisedWorkflowGraphqlPayload {
     supervisedRun: JSON!
+    runnerPoolRunId: String
     activeTargetStatus: String
   }
 
@@ -656,10 +657,15 @@ export const GRAPHQL_SCHEMA_TEXT = `
   }
 
   input SupervisedWorkflowLookupGraphqlInput {
+    runnerPoolRunId: String
     supervisedRunId: String
+    workflowExecutionId: String
+    workflowKey: String
+    alias: String
     sourceId: String
     bindingId: String
     correlationKey: String
+    idempotencyKey: String
   }
 
   input DispatchSupervisorChatInput {

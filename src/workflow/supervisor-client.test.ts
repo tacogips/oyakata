@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { atomicWriteJsonFile as writeJson } from "../shared/fs";
 import { createEventSupervisedRunRepository } from "../events/supervised-runs";
-import type { EventBinding } from "../events/types";
+import type { EventBinding, EventSupervisedRunRecord } from "../events/types";
 import { saveSession, loadSession } from "./session-store";
 import { createSessionState } from "./session";
 import { createWorkflowSupervisorClient } from "./supervisor-client";
@@ -811,6 +811,198 @@ describe("createWorkflowSupervisorClient", () => {
     expect(view.supervisedRun.activeTargetExecutionId).toBeDefined();
   });
 
+  test("library workflowKey and alias resolve durable supervised runs", async () => {
+    const root = await makeTempDir();
+    const workflowName = "sup-key-alias-lookup";
+    await writeManagerOnlyWorkflow({
+      root,
+      workflowName,
+      sticky: false,
+    });
+
+    const loadOpts = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const binding: EventBinding = {
+      id: "b-key-alias",
+      sourceId: "s-key-alias",
+      workflowName,
+      inputMapping: { mode: "event-input" },
+      execution: {
+        mode: "supervised",
+        control: { intentMapping: { mode: "structured-only" } },
+      },
+    };
+    const client = createWorkflowSupervisorClient(loadOpts);
+    const started = await client.start({
+      sourceId: binding.sourceId,
+      bindingId: binding.id,
+      correlationKey: "corr-key-alias",
+      targetWorkflowName: workflowName,
+      bindingSnapshot: binding,
+      mockScenario: {
+        "divedra-manager": {
+          payload: { reply: "started" },
+          backendSession: { sessionId: "backend-key-alias-1" },
+        },
+      },
+    });
+
+    const byWorkflowKey = await client.status({ workflowKey: workflowName });
+    expect(byWorkflowKey.supervisedRun.supervisedRunId).toBe(
+      started.supervisedRun.supervisedRunId,
+    );
+
+    const stoppedByAlias = await client.stop({
+      alias: workflowName,
+      idempotencyKey: "stop-key-alias",
+    });
+    expect(stoppedByAlias.supervisedRun.supervisedRunId).toBe(
+      started.supervisedRun.supervisedRunId,
+    );
+    expect(stoppedByAlias.supervisedRun.status).toBe("stopped");
+  });
+
+  test("library workflowKey and alias reject ambiguous active durable runs", async () => {
+    const root = await makeTempDir();
+    const workflowName = "sup-key-alias-ambiguous";
+    await writeManagerOnlyWorkflow({
+      root,
+      workflowName,
+      sticky: false,
+    });
+
+    const loadOpts = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const repo = createEventSupervisedRunRepository(loadOpts);
+    const baseRecord: Omit<
+      EventSupervisedRunRecord,
+      "activeTargetExecutionId" | "correlationKey" | "supervisedRunId"
+    > = {
+      sourceId: "s-key-ambiguous",
+      bindingId: "b-key-ambiguous",
+      supervisorWorkflowName: "divedra-default-workflow-supervisor",
+      targetWorkflowName: workflowName,
+      status: "running",
+      restartCount: 0,
+      maxRestartsOnFailure: 3,
+      autoImproveEnabled: false,
+      createdAt: "2026-05-14T00:00:00.000Z",
+      updatedAt: "2026-05-14T00:00:00.000Z",
+    };
+    for (const run of [
+      {
+        supervisedRunId: "ambiguous-run-1",
+        correlationKey: "ck-amb-1",
+        activeTargetExecutionId: "ambiguous-session-1",
+      },
+      {
+        supervisedRunId: "ambiguous-run-2",
+        correlationKey: "ck-amb-2",
+        activeTargetExecutionId: "ambiguous-session-2",
+      },
+    ]) {
+      const artifactDir = path.join(
+        loadOpts.artifactRoot,
+        "supervised-runs",
+        run.supervisedRunId,
+      );
+      await mkdir(artifactDir, { recursive: true });
+      await repo.save(
+        {
+          ...baseRecord,
+          ...run,
+          updatedAt:
+            run.supervisedRunId === "ambiguous-run-1"
+              ? "2026-05-14T00:00:01.000Z"
+              : "2026-05-14T00:00:02.000Z",
+        },
+        artifactDir,
+      );
+    }
+    const client = createWorkflowSupervisorClient(loadOpts);
+
+    await expect(client.status({ workflowKey: workflowName })).rejects.toThrow(
+      /workflowKey.*ambiguous/,
+    );
+    await expect(client.stop({ alias: workflowName })).rejects.toThrow(
+      /alias.*ambiguous/,
+    );
+  });
+
+  test("library correlation lookup ignores new idempotency keys for target resolution", async () => {
+    const root = await makeTempDir();
+    const workflowName = "sup-correlation-idempotency-lookup";
+    await writeManagerOnlyWorkflow({
+      root,
+      workflowName,
+      sticky: false,
+    });
+
+    const loadOpts = {
+      workflowRoot: root,
+      artifactRoot: path.join(root, "artifacts"),
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "data"),
+      cwd: root,
+    };
+    const binding: EventBinding = {
+      id: "b-correlation-idem",
+      sourceId: "s-correlation-idem",
+      workflowName,
+      inputMapping: { mode: "event-input" },
+      execution: {
+        mode: "supervised",
+        control: { intentMapping: { mode: "structured-only" } },
+      },
+    };
+    const correlationKey = "corr-correlation-idem";
+    const client = createWorkflowSupervisorClient(loadOpts);
+    const started = await client.start({
+      sourceId: binding.sourceId,
+      bindingId: binding.id,
+      correlationKey,
+      targetWorkflowName: workflowName,
+      bindingSnapshot: binding,
+      mockScenario: {
+        "divedra-manager": {
+          payload: { reply: "started" },
+          backendSession: { sessionId: "backend-correlation-idem-1" },
+        },
+      },
+    });
+
+    const byCorrelation = await client.status({
+      sourceId: binding.sourceId,
+      bindingId: binding.id,
+      correlationKey,
+      idempotencyKey: "new-status-idem",
+    });
+    expect(byCorrelation.supervisedRun.supervisedRunId).toBe(
+      started.supervisedRun.supervisedRunId,
+    );
+
+    const stopped = await client.stop({
+      sourceId: binding.sourceId,
+      bindingId: binding.id,
+      correlationKey,
+      idempotencyKey: "new-stop-idem",
+    });
+    expect(stopped.supervisedRun.supervisedRunId).toBe(
+      started.supervisedRun.supervisedRunId,
+    );
+    expect(stopped.supervisedRun.status).toBe("stopped");
+  });
+
   test("library stop replays when idempotencyKey matches", async () => {
     const root = await makeTempDir();
     const workflowName = "sup-idem-lib-stop";
@@ -1075,6 +1267,13 @@ describe("createWorkflowSupervisorClient", () => {
     if (!loaded.ok) {
       return;
     }
+    const runningByWorkflowExecutionId = await client.status({
+      workflowExecutionId: sessionId,
+    });
+    expect(runningByWorkflowExecutionId.supervisedRun.supervisedRunId).toBe(
+      started.supervisedRun.supervisedRunId,
+    );
+
     const completed = {
       ...loaded.value,
       status: "completed" as const,
@@ -1097,6 +1296,18 @@ describe("createWorkflowSupervisorClient", () => {
       runtimeVariables: {},
     });
     expect(st.supervisedRun.status).toBe("completed");
+    expect(st.supervisedRun.activeTargetExecutionId).toBe(sessionId);
+
+    const terminalByWorkflowExecutionId = await client.status({
+      workflowExecutionId: sessionId,
+    });
+    expect(terminalByWorkflowExecutionId.supervisedRun.status).toBe(
+      "completed",
+    );
+    expect(
+      terminalByWorkflowExecutionId.supervisedRun.activeTargetExecutionId,
+    ).toBe(sessionId);
+    expect(terminalByWorkflowExecutionId.activeTargetStatus).toBe("completed");
   });
 
   test("library status rejects empty correlation lookup fields", async () => {

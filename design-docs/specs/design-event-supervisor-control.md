@@ -272,11 +272,30 @@ The runner pool tracks active executions by:
 - optional operator alias or managed workflow key
 - source/binding/correlation key for event-source conversations
 
+Target resolution uses those ids in the same priority order. `runnerPoolRunId`,
+`supervisedRunId`, and `workflowExecutionId` are authoritative for mutating
+commands. Alias, workflow key, and correlation key are convenience lookups for
+operator text and event-source conversations; when any of those convenience
+lookups resolves to multiple active handles, `stop`, `cancel`, `input`,
+`submit`, `resume`, `restart`, and `rerun` must return an ambiguous-target
+result and require a stronger id. Status and progress may either return a
+multi-run summary or the same refinement requirement, but they must not mutate
+or replace active handles.
+
 Only active in-process handles are directly cancellable or resumable through the
 pool. Durable records remain inspectable after process restart, but a restarted
 process may need to rehydrate status from persisted session/artifact state and
 refuse operations that require a live handle unless the engine supports safe
 resume for that operation.
+
+Wait is a live-handle operation with durable fallback semantics. If the target
+has an active in-process handle, wait blocks on that handle, reconciles terminal
+state into the supervised-run/session records, and removes the handle from all
+live indexes. If no live handle exists, wait should return the durable terminal
+view when the target already completed, or a not-live/not-waitable result when
+the durable record is still non-terminal. This keeps cancellation and wait
+truthful across process boundaries while preserving status as the durable
+inspection path.
 
 Event-source command surface:
 

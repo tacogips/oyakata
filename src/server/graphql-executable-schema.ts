@@ -206,7 +206,7 @@ workflowId: String! workflowName: String! stepRuns: [WorkflowExecutionStepRun!]!
 } type CancelWorkflowExecutionPayload { accepted: Boolean!
 workflowExecutionId: String! sessionId: String! status: String!
 } type SupervisedWorkflowGraphqlPayload { supervisedRun: JSON!
-activeTargetStatus: String commandResult: JSON }
+runnerPoolRunId: String activeTargetStatus: String commandResult: JSON }
 type DispatchSupervisorChatResult { receiptId: String! status: String!
 duplicate: Boolean! bindingId: String workflowName: String
 workflowExecutionId: String supervisedRunId: String supervisorExecutionId: String
@@ -259,8 +259,10 @@ input DispatchSupervisedWorkflowCommandInput { command: EventSupervisorCommandIn
 runtimeVariables: JSON mockScenario: JSON dryRun: Boolean
 maxSteps: Int maxLoopIterations: Int defaultTimeoutMs: Int
 maxConcurrency: Int } input SupervisedWorkflowLookupGraphqlInput {
-supervisedRunId: String sourceId: String bindingId: String
-correlationKey: String } input DispatchSupervisorChatInput {
+runnerPoolRunId: String supervisedRunId: String
+workflowExecutionId: String workflowKey: String alias: String
+sourceId: String bindingId: String correlationKey: String
+idempotencyKey: String } input DispatchSupervisorChatInput {
 sourceId: String! text: String! conversationId: String
 threadId: String eventId: String eventType: String
 provider: String idempotencyKey: String }

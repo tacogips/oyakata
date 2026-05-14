@@ -9,6 +9,10 @@ import {
   findActiveEventSupervisedRunRow,
   findEventSupervisorCommandResultJson,
   findLatestEventSupervisedRunRow,
+  findLatestEventSupervisedRunRowByTargetWorkflowName,
+  listActiveEventSupervisedRunRowsByTargetWorkflowName,
+  loadEventSupervisedRunRowByActiveTargetExecutionId,
+  loadEventSupervisedRunRowByCommandId,
   insertEventSupervisorCommandRow,
   loadEventSupervisedRunRowById,
   type RuntimeEventSupervisedRunSaveInput,
@@ -141,8 +145,18 @@ export interface EventSupervisedRunRepository {
   findLatestByCorrelation(
     input: SupervisedRunCorrelationKey,
   ): Promise<EventSupervisedRunRecord | null>;
+  findActiveByTargetWorkflowName(
+    targetWorkflowName: string,
+  ): Promise<readonly EventSupervisedRunRecord[]>;
+  findLatestByTargetWorkflowName(
+    targetWorkflowName: string,
+  ): Promise<EventSupervisedRunRecord | null>;
   save(record: EventSupervisedRunRecord, artifactDir: string): Promise<void>;
   loadById(supervisedRunId: string): Promise<EventSupervisedRunRecord | null>;
+  loadByActiveTargetExecutionId(
+    activeTargetExecutionId: string,
+  ): Promise<EventSupervisedRunRecord | null>;
+  loadByCommandId(commandId: string): Promise<EventSupervisedRunRecord | null>;
   claimCommandSlot(input: {
     readonly command: EventSupervisorCommand;
     readonly supervisedRunId: string;
@@ -237,6 +251,26 @@ export function createEventSupervisedRunRepository(
       return row === null ? null : rowToRecord(row);
     },
 
+    async findActiveByTargetWorkflowName(
+      targetWorkflowName: string,
+    ): Promise<readonly EventSupervisedRunRecord[]> {
+      const rows = await listActiveEventSupervisedRunRowsByTargetWorkflowName(
+        targetWorkflowName,
+        options,
+      );
+      return rows.map(rowToRecord);
+    },
+
+    async findLatestByTargetWorkflowName(
+      targetWorkflowName: string,
+    ): Promise<EventSupervisedRunRecord | null> {
+      const row = await findLatestEventSupervisedRunRowByTargetWorkflowName(
+        targetWorkflowName,
+        options,
+      );
+      return row === null ? null : rowToRecord(row);
+    },
+
     async save(
       record: EventSupervisedRunRecord,
       artifactDir: string,
@@ -252,6 +286,26 @@ export function createEventSupervisedRunRepository(
       supervisedRunId: string,
     ): Promise<EventSupervisedRunRecord | null> {
       const row = await loadEventSupervisedRunRowById(supervisedRunId, options);
+      return row === null ? null : rowToRecord(row);
+    },
+
+    async loadByActiveTargetExecutionId(
+      activeTargetExecutionId: string,
+    ): Promise<EventSupervisedRunRecord | null> {
+      const row = await loadEventSupervisedRunRowByActiveTargetExecutionId(
+        activeTargetExecutionId,
+        options,
+      );
+      return row === null ? null : rowToRecord(row);
+    },
+
+    async loadByCommandId(
+      commandId: string,
+    ): Promise<EventSupervisedRunRecord | null> {
+      const row = await loadEventSupervisedRunRowByCommandId(
+        commandId,
+        options,
+      );
       return row === null ? null : rowToRecord(row);
     },
 
