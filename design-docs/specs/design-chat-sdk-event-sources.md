@@ -302,6 +302,27 @@ The Slack example can stand in for the shared adapter family as long as config
 tests cover every allowed provider. Provider-specific fixture payloads should be
 added when normalization differs materially.
 
+The Chat SDK example must stay aligned with the existing webhook-shaped mock
+chat and Matrix examples:
+
+- it uses the same `chat.message` normalized event contract as
+  `example-webhook`, `example-reply-webhook`, and `team-matrix`
+- it uses explicit `kind: "chat"` output destinations for reply routing
+- it keeps deterministic fixture execution under
+  `examples/event-sources/payloads/chat-sdk-slack-message.json`
+- it requires live Chat SDK deployment URLs and credentials only through
+  environment-variable names
+- it does not introduce direct `@chat-adapter/*` dependencies in divedra runtime
+  code for the generic-boundary implementation
+
+Review closure for this source should include the shared event source
+validation command and the focused Chat SDK adapter test:
+
+```bash
+bun run src/main.ts events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events
+bun test src/events/adapters/chat-sdk.test.ts
+```
+
 Verification commands for the implementation plan:
 
 ```bash
