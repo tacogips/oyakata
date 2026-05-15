@@ -453,6 +453,8 @@ Minimal scheduled continuation workflow:
   while the workflow session is paused
 - when the shared scheduled event manager fires the event, the session resumes
   and runs `worker`
+- cancellation only applies to pending scheduled events, so firing, fired,
+  failed, and already-cancelled event states remain visible for inspection
 
 Run it with the bundled deterministic scenario:
 

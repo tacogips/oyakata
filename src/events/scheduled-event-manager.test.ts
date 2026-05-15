@@ -112,4 +112,64 @@ describe("scheduled event manager", () => {
     expect(manager.get("failing-sleep")?.lastError).toBe("resume failed");
     manager.stop();
   });
+
+  test("does not cancel events that are already firing", async () => {
+    vi.useFakeTimers();
+    let now = new Date("2026-05-15T00:00:00.000Z");
+    const manager = createScheduledEventManager({ now: () => now });
+    let releaseFire: (() => void) | undefined;
+    const fireBlocked = new Promise<void>((resolve) => {
+      releaseFire = resolve;
+    });
+
+    manager.register({
+      id: "firing-sleep",
+      kind: "workflow-sleep",
+      dueAt: "2026-05-15T00:00:01.000Z",
+      dedupeKey: "firing-sleep",
+      fire: async () => {
+        await fireBlocked;
+      },
+    });
+
+    now = new Date("2026-05-15T00:00:01.000Z");
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+
+    expect(manager.get("firing-sleep")?.status).toBe("firing");
+    expect(manager.cancel("firing-sleep")).toBe(false);
+    releaseFire?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(manager.get("firing-sleep")?.status).toBe("fired");
+    manager.stop();
+  });
+
+  test("does not cancel events that already failed", async () => {
+    vi.useFakeTimers();
+    let now = new Date("2026-05-15T00:00:00.000Z");
+    const manager = createScheduledEventManager({ now: () => now });
+
+    manager.register({
+      id: "failed-sleep",
+      kind: "workflow-sleep",
+      dueAt: "2026-05-15T00:00:01.000Z",
+      dedupeKey: "failed-sleep",
+      fire: async () => {
+        throw new Error("continuation failed");
+      },
+    });
+
+    now = new Date("2026-05-15T00:00:01.000Z");
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(manager.get("failed-sleep")?.status).toBe("failed");
+    expect(manager.cancel("failed-sleep")).toBe(false);
+    expect(manager.get("failed-sleep")?.status).toBe("failed");
+    expect(manager.get("failed-sleep")?.lastError).toBe("continuation failed");
+    manager.stop();
+  });
 });

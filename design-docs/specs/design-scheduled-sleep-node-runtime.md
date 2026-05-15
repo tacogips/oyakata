@@ -38,10 +38,11 @@ a scheduled event.
 ## Sleep Node Contract
 
 Authored sleep nodes use `nodeType: "sleep"` and a `sleep` payload. The payload
-should support at least relative duration; absolute wake time may be added when
-the implementation can validate timezone and clock behavior clearly.
+supports either a relative duration or an absolute wake time with an explicit
+timezone or UTC offset. Both forms are runtime scheduling requests, not agent
+backend work.
 
-Initial shape:
+Relative duration shape:
 
 ```json
 {
@@ -54,17 +55,59 @@ Initial shape:
 }
 ```
 
+Absolute wake-time shape:
+
+```json
+{
+  "id": "wait-for-window",
+  "nodeType": "sleep",
+  "variables": {},
+  "sleep": {
+    "until": "2026-05-15T12:00:00+09:00"
+  }
+}
+```
+
 Validation rules:
 
 - `nodeType: "sleep"` is worker-only and invalid for manager-role steps.
 - `sleep.durationMs`, when present, must be a positive integer.
-- `sleep.until`, if added, must be a parseable timestamp with an explicit
-  timezone or UTC offset.
-- exactly one of `sleep.durationMs` or `sleep.until` should be required for the
-  first implementation.
+- `sleep.until`, when present, must be a parseable timestamp with an explicit
+  timezone or UTC offset; local-time-only strings are invalid.
+- exactly one of `sleep.durationMs` or `sleep.until` is required.
 - `executionBackend`, `model`, `promptTemplate`, `command`, `container`,
   `userAction`, and `durability` are invalid on sleep nodes.
 - `variables` remains required for consistency with other node payloads.
+
+## Commit Review Hardening Scope
+
+Commit `b93ca6ad4cf2711ec7b919056f561e35cf6681ee` introduced the scheduled
+sleep runtime and made cron share the scheduled event manager. Issue-resolution
+review for this commit should preserve the design above while checking these
+boundaries for high and mid severity defects:
+
+- scheduled events are owned by the session ref, event id, node id, and
+  node execution id; stale timer callbacks must not resume cancelled, rerun,
+  replaced, terminal, or non-owning sessions
+- cancellation and terminal finalization update both the manager event status
+  and the workflow session `scheduledEvents` ref when the ref is still pending
+- rerun and direct-step replacement cancel stale pending sleep events only after
+  the target has been validated enough to avoid losing the still-valid paused
+  session on a failed rerun request
+- scheduled callback failures mark the manager event `failed` and keep an
+  operator-visible failed session ref instead of silently re-arming or reviving
+  superseded work
+- public library execution paths that can run, continue, or rerun workflows
+  propagate the caller-provided `scheduledEventManager` so tests and embedding
+  applications can share one manager with cron sources
+- cron registration, re-arming, stop behavior, dedupe, input mapping, and event
+  receipt behavior remain on the existing event-listener path after moving
+  timers behind the shared manager
+- validation and examples document both `durationMs` and explicit-offset
+  `until` while rejecting mixed or backend-specific sleep payloads
+
+The review should not broaden scope into unrelated chat event-source files or
+implementation plans unless a scheduled sleep regression directly requires it.
 
 ## Scheduled Event Pool
 
@@ -144,8 +187,6 @@ User-facing confirmation items are tracked in
 - whether the first implementation must recover pending sleep and cron events
   after a process restart, or may start with process-local scheduling while
   preserving the durable event-pool interface
-- whether `sleep.until` ships with `sleep.durationMs` initially, or is deferred
-  until timestamp and timezone validation are fully specified
 - exact operator-facing retry or repair controls for failed scheduled
   continuation events after the first milestone
 

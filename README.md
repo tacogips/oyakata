@@ -468,6 +468,9 @@ re-loads the paused session before continuation, and resumes queued workflow
 steps only when the session still owns the pending event. Pending sleep events
 are cancelled or marked failed across cancellation, rerun or replacement, and
 terminal session lifecycle paths so stale timers do not revive superseded work.
+Cancellation only transitions pending scheduled events; firing, fired, failed,
+and already-cancelled event states remain authoritative for inspection and
+failure handling.
 
 Cron event sources also register `cron` events through the shared scheduled
 event manager. `events serve` passes that manager into local workflow triggers,

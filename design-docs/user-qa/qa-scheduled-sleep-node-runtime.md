@@ -13,11 +13,6 @@ before the behavior is treated as a stable public contract.
    initially while preserving a durable event-pool interface for later
    hardening?
 
-2. Initial sleep schema:
-   Should `sleep.durationMs` be the only supported wake condition in the first
-   implementation, or should `sleep.until` ship at the same time with explicit
-   timestamp and timezone validation?
-
 ## Resolved First-Milestone Decisions
 
 1. Cancellation scope:
@@ -25,6 +20,11 @@ before the behavior is treated as a stable public contract.
    first-milestone scope: workflow cancellation, rerun or step replacement,
    terminal session finalization, and event fire failure are all in scope for
    scheduled sleep lifecycle handling.
+
+2. Initial sleep schema:
+   `sleep.durationMs` and `sleep.until` are both in the first milestone.
+   `sleep.until` requires an explicit timezone or UTC offset, and exactly one
+   wake condition is allowed per sleep node.
 
 ## Follow-Up Questions
 

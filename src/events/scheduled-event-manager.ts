@@ -220,10 +220,7 @@ export function createScheduledEventManager(
       if (current === undefined) {
         return false;
       }
-      if (
-        current.event.status === "fired" ||
-        current.event.status === "cancelled"
-      ) {
+      if (current.event.status !== "pending") {
         return false;
       }
       updateEvent(eventId, { status: "cancelled" });
