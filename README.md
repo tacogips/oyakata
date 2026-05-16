@@ -221,6 +221,14 @@ results for loaded workflows, so CLI `workflow validate`, GraphQL
 validation expose consistent add-on `nodeValidationResults` before any
 agent-backend preflight entries are appended.
 
+Async validation and async workflow loading also treat third-party add-on
+resolver calls as validation boundaries. Throwing resolvers, rejected resolver
+promises, and malformed resolver return values are reported as
+`ValidationIssue` records from `validateWorkflowBundleDetailedAsync` and the
+async load path instead of escaping validation. Valid resolver-provided
+`nodeValidationResults` remain additive and are preserved in detailed validation
+output.
+
 Run with JSON output:
 
 ```bash
