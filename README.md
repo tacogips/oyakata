@@ -203,6 +203,24 @@ Validate before running:
 bun run src/main.ts workflow validate <workflow-name> --workflow-definition-dir ./examples
 ```
 
+Validate local executability before running agent workflows:
+
+```bash
+bun run src/main.ts workflow validate <workflow-name> \
+  --workflow-definition-dir ./examples \
+  --executable \
+  --output json
+```
+
+Plain validation is passive and does not spawn backend probes. `--executable`
+adds bounded local preflight for node add-ons and supported agent backends, and
+returns `nodeValidationResults` with `valid`, `warning`, `invalid`, or
+`unknown` status values. JSON validation preserves add-on `validate` hook
+results for loaded workflows, so CLI `workflow validate`, GraphQL
+`validateWorkflowDefinition`, submitted-bundle validation, and library detailed
+validation expose consistent add-on `nodeValidationResults` before any
+agent-backend preflight entries are appended.
+
 Run with JSON output:
 
 ```bash
@@ -674,4 +692,6 @@ Issue-resolution runs that audit real backend behavior should run without
 configured backend/model, mailbox `latestOutputs`, request, candidate, and
 validation evidence. Its required documentation targets are `README.md` and
 `.agents/skills/divedra-impl-workflow/SKILL.md` so shipped behavior and the
-LLM-facing workflow skill stay aligned.
+LLM-facing workflow skill stay aligned. When implementation changes CLI,
+GraphQL, library, or workflow-operation behavior, the matching user-facing
+workflow skills under `.agents/skills/` should be refreshed in the same step.
