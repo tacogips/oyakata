@@ -35,6 +35,7 @@ import {
   readMockScenarioOption,
   readRemoteWorkflowExecutionPayload,
   readRuntimeVariables,
+  readWorkflowNodePatchOption,
   rejectUnsupportedRemoteMockScenario,
   requireArrayField,
   requireObjectField,
@@ -440,9 +441,23 @@ export async function runCliWorkflowScope(
   }
 
   if (command === "validate") {
+    let nodePatch = undefined;
+    if (parsed.options.nodePatchPath !== undefined) {
+      try {
+        nodePatch = await readWorkflowNodePatchOption(
+          parsed.options.nodePatchPath,
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to parse --node-patch: ${message}`);
+        return 1;
+      }
+    }
     const validationLoadOptions = {
       ...sharedOptions,
       executablePreflight: parsed.options.executablePreflight,
+      ...(nodePatch === undefined ? {} : { nodePatch }),
     };
     const loaded = await loadWorkflowFromCatalog(
       workflowTarget,
@@ -622,6 +637,19 @@ export async function runCliWorkflowScope(
         return 1;
       }
     }
+    let nodePatch = undefined;
+    if (parsed.options.nodePatchPath !== undefined) {
+      try {
+        nodePatch = await readWorkflowNodePatchOption(
+          parsed.options.nodePatchPath,
+        );
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "unknown error";
+        io.stderr(`failed to parse --node-patch: ${message}`);
+        return 1;
+      }
+    }
     if (graphqlCliTransport !== null) {
       if (rejectUnsupportedRemoteMockScenario(parsed.options, io)) {
         return 2;
@@ -643,6 +671,7 @@ export async function runCliWorkflowScope(
             input: {
               workflowName: workflowTarget,
               runtimeVariables,
+              ...(nodePatch === undefined ? {} : { nodePatch }),
               ...buildRemoteExecutionInput(parsed.options),
             },
           },
@@ -692,7 +721,10 @@ export async function runCliWorkflowScope(
 
     const loadedWorkflow = await loadWorkflowFromCatalog(
       workflowTarget,
-      sharedOptions,
+      {
+        ...sharedOptions,
+        ...(nodePatch === undefined ? {} : { nodePatch }),
+      },
     );
     if (!loadedWorkflow.ok) {
       if (parsed.options.output === "json") {
@@ -716,6 +748,7 @@ export async function runCliWorkflowScope(
 
     const result = await runWorkflow(workflowTarget, {
       ...workflowRunOptions,
+      ...(nodePatch === undefined ? {} : { nodePatch }),
       runtimeVariables,
       ...mockScenarioOptions,
       ...buildLocalWorkflowRunOverrides(parsed.options, true),

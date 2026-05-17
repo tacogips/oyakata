@@ -30,6 +30,7 @@ No active implementation plans remain.
 
 | Plan                                               | Completed  | Design Reference                                                                                                                                                                            |
 | -------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workflow-node-runtime-patches` | 2026-05-17 | `architecture#workflow-node-runtime-patches`, `command`, `design-workflow-node-executability-validation` |
 | `package-boundary-architecture` | 2026-05-17 | `architecture` |
 | `workflow-checkout-github-directory` | 2026-05-17 | `command`, `architecture`, `design-user-scope-workflows` |
 | `async-third-party-resolver-validation-error-handling` | 2026-05-17 | `architecture`, `design-node-addon-catalog-and-chat-reply-worker` |
