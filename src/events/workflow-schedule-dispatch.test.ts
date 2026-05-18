@@ -77,20 +77,21 @@ describe("workflow schedule dispatch", () => {
       actor: { id: "user-1" },
       input: { text: "run worker-only-single-step at 9:00" },
     };
+    const dispatchChatReply = vi.fn(async () => ({
+      status: "sent" as const,
+      provider: "webhook",
+      destinationResults: [
+        {
+          destinationId: "chat-replies",
+          sourceId: "chat",
+          idempotencyKey: "reply-1",
+          status: "sent" as const,
+          provider: "webhook",
+        },
+      ],
+    }));
     const replyDispatcher = {
-      dispatchChatReply: async () => ({
-        status: "sent" as const,
-        provider: "webhook",
-        destinationResults: [
-          {
-            destinationId: "chat-replies",
-            sourceId: "chat",
-            idempotencyKey: "reply-1",
-            status: "sent" as const,
-            provider: "webhook",
-          },
-        ],
-      }),
+      dispatchChatReply,
     };
 
     const results = await dispatchEventToMatchingBindings(
@@ -148,6 +149,189 @@ describe("workflow schedule dispatch", () => {
       kind: "workflow-schedule",
       status: "pending",
     });
+    expect(dispatchChatReply).toHaveBeenCalledTimes(2);
+    scheduledEventManager.stop();
+  });
+
+  test("suppresses unsafe schedule registration replies without output destinations", async () => {
+    const rootDataDir = await makeTempDir();
+    const repository = createWorkflowScheduleRepository({ rootDataDir });
+    const dispatchChatReply = vi.fn(async () => ({
+      status: "sent" as const,
+      provider: "webhook",
+    }));
+    const replyDispatcher = { dispatchChatReply };
+    const configuration: EventConfiguration = {
+      eventRoot: "test",
+      sources: [{ id: "chat", kind: "webhook", path: "/chat" }],
+      destinations: [],
+      bindings: [
+        {
+          id: "schedule-chat",
+          sourceId: "chat",
+          match: { eventType: "chat.message" },
+          inputMapping: {
+            mode: "template",
+            template: { request: "{{event.input.text}}" },
+          },
+          execution: {
+            mode: "schedule-registration",
+            resolverWorkflowName: "dispatcher-llm-resolver-stub",
+            resolverNodeId: "resolver-worker",
+            minConfidence: 0.8,
+          },
+        },
+      ],
+    };
+    const event: ExternalEventEnvelope = {
+      sourceId: "chat",
+      eventId: "evt-chat-schedule-unsafe-reply",
+      provider: "webhook",
+      eventType: "chat.message",
+      receivedAt: "2026-05-18T00:00:00.000Z",
+      dedupeKey: "evt-chat-schedule-unsafe-reply",
+      conversation: { id: "conv-1", threadId: "thread-1" },
+      actor: { id: "user-1" },
+      input: { text: "schedule worker-only-single-step without confidence" },
+    };
+
+    const results = await dispatchEventToMatchingBindings(
+      {
+        configuration,
+        event,
+        runner: createWorkflowTriggerRunner({
+          rootDataDir,
+          workflowRoot: "./examples",
+          mockScenario: {
+            "resolver-worker": {
+              provider: "scenario-mock",
+              when: { always: true },
+              payload: {
+                status: "ready",
+                workflowName: "worker-only-single-step",
+                schedule: {
+                  kind: "one-time",
+                  timezone: "UTC",
+                  dueAt: "2026-05-19T09:00:00.000Z",
+                },
+                workflowInput: { topic: "release" },
+                confirmationText: "Scheduled worker-only-single-step.",
+              },
+            },
+          },
+          eventReplyDispatcher: replyDispatcher,
+          workflowScheduleRepository: repository,
+        }),
+      },
+      {
+        rootDataDir,
+        workflowRoot: "./examples",
+        eventReplyDispatcher: replyDispatcher,
+        workflowScheduleRepository: repository,
+      },
+    );
+
+    expect(results[0]?.receipt.status).toBe("skipped");
+    expect(results[0]?.receipt.error).toBe(
+      "cannot ask schedule clarification without a safe reply destination",
+    );
+    expect(dispatchChatReply).not.toHaveBeenCalled();
+    expect(await repository.loadActive()).toHaveLength(0);
+  });
+
+  test("persists unsafe schedule registrations without dispatching confirmation replies", async () => {
+    const rootDataDir = await makeTempDir();
+    const repository = createWorkflowScheduleRepository({ rootDataDir });
+    const scheduledEventManager = createScheduledEventManager({
+      now: () => new Date("2026-05-18T00:00:00.000Z"),
+    });
+    const dispatchChatReply = vi.fn(async () => ({
+      status: "sent" as const,
+      provider: "webhook",
+    }));
+    const replyDispatcher = { dispatchChatReply };
+    const configuration: EventConfiguration = {
+      eventRoot: "test",
+      sources: [{ id: "chat", kind: "webhook", path: "/chat" }],
+      destinations: [],
+      bindings: [
+        {
+          id: "schedule-chat",
+          sourceId: "chat",
+          match: { eventType: "chat.message" },
+          inputMapping: { mode: "event-input" },
+          execution: {
+            mode: "schedule-registration",
+            resolverWorkflowName: "dispatcher-llm-resolver-stub",
+            resolverNodeId: "resolver-worker",
+            minConfidence: 0.8,
+          },
+        },
+      ],
+    };
+    const event: ExternalEventEnvelope = {
+      sourceId: "chat",
+      eventId: "evt-chat-schedule-unsafe-ready",
+      provider: "webhook",
+      eventType: "chat.message",
+      receivedAt: "2026-05-18T00:00:00.000Z",
+      dedupeKey: "evt-chat-schedule-unsafe-ready",
+      conversation: { id: "conv-1", threadId: "thread-1" },
+      actor: { id: "user-1" },
+      input: { text: "schedule worker-only-single-step at 9:00" },
+    };
+
+    const results = await dispatchEventToMatchingBindings(
+      {
+        configuration,
+        event,
+        runner: createWorkflowTriggerRunner({
+          rootDataDir,
+          workflowRoot: "./examples",
+          mockScenario: {
+            "resolver-worker": {
+              provider: "scenario-mock",
+              when: { always: true },
+              payload: {
+                status: "ready",
+                workflowName: "worker-only-single-step",
+                confidence: 0.99,
+                schedule: {
+                  kind: "one-time",
+                  timezone: "UTC",
+                  dueAt: "2026-05-19T09:00:00.000Z",
+                },
+                workflowInput: { topic: "release" },
+                confirmationText: "Scheduled worker-only-single-step.",
+              },
+            },
+          },
+          eventReplyDispatcher: replyDispatcher,
+          scheduledEventManager,
+          workflowScheduleRepository: repository,
+        }),
+      },
+      {
+        rootDataDir,
+        workflowRoot: "./examples",
+        eventReplyDispatcher: replyDispatcher,
+        scheduledEventManager,
+        workflowScheduleRepository: repository,
+      },
+    );
+    const schedules = await repository.loadActive();
+
+    expect(results[0]?.receipt.status).toBe("dispatched");
+    expect(schedules).toHaveLength(1);
+    expect(
+      scheduledEventManager.get(
+        `workflow-schedule:${schedules[0]?.scheduleId ?? ""}`,
+      ),
+    ).toMatchObject({
+      kind: "workflow-schedule",
+      status: "pending",
+    });
+    expect(dispatchChatReply).not.toHaveBeenCalled();
     scheduledEventManager.stop();
   });
 

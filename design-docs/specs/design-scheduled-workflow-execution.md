@@ -69,7 +69,9 @@ Incomplete or unsafe schedule registration:
 chat provider event
   -> schedule-registration workflow
   -> structured decision needs clarification or refuses
-  -> chat reply asks the smallest missing question
+  -> safe reply destination check
+  -> if safe, chat reply asks the smallest missing question or refusal reason
+  -> if unsafe, no chat reply is dispatched
   -> no schedule is persisted
 ```
 
@@ -220,12 +222,15 @@ pick the smaller change that still records normal event receipts.
 
 Schedule registration replies use the chat task-planning lifecycle:
 
-- `received`: chat event accepted.
+- `received`: chat event accepted, only when the binding has a safe reply
+  destination.
 - `plan-or-question`: selected workflow and schedule proposal, or question.
-- `clarification`: missing workflow, time, timezone, recurrence, or input.
+- `clarification`: missing workflow, time, timezone, recurrence, or input, only
+  when the binding has a safe reply destination.
 - `starting`: only for the schedule-registration workflow itself, not for the
   later scheduled target workflow.
-- confirmation: schedule persisted with schedule id and next due time.
+- confirmation: schedule persisted with schedule id and next due time, only
+  when the binding has a safe reply destination.
 
 A later scheduled execution may publish ordinary workflow outputs through the
 selected target workflow's configured destinations. It should not assume the
@@ -245,6 +250,15 @@ passing score. If confidence is missing or below the configured threshold, the
 runtime must not persist a schedule. It should ask the smallest workflow
 selection clarification when a safe reply destination exists, and otherwise
 refuse the registration.
+
+The trigger runner must compute schedule-registration reply safety once per
+dispatch attempt and use that same decision for every chat reply path. When the
+binding has no safe reply destination, the runner must suppress received
+progress replies, resolver clarification replies, runtime clarification replies,
+refusal replies, and confirmation replies. Suppression must not change the
+receipt outcome: unsafe clarification or refusal still records a skipped receipt
+with the validator decision, and successful schedule creation still records and
+enqueues the schedule without assuming a chat reply can be delivered.
 
 One-time `dueAt` validation must be independent of the host process timezone:
 

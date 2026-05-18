@@ -87,6 +87,10 @@ function hasSafeScheduleReplyDestination(input: {
   );
 }
 
+interface ScheduleRegistrationReplySafety {
+  readonly hasSafeReplyDestination: boolean;
+}
+
 async function readResolverWorkflowOutput(input: {
   readonly workflowName: string;
   readonly resolverNodeId: string;
@@ -129,6 +133,7 @@ async function runScheduleRegistrationMode(input: {
   readonly receiptStore: EventReceiptStore;
   readonly repository: WorkflowScheduleRepository;
   readonly options: WorkflowTriggerRunnerOptions;
+  readonly replySafety: ScheduleRegistrationReplySafety;
 }): Promise<WorkflowTriggerResult> {
   const execution = input.binding.execution;
   const resolverWorkflowName = execution?.resolverWorkflowName?.trim();
@@ -162,24 +167,26 @@ async function runScheduleRegistrationMode(input: {
       await createWorkflowScheduleRegistrationValidator().validate({
         ...input.options,
         output: resolverOutput,
-        hasSafeReplyDestination: hasSafeScheduleReplyDestination(input),
+        hasSafeReplyDestination: input.replySafety.hasSafeReplyDestination,
         ...(execution?.minConfidence === undefined
           ? {}
           : { minConfidence: execution.minConfidence }),
       });
     if (validation.status === "needs-clarification") {
-      await dispatchEventTaskPlanningReplyIfConfigured({
-        options: input.options,
-        binding: input.binding,
-        event: input.event,
-        receiptId: input.receipt.receiptId,
-        decision: {
-          status: "needs-clarification",
-          replyKind: "clarification",
-          text: validation.decision.question,
-          missing: validation.decision.missing,
-        },
-      });
+      if (input.replySafety.hasSafeReplyDestination) {
+        await dispatchEventTaskPlanningReplyIfConfigured({
+          options: input.options,
+          binding: input.binding,
+          event: input.event,
+          receiptId: input.receipt.receiptId,
+          decision: {
+            status: "needs-clarification",
+            replyKind: "clarification",
+            text: validation.decision.question,
+            missing: validation.decision.missing,
+          },
+        });
+      }
       const skipped = await input.receiptStore.update(
         {
           record: input.receipt,
@@ -193,18 +200,20 @@ async function runScheduleRegistrationMode(input: {
       return { receipt: skipped, duplicate: false };
     }
     if (validation.status === "refused") {
-      await dispatchEventTaskPlanningReplyIfConfigured({
-        options: input.options,
-        binding: input.binding,
-        event: input.event,
-        receiptId: input.receipt.receiptId,
-        decision: {
-          status: "needs-clarification",
-          replyKind: "clarification",
-          text: validation.decision.message ?? validation.decision.reason,
-          missing: ["schedule"],
-        },
-      });
+      if (input.replySafety.hasSafeReplyDestination) {
+        await dispatchEventTaskPlanningReplyIfConfigured({
+          options: input.options,
+          binding: input.binding,
+          event: input.event,
+          receiptId: input.receipt.receiptId,
+          decision: {
+            status: "needs-clarification",
+            replyKind: "clarification",
+            text: validation.decision.message ?? validation.decision.reason,
+            missing: ["schedule"],
+          },
+        });
+      }
       const skipped = await input.receiptStore.update(
         {
           record: input.receipt,
@@ -261,17 +270,19 @@ async function runScheduleRegistrationMode(input: {
         },
       });
     }
-    await dispatchEventTaskPlanningReplyIfConfigured({
-      options: input.options,
-      binding: input.binding,
-      event: input.event,
-      receiptId: input.receipt.receiptId,
-      decision: {
-        status: "ready",
-        replyKind: "plan-or-question",
-        text: validation.decision.confirmationText,
-      },
-    });
+    if (input.replySafety.hasSafeReplyDestination) {
+      await dispatchEventTaskPlanningReplyIfConfigured({
+        options: input.options,
+        binding: input.binding,
+        event: input.event,
+        receiptId: input.receipt.receiptId,
+        decision: {
+          status: "ready",
+          replyKind: "plan-or-question",
+          text: validation.decision.confirmationText,
+        },
+      });
+    }
     const dispatched = await input.receiptStore.update(
       {
         record: input.receipt,
@@ -495,6 +506,18 @@ export function createWorkflowTriggerRunner(
         },
         options,
       );
+      const scheduleRegistrationReplySafety:
+        | ScheduleRegistrationReplySafety
+        | undefined =
+        input.binding.execution?.mode === "schedule-registration"
+          ? {
+              hasSafeReplyDestination: hasSafeScheduleReplyDestination({
+                binding: input.binding,
+                event: input.event,
+                options,
+              }),
+            }
+          : undefined;
       if (options.readOnly === true) {
         const skipped = await receiptStore.update(
           {
@@ -511,7 +534,12 @@ export function createWorkflowTriggerRunner(
           ...workflowNameResultField(input.binding.workflowName),
         };
       }
-      if (input.suppressSupervisorChatReply !== true && needsFullInputMapping) {
+      if (
+        input.suppressSupervisorChatReply !== true &&
+        needsFullInputMapping &&
+        (scheduleRegistrationReplySafety === undefined ||
+          scheduleRegistrationReplySafety.hasSafeReplyDestination)
+      ) {
         await dispatchEventProgressReplyIfConfigured({
           options,
           binding: input.binding,
@@ -524,6 +552,11 @@ export function createWorkflowTriggerRunner(
         });
       }
       if (input.binding.execution?.mode === "schedule-registration") {
+        if (scheduleRegistrationReplySafety === undefined) {
+          throw new Error(
+            "internal: schedule registration reply safety was not resolved",
+          );
+        }
         return await runScheduleRegistrationMode({
           binding: input.binding,
           event: input.event,
@@ -533,6 +566,7 @@ export function createWorkflowTriggerRunner(
           receiptStore,
           repository: workflowScheduleRepository,
           options,
+          replySafety: scheduleRegistrationReplySafety,
         });
       }
       if (needsFullInputMapping) {

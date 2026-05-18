@@ -551,9 +551,11 @@ dependency and credential review.
 Chat event bindings can use `execution.mode: "schedule-registration"` to run a
 resolver workflow that returns a structured schedule decision. Ready decisions
 are validated against the workflow catalog, persisted in the runtime database,
-and enqueued as the next `workflow-schedule` event. Clarification or refusal
-decisions send chat replies only when the event has a safe reply destination
-and do not persist schedules. Operators can inspect and cancel registered
+and enqueued as the next `workflow-schedule` event. Confirmation,
+clarification, and refusal replies are sent only when the event has a safe reply
+destination. Unsafe successful registrations still persist and enqueue the
+schedule without dispatching a chat reply; unsafe clarification or refusal
+decisions do not persist schedules. Operators can inspect and cancel registered
 schedules from the same artifact root:
 
 Schedule registration treats resolver output as untrusted until runtime
