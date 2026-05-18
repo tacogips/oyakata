@@ -1,6 +1,32 @@
-import { describe, expect, test } from "vitest";
-import { selectWorkflowSelfImproveSourceRuns } from "./source-selection";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
+import { createSessionState } from "../session";
+import { saveSession } from "../session-store";
+import {
+  discoverWorkflowSourceRuns,
+  selectWorkflowSelfImproveSourceRuns,
+} from "./source-selection";
 import type { WorkflowSelfImproveSourceRun } from "./types";
+
+const tempDirs: string[] = [];
+
+async function makeTempDir(): Promise<string> {
+  const directory = await mkdtemp(
+    path.join(os.tmpdir(), "divedra-self-improve-source-"),
+  );
+  tempDirs.push(directory);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
 
 const runs: readonly WorkflowSelfImproveSourceRun[] = [
   {
@@ -90,5 +116,65 @@ describe("selectWorkflowSelfImproveSourceRuns", () => {
         availableRuns: runs,
       }),
     ).toThrow("does not belong to workflow");
+  });
+
+  test("discovers runtime-db indexed sessions through file-backed state", async () => {
+    const root = await makeTempDir();
+    const options = {
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "runtime-data"),
+    };
+    const session = {
+      ...createSessionState({
+        sessionId: "run-indexed",
+        workflowName: "demo",
+        workflowId: "demo",
+        initialNodeId: "manager",
+        runtimeVariables: {},
+      }),
+      status: "completed" as const,
+      endedAt: "2026-05-18T03:00:00.000Z",
+    };
+    const saved = await saveSession(session, options);
+    expect(saved.ok).toBe(true);
+
+    await expect(
+      discoverWorkflowSourceRuns(
+        { workflowName: "demo", workflowId: "demo" },
+        options,
+      ),
+    ).resolves.toMatchObject([{ sessionId: "run-indexed" }]);
+  });
+
+  test("falls back to file-backed sessions when runtime-db rows are stale", async () => {
+    const root = await makeTempDir();
+    const options = {
+      sessionStoreRoot: path.join(root, "sessions"),
+      rootDataDir: path.join(root, "runtime-data"),
+    };
+    const staleSession = createSessionState({
+      sessionId: "run-stale",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "manager",
+      runtimeVariables: {},
+    });
+    const fileOnlySession = createSessionState({
+      sessionId: "run-file-only",
+      workflowName: "demo",
+      workflowId: "demo",
+      initialNodeId: "manager",
+      runtimeVariables: {},
+    });
+    expect((await saveSession(staleSession, options)).ok).toBe(true);
+    expect((await saveSession(fileOnlySession, options)).ok).toBe(true);
+    await rm(path.join(options.sessionStoreRoot, "run-stale.json"));
+
+    await expect(
+      discoverWorkflowSourceRuns(
+        { workflowName: "demo", workflowId: "demo" },
+        options,
+      ).then((sourceRuns) => sourceRuns.map((run) => run.sessionId)),
+    ).resolves.toEqual(["run-file-only"]);
   });
 });

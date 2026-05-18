@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isJsonObject } from "../../shared/json";
 import { resolveWorkflowSelfImproveDirectory } from "./pathing";
 
 export interface WorkflowSelfImproveMarker {
@@ -21,7 +22,13 @@ export async function readWorkflowSelfImproveMarker(input: {
   );
   try {
     const raw = await readFile(markerPath, "utf8");
-    return JSON.parse(raw) as WorkflowSelfImproveMarker;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isJsonObject(parsed)) {
+      throw new Error(
+        `self-improve marker '${markerPath}' must contain a JSON object`,
+      );
+    }
+    return parsed as unknown as WorkflowSelfImproveMarker;
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       return undefined;

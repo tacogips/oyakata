@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { resolveSafeScopedPath } from "../paths";
 import type { LoadOptions } from "../types";
 
 function expandLeadingHome(value: string): string {
@@ -49,10 +50,14 @@ export function resolveWorkflowSelfImproveDirectory(input: {
   readonly logRoot: string;
   readonly workflowDirectory: string;
 }): string {
-  return path.join(
+  const scoped = resolveSafeScopedPath(
     input.logRoot,
     workflowDirectoryIdentity(input.workflowDirectory),
   );
+  if (scoped === undefined) {
+    throw new Error("self-improve workflow directory identity is not safe");
+  }
+  return scoped;
 }
 
 export function resolveSelfImproveExecutionDirectory(input: {
@@ -60,8 +65,14 @@ export function resolveSelfImproveExecutionDirectory(input: {
   readonly workflowDirectory: string;
   readonly selfImproveId: string;
 }): string {
-  return path.join(
+  const scoped = resolveSafeScopedPath(
     resolveWorkflowSelfImproveDirectory(input),
     input.selfImproveId,
   );
+  if (scoped === undefined) {
+    throw new Error(
+      `self-improve id '${input.selfImproveId}' must be a safe path segment`,
+    );
+  }
+  return scoped;
 }

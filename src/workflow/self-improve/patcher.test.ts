@@ -142,4 +142,55 @@ describe("applyWorkflowSelfImprovePatch", () => {
       readFile(path.join(workflowDirectory, "nodes/node-manager.json"), "utf8"),
     ).resolves.toContain("short");
   });
+
+  test("rejects escaped, absolute, and reserved prompt-file patch paths before writes", async () => {
+    const root = await makeTempDir();
+    const { workflowDirectory, backupPath } = await createWorkflowFixture(root);
+
+    await expect(
+      applyWorkflowSelfImprovePatch({
+        workflowDirectory,
+        backupPath,
+        operations: [{ relativePath: "../escape.md", content: "bad\n" }],
+        validate: async () => true,
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      changedFiles: [],
+      validationStatus: "failed",
+    });
+
+    await expect(
+      applyWorkflowSelfImprovePatch({
+        workflowDirectory,
+        backupPath,
+        operations: [
+          {
+            relativePath: path.resolve(root, "absolute.md"),
+            content: "bad\n",
+          },
+        ],
+        validate: async () => true,
+      }),
+    ).resolves.toMatchObject({ status: "failed", changedFiles: [] });
+
+    await expect(
+      applyWorkflowSelfImprovePatch({
+        workflowDirectory,
+        backupPath,
+        operations: [
+          {
+            relativePath: "generated/node-sidecar.json",
+            content: "{}\n",
+          },
+        ],
+        validate: async () => true,
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      changedFiles: [],
+      message:
+        "self-improve patch path 'generated/node-sidecar.json' must not overwrite canonical workflow definition files",
+    });
+  });
 });

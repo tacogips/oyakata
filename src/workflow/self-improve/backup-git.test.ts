@@ -80,4 +80,96 @@ describe("commitWorkflowSelfImproveChanges", () => {
     );
     expect(await git(repoRoot, ["status", "--short"])).toBe("M unrelated.txt");
   });
+
+  test("rejects escaped, absolute, and directory changed files", async () => {
+    const repoRoot = await makeTempDir();
+    const workflowDirectory = path.join(repoRoot, "workflows/demo");
+    await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+    await git(repoRoot, ["init"]);
+
+    await expect(
+      commitWorkflowSelfImproveChanges({
+        workflowDirectory,
+        workflowName: "demo",
+        selfImproveId: "sim-test",
+        changedFiles: ["../escape.json"],
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      message:
+        "self-improve changed file '../escape.json' escapes workflow directory",
+    });
+
+    await expect(
+      commitWorkflowSelfImproveChanges({
+        workflowDirectory,
+        workflowName: "demo",
+        selfImproveId: "sim-test",
+        changedFiles: [path.join(workflowDirectory, "nodes/node-manager.json")],
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      message: expect.stringContaining(
+        "must be a non-empty relative file path",
+      ),
+    });
+
+    await expect(
+      commitWorkflowSelfImproveChanges({
+        workflowDirectory,
+        workflowName: "demo",
+        selfImproveId: "sim-test",
+        changedFiles: ["nodes"],
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      message: "self-improve changed file 'nodes' must not be a directory",
+    });
+  });
+
+  test("rejects unexpected pre-staged files and skips empty commits", async () => {
+    const repoRoot = await makeTempDir();
+    const workflowDirectory = path.join(repoRoot, "workflows/demo");
+    await mkdir(path.join(workflowDirectory, "nodes"), { recursive: true });
+    await git(repoRoot, ["init"]);
+    await git(repoRoot, ["config", "user.email", "test@example.invalid"]);
+    await git(repoRoot, ["config", "user.name", "Test User"]);
+    await writeFile(
+      path.join(workflowDirectory, "nodes/node-manager.json"),
+      "{}\n",
+      "utf8",
+    );
+    await writeFile(path.join(repoRoot, "other.txt"), "old\n", "utf8");
+    await git(repoRoot, ["add", "."]);
+    await git(repoRoot, ["commit", "-m", "test: initial"]);
+    await writeFile(path.join(repoRoot, "other.txt"), "new\n", "utf8");
+    await git(repoRoot, ["add", "other.txt"]);
+
+    await expect(
+      commitWorkflowSelfImproveChanges({
+        workflowDirectory,
+        workflowName: "demo",
+        selfImproveId: "sim-test",
+        changedFiles: ["nodes/node-manager.json"],
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      message:
+        "self-improve refused to commit pre-staged files outside changedFiles: other.txt",
+    });
+
+    await git(repoRoot, ["reset", "other.txt"]);
+    await expect(
+      commitWorkflowSelfImproveChanges({
+        workflowDirectory,
+        workflowName: "demo",
+        selfImproveId: "sim-test",
+        changedFiles: ["nodes/node-manager.json"],
+      }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      message: "self-improve has no staged changes to commit",
+    });
+    expect(await git(repoRoot, ["rev-list", "--count", "HEAD"])).toBe("1");
+  });
 });

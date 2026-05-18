@@ -47,6 +47,37 @@ The feature review for "Review and improve dedicated self-improve feature" shoul
 - git commit logic must stage only files changed by the current self-improve execution, must not push, and must not add automated-assistant attribution or co-authorship trailers
 - marker writes must represent successful self-improve completion for the resolved workflow identity; failed, reverted, or rejected executions must not advance the since-last boundary
 
+## Shared Function Reuse Audit
+
+The issue "Audit self-improve implementation for duplicated existing functionality" is an integration hardening pass, not a request to broaden the product boundary. The implementation should prefer existing divedra workflow helpers for common behavior and keep self-improve code responsible only for retrospective policy, report shape, and canonical workflow edit orchestration.
+
+Audit decisions:
+
+- `src/workflow/self-improve/patcher.ts` must not grow an independent workflow-edit validation model. Self-improve patch operations are intentionally different from invocation-scoped node setting overlays in `src/workflow/node-patches.ts`, because they write canonical workflow files instead of applying transient `executionBackend`/`model`/`effort` overrides. It should still reuse existing workflow-relative path validation from `src/workflow/prompt-template-file.ts` or equivalent loader helpers for workflow-local files, and post-write validation must continue through `src/workflow/load.ts` / `src/workflow/json-schema.ts` rather than a self-improve-only schema path.
+- Prompt-file patching must preserve authored `promptTemplateFile` boundaries. When a finding targets a prompt file, self-improve should resolve the target through the same workflow-relative path rules used by loaders instead of replacing file-backed prompts with embedded `promptTemplate` content.
+- Backup and restore in `src/workflow/self-improve/backup.ts` and `src/workflow/self-improve/patcher.ts` remain self-improve-specific because they protect the canonical workflow directory before an optional edit. They should share path-safety and artifact-root conventions with `src/workflow/paths.ts`, while deliberately writing recovery artifacts under the self-improve execution directory rather than runtime node artifact directories.
+- Log and report pathing in `src/workflow/self-improve/pathing.ts` intentionally stays separate from workflow execution artifacts. Reports live under `DIVEDRA_SELF_IMPROVE_LOG_ROOT` or `<user-root>/self-improve-log/` so retrospective reports do not mutate or masquerade as session artifacts. The directory identity hash is required to avoid collisions between same-named workflows from different scopes.
+- `src/workflow/self-improve/marker-store.ts` and `src/workflow/self-improve/report.ts` should use shared JSON object checks where they validate public inputs, but typed report persistence may keep direct JSON serialization as long as parsing failures are surfaced as report-read failures and not silently normalized into successful results.
+- Source selection in `src/workflow/self-improve/source-selection.ts` should reuse session-store/runtime-db discovery semantics rather than introducing a separate run index. File-backed session state remains authoritative for selected source runs; runtime DB helpers such as `src/workflow/runtime-db/session-query-records.ts` are indexes and inspection accelerators. Explicit sessions must still be loaded and checked against the resolved `workflowName` and `workflowId`.
+- Git commit behavior in `src/workflow/self-improve/git.ts` is policy-compatible with, but not the same executor as, native git add-ons in `src/workflow/native-node-executor/git-and-addon-execution.ts` and `packages/divedra-addons/src/native-node-executor/git-and-addon-execution.ts`. Self-improve runs outside a node artifact context, so it should not call the add-on executor directly. It should align with add-on safety rules: normalize committed paths relative to the owning repo, reject directory or escaped paths, refuse unexpected pre-staged files outside the current self-improve changed-file set, commit only when there are staged changes, never push, and persist failure status in the report.
+- CLI, library, GraphQL, and server surfaces must stay adapters over the same core functions in `src/workflow/self-improve/service.ts`. Endpoint-backed CLI/library calls should use typed GraphQL fields in `src/graphql/types.ts`, `src/graphql/schema/execution-resolvers.ts`, and `src/server/graphql-executable-schema.ts`; they must not introduce manager-message shortcuts or a second execution path.
+
+Implementation review should classify each apparent duplicate as one of:
+
+- `reuse-required`: an existing helper already owns the behavior and self-improve should call it
+- `align-required`: the behavior remains self-improve-specific but must match shared validation, path, git, or API semantics
+- `intentional-divergence`: the self-improve behavior has a different lifecycle boundary and the reason is documented here
+
+Current intentional divergences are limited to canonical workflow backup/restore, report/marker storage under the self-improve log root, and local git commit orchestration outside a workflow node artifact context.
+
+Implementation alignment:
+
+- Canonical workflow patching uses the shared workflow-relative prompt-template path helper for prompt files, permits only `workflow.json` and `nodes/node-*.json` as canonical definition writes, and leaves final bundle acceptance to existing workflow loading/schema validation.
+- Self-improve log directories use shared scoped-path safety while keeping the separate self-improve log-root lifecycle; `selfImproveId` is a safe path segment for report reads and writes.
+- Marker and report reads use the shared JSON object boundary check; direct report serialization remains typed internal JSON, and report listing skips invalid persisted entries.
+- Source discovery may use runtime DB session summaries as an index when a runtime DB root is configured, but selected source runs are still hydrated and validated through file-backed `loadSession` state.
+- Git commits remain self-improve-local and no-push, while matching native git add-on safety expectations for repo-relative path normalization, directory/escape rejection, unexpected pre-staged file blocking, and no empty commits.
+
 ## Workflow Configuration
 
 Workflow bundles may declare self-improve defaults under `workflow.defaults.selfImprove`.

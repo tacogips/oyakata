@@ -1,5 +1,10 @@
 import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  isReservedWorkflowDefinitionPath,
+  isSafeWorkflowRelativePath,
+  resolveWorkflowRelativePath,
+} from "../prompt-template-file";
 import type { WorkflowSelfImprovePatchResult } from "./types";
 
 export interface WorkflowSelfImprovePatchOperation {
@@ -7,9 +12,31 @@ export interface WorkflowSelfImprovePatchOperation {
   readonly content: string;
 }
 
-function resolveConstrainedPath(root: string, relativePath: string): string {
-  if (path.isAbsolute(relativePath)) {
-    throw new Error("self-improve patch paths must be relative");
+function resolveCanonicalWorkflowPatchPath(
+  root: string,
+  relativePath: string,
+): string {
+  if (!isSafeWorkflowRelativePath(relativePath)) {
+    throw new Error(
+      `self-improve patch path '${relativePath}' must be a workflow-relative path without '.' or '..' segments`,
+    );
+  }
+  const isCanonicalWorkflowPatchTarget =
+    relativePath === "workflow.json" ||
+    /^nodes[/\\]node-[^/\\]+\.json$/u.test(relativePath);
+  if (!isCanonicalWorkflowPatchTarget) {
+    const resolved = resolveWorkflowRelativePath(root, relativePath, {
+      fieldName: "self-improve patch path",
+    });
+    if (!resolved.ok) {
+      throw new Error(resolved.error.message);
+    }
+    return resolved.value;
+  }
+  if (!isReservedWorkflowDefinitionPath(relativePath)) {
+    throw new Error(
+      `self-improve patch path '${relativePath}' is not a canonical workflow definition file`,
+    );
   }
   const resolvedRoot = path.resolve(root);
   const target = path.resolve(resolvedRoot, relativePath);
@@ -64,7 +91,7 @@ export async function applyWorkflowSelfImprovePatch(input: {
   const changedFiles: string[] = [];
   try {
     for (const operation of input.operations) {
-      const target = resolveConstrainedPath(
+      const target = resolveCanonicalWorkflowPatchPath(
         input.workflowDirectory,
         operation.relativePath,
       );

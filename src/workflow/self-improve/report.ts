@@ -1,6 +1,10 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveWorkflowSelfImproveDirectory } from "./pathing";
+import { isJsonObject } from "../../shared/json";
+import {
+  resolveSelfImproveExecutionDirectory,
+  resolveWorkflowSelfImproveDirectory,
+} from "./pathing";
 import type {
   WorkflowSelfImproveReport,
   WorkflowSelfImproveReportSummary,
@@ -75,13 +79,20 @@ export async function readWorkflowSelfImproveReport(input: {
   readonly selfImproveId: string;
 }): Promise<WorkflowSelfImproveReport> {
   const reportPath = path.join(
-    resolveWorkflowSelfImproveDirectory(input),
-    input.selfImproveId,
+    resolveSelfImproveExecutionDirectory({
+      logRoot: input.logRoot,
+      workflowDirectory: input.workflowDirectory,
+      selfImproveId: input.selfImproveId,
+    }),
     "report.json",
   );
-  return JSON.parse(
-    await readFile(reportPath, "utf8"),
-  ) as WorkflowSelfImproveReport;
+  const parsed = JSON.parse(await readFile(reportPath, "utf8")) as unknown;
+  if (!isJsonObject(parsed)) {
+    throw new Error(
+      `self-improve report '${reportPath}' must contain a JSON object`,
+    );
+  }
+  return parsed as unknown as WorkflowSelfImproveReport;
 }
 
 export async function listWorkflowSelfImproveReportSummaries(input: {
@@ -103,9 +114,11 @@ export async function listWorkflowSelfImproveReportSummaries(input: {
   for (const entry of entries) {
     const reportPath = path.join(workflowDirectory, entry, "report.json");
     try {
-      const report = JSON.parse(
-        await readFile(reportPath, "utf8"),
-      ) as WorkflowSelfImproveReport;
+      const parsed = JSON.parse(await readFile(reportPath, "utf8")) as unknown;
+      if (!isJsonObject(parsed)) {
+        continue;
+      }
+      const report = parsed as unknown as WorkflowSelfImproveReport;
       if (report.workflowName !== input.workflowName) {
         continue;
       }

@@ -380,7 +380,13 @@ backup if validation or patching fails, and creates a local git commit for
 git-managed workflow changes without pushing. Reports are still written for
 failed or reverted patch attempts, but the since-last marker advances only after
 a completed report whose patch and git-commit phases did not fail. The same
-core service is exposed through GraphQL `executeWorkflowSelfImprove` plus
+patch, report, source-selection, and git paths reuse shared divedra validation
+semantics: prompt files stay workflow-relative, report and marker JSON must be
+objects, source runs are hydrated from file-backed session state even when a
+runtime DB index is present, and commits reject escaped, directory, empty, or
+unexpected pre-staged paths.
+
+The core service is exposed through GraphQL `executeWorkflowSelfImprove` plus
 `workflowSelfImproveReport`/`workflowSelfImproveReports`, and through library
 APIs `executeWorkflowSelfImprove`, `getWorkflowSelfImproveReport`, and
 `listWorkflowSelfImproveReports`. Endpoint-backed CLI and library calls use the
