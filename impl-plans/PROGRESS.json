@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-17T23:54:00+09:00",
+  "lastUpdated": "2026-05-19T00:00:00+09:00",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -519,9 +519,104 @@
     },
     "173": {
       "status": "READY"
+    },
+    "174": {
+      "status": "COMPLETED"
+    },
+    "175": {
+      "status": "COMPLETED"
+    },
+    "176": {
+      "status": "COMPLETED"
     }
   },
   "plans": {
+    "active/schedule-registration-policy-surface-cleanup": {
+      "phase": 176,
+      "status": "Completed",
+      "path": "impl-plans/active/schedule-registration-policy-surface-cleanup.md",
+      "designReference": "design-docs/specs/design-scheduled-workflow-execution.md#event-binding-and-execution",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "TASK-004": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "TASK-002",
+            "TASK-003"
+          ]
+        }
+      }
+    },
+    "active/schedule-registration-safe-reply-gating": {
+      "phase": 175,
+      "status": "Completed",
+      "path": "impl-plans/active/schedule-registration-safe-reply-gating.md",
+      "designReference": "design-docs/specs/design-scheduled-workflow-execution.md#schedule-registration-safety-contract",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001"
+          ]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "TASK-002"
+          ]
+        }
+      }
+    },
+    "active/schedule-registration-blocking-fixes": {
+      "phase": 174,
+      "status": "Completed",
+      "tasks": {
+        "TASK-001": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": []
+        },
+        "TASK-002": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001"
+          ]
+        },
+        "TASK-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "TASK-001",
+            "TASK-002"
+          ]
+        }
+      }
+    },
     "supervisor-natural-language-control": {
       "phase": 149,
       "status": "Completed",

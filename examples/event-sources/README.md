@@ -113,6 +113,64 @@ divedra events emit chat-sdk-slack \
   --output json
 ```
 
+The binding `chat-sdk-slack-schedule-registration` demonstrates chat-created
+workflow schedules. It listens only to conversation `schedule-demo`, runs the
+resolver workflow `dispatcher-llm-resolver-stub` at node `resolver-worker`, and
+expects the resolver output to be one of these structured decisions. The
+binding sets `minConfidence: 0.8`, so a ready decision must include numeric
+`confidence` at or above that threshold before a schedule can be persisted:
+
+Resolver input, including timezone-relevant chat fields, is selected through
+the binding `inputMapping` block. Do not configure `execution.inputPath` or
+`execution.timezonePath` for schedule-registration bindings.
+
+```json
+{
+  "status": "ready",
+  "workflowName": "worker-only-single-step",
+  "confidence": 0.95,
+  "schedule": {
+    "kind": "one-time",
+    "timezone": "UTC",
+    "dueAt": "2026-05-19T09:00:00.000Z"
+  },
+  "workflowInput": {
+    "topic": "release"
+  },
+  "confirmationText": "Scheduled worker-only-single-step."
+}
+```
+
+For recurring schedules, return `"kind": "recurring"` with a five-field
+`cron` string and `timezone`. For one-time schedules, `dueAt` may be an
+absolute timestamp with `Z` or a numeric UTC offset, or an offset-less wall
+clock value such as `2026-05-19T09:00:00` that is resolved using the provided
+IANA `timezone`. Invalid, ambiguous, or unresolvable wall-clock times are not
+persisted. Return `status: "needs-clarification"` with `missing` and `question`
+when the workflow, confidence, time, timezone, recurrence, or workflow input is
+ambiguous; no schedule is persisted for clarification or refusal decisions.
+Clarification replies require a safe chat reply destination; without one, the
+request is refused instead of persisted.
+
+Inspect and cancel persisted schedules with the operator commands:
+
+```bash
+divedra events schedules list \
+  --artifact-root ./tmp/event-source-demo/workflow-artifacts \
+  --source chat-sdk-slack \
+  --status active \
+  --output json
+
+divedra events schedules inspect <schedule-id> \
+  --artifact-root ./tmp/event-source-demo/workflow-artifacts \
+  --output json
+
+divedra events schedules cancel <schedule-id> \
+  --artifact-root ./tmp/event-source-demo/workflow-artifacts \
+  --reason "operator cleanup" \
+  --output json
+```
+
 Start a workflow control-plane endpoint in another shell when you want fixture
 events to dispatch real workflow executions:
 

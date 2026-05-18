@@ -33,7 +33,7 @@ flowchart TD
 - Monitor, resume, rerun, continue, export, and inspect workflow executions.
 - Start workflows with supervisor-backed execution by default; `--no-auto-improve` disables workflow patching but keeps deterministic supervision.
 - Start a local GraphQL control plane for remote execution and manager/control-plane operations.
-- Receive external events, replay event receipts, and inspect reply dispatch records.
+- Receive external events, replay event receipts, inspect reply dispatch records, and register chat-created workflow schedules.
 - Install shell hooks/snippets for Claude Code, Codex, and Gemini.
 
 ## Install
@@ -493,31 +493,31 @@ workflow root, or from `--event-root`.
 Validate event configuration:
 
 ```bash
-bun run src/main.ts events validate --event-root ./examples/event-sources
+bun run src/main.ts events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events
 ```
 
 Emit a fixture event:
 
 ```bash
 bun run src/main.ts events emit <source-id> \
-  --event-root ./examples/event-sources \
+  --event-root ./examples/event-sources/.divedra-events \
   --event-file ./examples/event-sources/payloads/chat-message.json
 ```
 
 Start listener adapters:
 
 ```bash
-bun run src/main.ts events serve --event-root ./examples/event-sources
+bun run src/main.ts events serve --event-root ./examples/event-sources/.divedra-events
 ```
 
 List and replay receipts:
 
 ```bash
-bun run src/main.ts events list --event-root ./examples/event-sources
+bun run src/main.ts events list --event-root ./examples/event-sources/.divedra-events
 ```
 
 ```bash
-bun run src/main.ts events replay <receipt-id> --event-root ./examples/event-sources
+bun run src/main.ts events replay <receipt-id> --event-root ./examples/event-sources/.divedra-events
 ```
 
 Inspect reply dispatch records for a workflow execution:
@@ -548,6 +548,39 @@ the webhook path must remain relative and provider-scoped, such as
 this boundary; direct provider SDK integration remains future scope after
 dependency and credential review.
 
+Chat event bindings can use `execution.mode: "schedule-registration"` to run a
+resolver workflow that returns a structured schedule decision. Ready decisions
+are validated against the workflow catalog, persisted in the runtime database,
+and enqueued as the next `workflow-schedule` event. Confirmation,
+clarification, and refusal replies are sent only when the event has a safe reply
+destination. Unsafe successful registrations still persist and enqueue the
+schedule without dispatching a chat reply; unsafe clarification or refusal
+decisions do not persist schedules. Operators can inspect and cancel registered
+schedules from the same artifact root:
+
+Schedule-registration bindings use binding `inputMapping` to choose the
+resolver workflow input, including timezone-relevant event fields. The
+schedule-registration execution policy only selects the resolver workflow/node
+and optional confidence threshold; it does not support `execution.inputPath` or
+`execution.timezonePath`.
+
+Schedule registration treats resolver output as untrusted until runtime
+validation succeeds. When a binding sets `minConfidence`, a ready decision must
+include numeric `confidence`; missing or below-threshold confidence produces
+clarification when a safe reply destination exists and refusal otherwise.
+One-time schedules accept absolute `dueAt` timestamps with `Z` or a numeric UTC
+offset, and also accept offset-less wall-clock timestamps such as
+`2026-05-19T09:00:00` only when `schedule.timezone` is a valid IANA timezone.
+Offset-less values are resolved in that timezone before divedra stores the
+canonical UTC `nextDueAt`; invalid, ambiguous, or unresolvable wall-clock times
+do not persist a schedule.
+
+```bash
+bun run src/main.ts events schedules list --artifact-root ./tmp/event-source-demo/workflow-artifacts --source chat-sdk-slack --status active
+bun run src/main.ts events schedules inspect <schedule-id> --artifact-root ./tmp/event-source-demo/workflow-artifacts --output json
+bun run src/main.ts events schedules cancel <schedule-id> --artifact-root ./tmp/event-source-demo/workflow-artifacts --reason "operator cleanup"
+```
+
 ## Scheduling
 
 Workflow sleep nodes use `nodeType: "sleep"` with a `sleep` payload containing
@@ -572,6 +605,13 @@ event manager. `events serve` passes that manager into local workflow triggers,
 the cron adapter registers the next occurrence on startup, and each fired cron
 event computes and registers the following occurrence while preserving existing
 binding, dedupe, receipt, and input-mapping behavior.
+
+Persisted chat-created workflow schedules use the same shared event manager.
+Schedule registration, recurring re-arm, and event listener startup enqueue the
+next `workflow-schedule` occurrence. When a due occurrence fires, divedra builds
+an internal `divedra-scheduler` event and dispatches it through generated
+bindings so normal event receipts, dedupe keys, workflow input mapping, and
+workflow trigger execution remain in the event path.
 
 ## Hooks
 
