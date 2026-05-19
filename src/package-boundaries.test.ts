@@ -56,7 +56,6 @@ const TEMPORARY_COMPATIBILITY_ROOT_IMPORTS = {
     "../../../src/workflow/types",
   ],
   "packages/divedra/src/cli/argument-parser.ts": [
-    "../../../../src/workflow/self-improve",
     "../../../../src/workflow/types",
   ],
   "packages/divedra/src/cli/input-output-helpers.ts": [
@@ -109,7 +108,6 @@ const TEMPORARY_COMPATIBILITY_ROOT_IMPORTS = {
     "../../../../src/workflow/load",
     "../../../../src/workflow/paths",
     "../../../../src/workflow/runtime-db",
-    "../../../../src/workflow/self-improve",
     "../../../../src/workflow/session",
     "../../../../src/workflow/types",
   ],
@@ -122,7 +120,6 @@ const TEMPORARY_COMPATIBILITY_ROOT_IMPORTS = {
     "../../../../src/workflow/load",
     "../../../../src/workflow/overview",
     "../../../../src/workflow/scenario-adapter",
-    "../../../../src/workflow/self-improve",
     "../../../../src/workflow/usage",
     "../../../../src/workflow/validate",
   ],

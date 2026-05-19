@@ -40,7 +40,7 @@ import type {
 import type {
   WorkflowSelfImproveMode,
   WorkflowSelfImproveSourceMode,
-} from "../../../../src/workflow/self-improve";
+} from "divedra-core";
 
 export type AutoImproveCliInputs = {
   readonly enabled: boolean;

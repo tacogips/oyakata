@@ -2,7 +2,7 @@ import type { WorkflowScopeSelector } from "../../../../src/workflow/types";
 import type {
   WorkflowSelfImproveMode,
   WorkflowSelfImproveSourceMode,
-} from "../../../../src/workflow/self-improve";
+} from "divedra-core";
 import type { ParsedArgs } from "./storage-and-options";
 import {
   parseAutoImprovePolicyFromCliFlags,

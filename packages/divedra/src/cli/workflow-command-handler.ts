@@ -8,7 +8,7 @@ import {
   type WorkflowStructureRow,
 } from "../../../../src/workflow/inspect";
 import { loadWorkflowFromCatalog } from "../../../../src/workflow/load";
-import { executeWorkflowSelfImprove } from "../../../../src/workflow/self-improve";
+import { executeWorkflowSelfImprove } from "divedra-core";
 import {
   hasInvalidNodeValidationResult,
   type NodeValidationResult,
