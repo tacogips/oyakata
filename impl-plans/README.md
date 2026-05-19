@@ -26,6 +26,7 @@ impl-plans/
 
 | Plan | Status | Design Reference |
 | ---- | ------ | ---------------- |
+| `active/self-improve-package-boundary-contract-reconciliation` | Completed | `design-self-improve#public-api-contract`, `architecture#package-boundary-architecture` |
 | `active/duplicate-scavenge-refactoring-workflow-mode` | Completed | `architecture#duplicate-scavenge-refactoring-workflow-mode` |
 | `active/self-improve-shared-function-reuse-audit` | Completed | `design-self-improve#shared-function-reuse-audit` |
 | `active/self-improve-review-hardening` | Completed | `design-self-improve#issue-resolution-hardening-criteria` |

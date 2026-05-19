@@ -82,8 +82,8 @@ typecheck commands for the workspace.
 
 - `packages/divedra-core` exposes the core workflow runtime, session/runtime DB,
   supervisor, manager control, catalog, inspection, shared library contracts,
-  deterministic supervisor runner-pool lifecycle APIs, and filesystem helpers
-  used by the runtime.
+  dedicated retrospective self-improve service APIs, deterministic supervisor
+  runner-pool lifecycle APIs, and filesystem helpers used by the runtime.
 - `packages/divedra-addons` exposes built-in node add-on registries and native
   add-on execution helpers. It depends inward on `divedra-core`; core does not
   export native add-on execution or add-on registry construction.
@@ -108,6 +108,9 @@ transport wiring. They can become separate packages after their imports depend
 only on core contracts and no longer require compatibility-facade internals.
 Runner-pool state is owned by core supervision code; the `divedra` package is a
 compatibility facade and must not maintain a separate supervisor run pool.
+Temporary CLI imports from root workflow modules are tracked by package-boundary
+tests while package-owned adapters are still being split out; new root imports
+must be explicit compatibility entries, not broad allowlist patterns.
 
 ## Development Checks
 
@@ -389,10 +392,13 @@ unexpected pre-staged paths.
 The core service is exposed through GraphQL `executeWorkflowSelfImprove` plus
 `workflowSelfImproveReport`/`workflowSelfImproveReports`, and through library
 APIs `executeWorkflowSelfImprove`, `getWorkflowSelfImproveReport`, and
-`listWorkflowSelfImproveReports`. Endpoint-backed CLI and library calls use the
-GraphQL mutation and preserve selected source-run node execution evidence in
-the returned report. `serve --read-only` and `serve --no-exec` reject
-self-improve execution.
+`listWorkflowSelfImproveReports`. These APIs are intentional public surfaces of
+`divedra-core` and the compatibility `divedra` library facade; the CLI can use
+temporary root self-improve imports only as explicitly tested compatibility
+imports until package-owned CLI adapters replace them. Endpoint-backed CLI and
+library calls use the GraphQL mutation and preserve selected source-run node
+execution evidence in the returned report. `serve --read-only` and
+`serve --no-exec` reject self-improve execution.
 
 Supervised event and GraphQL runs are tracked by a deterministic in-process
 runner pool. Use `runnerPoolRunId`, `supervisedRunId`, or

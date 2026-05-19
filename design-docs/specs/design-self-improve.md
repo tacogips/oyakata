@@ -198,7 +198,30 @@ The provider-neutral core service is the source of truth:
 - `getWorkflowSelfImproveReport(input): Promise<WorkflowSelfImproveReport>`
 - `listWorkflowSelfImproveReports(input): Promise<WorkflowSelfImproveReportSummary[]>`
 
+These functions and their public result/input types are intentionally part of
+the stable `divedra-core` facade and the compatibility `divedra` library
+facade. The core package owns the provider-neutral self-improve service because
+it depends on workflow loading, validation, session stores, runtime indexes,
+backup/patch policy, and report persistence rather than CLI process behavior.
+Removing the core exports would narrow the public API and is not the intended
+package-boundary fix.
+
 CLI and GraphQL are adapters over this service. GraphQL should expose typed input and result objects rather than a freeform manager message. The served API must respect `serve --read-only` by allowing report listing/reading but rejecting new self-improve executions that would write reports or mutate workflow bundles. `serve --no-exec` rejects self-improve execution because analysis may invoke an agent backend.
+
+Package-boundary validation should reflect this ownership:
+
+- `packages/divedra-core/src/index.ts` exports the self-improve service,
+  policy resolver, default log limit, and public report/result/input types.
+- `packages/divedra/src/index.ts` keeps the compatibility library wrappers that
+  call the core service locally or route to the typed GraphQL contract when a
+  server endpoint is configured.
+- package CLI modules may temporarily import root `src/workflow/self-improve`
+  modules for argument typing and local command execution while the CLI package
+  remains a compatibility facade over root source modules.
+- every temporary CLI root import must be listed in the package-boundary
+  allowlist with the same rationale as other compatibility facades, and should
+  be removed only after an exported package-owned CLI/self-improve adapter
+  replaces the root import without changing public command behavior.
 
 ## Codex-Agent Reference Mapping
 

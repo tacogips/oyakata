@@ -1416,8 +1416,9 @@ Required packages:
 
 - `divedra-core`: owns workflow definitions, validation, execution engine,
   runtime DB/session artifacts, mailbox contracts, supervisor primitives,
-  backend adapter dispatch contracts, and the public library API currently
-  exposed through `src/lib.ts`.
+  backend adapter dispatch contracts, dedicated self-improve service contracts,
+  and the provider-neutral public library API currently exposed through
+  `src/lib.ts`.
 - `divedra-addons`: owns built-in node add-on catalog resolution, native
   add-on execution, add-on configuration validation, and any reusable add-on
   types that should not force downstream callers to depend on the CLI/server
@@ -1480,6 +1481,26 @@ Supervisor runner-pool package boundary:
   from the root task scripts
 - test and build commands must run from the root and from affected package
   scopes using flake-defined tooling
+
+Self-improve package-boundary contract:
+
+- the dedicated retrospective self-improve service is a core runtime service,
+  not CLI-owned behavior; `packages/divedra-core/src/index.ts` should export
+  `executeWorkflowSelfImprove`, report lookup/listing functions, policy
+  resolution, default log-limit constants, and the public self-improve
+  input/result/report types
+- `packages/divedra/src/index.ts` remains the compatibility library facade and
+  may wrap core self-improve calls with endpoint-backed GraphQL routing, but it
+  must not define a second self-improve execution path
+- package CLI handlers can retain temporary root imports from
+  `src/workflow/self-improve` only while the package split still uses root
+  source modules as compatibility facades; those imports must be explicit in
+  package-boundary tests and carry the same removal expectation as other
+  temporary root imports
+- package-boundary tests are part of the design contract: export-contract
+  expectations should include intentional self-improve core exports, while root
+  import allowlists should include only the current CLI compatibility imports
+  needed to preserve command behavior
 
 Rollout should be staged. First introduce workspace metadata, package-local
 entrypoints, and compatibility facades without behavior changes. Then move
