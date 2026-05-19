@@ -629,7 +629,10 @@ function normalizeAddonEnvBinding(
     return undefined;
   }
   const fromEnv = raw["fromEnv"];
-  if (typeof fromEnv !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(fromEnv)) {
+  if (
+    typeof fromEnv !== "string" ||
+    !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(fromEnv)
+  ) {
     issues.push(
       makeIssue(
         "error",
@@ -891,11 +894,7 @@ function normalizeNodeRegistryRef(
   );
   if (nodeFile === undefined && addon === undefined) {
     issues.push(
-      makeIssue(
-        "error",
-        path,
-        "must define nodeFile, inline node, or addon",
-      ),
+      makeIssue("error", path, "must define nodeFile, inline node, or addon"),
     );
   }
 
@@ -983,7 +982,10 @@ function normalizeStepFanout(
       ),
     );
   }
-  if (typeof itemsFrom === "string" && !(itemsFrom === "" || itemsFrom.startsWith("/"))) {
+  if (
+    typeof itemsFrom === "string" &&
+    !(itemsFrom === "" || itemsFrom.startsWith("/"))
+  ) {
     issues.push(
       makeIssue("error", `${path}.itemsFrom`, "must be a JSON Pointer"),
     );
@@ -1110,7 +1112,11 @@ function normalizeStepSessionPolicy(
   const mode = modeRaw === "new" || modeRaw === "reuse" ? modeRaw : undefined;
   if (modeRaw !== undefined && mode === undefined) {
     issues.push(
-      makeIssue("error", `${path}.mode`, "must be 'new' or 'reuse' when provided"),
+      makeIssue(
+        "error",
+        `${path}.mode`,
+        "must be 'new' or 'reuse' when provided",
+      ),
     );
   }
   const inheritFromStepId =
@@ -1535,7 +1541,11 @@ function normalizeArgumentBindings(
       source !== "conversation-transcript"
     ) {
       issues.push(
-        makeIssue("error", `${entryPath}.source`, "must be a valid binding source"),
+        makeIssue(
+          "error",
+          `${entryPath}.source`,
+          "must be a valid binding source",
+        ),
       );
       return [];
     }
@@ -1546,7 +1556,8 @@ function normalizeArgumentBindings(
       {
         targetPath,
         source,
-        ...(typeof entry["sourceRef"] === "string" || isRecord(entry["sourceRef"])
+        ...(typeof entry["sourceRef"] === "string" ||
+        isRecord(entry["sourceRef"])
           ? { sourceRef: entry["sourceRef"] }
           : {}),
         ...(typeof entry["sourcePath"] === "string"
@@ -1810,7 +1821,9 @@ function normalizeWorkflow(
   const steps: WorkflowStepRef[] =
     Array.isArray(stepsRaw) && stepsRaw.length > 0
       ? stepsRaw
-          .map((entry, index) => normalizeStepRef(entry, index, issues, options))
+          .map((entry, index) =>
+            normalizeStepRef(entry, index, issues, options),
+          )
           .filter((entry): entry is WorkflowStepRef => entry !== null)
       : nodeRegistry.map((node) => ({ id: node.id, nodeId: node.id }));
 
@@ -1998,7 +2011,10 @@ function normalizeNodePayload(input: {
   const variables = isRecord(input.raw["variables"])
     ? input.raw["variables"]
     : {};
-  if (input.raw["variables"] !== undefined && !isRecord(input.raw["variables"])) {
+  if (
+    input.raw["variables"] !== undefined &&
+    !isRecord(input.raw["variables"])
+  ) {
     input.issues.push(
       makeIssue("error", `${input.path}.variables`, "must be an object"),
     );
@@ -2090,7 +2106,9 @@ function normalizeNodePayload(input: {
     ...(systemPrompt.templateFile === undefined
       ? {}
       : { systemPromptTemplateFile: systemPrompt.templateFile }),
-    ...(prompt.template === undefined ? {} : { promptTemplate: prompt.template }),
+    ...(prompt.template === undefined
+      ? {}
+      : { promptTemplate: prompt.template }),
     ...(prompt.templateFile === undefined
       ? {}
       : { promptTemplateFile: prompt.templateFile }),
@@ -2134,12 +2152,15 @@ function buildPureNodePayloads(input: {
       continue;
     }
 
-    const nodeFile = registryNode.nodeFile ?? synthesizeInlineNodeFile(registryNode.id);
+    const nodeFile =
+      registryNode.nodeFile ?? synthesizeInlineNodeFile(registryNode.id);
     const payloadRaw =
       nodePayloadsRaw[nodeFile] ??
       (isRecord(input.rawWorkflow)
         ? (
-            (input.rawWorkflow["nodes"] as readonly unknown[] | undefined)?.find(
+            (
+              input.rawWorkflow["nodes"] as readonly unknown[] | undefined
+            )?.find(
               (node) =>
                 isRecord(node) &&
                 node["id"] === registryNode.id &&

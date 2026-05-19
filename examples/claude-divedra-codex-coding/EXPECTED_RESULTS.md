@@ -8,7 +8,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples
 ```
 
 Expected result: the workflow is valid.
@@ -18,7 +18,7 @@ Expected result: the workflow is valid.
 Command:
 
 ```bash
-bun run src/main.ts workflow run claude-divedra-codex-coding \
+bun run packages/divedra/src/bin.ts workflow run claude-divedra-codex-coding \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/claude-divedra-codex-coding/mock-scenario.json \
   --output json

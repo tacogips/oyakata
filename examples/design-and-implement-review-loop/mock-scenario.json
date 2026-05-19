@@ -305,8 +305,8 @@
       "payload": {
         "issueReference": "tacogips/cursor-agent#123",
         "changedFiles": [
-          "src/workflow/review-findings.ts",
-          "src/workflow/review-findings.test.ts",
+          "packages/divedra/src/workflow/review-findings.ts",
+          "packages/divedra/src/workflow/review-findings.test.ts",
           "impl-plans/active/workflow-review-findings.md"
         ],
         "implementationSummary": "Implemented persisted review-finding records and rerun replay, but did not update the implementation-plan progress log yet.",
@@ -326,8 +326,8 @@
       "payload": {
         "issueReference": "tacogips/cursor-agent#123",
         "changedFiles": [
-          "src/workflow/review-findings.ts",
-          "src/workflow/review-findings.test.ts",
+          "packages/divedra/src/workflow/review-findings.ts",
+          "packages/divedra/src/workflow/review-findings.test.ts",
           "impl-plans/active/workflow-review-findings.md"
         ],
         "implementationSummary": "Step 6 implemented the approved plan, addressed Step 7 feedback, and updated implementation-plan progress.",
@@ -356,8 +356,8 @@
       "feedback": [],
       "accepted": true,
       "reviewedFiles": [
-        "src/workflow/review-findings.ts",
-        "src/workflow/review-findings.test.ts",
+        "packages/divedra/src/workflow/review-findings.ts",
+        "packages/divedra/src/workflow/review-findings.test.ts",
         "impl-plans/active/workflow-review-findings.md"
       ],
       "verificationGaps": [],
@@ -434,8 +434,8 @@
         "design-docs/specs/design-workflow-review-findings.md",
         "design-docs/user-qa/qa-review-finding-retention.md",
         "impl-plans/active/workflow-review-findings.md",
-        "src/workflow/review-findings.ts",
-        "src/workflow/review-findings.test.ts",
+        "packages/divedra/src/workflow/review-findings.ts",
+        "packages/divedra/src/workflow/review-findings.test.ts",
         "README.md",
         ".agents/skills/divedra-impl-workflow/SKILL.md"
       ],
@@ -457,8 +457,8 @@
         "design-docs/specs/design-workflow-review-findings.md",
         "design-docs/user-qa/qa-review-finding-retention.md",
         "impl-plans/active/workflow-review-findings.md",
-        "src/workflow/review-findings.ts",
-        "src/workflow/review-findings.test.ts",
+        "packages/divedra/src/workflow/review-findings.ts",
+        "packages/divedra/src/workflow/review-findings.test.ts",
         "README.md",
         ".agents/skills/divedra-impl-workflow/SKILL.md"
       ],
@@ -470,8 +470,8 @@
           "design-docs/specs/design-workflow-review-findings.md",
           "design-docs/user-qa/qa-review-finding-retention.md",
           "impl-plans/active/workflow-review-findings.md",
-          "src/workflow/review-findings.ts",
-          "src/workflow/review-findings.test.ts",
+          "packages/divedra/src/workflow/review-findings.ts",
+          "packages/divedra/src/workflow/review-findings.test.ts",
           "README.md",
           ".agents/skills/divedra-impl-workflow/SKILL.md"
         ]
@@ -516,8 +516,8 @@
       ],
       "implPlanPaths": ["impl-plans/active/workflow-review-findings.md"],
       "changedFiles": [
-        "src/workflow/review-findings.ts",
-        "src/workflow/review-findings.test.ts",
+        "packages/divedra/src/workflow/review-findings.ts",
+        "packages/divedra/src/workflow/review-findings.test.ts",
         "impl-plans/active/workflow-review-findings.md",
         "README.md",
         ".agents/skills/divedra-impl-workflow/SKILL.md"

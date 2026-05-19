@@ -67,7 +67,7 @@
             "title": "Add session-history reference coverage",
             "dependsOn": [],
             "verificationCommands": [
-              "bun test src/workflow/session-history.test.ts"
+              "bun test packages/divedra/src/workflow/session-history.test.ts"
             ]
           }
         ],
@@ -128,7 +128,7 @@
       "designReviewSummary": "Independent design review accepted the feature-local design.",
       "implPlanReviewSummary": "Independent implementation-plan review accepted the plan.",
       "verification": [
-        "bun test src/workflow/session-history.test.ts"
+        "bun test packages/divedra/src/workflow/session-history.test.ts"
       ],
       "residualRisks": []
     }

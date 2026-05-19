@@ -89,7 +89,7 @@
             fi
 
             cd "$invocation_cwd"
-            exec bun run "$runtime_src/src/main.ts" "$@"
+            exec bun run "$runtime_src/packages/divedra/src/bin.ts" "$@"
           '';
           meta = {
             description = "TypeScript/Bun workflow runtime for cooperative multi-agent execution";

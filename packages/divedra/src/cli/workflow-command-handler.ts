@@ -1,29 +1,29 @@
-import { collectWorkflowAddonSourceSummaries } from "../../../../src/workflow/addon-source-summary";
-import { checkoutWorkflow } from "../../../../src/workflow/checkout";
-import { createWorkflowTemplate } from "../../../../src/workflow/create";
-import { runWorkflow } from "../../../../src/workflow/engine";
+import { collectWorkflowAddonSourceSummaries } from "../workflow/addon-source-summary";
+import { checkoutWorkflow } from "../workflow/checkout";
+import { createWorkflowTemplate } from "../workflow/create";
+import { runWorkflow } from "../workflow/engine";
 import {
   buildInspectionSummary,
   deriveWorkflowStructureRows,
   type WorkflowStructureRow,
-} from "../../../../src/workflow/inspect";
-import { loadWorkflowFromCatalog } from "../../../../src/workflow/load";
+} from "../workflow/inspect";
+import { loadWorkflowFromCatalog } from "../workflow/load";
 import { executeWorkflowSelfImprove } from "divedra-core";
 import {
   hasInvalidNodeValidationResult,
   type NodeValidationResult,
-} from "../../../../src/workflow/validate";
+} from "../workflow/validate";
 import {
   buildWorkflowCatalogOverview,
   buildWorkflowStatusOverview,
   parseWorkflowOverviewAggregateStatusFilter,
   type WorkflowOverviewRow,
-} from "../../../../src/workflow/overview";
-import type { MockNodeScenario } from "../../../../src/workflow/scenario-adapter";
+} from "../workflow/overview";
+import type { MockNodeScenario } from "../workflow/scenario-adapter";
 import {
   buildWorkflowUsageCatalog,
   buildWorkflowUsageSummary,
-} from "../../../../src/workflow/usage";
+} from "../workflow/usage";
 import {
   resolveWorkflowOverviewStorageOptions,
   type RunCliScopeContext,
@@ -408,7 +408,8 @@ export async function runCliWorkflowScope(
     });
     if (!checkedOut.ok) {
       io.stderr(`checkout failed: ${checkedOut.error.message}`);
-      return checkedOut.error.code === "IO" || checkedOut.error.code === "FETCH_FAILED"
+      return checkedOut.error.code === "IO" ||
+        checkedOut.error.code === "FETCH_FAILED"
         ? 1
         : 2;
     }
@@ -457,7 +458,9 @@ export async function runCliWorkflowScope(
       ...(parsed.options.selfImproveSourceMode === undefined
         ? {}
         : { sourceMode: parsed.options.selfImproveSourceMode }),
-      ...(parsed.options.limit === undefined ? {} : { limit: parsed.options.limit }),
+      ...(parsed.options.limit === undefined
+        ? {}
+        : { limit: parsed.options.limit }),
       ...(parsed.options.selfImproveSessions === undefined
         ? {}
         : { sessionIds: parsed.options.selfImproveSessions }),
@@ -520,7 +523,9 @@ export async function runCliWorkflowScope(
         } else {
           io.stdout(`selfImproveId: ${String(payload["selfImproveId"])}`);
           io.stdout(`report: ${String(payload["reportPath"])}`);
-          io.stdout(`purposeAchievement: ${String(payload["purposeAchievement"])}`);
+          io.stdout(
+            `purposeAchievement: ${String(payload["purposeAchievement"])}`,
+          );
           io.stdout(`patchStatus: ${String(payload["patchStatus"])}`);
           io.stdout(`gitCommitStatus: ${String(payload["gitCommitStatus"])}`);
         }
@@ -834,13 +839,10 @@ export async function runCliWorkflowScope(
       return 1;
     }
 
-    const loadedWorkflow = await loadWorkflowFromCatalog(
-      workflowTarget,
-      {
-        ...sharedOptions,
-        ...(nodePatch === undefined ? {} : { nodePatch }),
-      },
-    );
+    const loadedWorkflow = await loadWorkflowFromCatalog(workflowTarget, {
+      ...sharedOptions,
+      ...(nodePatch === undefined ? {} : { nodePatch }),
+    });
     if (!loadedWorkflow.ok) {
       if (parsed.options.output === "json") {
         emitJson(io, loadedWorkflow.error);

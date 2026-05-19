@@ -1,12 +1,9 @@
 import type { AutoImprovePolicyInput } from "divedra-core";
 import { buildLibraryWorkflowRunOptions } from "./lib-workflow-run-options";
 import { runWorkflow } from "divedra-core";
-import {
-  loadSession,
-  type SessionStoreOptions,
-} from "divedra-core";
+import { loadSession, type SessionStoreOptions } from "divedra-core";
 import type { WorkflowSessionState } from "divedra-core";
-import type { MockNodeScenario } from "../../../src/workflow/scenario-adapter";
+import type { MockNodeScenario } from "./workflow/scenario-adapter";
 import type { LoadOptions } from "divedra-core";
 
 export type DivedraContinuationOptions = LoadOptions & SessionStoreOptions;

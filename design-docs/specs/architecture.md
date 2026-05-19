@@ -1,6 +1,11 @@
 # Architecture Design
 
-This document describes the current runtime architecture implemented in `src/workflow/` and `src/server/`.
+This document describes the current runtime architecture implemented primarily
+under `packages/divedra/src/`, with reusable package surfaces under
+`packages/divedra-core/src/`, `packages/divedra-addons/src/`,
+`packages/divedra-adapters/src/`, `packages/divedra-events/src/`,
+`packages/divedra-graphql/src/`, `packages/divedra-server/src/`, and
+`packages/divedra-hook/src/`.
 
 ## Overview
 
@@ -81,12 +86,13 @@ code. Its write scope is the resolved workflow directory and its own
 report-and-auto-improve mode requires workflow config or explicit caller
 authorization and post-patch workflow validation.
 
-Implementation owners should keep the public facade in `src/lib.ts`, expose the
-served contract through GraphQL schema/resolver modules, and keep backend
-transcript parsing behind existing agent adapter/session-history boundaries.
-Codex-agent is a reference for session discovery and transcript/file-change
-summary patterns only; Cursor CLI behavior remains isolated behind adapter
-validation and runtime-readiness probes.
+Implementation owners should keep the compatibility public facade in
+`packages/divedra/src/lib.ts`, expose the served contract through GraphQL
+schema/resolver modules, and keep backend transcript parsing behind existing
+agent adapter/session-history boundaries. Codex-agent is a reference for
+session discovery and transcript/file-change summary patterns only; Cursor CLI
+behavior remains isolated behind adapter validation and runtime-readiness
+probes.
 
 ### Duplicate-Scavenge Refactoring Workflow Mode
 
@@ -165,8 +171,8 @@ contracts cannot carry the mode guidance.
 
 Validation must include both changed workflow bundles:
 
-- `bun run src/main.ts workflow validate refactoring-divide-and-conquer --workflow-definition-dir .divedra/workflows --output json`
-- `bun run src/main.ts workflow validate refactoring-slice-review --workflow-definition-dir .divedra/workflows --output json`
+- `bun run packages/divedra/src/bin.ts workflow validate refactoring-divide-and-conquer --workflow-definition-dir .divedra/workflows --output json`
+- `bun run packages/divedra/src/bin.ts workflow validate refactoring-slice-review --workflow-definition-dir .divedra/workflows --output json`
 
 Codex-agent remains only the execution backend for relevant worker nodes in
 this issue. No Codex-reference behavior was provided for duplicate-scavenge
@@ -243,13 +249,13 @@ generic patch schema.
 
 The authoritative implementation for those behaviors lives in:
 
-- `src/workflow/engine.ts`
-- `src/workflow/call-step.ts`
-- `src/workflow/superviser.ts`
-- `src/workflow/superviser-control.ts` (phase-2 `SuperviserRuntimeControl` and add-on argument validation)
-- `src/workflow/node-addons.ts` (native `divedra/*` supervision add-ons)
-- `src/workflow/types.ts` (shared step-addressed runtime identifiers, including phase-2 superviser-control add-on names)
-- `src/workflow/validate.ts`
+- `packages/divedra/src/workflow/engine.ts`
+- `packages/divedra/src/workflow/call-step.ts`
+- `packages/divedra/src/workflow/superviser.ts`
+- `packages/divedra/src/workflow/superviser-control.ts` (phase-2 `SuperviserRuntimeControl` and add-on argument validation)
+- `packages/divedra/src/workflow/node-addons.ts` (native `divedra/*` supervision add-ons)
+- `packages/divedra/src/workflow/types.ts` (shared step-addressed runtime identifiers, including phase-2 superviser-control add-on names)
+- `packages/divedra/src/workflow/validate.ts`
 
 ### Default Supervisor-Backed Starts
 
@@ -378,9 +384,9 @@ Public surface and package-boundary rules:
   supervisor-client surface. CLI, server, event-source, and GraphQL adapters may
   translate transport inputs, but they must not maintain independent live-run
   pools with different ambiguity, wait, or cancellation behavior.
-- `src/lib.ts` and the `divedra-core` package boundary should expose the stable
+- `packages/divedra/src/lib.ts` and the `divedra-core` package boundary should expose the stable
   supervisor-client and runner-pool types needed by embedders. Deep imports from
-  `src/workflow/*` remain internal unless intentionally re-exported.
+  `packages/divedra/src/workflow/*` remain internal unless intentionally re-exported.
 - `codex-agent` and any Cursor CLI integration remain backend adapters. They do
   not define runner-pool lifecycle semantics, and Cursor-specific behavior must
   stay isolated from provider-neutral supervisor-client contracts.
@@ -444,12 +450,12 @@ Earlier oversized source files have already been split into semantic modules
 and now remain as small facades where their public import paths still matter.
 The current lint issue target is:
 
-- `src/workflow/engine/workflow-runner-lifecycle.ts`
+- `packages/divedra/src/workflow/engine/workflow-runner-lifecycle.ts`
 
 For the issue-resolution workflow "Split only workflow-runner-lifecycle.ts
 below 1000 lines", this boundary is implementation work, not planning-only
 work. The implementation must make real TypeScript extractions from
-`src/workflow/engine/workflow-runner-lifecycle.ts`; implementation-plan-only or
+`packages/divedra/src/workflow/engine/workflow-runner-lifecycle.ts`; implementation-plan-only or
 progress-log-only updates do not satisfy the design intent.
 
 Module splits should follow these boundaries:
@@ -489,11 +495,11 @@ Validation for this boundary is layered:
 
 #### Workflow Runner Module Split
 
-`src/workflow/engine/workflow-runner-lifecycle.ts` is the remaining oversized
+`packages/divedra/src/workflow/engine/workflow-runner-lifecycle.ts` is the remaining oversized
 workflow engine source file and should be split without changing the public
-workflow engine surface. `src/workflow/engine.ts` remains the stable facade,
-`src/workflow/engine/workflow-runner.ts` remains a small internal facade for the
-runner contract, and `src/workflow/engine/auto-improve-and-runner.ts` remains
+workflow engine surface. `packages/divedra/src/workflow/engine.ts` remains the stable facade,
+`packages/divedra/src/workflow/engine/workflow-runner.ts` remains a small internal facade for the
+runner contract, and `packages/divedra/src/workflow/engine/auto-improve-and-runner.ts` remains
 the public runner entrypoint that exports `runWorkflow()` and delegates to the
 internal runner. The extracted files must use responsibility-based names, not
 ordinal or `part-NN` names, and must not add Biome suppression comments.
@@ -545,7 +551,7 @@ explicit fields on local context records; extracted modules should not depend
 on hidden lexical state, generated source strings, `eval`, `Function`, or
 `globalThis.Function`.
 
-Existing semantic helper modules under `src/workflow/engine/` should remain the
+Existing semantic helper modules under `packages/divedra/src/workflow/engine/` should remain the
 preferred owners for behavior they already encapsulate:
 
 - `types-and-session-state.ts` for shared runner primitives, failure helpers,
@@ -568,8 +574,8 @@ runtime boundary directly, for example `run-setup.ts`,
 
 Large additions should not be moved into already near-limit files outside the
 target engine split. Known near-limit files at the time this issue was triaged
-include `src/workflow/call-step-impl/direct-step-execution.ts` and
-`src/workflow/supervisor-client/workflow-supervisor-client-factory.ts`; those
+include `packages/divedra/src/workflow/call-step-impl/direct-step-execution.ts` and
+`packages/divedra/src/workflow/supervisor-client/workflow-supervisor-client-factory.ts`; those
 modules may be imported from when appropriate, but they are not expansion
 targets for this lifecycle split.
 
@@ -578,8 +584,8 @@ Verification for the workflow-runner split must include:
 - `bun run format`
 - `bun run lint:biome`
 - `bun run typecheck`
-- `find src -path '*test*' -prune -o -name '*.ts' -print0 | xargs -0 wc -l | sort -nr | head`
-- `bun test src/workflow/engine.test.ts src/workflow/call-step.test.ts src/workflow/call-step-impl-execution.test.ts src/workflow/call-step-impl-failures.test.ts src/workflow/history-continuation.test.ts src/workflow/manager-control.test.ts src/workflow/manager-message-service.test.ts src/workflow/manager-session-store.test.ts src/workflow/superviser.test.ts src/workflow/auto-improve-policy.test.ts src/workflow/supervisor-runner-pool.test.ts`
+- `find packages/divedra/src -path '*test*' -prune -o -name '*.ts' -print0 | xargs -0 wc -l | sort -nr | head`
+- `bun test packages/divedra/src/workflow/engine.test.ts packages/divedra/src/workflow/call-step.test.ts packages/divedra/src/workflow/call-step-impl-execution.test.ts packages/divedra/src/workflow/call-step-impl-failures.test.ts packages/divedra/src/workflow/history-continuation.test.ts packages/divedra/src/workflow/manager-control.test.ts packages/divedra/src/workflow/manager-message-service.test.ts packages/divedra/src/workflow/manager-session-store.test.ts packages/divedra/src/workflow/superviser.test.ts packages/divedra/src/workflow/auto-improve-policy.test.ts packages/divedra/src/workflow/supervisor-runner-pool.test.ts`
 
 ## Core Architectural Boundaries
 
@@ -596,11 +602,11 @@ Workflow definitions live under `<workflow-definition-dir>/<workflow-name>/` and
 
 The loader resolves those workflow-local prompt files into effective inline template text before validation and execution.
 
-Authored workflow boundary rules are centralized in `src/workflow/authored-workflow.ts`:
+Authored workflow boundary rules are centralized in `packages/divedra/src/workflow/authored-workflow.ts`:
 
 - removed top-level authored fields, their rejection messages, and canonical validation issue construction live there
 - save-time persistence strips only normalized-only workflow fields from in-memory `WorkflowJson` inputs before validation and write
-- `src/workflow/load.ts`, `src/workflow/validate.ts`, and `src/workflow/save.ts` should reuse that module rather than carrying separate copies of authored-schema guard logic
+- `packages/divedra/src/workflow/load.ts`, `packages/divedra/src/workflow/validate.ts`, and `packages/divedra/src/workflow/save.ts` should reuse that module rather than carrying separate copies of authored-schema guard logic
 
 Workflow roots can be resolved directly or through the scoped workflow catalog.
 The scoped model defines:
@@ -615,7 +621,7 @@ The scoped model defines:
 Project scope is searched before user scope for bare workflow names, while
 `--workflow-definition-dir` and `DIVEDRA_WORKFLOW_DEFINITION_DIR` remain direct workflow-definition-dir
 overrides for examples and automation. Scope resolution is implemented in
-`src/workflow/catalog.ts`.
+`packages/divedra/src/workflow/catalog.ts`.
 
 ### Workflow Checkout Boundary
 
@@ -790,7 +796,7 @@ Supporting design:
 
 ### Execution Boundary
 
-The main runtime entrypoint is `runWorkflow()` in `src/workflow/engine.ts`.
+The main runtime entrypoint is `runWorkflow()` in `packages/divedra/src/workflow/engine.ts`.
 
 It owns:
 
@@ -826,7 +832,7 @@ Planned extension:
   must be reviewed explicitly during continuation work; the current hotspots are
   in `buildUpstreamOutputRefs()`, `buildUpstreamInputs()`,
   `findLatestPublishedWorkflowResult()`, and
-  `findLatestWorkflowCallResultExecution()` in `src/workflow/engine.ts`
+  `findLatestWorkflowCallResultExecution()` in `packages/divedra/src/workflow/engine.ts`
 
 Execution-time working directory is resolved separately from workflow/artifact/session root resolution.
 
@@ -835,16 +841,16 @@ Execution-time working directory is resolved separately from workflow/artifact/s
 - node-scoped override: `nodePayload.workingDirectory`, resolved from the effective workflow execution working directory
 
 Working-directory resolution is implemented in
-`src/workflow/working-directory.ts`.
+`packages/divedra/src/workflow/working-directory.ts`.
 
 ### Bounded Fanout And Join Boundary
 
 Source:
 
-- `src/workflow/engine.ts`
-- `src/workflow/cross-workflow-from-steps.ts`
-- `src/workflow/types.ts`
-- `src/workflow/validate.ts`
+- `packages/divedra/src/workflow/engine.ts`
+- `packages/divedra/src/workflow/cross-workflow-from-steps.ts`
+- `packages/divedra/src/workflow/types.ts`
+- `packages/divedra/src/workflow/validate.ts`
 
 Target design:
 
@@ -893,12 +899,12 @@ execute the same backend-neutral node payload contract as every other step.
 
 Source:
 
-- `src/workflow/engine.ts`
-- `src/workflow/superviser.ts`
-- `src/workflow/superviser-control.ts`
-- `src/workflow/node-addons.ts`
-- `src/workflow/mutable-workspace.ts`
-- `src/workflow/auto-improve-policy.ts`
+- `packages/divedra/src/workflow/engine.ts`
+- `packages/divedra/src/workflow/superviser.ts`
+- `packages/divedra/src/workflow/superviser-control.ts`
+- `packages/divedra/src/workflow/node-addons.ts`
+- `packages/divedra/src/workflow/mutable-workspace.ts`
+- `packages/divedra/src/workflow/auto-improve-policy.ts`
 
 Current phase-1 responsibilities:
 
@@ -950,15 +956,15 @@ stay in repository lint scripts/tests rather than in backend adapter modules.
 
 Source:
 
-- `src/workflow/load.ts`
-- `src/workflow/validate.ts`
+- `packages/divedra/src/workflow/load.ts`
+- `packages/divedra/src/workflow/validate.ts`
 
 Responsibilities:
 
 - read workflow bundle files
 - resolve `promptTemplateFile`
 - validate step definitions, node registry entries, transitions, and payload shapes
-- share authored-schema guard rules with the save path through `src/workflow/authored-workflow.ts` so validation and persistence reject the same removed fields with the same messages
+- share authored-schema guard rules with the save path through `packages/divedra/src/workflow/authored-workflow.ts` so validation and persistence reject the same removed fields with the same messages
 
 Important validation facts:
 
@@ -1016,7 +1022,7 @@ workflow engine. Add-ons that need invocation-specific values use
 bindings accept `addon.env`. Host applications can pass add-on resolvers through
 workflow load, validation, save, and execution options to materialize
 third-party add-on references into ordinary node payloads. The package root
-exports the library API from `src/lib.ts` rather than the CLI entrypoint so
+exports the library API from `packages/divedra/src/lib.ts` rather than the CLI entrypoint so
 third-party add-on packages can type resolver exports from `divedra` without
 deep imports. Third-party resolver calls are package-boundary validation
 boundaries: both synchronous and asynchronous resolver paths must normalize
@@ -1036,9 +1042,9 @@ transport-specific checks.
 
 Source:
 
-- `src/workflow/input-assembly.ts`
-- `src/workflow/prompt-composition.ts`
-- `src/workflow/prompt-template-context.ts`
+- `packages/divedra/src/workflow/input-assembly.ts`
+- `packages/divedra/src/workflow/prompt-composition.ts`
+- `packages/divedra/src/workflow/prompt-template-context.ts`
 
 Responsibilities:
 
@@ -1068,8 +1074,8 @@ wrappers only when a session is first created.
 
 Source:
 
-- `src/workflow/adapter.ts`
-- `src/workflow/adapters/*`
+- `packages/divedra/src/workflow/adapter.ts`
+- `packages/divedra/src/workflow/adapters/*`
 
 Responsibilities:
 
@@ -1095,7 +1101,7 @@ wrappers before validation:
 
 The parser must still reject non-object JSON such as arrays, strings, numbers,
 or partial/unbalanced object text. Backend-specific output collection remains in
-`src/workflow/adapters/*`; wrapper recovery stays in the shared adapter module
+`packages/divedra/src/workflow/adapters/*`; wrapper recovery stays in the shared adapter module
 so `codex-agent`, `claude-code-agent`, and SDK-backed adapters converge before
 engine-level schema, completion, and manager-control validation.
 
@@ -1111,9 +1117,9 @@ business payloads and incorrectly routed through `!(needs_revision)`.
 
 Source:
 
-- `src/workflow/session.ts`
-- `src/workflow/session-store.ts`
-- `src/workflow/runtime-db.ts`
+- `packages/divedra/src/workflow/session.ts`
+- `packages/divedra/src/workflow/session-store.ts`
+- `packages/divedra/src/workflow/runtime-db.ts`
 
 Responsibilities:
 
@@ -1128,10 +1134,10 @@ The queue is deduplicated after each scheduling pass. Multiple valid transition 
 
 Source:
 
-- `src/workflow/cross-workflow-from-steps.ts` (projection of step transitions to dispatch rows)
-- `src/workflow/engine.ts` (enqueue and run callee workflows; artifacts under `workflow-calls/`)
-- `src/workflow/runtime-readiness.ts` (readiness checks for callee targets and dispatch chains)
-- `src/workflow/manager-control.ts` (validates manager-emitted control actions)
+- `packages/divedra/src/workflow/cross-workflow-from-steps.ts` (projection of step transitions to dispatch rows)
+- `packages/divedra/src/workflow/engine.ts` (enqueue and run callee workflows; artifacts under `workflow-calls/`)
+- `packages/divedra/src/workflow/runtime-readiness.ts` (readiness checks for callee targets and dispatch chains)
+- `packages/divedra/src/workflow/manager-control.ts` (validates manager-emitted control actions)
 
 Responsibilities:
 
@@ -1167,8 +1173,8 @@ Fanout extension:
 
 Source:
 
-- `src/server/*`
-- `src/graphql/*`
+- `packages/divedra/src/server/*`
+- `packages/divedra/src/graphql/*`
 
 Responsibilities:
 
@@ -1203,7 +1209,7 @@ routing when the binding opts into lifecycle control; same pipeline powers libra
 The workflow engine should not import provider SDKs or provider-specific event
 types. Event bindings live outside workflow bundles so adding or changing an
 event source does not mutate `workflow.json`. The current implementation lives
-under `src/events/`.
+under `packages/divedra/src/events/`.
 
 Target architectural direction: event bindings should be understood as bridges
 between provider transports and the runtime-owned `external-mailbox` boundary,
@@ -1248,8 +1254,8 @@ Execution policies:
 - node add-ons are an authoring reuse layer, not a third role axis; after
   resolution, an add-on node executes as a normal worker with descriptor
   provenance recorded in runtime metadata
-- this behavior is implemented across `src/workflow/engine.ts`,
-  `src/workflow/types.ts`, and `src/events/`
+- this behavior is implemented across `packages/divedra/src/workflow/engine.ts`,
+  `packages/divedra/src/workflow/types.ts`, and `packages/divedra/src/events/`
 
 ## Current Execution Flow
 
@@ -1329,7 +1335,7 @@ Before each node execution, the runtime compiles a worker-facing execution
 inbox/outbox contract under the node artifact directory. That contract is the
 stable node-facing ABI across `agent`, `command`, `container`, and `addon`
 execution. The current implementation is centered on
-`src/workflow/node-execution-mailbox.ts`.
+`packages/divedra/src/workflow/node-execution-mailbox.ts`.
 
 ## Output Ownership
 
@@ -1387,7 +1393,7 @@ passes the same scope and action validation rules.
 - `execute-optional-step` / `skip-optional-step` (replacing `execute-optional-node` / `skip-optional-node`)
 - no structural child-workflow actions
 
-**Current** implementation in `src/workflow/manager-control.ts` accepts `planner-note`, `retry-step`, `replay-communication`, `execute-optional-step`, and `skip-optional-step` (retry/optional actions use `stepId`). Removal-bound aliases `retry-node` / `execute-optional-node` / `skip-optional-node` are **rejected** (no `nodeId` field on these actions). Structural compatibility actions `start-sub-workflow` and `deliver-to-child-input` are **rejected**. Remaining follow-up work in `impl-plans/workflow-legacy-compatibility-removal.md` is now mostly naming/doc cleanup rather than live authored compatibility logic. Cross-workflow dispatch is step-derived only; the engine does not execute authored top-level `workflow.workflowCalls`.
+**Current** implementation in `packages/divedra/src/workflow/manager-control.ts` accepts `planner-note`, `retry-step`, `replay-communication`, `execute-optional-step`, and `skip-optional-step` (retry/optional actions use `stepId`). Removal-bound aliases `retry-node` / `execute-optional-node` / `skip-optional-node` are **rejected** (no `nodeId` field on these actions). Structural compatibility actions `start-sub-workflow` and `deliver-to-child-input` are **rejected**. Remaining follow-up work in `impl-plans/workflow-legacy-compatibility-removal.md` is now mostly naming/doc cleanup rather than live authored compatibility logic. Cross-workflow dispatch is step-derived only; the engine does not execute authored top-level `workflow.workflowCalls`.
 
 Scope enforcement:
 
@@ -1417,8 +1423,8 @@ Required packages:
 - `divedra-core`: owns workflow definitions, validation, execution engine,
   runtime DB/session artifacts, mailbox contracts, supervisor primitives,
   backend adapter dispatch contracts, dedicated self-improve service contracts,
-  and the provider-neutral public library API currently exposed through
-  `src/lib.ts`.
+  and provider-neutral public library API contracts exported through package
+  surfaces rather than root source files.
 - `divedra-addons`: owns built-in node add-on catalog resolution, native
   add-on execution, add-on configuration validation, and any reusable add-on
   types that should not force downstream callers to depend on the CLI/server
@@ -1459,13 +1465,33 @@ Boundary rules:
   `--workflow-definition-dir ./examples`; example workflow JSON and prompt
   paths must not depend on repository-internal source paths
 
+Root source removal cutover:
+
+- the repository root `src/` directory is not a runtime, test, or compatibility
+  location; former root runtime and tests live under `packages/divedra/src`
+- executable commands in root tooling, README guidance, examples, and workflow
+  fixtures must invoke `bun run packages/divedra/src/bin.ts ...` or another
+  package-local entrypoint; `bun run src/main.ts ...` is obsolete
+- root `package.json`, `tsconfig.json`, `tsconfig.build.json`,
+  `vitest.config.ts`, `biome.json`, `scripts/run-bun-tests.sh`,
+  `scripts/check-source-filenames.ts`, and
+  `scripts/sync-package-declarations.ts` must resolve package-local sources
+  only
+- `packages/divedra/src/package-boundaries.test.ts` is the design guard for the
+  cutover: it must fail if root `src/` is recreated or package-local code
+  imports from root source paths
+- current docs and workflow fixtures should use package-local paths for live
+  commands and verification; historical design notes or archived mock payloads
+  may retain old `src/...` text only when that text is clearly historical
+  scenario data
+
 Supervisor runner-pool package boundary:
 
 - runner-pool lifecycle types, client request/response shapes, and the
   deterministic in-process pool implementation belong to `divedra-core`
-- `src/lib.ts` and `packages/divedra-core/src/index.ts` should expose the same
-  stable supervision client surface needed by embedders without requiring deep
-  imports from `src/workflow/*`
+- `packages/divedra/src/lib.ts` and `packages/divedra-core/src/index.ts` should
+  expose the same stable supervision client surface needed by embedders without
+  requiring deep imports from `packages/divedra/src/workflow/*`
 - `divedra` remains a compatibility facade and CLI package; it may re-export
   core supervision APIs but must not own independent runner-pool state
 - GraphQL, event-source, and CLI adapters may translate transport-specific
@@ -1492,22 +1518,21 @@ Self-improve package-boundary contract:
 - `packages/divedra/src/index.ts` remains the compatibility library facade and
   may wrap core self-improve calls with endpoint-backed GraphQL routing, but it
   must not define a second self-improve execution path
-- package CLI handlers can retain temporary root imports from
-  `src/workflow/self-improve` only while the package split still uses root
-  source modules as compatibility facades; those imports must be explicit in
-  package-boundary tests and carry the same removal expectation as other
-  temporary root imports
+- package CLI handlers must call package-local or exported package surfaces; root
+  source compatibility imports are no longer allowed after the root `src/`
+  removal
 - package-boundary tests are part of the design contract: export-contract
-  expectations should include intentional self-improve core exports, while root
-  import allowlists should include only the current CLI compatibility imports
-  needed to preserve command behavior
+  expectations should include intentional self-improve core exports, and root
+  import checks should reject package-to-root source dependencies
 
-Rollout should be staged. First introduce workspace metadata, package-local
-entrypoints, and compatibility facades without behavior changes. Then move
-implementation files by ownership, replacing relative imports with package
-imports only after the receiving package exports the needed surface. Finally,
-align examples, README command snippets, Taskfile tasks, `tsconfig` project
-references or build configs, Vitest configuration, and flake packaging.
+Rollout is staged. First introduce workspace metadata, package-local entrypoints,
+and compatibility facades without behavior changes. Then move implementation
+files by ownership, replacing relative imports with package imports only after
+the receiving package exports the needed surface. The root `src/` removal is the
+final cutover for the compatibility phase: examples, README command snippets,
+workflow fixtures, Taskfile tasks, `tsconfig` project references or build
+configs, Vitest configuration, and flake packaging must all resolve package-local
+entrypoints before the cutover is considered complete.
 
 Compatibility validation for the package split:
 
@@ -1524,15 +1549,14 @@ Compatibility validation for the package split:
 - the main runtime remains queue-based; the local `call-step` path is not the whole orchestration model
 - runtime/tooling cleanup is still needed in older internal documents that describe removed branch/loop or structural sub-workflow authoring
 - some supporting materials still assume node-centric naming even though authored execution is step-addressed
-- the repository is still physically a single Bun package until the package
-  split implementation moves source files, package metadata, and build/test
-  configuration into workspace packages
+- some compatibility facades remain while package ownership continues to
+  converge, but root source files are no longer an allowed compatibility layer
 
 ## References
 
 - `README.md`
-- `src/workflow/`
-- `src/events/`
-- `src/graphql/`
-- `src/server/`
+- `packages/divedra/src/workflow/`
+- `packages/divedra/src/events/`
+- `packages/divedra/src/graphql/`
+- `packages/divedra/src/server/`
 - `design-docs/specs/design-workflow-supervisor-dispatcher.md`

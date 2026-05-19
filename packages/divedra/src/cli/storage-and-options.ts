@@ -1,42 +1,42 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import type { EventListenerHandle } from "../../../../src/events/listener-service";
-import { createReadHookStdin } from "../../../../src/hook/index";
-import { SUPPORTED_HOOK_VENDORS } from "../../../../src/hook/types";
+import type { EventListenerHandle } from "../events/listener-service";
+import { createReadHookStdin } from "../hook/index";
+import { SUPPORTED_HOOK_VENDORS } from "../hook/types";
 import {
   startServe,
   type ServeStartOptions,
   type StartedServe,
-} from "../../../../src/server/serve";
+} from "../server/serve";
 import {
   normalizeAutoImprovePolicy,
   type AutoImprovePolicyInput,
-} from "../../../../src/workflow/auto-improve-policy";
-import type { createCommunicationService } from "../../../../src/workflow/communication-service";
+} from "../workflow/auto-improve-policy";
+import type { createCommunicationService } from "../workflow/communication-service";
 import {
   buildFanoutGroupSummaries,
   type buildInspectionSummary,
-} from "../../../../src/workflow/inspect";
-import { loadWorkflowFromCatalog } from "../../../../src/workflow/load";
-import { computeProjectScopedRootDataDirForScopeRoot } from "../../../../src/workflow/paths";
+} from "../workflow/inspect";
+import { loadWorkflowFromCatalog } from "../workflow/load";
+import { computeProjectScopedRootDataDirForScopeRoot } from "../workflow/paths";
 import type {
   listRuntimeHookEvents,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
   RuntimeEventReplyDispatchStatus,
-} from "../../../../src/workflow/runtime-db";
+} from "../workflow/runtime-db";
 import {
   resolveCurrentStepId,
   resolveCurrentStepIdFromWorkflow,
   type WorkflowSessionState,
-} from "../../../../src/workflow/session";
+} from "../workflow/session";
 import type {
   AsyncNodeAddonPayloadResolver,
   NodeAddonDefinition,
   NodeAddonPayloadResolver,
   ResolvedWorkflowSource,
   WorkflowScopeSelector,
-} from "../../../../src/workflow/types";
+} from "../workflow/types";
 import type {
   WorkflowSelfImproveMode,
   WorkflowSelfImproveSourceMode,

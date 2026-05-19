@@ -40,9 +40,7 @@ export interface WorkflowDefaults {
   readonly selfImprove?: WorkflowSelfImproveDefaults;
 }
 
-export type WorkflowSelfImproveMode =
-  | "report-only"
-  | "report-and-auto-improve";
+export type WorkflowSelfImproveMode = "report-only" | "report-and-auto-improve";
 
 export interface WorkflowSelfImproveDefaults {
   readonly enabled?: boolean;

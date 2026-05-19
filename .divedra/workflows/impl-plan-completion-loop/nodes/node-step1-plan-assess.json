@@ -1,6 +1,6 @@
 {
   "id": "step1-plan-assess",
-  "description": "Assess target implementation-plan completion from the plan file.",
+  "description": "Find the next incomplete active implementation plan and report whether active implementation work is complete.",
   "nodeType": "command",
   "variables": {},
   "command": {
@@ -11,6 +11,6 @@
     }
   },
   "output": {
-    "description": "Return JSON with plan_complete, nextTaskId, incompleteTasks, completedTasks, and implementation guidance."
+    "description": "Return JSON with plan_complete, activePlanFound, selected planPath, incompleteTasks, completedTasks, designReference, and delegation guidance."
   }
 }

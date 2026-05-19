@@ -52,8 +52,8 @@ Expected final output payload:
   ],
   "implPlanPaths": ["impl-plans/active/workflow-review-findings.md"],
   "changedFiles": [
-    "src/workflow/review-findings.ts",
-    "src/workflow/review-findings.test.ts",
+    "packages/divedra/src/workflow/review-findings.ts",
+    "packages/divedra/src/workflow/review-findings.test.ts",
     "impl-plans/active/workflow-review-findings.md",
     "README.md",
     ".agents/skills/divedra-impl-workflow/SKILL.md"

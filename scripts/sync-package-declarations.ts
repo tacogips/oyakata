@@ -28,6 +28,7 @@ interface DeclarationSupportContract {
 
 interface PackageDeclarationContract {
   readonly packageName: string;
+  readonly supportSourcePackageName?: string;
   readonly supportDirs: readonly string[];
   readonly supportDeclarations?: readonly DeclarationSupportContract[];
   readonly exports: readonly DeclarationExportContract[];
@@ -87,6 +88,7 @@ const packageDeclarationContracts: readonly PackageDeclarationContract[] = [
   },
   {
     packageName: "divedra-core",
+    supportSourcePackageName: "divedra",
     supportDirs: ["shared", "workflow"],
     supportDeclarations: [
       {
@@ -396,9 +398,11 @@ async function copyIfPresent(source: string, target: string): Promise<void> {
 }
 
 async function copyDeclarationSupport(
+  packageName: string,
   packageDistDir: string,
   supportDirs: readonly string[],
   supportDeclarations: readonly DeclarationSupportContract[],
+  supportSourcePackageName?: string,
 ): Promise<void> {
   await mkdir(packageDistDir, { recursive: true });
   const packageDistEntries = await readdir(packageDistDir, {
@@ -424,9 +428,16 @@ async function copyDeclarationSupport(
       force: true,
     });
   }
+  const sourcePackageName = supportSourcePackageName ?? packageName;
+  const sourcePackageDir = path.join(
+    rootDistDir,
+    "packages",
+    sourcePackageName,
+    "src",
+  );
   for (const dirName of supportDirs) {
     await copyIfPresent(
-      path.join(rootDistDir, "src", dirName),
+      path.join(sourcePackageDir, dirName),
       path.join(packageDistDir, dirName),
     );
   }
@@ -447,11 +458,9 @@ async function writeRewrittenDeclaration(
 ): Promise<void> {
   const source = await readFile(sourcePath, "utf8");
   const withoutSourceMap = source.replace(/^\/\/# sourceMappingURL=.*$/gm, "");
-  const rootRewritten = (
-    rewriteRootSourceImports
-      ? withoutSourceMap.replaceAll("../../../src/", "./")
-      : withoutSourceMap
-  );
+  const rootRewritten = rewriteRootSourceImports
+    ? withoutSourceMap.replaceAll("../../../src/", "./")
+    : withoutSourceMap;
   const rewritten = (
     rewritePackageImports
       ? rewritePackageSourceImports(rootRewritten)
@@ -520,9 +529,11 @@ for (const contract of packageDeclarationContracts) {
   );
   const supportDeclarations = contract.supportDeclarations ?? [];
   await copyDeclarationSupport(
+    contract.packageName,
     packageDistDir,
     contract.supportDirs,
     supportDeclarations,
+    contract.supportSourcePackageName,
   );
   await copyRewrittenDeclarationSupport(packageDistDir, supportDeclarations);
 

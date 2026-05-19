@@ -72,27 +72,27 @@
           "Do package entrypoints duplicate root src validation, declaration sync, or export normalization logic?"
         ],
         "duplicateSearchHints": [
-          "Compare packages/*/src entrypoints with src/lib.ts and scripts/sync-package-declarations.ts.",
+          "Compare packages/*/src entrypoints with packages/divedra/src/lib.ts and scripts/sync-package-declarations.ts.",
           "Record counterpart paths and behavioral differences before recommending shared helpers."
         ],
           "suggestedVerification": [
             "bun run build",
-            "bun test src/package-boundaries.test.ts"
+            "bun test packages/divedra/src/package-boundaries.test.ts"
           ]
         },
         {
           "sliceId": "src-compatibility-surfaces",
           "title": "Root src compatibility surfaces",
           "ownedPaths": [
-            "src/cli",
-            "src/main.ts",
-            "src/lib.ts",
-            "src/workflow",
-            "src/graphql",
-            "src/server",
-            "src/events",
-            "src/hook",
-            "src/shared"
+            "packages/divedra/src/cli",
+            "packages/divedra/src/bin.ts",
+            "packages/divedra/src/lib.ts",
+            "packages/divedra/src/workflow",
+            "packages/divedra/src/graphql",
+            "packages/divedra/src/server",
+            "packages/divedra/src/events",
+            "packages/divedra/src/hook",
+            "packages/divedra/src/shared"
           ],
           "excludedPaths": [
             "src/**/*.test.ts"
@@ -107,7 +107,7 @@
           "Which validation, parsing, normalization, routing, mailbox/output, or workflow-helper implementations repeat across root src areas?"
         ],
         "duplicateSearchHints": [
-          "Compare src/cli, src/workflow, src/graphql, src/server, src/events, and src/shared for parallel helper implementations.",
+          "Compare packages/divedra/src/cli, packages/divedra/src/workflow, packages/divedra/src/graphql, packages/divedra/src/server, packages/divedra/src/events, and packages/divedra/src/shared for parallel helper implementations.",
           "Preserve public API and error-envelope differences while identifying consolidation targets."
         ],
           "suggestedVerification": [
@@ -141,7 +141,7 @@
             "duplicateScavenge": {
               "repeatedConcept": "package/root export normalization",
               "counterpartPaths": [
-                "src/lib.ts",
+                "packages/divedra/src/lib.ts",
                 "packages/divedra-core/src/index.ts",
                 "packages/divedra-addons/src/index.ts"
               ],
@@ -193,7 +193,7 @@
         "findings": [
           {
             "severity": "mid",
-            "file": "src/lib.ts",
+            "file": "packages/divedra/src/lib.ts",
             "problem": "Root public API still acts as the implementation center for package consumers.",
             "duplicateScavenge": {
               "repeatedConcept": "root src compatibility and package facade exports",
@@ -217,14 +217,14 @@
             "taskId": "REF-002",
             "title": "Narrow root src compatibility surfaces after package contracts exist",
             "ownedPaths": [
-              "src/lib.ts",
-              "src/cli.ts",
-              "src/workflow",
-              "src/graphql",
-              "src/server",
-              "src/events",
-              "src/hook",
-              "src/shared"
+              "packages/divedra/src/lib.ts",
+              "packages/divedra/src/cli.ts",
+              "packages/divedra/src/workflow",
+              "packages/divedra/src/graphql",
+              "packages/divedra/src/server",
+              "packages/divedra/src/events",
+              "packages/divedra/src/hook",
+              "packages/divedra/src/shared"
             ],
             "blockedBy": [
               "REF-001"
@@ -276,7 +276,7 @@
             "packages/divedra-addons/src"
           ],
           "counterpartPaths": [
-            "src/lib.ts"
+            "packages/divedra/src/lib.ts"
           ],
           "behaviorToPreserve": [
             "Root src remains the compatibility API until package entrypoints pass build and API checks."
@@ -286,7 +286,7 @@
           ],
           "consolidationTarget": "Package-owned entrypoint contract with root compatibility shims.",
           "verificationCommands": [
-            "bun test src/package-boundaries.test.ts",
+            "bun test packages/divedra/src/package-boundaries.test.ts",
             "bun run build"
           ]
         }
@@ -316,7 +316,7 @@
           ],
           "dependsOn": [],
           "verificationCommands": [
-            "bun test src/package-boundaries.test.ts",
+            "bun test packages/divedra/src/package-boundaries.test.ts",
             "bun run build"
           ]
         },

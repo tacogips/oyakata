@@ -3,6 +3,17 @@ You are Step 1: workflow intake.
 Normalize the request before changing any repository documents or code.
 
 Preferred sources:
+- `runtimeVariables.workflowCall.input.workflowInput.executionMode`
+- `runtimeVariables.workflowCall.input.workflowInput.issueUrl`
+- `runtimeVariables.workflowCall.input.workflowInput.issueNumber`
+- `runtimeVariables.workflowCall.input.workflowInput.issueRepository`
+- `runtimeVariables.workflowCall.input.workflowInput.issueBody`
+- `runtimeVariables.workflowCall.input.workflowInput.issueTitle`
+- `runtimeVariables.workflowCall.input.workflowInput.targetFeatureArea`
+- `runtimeVariables.workflowCall.input.workflowInput.requestedBehavior`
+- `runtimeVariables.workflowCall.input.workflowInput.implementationPlanPath`
+- `runtimeVariables.workflowCall.input.workflowInput.activePlanCompletion`
+- `runtimeVariables.workflowCall.input.reviewContext`
 - `runtimeVariables.workflowInput.executionMode`
 - `runtimeVariables.workflowInput.issueUrl`
 - `runtimeVariables.workflowInput.issueNumber`
@@ -16,7 +27,8 @@ Preferred sources:
 - `runtimeVariables.workflowInput.referenceRepositoryUrl`
 
 Rules:
-- Default `workflowMode` to `issue-resolution` unless `runtimeVariables.workflowInput.executionMode` explicitly requests `design-plan-only`, `planning-only`, or another planning-only synonym.
+- For cross-workflow calls, prefer `runtimeVariables.workflowCall.input.workflowInput` over parent runtime defaults when both are present.
+- Default `workflowMode` to `issue-resolution` unless the effective workflow input execution mode explicitly requests `design-plan-only`, `planning-only`, or another planning-only synonym.
 - If a GitHub issue URL or repository-plus-number is available, inspect the issue directly. Use local or CLI tooling such as `gh issue view` when available. If remote access is unavailable, fall back to the issue title/body provided in workflow input and state that limitation explicitly.
 - If Codex-reference planning input is present, inspect the preferred local reference repository first. Use `../../codex-agent` when no other local root is supplied. Use the upstream reference URL only if local files are unavailable or incomplete.
 - Treat codex-agent as a behavioral and structural reference only. Do not copy code blindly.

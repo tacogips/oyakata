@@ -1,11 +1,8 @@
 import {
   buildMergedContinuationTimeline,
   loadContinuationRelatedSnapshots,
-} from "../../../src/workflow/history-continuation";
-import {
-  loadSession,
-  type SessionStoreOptions,
-} from "divedra-core";
+} from "./workflow/history-continuation";
+import { loadSession, type SessionStoreOptions } from "divedra-core";
 import {
   normalizeSessionState,
   type NodeExecutionRecord,

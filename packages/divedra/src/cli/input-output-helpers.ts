@@ -4,34 +4,34 @@ import path from "node:path";
 import {
   executeGraphqlRequest,
   type GraphqlClientResponse,
-} from "../../../../src/graphql/client";
+} from "../graphql/client";
 import {
   createLifecycleSupervisionPolicyInput,
   type AutoImprovePolicyInput,
-} from "../../../../src/workflow/auto-improve-policy";
-import { createCommunicationService } from "../../../../src/workflow/communication-service";
-import type { WorkflowRunOptions } from "../../../../src/workflow/engine";
+} from "../workflow/auto-improve-policy";
+import { createCommunicationService } from "../workflow/communication-service";
+import type { WorkflowRunOptions } from "../workflow/engine";
 import {
   readWorkflowNodePatch,
   type WorkflowNodePatchMap,
-} from "../../../../src/workflow/node-patches";
+} from "../workflow/node-patches";
 import {
   listRuntimeHookEvents,
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
-} from "../../../../src/workflow/runtime-db";
-import type { MockNodeScenario } from "../../../../src/workflow/scenario-adapter";
+} from "../workflow/runtime-db";
+import type { MockNodeScenario } from "../workflow/scenario-adapter";
 import type {
   NodeExecutionRecord,
   WorkflowSessionState,
-} from "../../../../src/workflow/session";
-import type { SessionHealthReport } from "../../../../src/workflow/session-health";
-import { loadSession } from "../../../../src/workflow/session-store";
+} from "../workflow/session";
+import type { SessionHealthReport } from "../workflow/session-health";
+import { loadSession } from "../workflow/session-store";
 import {
   createSupervisorProgressEventSink,
   createSupervisorProgressRenderer,
-} from "../../../../src/workflow/supervisor-progress-renderer";
-import { normalizeWorkflowWorkingDirectoryOverride } from "../../../../src/workflow/working-directory";
+} from "../workflow/supervisor-progress-renderer";
+import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import type {
   CliDependencies,
   CliIo,
@@ -94,9 +94,13 @@ export function printHelp(io: CliIo): void {
   io.stdout("  --worker-only  Scaffold a manager-less starter workflow");
   io.stdout("");
   io.stdout("Checkout options:");
-  io.stdout("  workflow checkout <github-url>  Install a GitHub workflow directory into project scope");
+  io.stdout(
+    "  workflow checkout <github-url>  Install a GitHub workflow directory into project scope",
+  );
   io.stdout("  --user-scope   Install checkout under the user scope root");
-  io.stdout("  --overwrite    Replace an existing checkout after staged validation");
+  io.stdout(
+    "  --overwrite    Replace an existing checkout after staged validation",
+  );
   io.stdout("");
   io.stdout("Workflow scope options:");
   io.stdout(

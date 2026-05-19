@@ -38,7 +38,9 @@ const TEMPLATE_EXACT_REFERENCE_PATTERN = /^\{\{\s*([^}]+?)\s*\}\}$/;
 const TEMPLATE_REFERENCE_PATTERN = /\{\{\s*([^}]+?)\s*\}\}/g;
 const NAMED_TEMPLATE_REFERENCE_PATTERN = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
 
-function isJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
+function isJsonObject(
+  value: unknown,
+): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

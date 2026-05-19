@@ -1,5 +1,8 @@
 import path from "node:path";
-import { AdapterExecutionError, type AdapterExecutionOutput } from "../../../divedra-core/src/index";
+import {
+  AdapterExecutionError,
+  type AdapterExecutionOutput,
+} from "../../../divedra-core/src/index";
 import {
   DEFAULT_MAIL_GATEWAY_IMAGE,
   DEFAULT_X_GATEWAY_IMAGE,

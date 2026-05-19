@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 export interface FilenamePolicyViolation {
@@ -8,6 +8,7 @@ export interface FilenamePolicyViolation {
 
 export interface FilenamePolicyCheckResult {
   readonly violations: readonly FilenamePolicyViolation[];
+  readonly rootSourceTreePresent: boolean;
 }
 
 const FORBIDDEN_SOURCE_PART_BASENAME = /^part-\d+\.tsx?$/u;
@@ -86,7 +87,11 @@ async function collectPackageSourceRoots(rootDir: string): Promise<string[]> {
 export async function checkSourceFilenames(
   rootDir: string,
 ): Promise<FilenamePolicyCheckResult> {
-  const sourceRoots = ["src", ...(await collectPackageSourceRoots(rootDir))];
+  const rootSourceTreePresent =
+    (
+      await stat(path.join(rootDir, "src")).catch(() => undefined)
+    )?.isDirectory() === true;
+  const sourceRoots = await collectPackageSourceRoots(rootDir);
   const sourceFiles = (
     await Promise.all(
       sourceRoots.map((sourceRoot) => collectSourceFiles(rootDir, sourceRoot)),
@@ -104,20 +109,28 @@ export async function checkSourceFilenames(
       basename: path.posix.basename(filePath),
     }));
 
-  return { violations };
+  return { rootSourceTreePresent, violations };
 }
 
 async function main(): Promise<void> {
   const rootDir = process.argv[2] ?? process.cwd();
   const result = await checkSourceFilenames(rootDir);
 
-  if (result.violations.length === 0) {
+  if (!result.rootSourceTreePresent && result.violations.length === 0) {
     return;
   }
 
-  console.error(
-    "Forbidden source filenames found. Use descriptive split filenames instead of part-<digits>.ts or part-<digits>.tsx:",
-  );
+  if (result.rootSourceTreePresent) {
+    console.error(
+      "Root source tree found at ./src. Runtime and tests must live under packages/divedra/src.",
+    );
+  }
+
+  if (result.violations.length > 0) {
+    console.error(
+      "Forbidden source filenames found. Use descriptive split filenames instead of part-<digits>.ts or part-<digits>.tsx:",
+    );
+  }
 
   for (const violation of result.violations) {
     console.error(`- ${violation.path}`);

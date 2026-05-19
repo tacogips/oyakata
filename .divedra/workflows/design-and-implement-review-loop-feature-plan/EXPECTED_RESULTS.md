@@ -8,7 +8,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate design-and-implement-review-loop-feature-plan --workflow-definition-dir .divedra/workflows
+bun run packages/divedra/src/bin.ts workflow validate design-and-implement-review-loop-feature-plan --workflow-definition-dir .divedra/workflows
 ```
 
 Expected result: the workflow is valid.
@@ -18,7 +18,7 @@ Expected result: the workflow is valid.
 Accepted feature-plan command:
 
 ```bash
-bun run src/main.ts workflow run design-and-implement-review-loop-feature-plan \
+bun run packages/divedra/src/bin.ts workflow run design-and-implement-review-loop-feature-plan \
   --workflow-definition-dir .divedra/workflows \
   --mock-scenario .divedra/workflows/design-and-implement-review-loop-feature-plan/mock-scenario.json \
   --output json
@@ -56,7 +56,7 @@ Expected final output payload:
   "designReviewSummary": "Independent design review accepted the feature-local design.",
   "implPlanReviewSummary": "Independent implementation-plan review accepted the plan.",
   "verification": [
-    "bun test src/workflow/session-history.test.ts"
+    "bun test packages/divedra/src/workflow/session-history.test.ts"
   ],
   "residualRisks": []
 }

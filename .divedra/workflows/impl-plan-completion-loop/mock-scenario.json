@@ -22,12 +22,14 @@
     "payload": {
       "planPath": "impl-plans/active/example-complete-plan.md",
       "plan_complete": true,
+      "activePlanFound": true,
+      "designReference": "design-docs/specs/example.md",
       "completedTasks": ["TASK-001"],
       "incompleteTasks": [],
       "nextTaskId": null,
       "implementationRequired": false,
       "verificationCommands": [
-        "bun test src/workflow/engine.test.ts -t plan-completion-loop"
+        "bun test packages/divedra/src/workflow/engine.test.ts -t plan-completion-loop"
       ],
       "residualRisks": []
     }

@@ -6,7 +6,12 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**/*.ts", "src/**/*.tsx", "vitest.config.ts"]
+    "includes": [
+      "packages/divedra/src/**/*.ts",
+      "packages/divedra/src/**/*.tsx",
+      "scripts/**/*.ts",
+      "vitest.config.ts"
+    ]
   },
   "formatter": {
     "enabled": true,

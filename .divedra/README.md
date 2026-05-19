@@ -19,31 +19,31 @@ project catalog.
 List available workflows from this repository:
 
 ```bash
-bun run src/main.ts workflow list
+bun run packages/divedra/src/bin.ts workflow list
 ```
 
 Validate the bundled workflows:
 
 ```bash
-bun run src/main.ts workflow validate design-and-implement-review-loop
-bun run src/main.ts workflow validate refactoring-divide-and-conquer
-bun run src/main.ts workflow validate refactoring-slice-review
-bun run src/main.ts workflow validate impl-plan-completion-loop
-bun run src/main.ts workflow validate recent-change-quality-loop
+bun run packages/divedra/src/bin.ts workflow validate design-and-implement-review-loop
+bun run packages/divedra/src/bin.ts workflow validate refactoring-divide-and-conquer
+bun run packages/divedra/src/bin.ts workflow validate refactoring-slice-review
+bun run packages/divedra/src/bin.ts workflow validate impl-plan-completion-loop
+bun run packages/divedra/src/bin.ts workflow validate recent-change-quality-loop
 ```
 
 Inspect workflow usage:
 
 ```bash
-bun run src/main.ts workflow inspect design-and-implement-review-loop --output json
-bun run src/main.ts workflow usage --output json
+bun run packages/divedra/src/bin.ts workflow inspect design-and-implement-review-loop --output json
+bun run packages/divedra/src/bin.ts workflow usage --output json
 ```
 
 Run the bundled planning and implementation workflow with its deterministic mock
 scenario:
 
 ```bash
-bun run src/main.ts workflow run design-and-implement-review-loop \
+bun run packages/divedra/src/bin.ts workflow run design-and-implement-review-loop \
   --mock-scenario .divedra/workflows/design-and-implement-review-loop/mock-scenario.json \
   --output json
 ```
@@ -51,16 +51,16 @@ bun run src/main.ts workflow run design-and-implement-review-loop \
 Run the refactoring workflow in deterministic plan-only mode:
 
 ```bash
-bun run src/main.ts workflow run refactoring-divide-and-conquer \
+bun run packages/divedra/src/bin.ts workflow run refactoring-divide-and-conquer \
   --mock-scenario .divedra/workflows/refactoring-divide-and-conquer/mock-scenario.json \
-  --variables '{"workflowInput":{"executionMode":"plan-only","targetPaths":["src/workflow","src/cli"],"maxSlices":2}}' \
+  --variables '{"workflowInput":{"executionMode":"plan-only","targetPaths":["packages/divedra/src/workflow","packages/divedra/src/cli"],"maxSlices":2}}' \
   --output json
 ```
 
 Run the bundled recent-change workflow with its deterministic mock scenario:
 
 ```bash
-bun run src/main.ts workflow run recent-change-quality-loop \
+bun run packages/divedra/src/bin.ts workflow run recent-change-quality-loop \
   --mock-scenario .divedra/workflows/recent-change-quality-loop/mock-scenario.json \
   --output json
 ```

@@ -44,7 +44,14 @@ function emit(payload) {
 
 function readPlanTasks(planPath) {
   const text = fs.readFileSync(planPath, "utf8");
-  const taskRegex = /^### (TASK-\d+): ([^\n]+)\n([\s\S]*?)(?=^### TASK-\d+: |\n## Dependencies|\n## Parallelization Notes|\n## Verification Plan|\n## Plan Completion Criteria|\n## Completion Criteria|\n## Progress Log|(?![\s\S]))/gm;
+  const headingRegex = /^### ((?:TASK|REF)-\d+): ([^\n]+)/gm;
+  const headingTitles = new Map(
+    [...text.matchAll(headingRegex)].map((headingMatch) => [
+      headingMatch[1],
+      headingMatch[2].trim(),
+    ]),
+  );
+  const taskRegex = /^### ((?:TASK|REF)-\d+): ([^\n]+)\n([\s\S]*?)(?=^### (?:TASK|REF)-\d+: |\n## Dependencies|\n## Parallelization Notes|\n## Verification Plan|\n## Plan Completion Criteria|\n## Completion Criteria|\n## Progress Log|(?![\s\S]))/gm;
   const tasks = [];
   let match;
   while ((match = taskRegex.exec(text)) !== null) {
@@ -72,6 +79,20 @@ function readPlanTasks(planPath) {
   }
   if (tasks.length === 0) {
     for (const rowMatch of text.matchAll(
+      /^\|\s*((?:TASK|REF)-\d+)\s*\|\s*([^|]+?)\s*\|.*$/gm,
+    )) {
+      const [, taskId, statusRaw] = rowMatch;
+      tasks.push({
+        taskId,
+        title: headingTitles.get(taskId) ?? taskId,
+        status: normalizeStatus(statusRaw, []),
+        dependencies: "See plan dependencies table",
+        completionCriteria: [],
+      });
+    }
+  }
+  if (tasks.length === 0) {
+    for (const rowMatch of text.matchAll(
       /^\|\s*(TASK-\d+)\s+([^|]+?)\s*\|[^|]*\|\s*([^|]+?)\s*\|[^|]*\|$/gm,
     )) {
       const [, taskId, title, statusRaw] = rowMatch;
@@ -90,21 +111,41 @@ function readPlanTasks(planPath) {
   return tasks;
 }
 
+function readPlanTopStatus(planPath) {
+  const text = fs.readFileSync(planPath, "utf8");
+  return normalizeStatus(text.match(/^\*\*Status\*\*:\s*([^\n]+)/m)?.[1], []);
+}
+
+function readPlanDesignReference(planPath) {
+  const text = fs.readFileSync(planPath, "utf8");
+  return text.match(/^\*\*Design Reference\*\*:\s*([^\n]+)/m)?.[1]?.trim() ?? "Unspecified";
+}
+
+function isPlanComplete(planPath) {
+  const tasks = readPlanTasks(planPath);
+  if (tasks.length > 0) {
+    return tasks.every((task) => task.status === "Completed");
+  }
+  return readPlanTopStatus(planPath) === "Completed";
+}
+
 function selectPlanPath() {
   if (requestedPlanPath.length > 0) {
     return {
       planPath: requestedPlanPath,
       selectionMode: "explicit",
       candidatePlans: [],
+      completedCandidatePlans: [],
     };
   }
 
   const activeDir = path.join("impl-plans", "active");
   if (!fs.existsSync(activeDir)) {
     return {
-      planPath: path.join(activeDir, "__missing__.md"),
+      planPath: null,
       selectionMode: "active-auto",
       candidatePlans: [],
+      completedCandidatePlans: [],
     };
   }
 
@@ -114,36 +155,60 @@ function selectPlanPath() {
     .map((entry) => path.join(activeDir, entry))
     .sort();
 
+  const completedCandidatePlans = [];
   for (const candidate of candidatePlans) {
-    const candidateTasks = readPlanTasks(candidate);
-    if (
-      candidateTasks.length > 0 &&
-      candidateTasks.some((task) => task.status !== "Completed")
-    ) {
+    if (!isPlanComplete(candidate)) {
       return {
         planPath: candidate,
         selectionMode: "active-auto",
         candidatePlans,
+        completedCandidatePlans,
       };
     }
+    completedCandidatePlans.push(candidate);
   }
 
   return {
-    planPath: candidatePlans[0] ?? path.join(activeDir, "__empty__.md"),
+    planPath: null,
     selectionMode: "active-auto",
     candidatePlans,
+    completedCandidatePlans,
   };
 }
 
 const planSelection = selectPlanPath();
 const planPath = planSelection.planPath;
 
+if (planPath === null) {
+  emit({
+    plan_complete: true,
+    activePlanFound: false,
+    planPath: null,
+    planSelectionMode: planSelection.selectionMode,
+    candidatePlans: planSelection.candidatePlans,
+    completedCandidatePlans: planSelection.completedCandidatePlans,
+    taskCount: 0,
+    remainingCount: 0,
+    completedTasks: [],
+    incompleteTasks: [],
+    nextTaskId: null,
+    nextTaskTitle: null,
+    nextTaskStatus: null,
+    completionCriteria: [],
+    designReference: null,
+    guidance: "No incomplete active implementation plans remain.",
+  });
+  process.exit(0);
+}
+
 if (!fs.existsSync(planPath)) {
   emit({
     plan_complete: false,
+    activePlanFound: false,
     planPath,
     planSelectionMode: planSelection.selectionMode,
     candidatePlans: planSelection.candidatePlans,
+    completedCandidatePlans: planSelection.completedCandidatePlans,
     error: "plan file not found",
     incompleteTasks: [],
     completedTasks: [],
@@ -174,6 +239,7 @@ function normalizeStatus(rawStatus, criteria) {
 }
 
 const tasks = readPlanTasks(planPath);
+const topStatus = readPlanTopStatus(planPath);
 
 const completedTasks = tasks.filter((task) => task.status === "Completed");
 const incompleteTasks = tasks.filter((task) => task.status !== "Completed");
@@ -181,15 +247,22 @@ const inProgress = incompleteTasks.find((task) => task.status === "In Progress")
 const notStarted = incompleteTasks.find((task) => task.status === "Not Started");
 const ready = incompleteTasks.find((task) => task.status === "Ready");
 const nextTask = inProgress ?? notStarted ?? ready ?? incompleteTasks[0] ?? null;
+const planComplete =
+  tasks.length > 0 ? incompleteTasks.length === 0 : topStatus === "Completed";
+const remainingCount =
+  tasks.length > 0 ? incompleteTasks.length : planComplete ? 0 : 1;
 
 emit({
-  plan_complete: incompleteTasks.length === 0,
+  plan_complete: planComplete,
+  activePlanFound: true,
   planPath,
   planSelectionMode: planSelection.selectionMode,
   candidatePlans: planSelection.candidatePlans,
+  completedCandidatePlans: planSelection.completedCandidatePlans,
   targetTasks: targetTasks === null ? null : [...targetTasks],
   taskCount: tasks.length,
-  remainingCount: incompleteTasks.length,
+  remainingCount,
+  designReference: readPlanDesignReference(planPath),
   completedTasks: completedTasks.map((task) => ({
     taskId: task.taskId,
     title: task.title,
@@ -209,8 +282,10 @@ emit({
   nextTaskStatus: nextTask?.status ?? null,
   completionCriteria: nextTask?.completionCriteria ?? [],
   guidance:
-    nextTask === null
+    planComplete
       ? "All target tasks are completed."
-      : `Implement ${nextTask.taskId} and update ${planPath} before reassessment.`,
+      : nextTask === null
+        ? `Delegate ${planPath} to design-and-implement-review-loop to complete plan-level active work before reassessment.`
+      : `Delegate ${planPath} to design-and-implement-review-loop to complete ${nextTask.taskId} and remaining active-plan work before reassessment.`,
 });
 '

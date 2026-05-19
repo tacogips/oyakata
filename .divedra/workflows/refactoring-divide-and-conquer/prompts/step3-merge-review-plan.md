@@ -74,13 +74,13 @@ Return adapter JSON:
       {
         "groupId": "DUP-001",
         "repeatedConcept": "workflow input validation",
-        "ownerPaths": ["src/workflow/example.ts"],
-        "counterpartPaths": ["src/cli/example.ts", "src/graphql/example.ts"],
+        "ownerPaths": ["packages/divedra/src/workflow/example.ts"],
+        "counterpartPaths": ["packages/divedra/src/cli/example.ts", "packages/divedra/src/graphql/example.ts"],
         "behaviorToPreserve": ["CLI usage errors", "GraphQL typed errors"],
         "knownDifferencesNotToCollapse": ["Different external error envelopes."],
         "consolidationTarget": "Existing validation helper or new narrow workflow-owned helper.",
         "conflicts": [],
-        "verificationCommands": ["bun test src/workflow/example.test.ts"]
+        "verificationCommands": ["bun test packages/divedra/src/workflow/example.test.ts"]
       }
     ],
     "tasks": [
@@ -89,22 +89,22 @@ Return adapter JSON:
         "title": "Move workflow runtime ownership to package exports",
         "status": "Ready",
         "ownedPaths": ["packages/divedra-core/src", "packages/divedra-core/package.json"],
-        "excludedPaths": ["src/workflow/**/*.test.ts", "dist", "packages/divedra-core/dist"],
+        "excludedPaths": ["packages/divedra/src/workflow/**/*.test.ts", "dist", "packages/divedra-core/dist"],
         "dependsOn": [],
         "duplicateGroupIds": ["DUP-001"],
         "repeatedConcept": "workflow input validation",
-        "counterpartPaths": ["src/cli/example.ts", "src/graphql/example.ts"],
+        "counterpartPaths": ["packages/divedra/src/cli/example.ts", "packages/divedra/src/graphql/example.ts"],
         "behaviorToPreserve": ["CLI usage errors", "GraphQL typed errors"],
         "knownDifferencesNotToCollapse": ["Different external error envelopes."],
         "consolidationTarget": "Existing validation helper or new narrow workflow-owned helper.",
         "conflicts": [],
-        "verificationCommands": ["bun test src/workflow/**/*.test.ts", "bun run build"]
+        "verificationCommands": ["bun test packages/divedra/src/workflow/**/*.test.ts", "bun run build"]
       }
     ],
     "nextTaskId": "REF-001",
     "conflicts": [],
     "residualRisks": [
-      "Root src/workflow compatibility shims remain until package entrypoints, tests, and build outputs pass.",
+      "Former root workflow sources now live under packages/divedra/src/workflow.",
       "No provisioning package is planned because no concrete provisioning source surface was identified."
     ]
   }

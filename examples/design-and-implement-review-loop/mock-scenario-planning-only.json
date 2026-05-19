@@ -23,7 +23,7 @@
         "The design maps the target codex-agent behavior to cursor-agent boundaries.",
         "The implementation plan is accepted and ready for a later execution workflow."
       ],
-      "impactedAreas": ["src/cli", "src/cursor", "impl-plans/active"],
+      "impactedAreas": ["packages/divedra/src/cli", "packages/divedra-adapters/src/cursor.ts", "impl-plans/active"],
       "constraints": [
         "Use codex-agent as a behavioral reference only.",
         "Keep Cursor-specific behavior behind adapter modules."
@@ -88,7 +88,7 @@
         ],
         "cursorCliBehaviorMapping": [
           "Map codex-agent session history behavior to cursor-agent local Cursor transcript discovery.",
-          "Keep Cursor transcript parsing behind src/cursor adapters."
+          "Keep Cursor transcript parsing behind packages/divedra-adapters/src/cursor.ts adapters."
         ],
         "designSummary": "Revised the design with explicit Cursor adapter boundaries and CLI behavior.",
         "decisions": [

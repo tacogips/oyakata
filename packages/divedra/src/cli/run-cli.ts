@@ -1,4 +1,4 @@
-import { inferRootDataDirFromExplicitStorageRoots } from "../../../../src/workflow/paths";
+import { inferRootDataDirFromExplicitStorageRoots } from "../workflow/paths";
 import type {
   CliDependencies,
   CliIo,

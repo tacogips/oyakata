@@ -37,19 +37,19 @@ Minimal runnable reference for a manager-less workflow:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate worker-only-single-step --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate worker-only-single-step --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect worker-only-single-step --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect worker-only-single-step --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run worker-only-single-step \
+bun run packages/divedra/src/bin.ts workflow run worker-only-single-step \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/worker-only-single-step/mock-scenario.json \
   --output json
@@ -92,7 +92,7 @@ supervised lifecycle control is deterministic and in-process; this workflow id i
 the supervisor identity, not a child `divedra` process manager:
 
 ```bash
-bun run src/main.ts workflow validate divedra-default-workflow-supervisor --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate divedra-default-workflow-supervisor --workflow-definition-dir ./examples
 ```
 
 ### `dispatcher-llm-resolver-stub`
@@ -117,13 +117,13 @@ Minimal worker-only workflow showing the built-in node add-on catalog:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate chat-reply-webhook --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate chat-reply-webhook --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect chat-reply-webhook --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect chat-reply-webhook --workflow-definition-dir ./examples --output json
 ```
 
 See `examples/event-sources/README.md` for a local webhook event and reply
@@ -143,7 +143,7 @@ through a real Matrix receive/send path:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate matrix-chat-reply --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate matrix-chat-reply --workflow-definition-dir ./examples
 ```
 
 Run the local Matrix verification:
@@ -164,8 +164,8 @@ Chat-triggered supervisor collaboration reference:
 Validate the workflow and event binding:
 
 ```bash
-bun run src/main.ts workflow validate chat-supervisor-collaboration --workflow-definition-dir ./examples
-bun run src/main.ts events validate \
+bun run packages/divedra/src/bin.ts workflow validate chat-supervisor-collaboration --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts events validate \
   --workflow-definition-dir ./examples \
   --event-root ./examples/chat-supervisor-collaboration/.divedra-events
 ```
@@ -173,7 +173,7 @@ bun run src/main.ts events validate \
 Run the deterministic workflow scenario:
 
 ```bash
-bun run src/main.ts workflow run chat-supervisor-collaboration \
+bun run packages/divedra/src/bin.ts workflow run chat-supervisor-collaboration \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/chat-supervisor-collaboration/mock-scenario.json \
   --output json
@@ -201,19 +201,19 @@ step-addressed authored shape:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate workflow-call-simple --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate workflow-call-simple --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect workflow-call-simple --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect workflow-call-simple --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run workflow-call-simple \
+bun run packages/divedra/src/bin.ts workflow run workflow-call-simple \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/workflow-call-simple/mock-scenario.json \
   --output json
@@ -232,19 +232,19 @@ Worker-only callee bundle used by `workflow-call-simple`:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate workflow-call-review-target --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate workflow-call-review-target --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect workflow-call-review-target --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect workflow-call-review-target --workflow-definition-dir ./examples --output json
 ```
 
 Run it standalone with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run workflow-call-review-target \
+bun run packages/divedra/src/bin.ts workflow run workflow-call-review-target \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/workflow-call-review-target/mock-scenario.json \
   --output json
@@ -268,13 +268,13 @@ Real development workflow sample adapted from the project-local workflow catalog
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate design-and-implement-review-loop --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate design-and-implement-review-loop --workflow-definition-dir ./examples
 ```
 
 Run the full deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run design-and-implement-review-loop \
+bun run packages/divedra/src/bin.ts workflow run design-and-implement-review-loop \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/design-and-implement-review-loop/mock-scenario.json \
   --output json
@@ -299,7 +299,7 @@ Worker-only companion workflow used by the bounded fanout path in
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate design-and-implement-review-loop-feature-plan --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate design-and-implement-review-loop-feature-plan --workflow-definition-dir ./examples
 ```
 
 ### `recent-change-quality-loop`
@@ -317,13 +317,13 @@ Real development workflow sample for reviewing recent repository changes:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate recent-change-quality-loop --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate recent-change-quality-loop --workflow-definition-dir ./examples
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run recent-change-quality-loop \
+bun run packages/divedra/src/bin.ts workflow run recent-change-quality-loop \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/recent-change-quality-loop/mock-scenario.json \
   --output json
@@ -348,19 +348,19 @@ the structural sub-workflow compatibility reference.
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate subworkflow-chained-simple --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate subworkflow-chained-simple --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect subworkflow-chained-simple --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect subworkflow-chained-simple --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run subworkflow-chained-simple \
+bun run packages/divedra/src/bin.ts workflow run subworkflow-chained-simple \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/subworkflow-chained-simple/mock-scenario.json \
   --output json
@@ -383,19 +383,19 @@ Recommended mixed-backend reference:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect claude-divedra-codex-coding --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect claude-divedra-codex-coding --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run claude-divedra-codex-coding \
+bun run packages/divedra/src/bin.ts workflow run claude-divedra-codex-coding \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/claude-divedra-codex-coding/mock-scenario.json \
   --output json
@@ -428,19 +428,19 @@ Execution notes:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate node-combinations-showcase --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate node-combinations-showcase --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect node-combinations-showcase --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect node-combinations-showcase --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run node-combinations-showcase \
+bun run packages/divedra/src/bin.ts workflow run node-combinations-showcase \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/node-combinations-showcase/mock-scenario.json \
   --output json
@@ -461,7 +461,7 @@ Minimal scheduled continuation workflow:
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run scheduled-sleep \
+bun run packages/divedra/src/bin.ts workflow run scheduled-sleep \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/scheduled-sleep/mock-scenario.json \
   --output json
@@ -502,19 +502,19 @@ Execution notes:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate first-four-arithmetic-pipeline --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate first-four-arithmetic-pipeline --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect first-four-arithmetic-pipeline --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect first-four-arithmetic-pipeline --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run first-four-arithmetic-pipeline \
+bun run packages/divedra/src/bin.ts workflow run first-four-arithmetic-pipeline \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/first-four-arithmetic-pipeline/mock-scenario.json \
   --output json
@@ -534,19 +534,19 @@ Reference workflow for the case where a regular task node also uses
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate claude-divedra-claude-worker --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate claude-divedra-claude-worker --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect claude-divedra-claude-worker --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect claude-divedra-claude-worker --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run claude-divedra-claude-worker \
+bun run packages/divedra/src/bin.ts workflow run claude-divedra-claude-worker \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/claude-divedra-claude-worker/mock-scenario.json \
   --output json
@@ -572,19 +572,19 @@ Reference workflow for the case where one worker node should run twice:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate same-node-session-echo --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate same-node-session-echo --workflow-definition-dir ./examples
 ```
 
 Inspect it:
 
 ```bash
-bun run src/main.ts workflow inspect same-node-session-echo --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow inspect same-node-session-echo --workflow-definition-dir ./examples --output json
 ```
 
 Run it with the bundled deterministic scenario:
 
 ```bash
-bun run src/main.ts workflow run same-node-session-echo \
+bun run packages/divedra/src/bin.ts workflow run same-node-session-echo \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/same-node-session-echo/mock-scenario.json \
   --output json
@@ -614,13 +614,13 @@ canonical debate example and replaces the older hard-coded topic variant:
 Validate it:
 
 ```bash
-bun run src/main.ts workflow validate codex-codex-topic-debate --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate codex-codex-topic-debate --workflow-definition-dir ./examples
 ```
 
 Run it with live backend execution:
 
 ```bash
-bun run src/main.ts workflow run codex-codex-topic-debate \
+bun run packages/divedra/src/bin.ts workflow run codex-codex-topic-debate \
   --workflow-definition-dir ./examples \
   --variables '{"humanInput":{"request":"Debate immigration policy. The affirmative side should argue for more open immigration with managed legal pathways, and the negative side should argue for stricter border and asylum controls."}}' \
   --output json

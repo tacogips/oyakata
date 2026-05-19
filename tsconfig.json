@@ -65,6 +65,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts", "packages/*/src/**/*.ts"],
+  "include": ["scripts/**/*.ts", "packages/*/src/**/*.ts"],
   "exclude": ["node_modules", "dist", "packages/*/dist"]
 }

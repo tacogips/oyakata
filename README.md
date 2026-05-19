@@ -47,8 +47,11 @@ bun install
 Run commands from source:
 
 ```bash
-bun run src/main.ts <command>
+bun run packages/divedra/src/bin.ts <command>
 ```
+
+The repository no longer keeps a root `src/` runtime tree. Source-based CLI
+examples should use the package-local executable under `packages/divedra/src`.
 
 Run directly from the Nix flake on Linux or Darwin:
 
@@ -112,6 +115,10 @@ Temporary CLI imports from root workflow modules are tracked by package-boundary
 tests while package-owned adapters are still being split out; new root imports
 must be explicit compatibility entries, not broad allowlist patterns.
 
+The removed root `src/` directory is guarded by package-boundary and source
+filename checks; runtime and test ownership for the compatibility package stays
+under `packages/divedra/src`.
+
 ## Development Checks
 
 `bun run lint:biome` is the shared Biome lint path for local development, task
@@ -143,7 +150,7 @@ Install a workflow bundle from a public GitHub directory into the scoped
 catalog with `workflow checkout`:
 
 ```bash
-bun run src/main.ts workflow checkout \
+bun run packages/divedra/src/bin.ts workflow checkout \
   https://github.com/<owner>/<repo>/tree/<ref>/.divedra/workflows/<workflow-name>
 ```
 
@@ -164,19 +171,19 @@ workflow's purpose, callable step, callable role, input/output summary, and
 compact step overview.
 
 ```bash
-bun run src/main.ts workflow usage --workflow-definition-dir ./examples --output json
+bun run packages/divedra/src/bin.ts workflow usage --workflow-definition-dir ./examples --output json
 ```
 
 Use `workflow list` for a human-facing catalog overview:
 
 ```bash
-bun run src/main.ts workflow list --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow list --workflow-definition-dir ./examples
 ```
 
 Use `workflow status` for recent execution status for one workflow:
 
 ```bash
-bun run src/main.ts workflow status <workflow-name> --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow status <workflow-name> --workflow-definition-dir ./examples
 ```
 
 `workflow list` and `workflow status` report active executions only when those
@@ -206,7 +213,7 @@ inspection summary and runtime readiness checks that compact output does not
 display:
 
 ```bash
-bun run src/main.ts workflow inspect <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow inspect <workflow-name> \
   --workflow-definition-dir ./examples \
   --structure
 ```
@@ -215,7 +222,7 @@ Use JSON inspection when you need the full machine-readable workflow summary,
 including runtime readiness and other detailed inspection fields:
 
 ```bash
-bun run src/main.ts workflow inspect <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow inspect <workflow-name> \
   --workflow-definition-dir ./examples \
   --output json
 ```
@@ -225,25 +232,25 @@ bun run src/main.ts workflow inspect <workflow-name> \
 Create a starter workflow in the selected catalog:
 
 ```bash
-bun run src/main.ts workflow create <workflow-name>
+bun run packages/divedra/src/bin.ts workflow create <workflow-name>
 ```
 
 Create a manager-less starter workflow:
 
 ```bash
-bun run src/main.ts workflow create <workflow-name> --worker-only
+bun run packages/divedra/src/bin.ts workflow create <workflow-name> --worker-only
 ```
 
 Validate before running:
 
 ```bash
-bun run src/main.ts workflow validate <workflow-name> --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts workflow validate <workflow-name> --workflow-definition-dir ./examples
 ```
 
 Validate local executability before running agent workflows:
 
 ```bash
-bun run src/main.ts workflow validate <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow validate <workflow-name> \
   --workflow-definition-dir ./examples \
   --executable \
   --output json
@@ -269,7 +276,7 @@ output.
 Run with JSON output:
 
 ```bash
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --output json
 ```
@@ -277,7 +284,7 @@ bun run src/main.ts workflow run <workflow-name> \
 Run with runtime variables:
 
 ```bash
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --variables '{"hours":48}' \
   --output json
@@ -287,12 +294,12 @@ File-based runtime variables are also supported with explicit `@file` and the
 historical bare file path form:
 
 ```bash
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --variables @./variables.json \
   --output json
 
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --variables ./variables.json \
   --output json
@@ -302,11 +309,11 @@ Patch node settings for a single validation or run without editing workflow
 files:
 
 ```bash
-bun run src/main.ts workflow validate <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow validate <workflow-name> \
   --workflow-definition-dir ./examples \
   --node-patch '{"worker":{"executionBackend":"cursor-cli-agent","model":"claude-sonnet-4-5"}}'
 
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --node-patch @./node-patch.json \
   --output json
@@ -322,7 +329,7 @@ validation against the patched workflow state.
 Run with a deterministic mock scenario:
 
 ```bash
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --mock-scenario ./examples/<workflow-name>/mock-scenario.json \
   --output json
@@ -334,7 +341,7 @@ remains accepted for scripts that spell the policy explicitly, and
 workflow when that bundle is available in the workflow catalog:
 
 ```bash
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --auto-improve \
   --nested-supervisor \
@@ -355,7 +362,7 @@ workflow structure, and prompts, and can be explicitly run in report-only or
 report-and-auto-improve mode:
 
 ```bash
-bun run src/main.ts workflow self-improve <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow self-improve <workflow-name> \
   --workflow-definition-dir ./examples \
   --latest \
   --limit 10 \
@@ -418,19 +425,19 @@ After a workflow starts, keep the returned `sessionId` / workflow execution id.
 Check status:
 
 ```bash
-bun run src/main.ts session status <session-id> --output json
+bun run packages/divedra/src/bin.ts session status <session-id> --output json
 ```
 
 Show progress:
 
 ```bash
-bun run src/main.ts session progress <session-id>
+bun run packages/divedra/src/bin.ts session progress <session-id>
 ```
 
 List merged step-run history for the same workflow execution:
 
 ```bash
-bun run src/main.ts session step-runs <session-id> --output json
+bun run packages/divedra/src/bin.ts session step-runs <session-id> --output json
 ```
 
 For any active `sessionId` reported by local `workflow status` in the same
@@ -442,19 +449,19 @@ context, the local workflow overview should not report the session as active.
 Resume a paused or resumable execution:
 
 ```bash
-bun run src/main.ts session resume <session-id>
+bun run packages/divedra/src/bin.ts session resume <session-id>
 ```
 
 Rerun from a step without importing prior step artifacts:
 
 ```bash
-bun run src/main.ts session rerun <session-id> <step-id>
+bun run packages/divedra/src/bin.ts session rerun <session-id> <step-id>
 ```
 
 Continue from a concrete prior step-run boundary:
 
 ```bash
-bun run src/main.ts session continue <session-id> \
+bun run packages/divedra/src/bin.ts session continue <session-id> \
   --start-step <step-id> \
   --after-step-run <step-run-id>
 ```
@@ -464,7 +471,7 @@ bun run src/main.ts session continue <session-id> \
 Use `call-step` for local debugging or direct step-addressed integration:
 
 ```bash
-bun run src/main.ts call-step <workflow-id> <workflow-run-id> <step-id> \
+bun run packages/divedra/src/bin.ts call-step <workflow-id> <workflow-run-id> <step-id> \
   --message-file ./message.json \
   --output json
 ```
@@ -483,7 +490,7 @@ Useful `call-step` options:
 Start the local server:
 
 ```bash
-bun run src/main.ts serve --workflow-definition-dir ./examples
+bun run packages/divedra/src/bin.ts serve --workflow-definition-dir ./examples
 ```
 
 Defaults:
@@ -496,7 +503,7 @@ Defaults:
 Run a GraphQL query from the CLI:
 
 ```bash
-bun run src/main.ts graphql '
+bun run packages/divedra/src/bin.ts graphql '
   query {
     workflows(input: {})
   }
@@ -510,7 +517,7 @@ schema using project-scoped workflow/session storage. Use `--endpoint` or
 Run a workflow through a remote endpoint:
 
 ```bash
-bun run src/main.ts workflow run <workflow-name> \
+bun run packages/divedra/src/bin.ts workflow run <workflow-name> \
   --workflow-definition-dir ./examples \
   --endpoint http://127.0.0.1:43173/graphql \
   --output json
@@ -547,13 +554,13 @@ workflow root, or from `--event-root`.
 Validate event configuration:
 
 ```bash
-bun run src/main.ts events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events
+bun run packages/divedra/src/bin.ts events validate --workflow-definition-dir ./examples --event-root ./examples/event-sources/.divedra-events
 ```
 
 Emit a fixture event:
 
 ```bash
-bun run src/main.ts events emit <source-id> \
+bun run packages/divedra/src/bin.ts events emit <source-id> \
   --event-root ./examples/event-sources/.divedra-events \
   --event-file ./examples/event-sources/payloads/chat-message.json
 ```
@@ -561,23 +568,23 @@ bun run src/main.ts events emit <source-id> \
 Start listener adapters:
 
 ```bash
-bun run src/main.ts events serve --event-root ./examples/event-sources/.divedra-events
+bun run packages/divedra/src/bin.ts events serve --event-root ./examples/event-sources/.divedra-events
 ```
 
 List and replay receipts:
 
 ```bash
-bun run src/main.ts events list --event-root ./examples/event-sources/.divedra-events
+bun run packages/divedra/src/bin.ts events list --event-root ./examples/event-sources/.divedra-events
 ```
 
 ```bash
-bun run src/main.ts events replay <receipt-id> --event-root ./examples/event-sources/.divedra-events
+bun run packages/divedra/src/bin.ts events replay <receipt-id> --event-root ./examples/event-sources/.divedra-events
 ```
 
 Inspect reply dispatch records for a workflow execution:
 
 ```bash
-bun run src/main.ts events replies <workflow-execution-id>
+bun run packages/divedra/src/bin.ts events replies <workflow-execution-id>
 ```
 
 Set `DIVEDRA_EVENTS_READ_ONLY=true` or pass `--read-only` to validate and
@@ -630,9 +637,9 @@ canonical UTC `nextDueAt`; invalid, ambiguous, or unresolvable wall-clock times
 do not persist a schedule.
 
 ```bash
-bun run src/main.ts events schedules list --artifact-root ./tmp/event-source-demo/workflow-artifacts --source chat-sdk-slack --status active
-bun run src/main.ts events schedules inspect <schedule-id> --artifact-root ./tmp/event-source-demo/workflow-artifacts --output json
-bun run src/main.ts events schedules cancel <schedule-id> --artifact-root ./tmp/event-source-demo/workflow-artifacts --reason "operator cleanup"
+bun run packages/divedra/src/bin.ts events schedules list --artifact-root ./tmp/event-source-demo/workflow-artifacts --source chat-sdk-slack --status active
+bun run packages/divedra/src/bin.ts events schedules inspect <schedule-id> --artifact-root ./tmp/event-source-demo/workflow-artifacts --output json
+bun run packages/divedra/src/bin.ts events schedules cancel <schedule-id> --artifact-root ./tmp/event-source-demo/workflow-artifacts --reason "operator cleanup"
 ```
 
 ## Scheduling
@@ -672,13 +679,13 @@ workflow trigger execution remain in the event path.
 Run a hook receiver:
 
 ```bash
-bun run src/main.ts hook --vendor claude-code
+bun run packages/divedra/src/bin.ts hook --vendor claude-code
 ```
 
 Print an install snippet:
 
 ```bash
-bun run src/main.ts hook snippet --vendor codex
+bun run packages/divedra/src/bin.ts hook snippet --vendor codex
 ```
 
 Supported vendors:
@@ -812,9 +819,9 @@ are explicit.
 Run the local refactoring workflow with project workflow definitions:
 
 ```bash
-bun run src/main.ts workflow run refactoring-divide-and-conquer \
+bun run packages/divedra/src/bin.ts workflow run refactoring-divide-and-conquer \
   --workflow-definition-dir .divedra/workflows \
-  --variables '{"workflowInput":{"requestedOutcome":"Run duplicate-scavenge refactoring: find duplicate implementations and consolidate safe candidates behind shared helpers or APIs.","refactoringMode":"duplicate-scavenge","targetPaths":["src","packages",".divedra/workflows"],"excludePaths":["dist","node_modules","impl-plans/completed"],"maxSlices":8,"constraints":["Do not stage, commit, or push unless explicitly requested.","Do not revert unrelated dirty worktree changes.","Preserve public behavior and public APIs unless the plan explicitly authorizes a change.","Record duplicate evidence, chosen consolidation target, behavioral differences, risks, and verification commands."],"verificationPreferences":["Run focused tests for each consolidated behavior.","Run workflow validate when workflow bundles change.","Run git diff --check before completion."]}}' \
+  --variables '{"workflowInput":{"requestedOutcome":"Run duplicate-scavenge refactoring: find duplicate implementations and consolidate safe candidates behind shared helpers or APIs.","refactoringMode":"duplicate-scavenge","targetPaths":["packages/divedra/src","packages",".divedra/workflows"],"excludePaths":["dist","node_modules","impl-plans/completed"],"maxSlices":8,"constraints":["Do not stage, commit, or push unless explicitly requested.","Do not revert unrelated dirty worktree changes.","Preserve public behavior and public APIs unless the plan explicitly authorizes a change.","Record duplicate evidence, chosen consolidation target, behavioral differences, risks, and verification commands."],"verificationPreferences":["Run focused tests for each consolidated behavior.","Run workflow validate when workflow bundles change.","Run git diff --check before completion."]}}' \
   --output json --verbose --no-auto-improve
 ```
 

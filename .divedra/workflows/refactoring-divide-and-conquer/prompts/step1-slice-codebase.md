@@ -81,19 +81,19 @@ Return adapter JSON:
         "ownedPaths": ["packages/divedra-core/src", "packages/divedra-core/package.json"],
         "excludedPaths": ["dist", "packages/divedra-core/dist"],
         "dependencyNotes": [
-          "Root src/workflow files are compatibility shims until package-owned entrypoints and build outputs pass.",
-          "Public API callers in src/lib.ts must keep behavior."
+          "Runtime implementation files now live under packages/divedra/src/workflow.",
+          "Public API callers through packages/divedra/src/index.ts and packages/divedra/src/lib.ts must keep behavior."
         ],
         "reviewQuestions": [
           "Which runtime responsibilities should move behind package-owned exports?",
-          "Which src/workflow imports are temporary compatibility dependencies rather than ownership roots?",
+          "Which packages/divedra/src/workflow imports are temporary compatibility dependencies rather than ownership roots?",
           "In duplicate-scavenge mode, are there duplicate implementations of validation, parsing, normalization, routing, or output handling that should share one existing helper?"
         ],
         "duplicateSearchHints": [
-          "Compare validation and routing helper patterns against src/cli, src/graphql, src/server, and packages/*/src.",
+          "Compare validation and routing helper patterns against packages/divedra/src/cli, packages/divedra/src/graphql, packages/divedra/src/server, and packages/*/src.",
           "Record counterpart paths and behavioral differences before proposing consolidation."
         ],
-        "suggestedVerification": ["bun test src/workflow/**/*.test.ts", "bun run build"]
+        "suggestedVerification": ["bun test packages/divedra/src/workflow/**/*.test.ts", "bun run build"]
       }
     ],
     "globalConstraints": [

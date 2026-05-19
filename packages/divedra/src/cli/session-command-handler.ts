@@ -1,11 +1,11 @@
 import { continueWorkflowFromHistory } from "../lib-continuation";
 import { listMergedWorkflowExecutionStepRuns } from "../lib-step-runs";
-import { runWorkflow } from "../../../../src/workflow/engine";
-import { buildFanoutGroupSummaries } from "../../../../src/workflow/inspect";
-import { listRuntimeNodeLogs } from "../../../../src/workflow/runtime-db";
-import type { MockNodeScenario } from "../../../../src/workflow/scenario-adapter";
-import { buildSessionHealthReport } from "../../../../src/workflow/session-health";
-import { loadSession } from "../../../../src/workflow/session-store";
+import { runWorkflow } from "../workflow/engine";
+import { buildFanoutGroupSummaries } from "../workflow/inspect";
+import { listRuntimeNodeLogs } from "../workflow/runtime-db";
+import type { MockNodeScenario } from "../workflow/scenario-adapter";
+import { buildSessionHealthReport } from "../workflow/session-health";
+import { loadSession } from "../workflow/session-store";
 import type {
   RunCliScopeContext,
   WorkflowExecutionExport,

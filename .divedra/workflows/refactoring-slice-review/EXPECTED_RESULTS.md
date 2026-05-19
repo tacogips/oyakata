@@ -9,7 +9,7 @@ Ignore `sessionId`, timestamps, and artifact paths.
 Command:
 
 ```bash
-bun run src/main.ts workflow validate refactoring-slice-review --workflow-definition-dir .divedra/workflows
+bun run packages/divedra/src/bin.ts workflow validate refactoring-slice-review --workflow-definition-dir .divedra/workflows
 ```
 
 Expected result: the workflow is valid.
@@ -19,7 +19,7 @@ Expected result: the workflow is valid.
 Command:
 
 ```bash
-bun run src/main.ts workflow run refactoring-slice-review \
+bun run packages/divedra/src/bin.ts workflow run refactoring-slice-review \
   --workflow-definition-dir .divedra/workflows \
   --mock-scenario .divedra/workflows/refactoring-slice-review/mock-scenario.json \
   --output json
@@ -55,7 +55,7 @@ Expected final output payload highlights:
       "duplicateScavenge": {
         "repeatedConcept": "package/root export normalization",
         "counterpartPaths": [
-          "src/lib.ts",
+          "packages/divedra/src/lib.ts",
           "packages/divedra-core/src/index.ts",
           "packages/divedra-addons/src/index.ts"
         ],
@@ -64,7 +64,7 @@ Expected final output payload highlights:
         ],
         "consolidationTarget": "Package-owned entrypoint contract with root src compatibility shims.",
         "verificationSuggestions": [
-          "bun test src/package-boundaries.test.ts",
+          "bun test packages/divedra/src/package-boundaries.test.ts",
           "bun run build"
         ]
       }
@@ -82,7 +82,7 @@ Expected final output payload highlights:
     "No provisioning package should be created because no concrete provisioning source surface was identified."
   ],
   "verificationSuggestions": [
-    "bun run src/main.ts workflow validate refactoring-slice-review --workflow-definition-dir .divedra/workflows",
+    "bun run packages/divedra/src/bin.ts workflow validate refactoring-slice-review --workflow-definition-dir .divedra/workflows",
     "bun run build"
   ],
   "residualRisks": [

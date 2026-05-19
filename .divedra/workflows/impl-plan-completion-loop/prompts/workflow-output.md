@@ -5,11 +5,12 @@ Also read the Step 4 archival output and report whether completed active plans w
 
 Return final JSON with:
 - `status`: `completed`
-- `planPath`
+- `lastAssessedPlanPath`
 - `completedTasks`
 - `remainingTasks`
 - `archivedPlans`
 - `activePlansRemaining`
+- `delegatedWorkflowRuns`
 - `verificationEvidence`
 - `changedFiles`
 - `residualRisks`

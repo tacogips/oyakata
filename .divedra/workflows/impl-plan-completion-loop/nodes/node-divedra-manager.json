@@ -6,7 +6,7 @@
   "promptTemplateFile": "prompts/divedra-manager.md",
   "variables": {},
   "input": {
-    "description": "Workflow arguments. `workflowInput.planPath` should point to the implementation plan to complete. Optional `workflowInput.maxIterations` can document the operator's intended loop budget.",
+    "description": "Workflow arguments. Optional `workflowInput.planPath` can constrain execution to one active implementation plan; otherwise the workflow selects the next incomplete plan from impl-plans/active. Optional `workflowInput.maxIterations` can document the operator's intended loop budget.",
     "jsonSchema": {
       "type": "object",
       "additionalProperties": true,

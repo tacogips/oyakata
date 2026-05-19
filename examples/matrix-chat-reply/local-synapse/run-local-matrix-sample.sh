@@ -287,7 +287,7 @@ mkdir -p \
   "${ARTIFACT_ROOT}"
 write_event_configuration
 
-bun run "${REPO_ROOT}/src/main.ts" events validate \
+bun run "${REPO_ROOT}/packages/divedra/src/bin.ts" events validate \
   --workflow-definition-dir "${REPO_ROOT}/examples" \
   --event-root "${EVENT_ROOT}" \
   --output json \
@@ -297,7 +297,7 @@ LISTENER_LOG="${RUN_ROOT}/events-serve.log"
 : > "${LISTENER_LOG}"
 DIVEDRA_MATRIX_HOMESERVER_URL="${HOMESERVER_URL}" \
 DIVEDRA_MATRIX_ACCESS_TOKEN="${BOT_TOKEN}" \
-  bun run "${REPO_ROOT}/src/main.ts" events serve \
+  bun run "${REPO_ROOT}/packages/divedra/src/bin.ts" events serve \
     --workflow-definition-dir "${REPO_ROOT}/examples" \
     --event-root "${EVENT_ROOT}" \
     --artifact-root "${ARTIFACT_ROOT}" \
@@ -345,13 +345,13 @@ if [[ -z "${REPLY_EVENT_ID}" ]]; then
   exit 1
 fi
 
-bun run "${REPO_ROOT}/src/main.ts" events list \
+bun run "${REPO_ROOT}/packages/divedra/src/bin.ts" events list \
   --artifact-root "${ARTIFACT_ROOT}" \
   --source local-matrix \
   --output json \
   > "${RUN_ROOT}/event-receipts.json"
 
-bun run "${REPO_ROOT}/src/main.ts" events replies \
+bun run "${REPO_ROOT}/packages/divedra/src/bin.ts" events replies \
   --artifact-root "${ARTIFACT_ROOT}" \
   --status sent \
   --output json \

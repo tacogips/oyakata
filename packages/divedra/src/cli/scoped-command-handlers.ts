@@ -1,23 +1,23 @@
 import {
   createEventListenerService,
   loadAndValidateEventConfiguration,
-} from "../../../../src/events";
-import { emitEventFile } from "../../../../src/events/manual-emit";
-import { listEventReceipts, replayEventReceipt } from "../../../../src/events/receipt-ops";
-import { createWorkflowScheduleRepository } from "../../../../src/events/workflow-schedule-registry";
+} from "../events";
+import { emitEventFile } from "../events/manual-emit";
+import { listEventReceipts, replayEventReceipt } from "../events/receipt-ops";
+import { createWorkflowScheduleRepository } from "../events/workflow-schedule-registry";
 import type { WorkflowScheduleStatus } from "divedra-events";
 import {
   DEFAULT_GRAPHQL_ENDPOINT,
   executeGraphqlRequest,
-} from "../../../../src/graphql/client";
-import { buildHookConfigurationSnippet } from "../../../../src/hook/config";
-import { parseHookVendorOption } from "../../../../src/hook/detect-vendor";
-import { createReadHookStdin, runHookCommand } from "../../../../src/hook/index";
-import { callStep } from "../../../../src/workflow/call-step";
-import { resolveWorkflowSource } from "../../../../src/workflow/catalog";
-import { listEventReplyDispatchesFromRuntimeDb } from "../../../../src/workflow/runtime-db";
-import type { MockNodeScenario } from "../../../../src/workflow/scenario-adapter";
-import type { LoadOptions, ResolvedWorkflowSource } from "../../../../src/workflow/types";
+} from "../graphql/client";
+import { buildHookConfigurationSnippet } from "../hook/config";
+import { parseHookVendorOption } from "../hook/detect-vendor";
+import { createReadHookStdin, runHookCommand } from "../hook/index";
+import { callStep } from "../workflow/call-step";
+import { resolveWorkflowSource } from "../workflow/catalog";
+import { listEventReplyDispatchesFromRuntimeDb } from "../workflow/runtime-db";
+import type { MockNodeScenario } from "../workflow/scenario-adapter";
+import type { LoadOptions, ResolvedWorkflowSource } from "../workflow/types";
 import type { RunCliScopeContext } from "./storage-and-options";
 import {
   DEFAULT_DEPS,
@@ -47,7 +47,8 @@ const WORKFLOW_SCHEDULE_STATUSES = new Set<WorkflowScheduleStatus>([
 function parseWorkflowScheduleStatus(
   value: string | undefined,
 ): WorkflowScheduleStatus | undefined {
-  return value !== undefined && WORKFLOW_SCHEDULE_STATUSES.has(value as WorkflowScheduleStatus)
+  return value !== undefined &&
+    WORKFLOW_SCHEDULE_STATUSES.has(value as WorkflowScheduleStatus)
     ? (value as WorkflowScheduleStatus)
     : undefined;
 }
@@ -418,7 +419,8 @@ export async function runCliEventsScope(
         }
         return 0;
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown error";
+        const message =
+          error instanceof Error ? error.message : "unknown error";
         io.stderr(`events schedules list failed: ${message}`);
         return 1;
       }
@@ -448,7 +450,8 @@ export async function runCliEventsScope(
         }
         return 0;
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown error";
+        const message =
+          error instanceof Error ? error.message : "unknown error";
         io.stderr(`events schedules inspect failed: ${message}`);
         return 1;
       }
@@ -477,7 +480,8 @@ export async function runCliEventsScope(
         }
         return 0;
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "unknown error";
+        const message =
+          error instanceof Error ? error.message : "unknown error";
         io.stderr(`events schedules cancel failed: ${message}`);
         return 1;
       }

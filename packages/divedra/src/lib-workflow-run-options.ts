@@ -1,7 +1,7 @@
 import type { AutoImprovePolicyInput } from "divedra-core";
 import type { WorkflowRunOptions } from "divedra-core";
 import type { SessionStoreOptions } from "divedra-core";
-import type { MockNodeScenario } from "../../../src/workflow/scenario-adapter";
+import type { MockNodeScenario } from "./workflow/scenario-adapter";
 import type { ChatReplyDispatcher, LoadOptions } from "divedra-core";
 import { normalizeWorkflowWorkingDirectoryOverride } from "divedra-core";
 

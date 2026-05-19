@@ -22,7 +22,7 @@ import {
   resolveCurrentStepIdFromWorkflow,
   type WorkflowSessionState,
 } from "divedra-core";
-import type { WorkflowExecutionSummary } from "../../../src/shared/ui-contract";
+import type { WorkflowExecutionSummary } from "./shared/ui-contract";
 import type { LoadOptions, WorkflowJson } from "divedra-core";
 
 export type DivedraSessionOptions = LoadOptions & SessionStoreOptions;

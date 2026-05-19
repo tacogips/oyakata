@@ -1,4 +1,4 @@
-import type { WorkflowScopeSelector } from "../../../../src/workflow/types";
+import type { WorkflowScopeSelector } from "../workflow/types";
 import type {
   WorkflowSelfImproveMode,
   WorkflowSelfImproveSourceMode,
@@ -655,14 +655,16 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       case "--since-last":
         if (selfImproveSourceMode !== undefined) {
-          parseError = "--since-last cannot be combined with another self-improve source selector";
+          parseError =
+            "--since-last cannot be combined with another self-improve source selector";
           break;
         }
         selfImproveSourceMode = "since-last";
         break;
       case "--latest":
         if (selfImproveSourceMode !== undefined) {
-          parseError = "--latest cannot be combined with another self-improve source selector";
+          parseError =
+            "--latest cannot be combined with another self-improve source selector";
           break;
         }
         selfImproveSourceMode = "latest";
@@ -681,7 +683,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
           selfImproveSourceMode !== undefined &&
           selfImproveSourceMode !== "explicit"
         ) {
-          parseError = "--session cannot be combined with --since-last or --latest";
+          parseError =
+            "--session cannot be combined with --since-last or --latest";
           break;
         }
         selfImproveSourceMode = "explicit";
@@ -834,9 +837,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
         ? {}
         : { continuationAfterStepRunId }),
       ...(stepRunsFilterStepId === undefined ? {} : { stepRunsFilterStepId }),
-      ...(selfImproveSourceMode === undefined
-        ? {}
-        : { selfImproveSourceMode }),
+      ...(selfImproveSourceMode === undefined ? {} : { selfImproveSourceMode }),
       ...(selfImproveSessions.length === 0 ? {} : { selfImproveSessions }),
       ...(selfImproveMode === undefined ? {} : { selfImproveMode }),
       selfImproveEnableDisabled,

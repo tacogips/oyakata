@@ -4,13 +4,13 @@ import {
   type GraphqlClientRequest,
   type GraphqlClientResponse,
   type GraphqlResponseError,
-} from "../../../src/graphql/client";
-import { createGraphqlSchema } from "../../../src/graphql/schema";
+} from "./graphql/client";
+import { createGraphqlSchema } from "./graphql/schema";
 import type {
   GraphqlRequestContext,
   GraphqlSchema,
   GraphqlSchemaDependencies,
-} from "../../../src/graphql/types";
+} from "./graphql/types";
 import {
   buildInspectionSummary,
   getSupervisionSummary,
@@ -39,12 +39,9 @@ import {
   type WorkflowSelfImproveReportSummary,
   type WorkflowSelfImproveResult,
 } from "divedra-core";
-import {
-  loadSession,
-  type SessionStoreOptions,
-} from "divedra-core";
+import { loadSession, type SessionStoreOptions } from "divedra-core";
 import type { WorkflowSessionState } from "divedra-core";
-import type { MockNodeScenario } from "../../../src/workflow/scenario-adapter";
+import type { MockNodeScenario } from "./workflow/scenario-adapter";
 import type { ChatReplyDispatcher, LoadOptions } from "divedra-core";
 import { normalizeWorkflowWorkingDirectoryOverride } from "divedra-core";
 import { buildLibraryWorkflowRunOptions } from "./lib-workflow-run-options";
@@ -150,8 +147,8 @@ interface GraphqlTransportOptions {
   readonly fetchImpl?: typeof fetch;
 }
 
-type ExecuteWorkflowSelfImproveLibraryInput =
-  ExecuteWorkflowSelfImproveInput & GraphqlTransportOptions;
+type ExecuteWorkflowSelfImproveLibraryInput = ExecuteWorkflowSelfImproveInput &
+  GraphqlTransportOptions;
 type WorkflowSelfImproveReportLookupLibraryInput =
   WorkflowSelfImproveReportLookupInput & GraphqlTransportOptions;
 type WorkflowSelfImproveReportListLibraryInput =
@@ -770,9 +767,9 @@ export {
 } from "./lib-sessions";
 
 export { runCli } from "./cli";
-export { startServe } from "../../../src/server/serve";
-export { handleApiRequest } from "../../../src/server/api";
-export { handleGraphqlRequest, executeGraphqlDocument } from "../../../src/server/graphql";
+export { startServe } from "./server/serve";
+export { handleApiRequest } from "./server/api";
+export { handleGraphqlRequest, executeGraphqlDocument } from "./server/graphql";
 export { createGraphqlSchema, executeGraphqlRequest };
 export {
   resolveRuntimeDbPath,
@@ -905,7 +902,7 @@ export {
   type SessionHealthReport,
   type SessionHealthState,
   type SessionHealthSummary,
-} from "../../../src/workflow/session-health";
+} from "./workflow/session-health";
 export {
   noopWorkflowRunEventSink,
   runWorkflow,
@@ -954,7 +951,7 @@ export {
   buildSupervisorChatConversation,
   dispatchSupervisorChat,
   type DispatchSupervisorChatInput,
-} from "../../../src/events/dispatch-supervisor-chat";
+} from "./events/dispatch-supervisor-chat";
 /**
  * Direct single-step execution for step-addressed workflow bundles. Failures
  * are rewritten to step-oriented messages at this boundary. For a

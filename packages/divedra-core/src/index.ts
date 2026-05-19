@@ -8,12 +8,12 @@ export {
   type WorkflowRunEvent,
   type WorkflowRunEventOptions,
   type WorkflowRunEventSink,
-} from "../../../src/workflow/engine";
+} from "../../divedra/src/workflow/engine";
 export {
   loadWorkflowFromCatalog,
   loadWorkflowFromDisk,
   mergeLoadOptionsForSessionMutableBundle,
-} from "../../../src/workflow/load";
+} from "../../divedra/src/workflow/load";
 export {
   DEFAULT_SELF_IMPROVE_LOG_LIMIT,
   executeWorkflowSelfImprove,
@@ -36,7 +36,7 @@ export {
   type WorkflowSelfImproveSourceNodeExecution,
   type WorkflowSelfImproveSourceMode,
   type WorkflowSelfImproveSourceRun,
-} from "../../../src/workflow/self-improve";
+} from "../../divedra/src/workflow/self-improve";
 export {
   applyWorkflowNodePatch,
   applyWorkflowNodePatchToRawPayloads,
@@ -45,7 +45,7 @@ export {
   type ApplyWorkflowNodePatchInput,
   type ApplyWorkflowNodePatchToRawPayloadsInput,
   type ParseWorkflowNodePatchInput,
-} from "../../../src/workflow/node-patches";
+} from "../../divedra/src/workflow/node-patches";
 export {
   listWorkflowCatalogSources,
   resolveAddonSource,
@@ -53,20 +53,20 @@ export {
   resolveWorkflowScopeSelector,
   resolveWorkflowSource,
   withResolvedWorkflowSourceOptions,
-} from "../../../src/workflow/catalog";
+} from "../../divedra/src/workflow/catalog";
 export {
   listSessions,
   loadSession,
   saveSession,
   type SessionStoreOptions,
-} from "../../../src/workflow/session-store";
+} from "../../divedra/src/workflow/session-store";
 export {
   normalizeSessionState,
   resolveCurrentStepId,
   resolveCurrentStepIdFromWorkflow,
   type NodeExecutionRecord,
   type WorkflowSessionState,
-} from "../../../src/workflow/session";
+} from "../../divedra/src/workflow/session";
 export {
   listEventReplyDispatchesFromRuntimeDb,
   listRuntimeHookEvents,
@@ -75,7 +75,7 @@ export {
   listRuntimeNodeExecutions,
   listRuntimeNodeLogs,
   listRuntimeSessions,
-} from "../../../src/workflow/runtime-db";
+} from "../../divedra/src/workflow/runtime-db";
 export {
   createCommunicationService,
   type CommunicationArtifactSnapshot,
@@ -86,7 +86,7 @@ export {
   type ReplayCommunicationResult,
   type RetryCommunicationDeliveryInput,
   type RetryCommunicationDeliveryResult,
-} from "../../../src/workflow/communication-service";
+} from "../../divedra/src/workflow/communication-service";
 export {
   createManagerSessionStore,
   hashManagerAuthToken,
@@ -100,21 +100,21 @@ export {
   type ManagerMessageRecord,
   type ManagerSessionRecord,
   type ManagerSessionStore,
-} from "../../../src/workflow/manager-session-store";
+} from "../../divedra/src/workflow/manager-session-store";
 export {
   createManagerMessageService,
   type DataDirFileRef,
   type ManagerMessageService,
   type SendManagerMessageInput,
   type SendManagerMessageResult,
-} from "../../../src/workflow/manager-message-service";
+} from "../../divedra/src/workflow/manager-message-service";
 export {
   parseManagerControlActions,
   parseManagerControlPayload,
   type ManagerControlAction,
   type ManagerControlActionType,
   type ParsedManagerControl,
-} from "../../../src/workflow/manager-control";
+} from "../../divedra/src/workflow/manager-control";
 export type {
   AgentNodePayload,
   AgentWorkerAddonConfig,
@@ -180,12 +180,12 @@ export type {
   WorkflowSourceScope,
   XGatewayAddonConfig,
   XGatewayReadAddonConfig,
-} from "../../../src/workflow/types";
+} from "../../divedra/src/workflow/types";
 export {
   describeSuperviserControlAddon,
   getSuperviserControlAddonProviderOperationId,
   isSuperviserControlAddonName,
-} from "../../../src/workflow/types";
+} from "../../divedra/src/workflow/types";
 export {
   listNodeTemplateFieldContainers,
   NODE_TEMPLATE_FIELD_SPECS,
@@ -202,9 +202,9 @@ export {
   type AdapterLlmSessionMessage,
   type AdapterProcessLog,
   type NodeAdapter,
-} from "../../../src/workflow/adapter";
-export { normalizeTextBusinessPayload } from "../../../src/workflow/json-boundary";
-export type { NodeExecutionMailbox } from "../../../src/workflow/node-execution-mailbox";
+} from "../../divedra/src/workflow/adapter";
+export { normalizeTextBusinessPayload } from "../../divedra/src/workflow/json-boundary";
+export type { NodeExecutionMailbox } from "../../divedra/src/workflow/node-execution-mailbox";
 export { err, ok, type Result } from "./result";
 export {
   validateJsonSchemaDefinition,
@@ -216,15 +216,15 @@ export {
   type NodeValidationResultInput,
   type NodeValidationSource,
   type NodeValidationStatus,
-} from "../../../src/workflow/validate/node-validation-result";
-export { callStep } from "../../../src/workflow/call-step";
+} from "../../divedra/src/workflow/validate/node-validation-result";
+export { callStep } from "../../divedra/src/workflow/call-step";
 export type {
   CallStepFailure,
   CallStepInput,
   CallStepOverrides,
   CallStepSuccess,
-} from "../../../src/workflow/call-step";
-export { deriveWorkflowVisualization } from "../../../src/workflow/visualization";
+} from "../../divedra/src/workflow/call-step";
+export { deriveWorkflowVisualization } from "../../divedra/src/workflow/visualization";
 export {
   buildFanoutGroupSummaries,
   buildInspectionSummary,
@@ -232,20 +232,20 @@ export {
   type FanoutGroupSummary,
   type WorkflowInspectionCounts,
   type WorkflowInspectionSummary,
-} from "../../../src/workflow/inspect";
+} from "../../divedra/src/workflow/inspect";
 export {
   buildWorkflowUsageCatalog,
   buildWorkflowUsageSummary,
   type WorkflowUsageCatalog,
   type WorkflowUsageSummary,
-} from "../../../src/workflow/usage";
+} from "../../divedra/src/workflow/usage";
 export {
   buildMutableWorkflowWorkspace,
   createExecutionCopyMutableWorkspace,
   readWorkflowPatchRevisionsFromArtifact,
   recordWorkflowPatchRevision,
   type MutableWorkspaceFailure,
-} from "../../../src/workflow/mutable-workspace";
+} from "../../divedra/src/workflow/mutable-workspace";
 export {
   buildSupervisionStallWatch,
   getEngineSupervisionPatcherId,
@@ -257,15 +257,15 @@ export {
   type StartSupervisedRunInput,
   type SupervisionRemediationDecision,
   type SupervisionRemediationPlan,
-} from "../../../src/workflow/superviser";
+} from "../../divedra/src/workflow/superviser";
 export {
   executeSuperviserControlNativeOperation,
   type SuperviserRuntimeControl,
-} from "../../../src/workflow/superviser-control";
+} from "../../divedra/src/workflow/superviser-control";
 export {
   normalizeWorkflowWorkingDirectoryOverride,
   resolveNodeExecutionWorkingDirectory,
-} from "../../../src/workflow/working-directory";
+} from "../../divedra/src/workflow/working-directory";
 export {
   createWorkflowSupervisorDispatchClient,
   type DispatchSupervisorConversationInput,
@@ -275,12 +275,12 @@ export {
   type SupervisorRuntimeCapabilitySet,
   type WorkflowSupervisorDispatchClient,
   type WorkflowSupervisorDispatchView,
-} from "../../../src/workflow/supervisor-dispatch-client";
+} from "../../divedra/src/workflow/supervisor-dispatch-client";
 export {
   createWorkflowSupervisorGraphqlClient,
   postDispatchSupervisorConversationThroughGraphql,
   type WorkflowSupervisorGraphqlClientOptions,
-} from "../../../src/workflow/supervisor-graphql-client";
+} from "../../divedra/src/workflow/supervisor-graphql-client";
 export {
   createWorkflowSupervisorClient,
   type RestartSupervisedWorkflowInput,
@@ -291,18 +291,21 @@ export {
   type SupervisedWorkflowView,
   type SupervisorEngineOverrides,
   type WorkflowSupervisorClient,
-} from "../../../src/workflow/supervisor-client";
+} from "../../divedra/src/workflow/supervisor-client";
 export {
   createSupervisorRunnerPool,
   type SupervisorRunnerPool,
   type SupervisorRunnerPoolHandle,
-} from "../../../src/workflow/supervisor-runner-pool";
+} from "../../divedra/src/workflow/supervisor-runner-pool";
 export {
   createSupervisorProgressEventSink,
   createSupervisorProgressRenderer,
   type SupervisorProgressRenderer,
   type SupervisorProgressRendererOptions,
-} from "../../../src/workflow/supervisor-progress-renderer";
-export { createLifecycleSupervisionPolicyInput } from "../../../src/workflow/auto-improve-policy";
-export type { AutoImprovePolicyInput } from "../../../src/workflow/auto-improve-policy";
-export { atomicWriteJsonFile, atomicWriteTextFile } from "../../../src/shared/fs";
+} from "../../divedra/src/workflow/supervisor-progress-renderer";
+export { createLifecycleSupervisionPolicyInput } from "../../divedra/src/workflow/auto-improve-policy";
+export type { AutoImprovePolicyInput } from "../../divedra/src/workflow/auto-improve-policy";
+export {
+  atomicWriteJsonFile,
+  atomicWriteTextFile,
+} from "../../divedra/src/shared/fs";

@@ -58,8 +58,8 @@
         "Provide a deterministic mock scenario"
       ],
       "verificationCommands": [
-        "bun run src/main.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples",
-        "bun run src/main.ts workflow inspect claude-divedra-codex-coding --workflow-definition-dir ./examples --output json"
+        "bun run packages/divedra/src/bin.ts workflow validate claude-divedra-codex-coding --workflow-definition-dir ./examples",
+        "bun run packages/divedra/src/bin.ts workflow inspect claude-divedra-codex-coding --workflow-definition-dir ./examples --output json"
       ]
     }
   },

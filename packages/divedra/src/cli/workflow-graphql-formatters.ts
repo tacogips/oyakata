@@ -1,26 +1,26 @@
-import type { WorkflowExecutionCompactSummary } from "../../../../src/shared/ui-contract";
-import { createLifecycleSupervisionPolicyInput } from "../../../../src/workflow/auto-improve-policy";
-import type { CallStepInput } from "../../../../src/workflow/call-step";
+import type { WorkflowExecutionCompactSummary } from "../shared/ui-contract";
+import { createLifecycleSupervisionPolicyInput } from "../workflow/auto-improve-policy";
+import type { CallStepInput } from "../workflow/call-step";
 import {
   listWorkflowCatalogSources,
   withResolvedWorkflowSourceOptions,
-} from "../../../../src/workflow/catalog";
-import type { WorkflowRunOptions } from "../../../../src/workflow/engine";
-import type { LoadedWorkflow } from "../../../../src/workflow/load";
+} from "../workflow/catalog";
+import type { WorkflowRunOptions } from "../workflow/engine";
+import type { LoadedWorkflow } from "../workflow/load";
 import type {
   WorkflowOverviewRow,
   WorkflowStatusOverview,
-} from "../../../../src/workflow/overview";
+} from "../workflow/overview";
 import type {
   LoadOptions,
   ResolvedWorkflowSource,
   WorkflowSourceScope,
-} from "../../../../src/workflow/types";
+} from "../workflow/types";
 import type {
   WorkflowUsageCatalog,
   WorkflowUsageSummary,
-} from "../../../../src/workflow/usage";
-import { normalizeWorkflowWorkingDirectoryOverride } from "../../../../src/workflow/working-directory";
+} from "../workflow/usage";
+import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import type {
   CliIo,
   CliStorageOptions,
