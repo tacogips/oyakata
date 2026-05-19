@@ -8,6 +8,56 @@ export type NodeExecutionBackend =
   | "official/openai-sdk"
   | "official/anthropic-sdk";
 
+export const NODE_EXECUTION_BACKEND = {
+  CODEX_AGENT: "codex-agent",
+  CLAUDE_CODE_AGENT: "claude-code-agent",
+  CURSOR_CLI_AGENT: "cursor-cli-agent",
+  OFFICIAL_OPENAI_SDK: "official/openai-sdk",
+  OFFICIAL_ANTHROPIC_SDK: "official/anthropic-sdk",
+} as const;
+
+export const CLI_AGENT_BACKENDS = [
+  NODE_EXECUTION_BACKEND.CODEX_AGENT,
+  NODE_EXECUTION_BACKEND.CLAUDE_CODE_AGENT,
+  NODE_EXECUTION_BACKEND.CURSOR_CLI_AGENT,
+] as const satisfies readonly CliAgentBackend[];
+
+export const NODE_EXECUTION_BACKENDS = [
+  ...CLI_AGENT_BACKENDS,
+  NODE_EXECUTION_BACKEND.OFFICIAL_OPENAI_SDK,
+  NODE_EXECUTION_BACKEND.OFFICIAL_ANTHROPIC_SDK,
+] as const satisfies readonly NodeExecutionBackend[];
+
+export const NODE_EXECUTION_BACKEND_LIST_TEXT =
+  "codex-agent, claude-code-agent, cursor-cli-agent, official/openai-sdk, or official/anthropic-sdk";
+
+const CLI_AGENT_BACKEND_SET: ReadonlySet<unknown> = new Set(
+  CLI_AGENT_BACKENDS,
+);
+const NODE_EXECUTION_BACKEND_SET: ReadonlySet<unknown> = new Set(
+  NODE_EXECUTION_BACKENDS,
+);
+
+export function normalizeCliAgentBackend(
+  value: unknown,
+): CliAgentBackend | undefined {
+  return CLI_AGENT_BACKEND_SET.has(value)
+    ? (value as CliAgentBackend)
+    : undefined;
+}
+
+export function isCliAgentBackend(value: unknown): value is CliAgentBackend {
+  return normalizeCliAgentBackend(value) !== undefined;
+}
+
+export function normalizeNodeExecutionBackend(
+  value: unknown,
+): NodeExecutionBackend | undefined {
+  return NODE_EXECUTION_BACKEND_SET.has(value)
+    ? (value as NodeExecutionBackend)
+    : undefined;
+}
+
 export type NodeKind =
   | "task"
   | "branch-judge"

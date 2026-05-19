@@ -2,6 +2,15 @@
 // without pulling in CLI, server transport, or native add-on ownership.
 export type * from "./workflow-model";
 export {
+  CLI_AGENT_BACKENDS,
+  isCliAgentBackend,
+  NODE_EXECUTION_BACKEND,
+  NODE_EXECUTION_BACKENDS,
+  NODE_EXECUTION_BACKEND_LIST_TEXT,
+  normalizeCliAgentBackend,
+  normalizeNodeExecutionBackend,
+} from "./workflow-model";
+export {
   noopWorkflowRunEventSink,
   runWorkflow,
   type WorkflowRunOptions,

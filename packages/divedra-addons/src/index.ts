@@ -12,3 +12,4 @@ export {
   executeAddonNode,
   executeNativeNode,
 } from "./native-node-executor/git-and-addon-execution";
+export { isContainerRunnerWithDockerCli } from "./native-node-executor/template-env-and-containers";

@@ -1,5 +1,6 @@
 import {
   AdapterExecutionError,
+  NODE_EXECUTION_BACKEND,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
@@ -82,23 +83,23 @@ function createDefaultNodeAdapterRegistry(
   config: DispatchingNodeAdapterConfig,
 ): NodeAdapterRegistry {
   return {
-    "codex-agent": async () => {
+    [NODE_EXECUTION_BACKEND.CODEX_AGENT]: async () => {
       const { CodexAgentAdapter } = await import("./codex");
       return new CodexAgentAdapter(config.codexAgent);
     },
-    "claude-code-agent": async () => {
+    [NODE_EXECUTION_BACKEND.CLAUDE_CODE_AGENT]: async () => {
       const { ClaudeCodeAgentAdapter } = await import("./claude");
       return new ClaudeCodeAgentAdapter(config.claudeCodeAgent);
     },
-    "cursor-cli-agent": async () => {
+    [NODE_EXECUTION_BACKEND.CURSOR_CLI_AGENT]: async () => {
       const { CursorCliAgentAdapter } = await import("./cursor");
       return new CursorCliAgentAdapter(config.cursorCliAgent);
     },
-    "official/openai-sdk": async () => {
+    [NODE_EXECUTION_BACKEND.OFFICIAL_OPENAI_SDK]: async () => {
       const { OpenAiSdkAdapter } = await import("./openai-sdk");
       return new OpenAiSdkAdapter(config.openAiSdk);
     },
-    "official/anthropic-sdk": async () => {
+    [NODE_EXECUTION_BACKEND.OFFICIAL_ANTHROPIC_SDK]: async () => {
       const { AnthropicSdkAdapter } = await import("./anthropic-sdk");
       return new AnthropicSdkAdapter(config.anthropicSdk);
     },

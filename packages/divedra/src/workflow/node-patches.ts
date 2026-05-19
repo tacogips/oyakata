@@ -1,7 +1,10 @@
 import { constants as fsConstants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
-import { normalizeNodeExecutionBackend } from "./backend";
+import {
+  NODE_EXECUTION_BACKEND_LIST_TEXT,
+  normalizeNodeExecutionBackend,
+} from "./backend";
 import { err, ok, type Result } from "./result";
 import type {
   NodePayload,
@@ -19,9 +22,6 @@ const ALLOWED_PATCH_FIELDS = ["executionBackend", "model", "effort"] as const;
 const ALLOWED_PATCH_FIELD_SET: ReadonlySet<string> = new Set(
   ALLOWED_PATCH_FIELDS,
 );
-
-const PATCHABLE_BACKENDS =
-  "codex-agent, claude-code-agent, cursor-cli-agent, official/openai-sdk, or official/anthropic-sdk";
 
 export interface ParseWorkflowNodePatchInput {
   readonly value: string;
@@ -194,7 +194,7 @@ export function normalizeWorkflowNodePatchMap(
         issues.push(
           makeIssue(
             `${nodePath}.executionBackend`,
-            `must be ${PATCHABLE_BACKENDS}`,
+            `must be ${NODE_EXECUTION_BACKEND_LIST_TEXT}`,
           ),
         );
       } else {

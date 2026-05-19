@@ -1,9 +1,9 @@
 # Product Code Duplicate-Scavenge Refactoring Plan
 
-**Status**: In Progress
+**Status**: Completed
 **Design Reference**: Workflow output from `refactoring-divide-and-conquer` step `step3-merge-review-plan`; accepted boundary update in `design-docs/specs/architecture.md#product-code-duplicate-scavenge-consolidation-boundaries`
 **Created**: 2026-05-19
-**Last Updated**: 2026-05-19
+**Last Updated**: 2026-05-20
 
 ## Scope
 
@@ -16,20 +16,21 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 ## Accepted Design References
 
 - `design-docs/specs/architecture.md#product-code-duplicate-scavenge-consolidation-boundaries`: Defines the behavior-preserving boundaries for the remaining product-code duplicate-scavenge tasks.
-- `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`: Tracks the user or owner decisions required before unblocking `REF-003` and `REF-015`.
+- `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`: Records the owner decisions that unblock `REF-003` and `REF-015`.
 - `design-docs/user-qa/README.md`: Indexes the active blocker questions.
 - Codex reference: no external `../../codex-agent` checkout was available or required for this plan. `codex-agent` remains an execution backend and adapter-behavior reference only; implementation must not copy Codex source or alter Cursor-specific adapter boundaries while sharing local-agent helpers.
 
 ## Implementation Order for Remaining Work
 
 1. Treat `REF-007`, `REF-008`, `REF-009`, `REF-010`, `REF-011`, `REF-012`, `REF-013`, `REF-014`, `REF-016`, `REF-017`, and `REF-018` as completed by the 2026-05-19 23:08 and 23:23 JST implementation sessions.
-2. Keep `REF-003` and `REF-015` blocked unless the decisions in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md` are resolved or explicitly accepted as residual risk by an owner decision.
-3. If owner decisions unblock either blocked task, implement only that task's owned files, preserve the task-specific public-surface semantics, and run its focused verification commands plus `bun run typecheck` and `git diff --check`.
-4. If owner decisions keep either blocked task as accepted residual risk, update that task status, the exit criteria, `impl-plans/PROGRESS.json`, and this progress log before closure.
+2. Treat `REF-003` and `REF-015` as Ready because the delegated completion run supplied explicit owner decisions recorded in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`.
+3. Implement `REF-003` first, then `REF-015`, so add-ons runner predicate changes are verified before backend constant normalization touches validation, dispatch, and readiness call sites.
+4. Implement only each task's owned files, preserve the task-specific public-surface semantics, and run its focused verification commands plus `bun run typecheck` and `git diff --check`.
+5. If a new constraint is discovered, record it as a new blocker or residual risk; do not revive the superseded public-surface questions.
 
 ## Delegated Completion Rerun State
 
-Step 3 of `design-and-implement-review-loop` accepted the design update that reconciles this plan's stale completion markers with current task state. Task-level blocker state now takes precedence over the previous plan-level `Completed` header. This plan remains `In Progress` until `REF-003` and `REF-015` are either unblocked and completed, or explicitly accepted as residual risks by an owner decision recorded in the plan and user-QA blocker document.
+Step 3 of `design-and-implement-review-loop` accepted the design update that supersedes the prior blocker state for `REF-003` and `REF-015`. The workflow input owner decisions approved the narrowest package-owned Docker-compatible runner predicate surface and core-owned backend constants with compatibility wrappers. Both Ready tasks are now completed and verified.
 
 ## Duplicate Groups
 
@@ -63,7 +64,7 @@ Step 3 of `design-and-implement-review-loop` accepted the design update that rec
 | --- | --- | --- | --- | --- |
 | REF-001 | Completed | DUP-001 | - | Yes |
 | REF-002 | Completed | DUP-002 | REF-001 | No |
-| REF-003 | Blocked | DUP-003 | REF-001 | No |
+| REF-003 | Completed | DUP-003 | REF-001 | No |
 | REF-004 | Completed | DUP-004 | - | Yes |
 | REF-005 | Completed | DUP-005 | REF-004 | No |
 | REF-006 | Completed | DUP-006 | - | Yes |
@@ -75,7 +76,7 @@ Step 3 of `design-and-implement-review-loop` accepted the design update that rec
 | REF-012 | Completed | DUP-013 | REF-011 | No |
 | REF-013 | Completed | DUP-015 | - | Yes |
 | REF-014 | Completed | DUP-016 | REF-013 | No |
-| REF-015 | Blocked | DUP-017 | REF-009, REF-013 | No |
+| REF-015 | Completed | DUP-017 | REF-009, REF-013 | No |
 | REF-016 | Completed | DUP-018 | - | Yes |
 | REF-017 | Completed | DUP-019 | REF-016 | No |
 | REF-018 | Completed | DUP-020 | REF-011 | No |
@@ -114,18 +115,19 @@ Step 3 of `design-and-implement-review-loop` accepted the design update that rec
 
 ### REF-003: Share Docker-Compatible Runner Predicate
 
-**Status**: Blocked
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-addons/src/native-node-executor/template-env-and-containers.ts`, `packages/divedra-addons/src/index.ts`, `packages/divedra/src/workflow/runtime-readiness.ts`
 **Excluded Files**: `packages/divedra/src/workflow/native-node-executor/**`, `dist`
 **Depends On**: REF-001
-**Blocker**: Confirm whether exporting a runner predicate from `packages/divedra-addons/src/index.ts` is an acceptable public package surface. Tracked in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md#ref-003-docker-compatible-runner-predicate-export`.
+**Owner Decision**: Approved to add or expose the narrowest appropriate package-owned Docker-compatible runner predicate surface needed to complete the task, including a top-level add-ons export if that is the existing package convention. Recorded in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md#ref-003-docker-compatible-runner-predicate-export`.
 **Completion Criteria**:
-- [ ] Use one predicate for `podman`, `docker`, and `nerdctl`.
-- [ ] Preserve readiness reporting versus runtime policy error semantics.
+- [x] Use one predicate for `podman`, `docker`, and `nerdctl`.
+- [x] Expose the predicate through the narrowest add-ons-owned surface that matches existing package export conventions.
+- [x] Preserve readiness reporting versus runtime policy error semantics.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/runtime-readiness-backends.test.ts packages/divedra/src/workflow/native-node-executor-gateway.test.ts`
 - `bun run typecheck`
-**Residual Risk**: Public export surface may need a narrower internal package path instead of top-level export.
+**Residual Risk**: Public export surface should remain narrow; choose the top-level export only if it follows existing package convention.
 
 ### REF-004: Consolidate Supervisor Resolver Output Artifact Extraction
 
@@ -291,18 +293,19 @@ Step 3 of `design-and-implement-review-loop` accepted the design update that rec
 
 ### REF-015: Centralize Node Execution Backend Constants
 
-**Status**: Blocked
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-core/src/workflow-model.ts`, `packages/divedra/src/workflow/backend.ts`, `packages/divedra-core/src/workflow-validation.ts`, `packages/divedra/src/workflow/node-patches.ts`, `packages/divedra/src/workflow/validate/node-payload-validation.ts`, `packages/divedra-adapters/src/dispatch.ts`
 **Excluded Files**: runtime readiness unless needed for compile updates
 **Depends On**: REF-009, REF-013
-**Blocker**: Coordinate validation, adapter dispatch, and runtime-readiness owners before changing backend constants because this is a public workflow model surface. Tracked in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md#ref-015-backend-constants-normalization`.
+**Owner Decision**: Approved to establish core-owned backend constants and normalization while preserving existing null-versus-undefined caller semantics through wrappers or compatibility helpers. Recorded in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md#ref-015-backend-constants-normalization`.
 **Completion Criteria**:
-- [ ] Establish core-owned backend constants and normalization.
-- [ ] Preserve null versus undefined caller semantics through wrappers.
+- [x] Establish core-owned backend constants and normalization.
+- [x] Preserve null versus undefined caller semantics through wrappers.
+- [x] Preserve validation issue shapes, adapter dispatch behavior, runtime readiness behavior, and public workflow model compatibility.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/validate.test.ts packages/divedra/src/workflow/adapters/dispatch.test.ts packages/divedra/src/workflow/runtime-readiness-backends.test.ts packages/divedra/src/package-boundaries.test.ts`
 - `bun run typecheck`
-**Residual Risk**: Public workflow validation issue shapes must not drift.
+**Residual Risk**: Public workflow validation issue shapes and null-versus-undefined compatibility must not drift while constants move into core.
 
 ### REF-016: Consolidate Workflow Execution Option Projection
 
@@ -383,7 +386,7 @@ Step 3 of `design-and-implement-review-loop` accepted the design update that rec
 ## Exit Criteria
 
 - [x] All Ready high/mid tasks are Completed, or explicitly moved to Blocked with owner, blocker, and residual risk.
-- [ ] Blocked tasks REF-003 and REF-015 are either unblocked and completed or accepted as residual risks by an explicit owner decision.
+- [x] Ready tasks REF-003 and REF-015 are completed or any newly discovered blocker is documented with owner and residual risk.
 - [x] Accepted low residual risks remain documented above.
 - [x] Focused verification commands pass for every completed task.
 - [x] `bun run typecheck` passes after TypeScript source changes.
@@ -559,3 +562,27 @@ Step 3 of `design-and-implement-review-loop` accepted the design update that rec
 - `git diff --check` passed.
 
 **Notes**: Rechecked the Step 5 accepted plan against the accepted design boundary. No owner decision was present in the workflow input to approve the `packages/divedra-addons/src/index.ts` runner predicate export, approve core-owned backend normalization, or accept either blocked task as residual risk. `REF-003` and `REF-015` therefore remain blocked and no TypeScript files were modified in this implementation step.
+
+### Session: 2026-05-20 Step 4 Implementation Plan Update
+
+**Tasks Completed**: Planning update only; no TypeScript implementation.
+
+**Tasks Ready**: REF-003, REF-015
+
+**Verification**:
+- `git diff --check -- impl-plans/active/refactoring-duplicate-scavenge-product-code.md impl-plans/PROGRESS.json` passed.
+
+**Notes**: Updated the plan after Step 3 accepted the design update and the workflow input supplied explicit owner decisions. `REF-003` is now Ready to expose the narrowest package-owned Docker-compatible runner predicate surface needed for root runtime readiness. `REF-015` is now Ready to establish core-owned backend constants and normalization while preserving null-versus-undefined caller semantics through wrappers or compatibility helpers. Later implementation should run the focused task verification commands plus `bun run typecheck` and `git diff --check`.
+
+### Session: 2026-05-20 Step 6 Implement
+
+**Tasks Completed**: REF-003, REF-015
+
+**Verification**:
+- `bun test packages/divedra/src/workflow/runtime-readiness-backends.test.ts packages/divedra/src/workflow/native-node-executor-gateway.test.ts` passed.
+- `bun test packages/divedra/src/workflow/validate.test.ts packages/divedra/src/workflow/adapters/dispatch.test.ts packages/divedra/src/workflow/runtime-readiness-backends.test.ts packages/divedra/src/package-boundaries.test.ts` passed.
+- `bun run typecheck` passed.
+- `bun run lint:biome` passed with existing explicit-`any` warnings in moved `packages/divedra/src/workflow/engine/*.ts` split files.
+- `git diff --check` passed.
+
+**Notes**: Completed the owner-approved unblocked tasks. `REF-003` now reuses the add-ons-owned Docker-compatible runner predicate through the package top-level export while keeping readiness reporting separate from native executor policy errors. `REF-015` now owns backend constants and normalization in `packages/divedra-core/src/workflow-model.ts`, with root wrappers preserving existing null-return compatibility and core validation preserving undefined semantics.

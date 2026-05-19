@@ -1,48 +1,42 @@
 # Product-Code Duplicate-Scavenge Blockers
 
-This document tracks user or owner confirmation needed before implementing
-blocked tasks in `impl-plans/active/refactoring-duplicate-scavenge-product-code.md`.
-During delegated completion reruns, these questions remain unresolved unless an
-owner answer is supplied in the workflow input. A completion request by itself
-does not approve either public-surface change.
+This document records the owner decisions that resolved the public-surface
+blockers for tasks in
+`impl-plans/active/refactoring-duplicate-scavenge-product-code.md`. Earlier
+delegated completion reruns treated these questions as unresolved unless an
+owner answer was supplied in workflow input; the current owner decisions now
+unblock `REF-003` and `REF-015`.
 
 ## REF-003: Docker-Compatible Runner Predicate Export
 
-Question:
+Resolved question:
 
 - Is exporting a Docker-compatible runner predicate from
   `packages/divedra-addons/src/index.ts` an acceptable public package surface?
 
-Options:
+Owner decision:
 
-- Approve a top-level public export from `packages/divedra-addons/src/index.ts`
-  so root runtime readiness can reuse the add-ons-owned runner predicate.
-- Prefer a narrower internal or package-subpath export, then update the
-  implementation plan before unblocking `REF-003`.
-- Keep the duplicate predicate as an accepted residual risk and leave `REF-003`
-  blocked.
+- Approved to add or expose the narrowest appropriate package-owned
+  Docker-compatible runner predicate surface needed to complete the task,
+  including a top-level add-ons export if that is the existing package
+  convention.
 
 Implementation must preserve readiness reporting versus runtime policy error
 semantics for `podman`, `docker`, and `nerdctl`.
 
 ## REF-015: Backend Constants Normalization
 
-Question:
+Resolved question:
 
 - Should backend constants and normalization become core-owned public workflow
   model surface now, and what null-versus-undefined semantics must wrappers
   preserve?
 
-Options:
+Owner decision:
 
-- Approve core-owned backend constants and normalization in
-  `packages/divedra-core/src/workflow-model.ts`, with wrappers preserving
-  caller-specific null-versus-undefined behavior.
-- Defer centralization until validation, adapter dispatch, runtime-readiness,
-  and workflow-model owners agree on public issue shapes and normalization
-  behavior.
-- Keep existing separate constants as an accepted residual risk and leave
-  `REF-015` blocked.
+- Approved to establish core-owned backend constants and normalization while
+  preserving existing null-versus-undefined caller semantics through wrappers or
+  compatibility helpers.
 
 Implementation must preserve validation issue shapes, adapter dispatch behavior,
 runtime readiness behavior, and public workflow model compatibility.

@@ -27,7 +27,9 @@ flowchart TD
 
 - Store reusable workflow bundles in a user catalog (`~/.divedra/workflows`), a project catalog (`<project>/.divedra/workflows`), or an explicit workflow definition directory.
 - Discover available workflows and their callable contracts before running them.
-- Run workflows using agent backends such as `codex-agent`, `claude-code-agent`, `official/openai-sdk`, and `official/anthropic-sdk`.
+- Run workflows using agent backends such as `codex-agent`,
+  `claude-code-agent`, `cursor-cli-agent`, `official/openai-sdk`, and
+  `official/anthropic-sdk`.
 - Run deterministic mock scenarios for demos, tests, and documentation without real agent calls.
 - Pause a workflow with `nodeType: "sleep"` without blocking the worker; the runtime registers a scheduled continuation event and resumes the queued steps when it fires.
 - Monitor, resume, rerun, continue, export, and inspect workflow executions.
@@ -86,10 +88,14 @@ typecheck commands for the workspace.
 - `packages/divedra-core` exposes the core workflow runtime, session/runtime DB,
   supervisor, manager control, catalog, inspection, shared library contracts,
   dedicated retrospective self-improve service APIs, deterministic supervisor
-  runner-pool lifecycle APIs, and filesystem helpers used by the runtime.
+  runner-pool lifecycle APIs, backend constants/normalization helpers, and
+  filesystem helpers used by the runtime.
 - `packages/divedra-addons` exposes built-in node add-on registries and native
-  add-on execution helpers. It depends inward on `divedra-core`; core does not
-  export native add-on execution or add-on registry construction.
+  add-on execution helpers, including the package-owned
+  `isContainerRunnerWithDockerCli` predicate for container runners that can
+  satisfy Docker CLI requirements (`podman`, `docker`, and `nerdctl`). It
+  depends inward on `divedra-core`; core does not export native add-on
+  execution or add-on registry construction.
 - `packages/divedra` is the compatibility facade named `divedra`; it preserves
   the current `import "divedra"` library surface, `./cli` export, and CLI binary
   behavior. The `divedra/cli` export is import-safe and exposes `runCli` without
@@ -264,6 +270,19 @@ results for loaded workflows, so CLI `workflow validate`, GraphQL
 `validateWorkflowDefinition`, submitted-bundle validation, and library detailed
 validation expose consistent add-on `nodeValidationResults` before any
 agent-backend preflight entries are appended.
+
+Backend names are normalized through the core-owned constants and helpers
+exported from `divedra-core` and re-exported by the `divedra` compatibility
+facade. The canonical backend set is `codex-agent`, `claude-code-agent`,
+`cursor-cli-agent`, `official/openai-sdk`, and `official/anthropic-sdk`.
+Compatibility wrappers in `divedra` keep the historical `null` return value for
+invalid backend normalization while core validation continues to report
+`undefined` for invalid values and preserves existing validation issue shapes.
+Runtime readiness for container nodes reuses the add-ons-owned
+`isContainerRunnerWithDockerCli` predicate so Docker CLI requirements are
+recognized consistently for `podman`, `docker`, and `nerdctl`; readiness
+reporting and native executor policy errors remain separate caller-owned
+decisions.
 
 Async validation and async workflow loading also treat third-party add-on
 resolver calls as validation boundaries. Throwing resolvers, rejected resolver
@@ -828,13 +847,17 @@ consolidation tasks in
 shared artifact hashing/sanitization, workflow scope and validation helpers,
 communication artifact persistence, node output publication, official SDK and
 local-agent adapter helpers, workflow run option projection, GraphQL response
-handling, and GraphQL DTO projection. The active plan remains `In Progress`
-because `REF-003` and `REF-015` are still blocked pending explicit owner
-decisions for the public add-ons runner predicate export surface and backend
-constant ownership/normalization contract. A completion request alone does not
-approve those public-surface changes or accept them as residual risks; the
-current blocker questions are recorded in
-`design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`.
+handling, GraphQL DTO projection, `REF-003` container-runner predicate
+consolidation, and `REF-015` backend constant/normalization consolidation.
+`REF-003` is resolved through the narrow add-ons-owned
+`isContainerRunnerWithDockerCli` export used by runtime readiness. `REF-015` is
+resolved through core-owned backend constants and normalization helpers exposed
+by `packages/divedra-core/src/workflow-model.ts` and re-exported through the
+compatibility facade while preserving existing caller null-versus-undefined
+semantics. The owner decisions that unblocked these public-surface changes are
+recorded in
+`design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`; the
+active implementation plan records both tasks as completed.
 
 Run the local refactoring workflow with project workflow definitions:
 
@@ -854,6 +877,11 @@ Common entry points:
 
 - `createWorkflowExecutionClient()`
 - `createSupervisorRunnerPool()`
+- `NODE_EXECUTION_BACKEND`
+- `NODE_EXECUTION_BACKENDS`
+- `CLI_AGENT_BACKENDS`
+- `normalizeNodeExecutionBackend()`
+- `normalizeCliAgentBackend()`
 - `executeWorkflow()`
 - `resumeWorkflow()`
 - `rerunWorkflow()`

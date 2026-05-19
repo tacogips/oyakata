@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-19T23:35:00+09:00",
+  "lastUpdated": "2026-05-20T00:24:00+09:00",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -6552,7 +6552,7 @@
     },
     "active/refactoring-duplicate-scavenge-product-code": {
       "phase": 181,
-      "status": "In Progress",
+      "status": "Completed",
       "path": "impl-plans/active/refactoring-duplicate-scavenge-product-code.md",
       "designReference": "refactoring-divide-and-conquer duplicate-scavenge merge review plan",
       "tasks": {
@@ -6569,7 +6569,7 @@
           ]
         },
         "REF-003": {
-          "status": "Blocked",
+          "status": "Completed",
           "parallelizable": false,
           "deps": [
             "REF-001"
@@ -6640,7 +6640,7 @@
           ]
         },
         "REF-015": {
-          "status": "Blocked",
+          "status": "Completed",
           "parallelizable": false,
           "deps": [
             "REF-009",

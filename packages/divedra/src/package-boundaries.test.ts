@@ -935,6 +935,7 @@ describe("package boundaries", () => {
         ...sortedExportKeys(sourceMailboxGuidance),
         "executeAddonNode",
         "executeNativeNode",
+        "isContainerRunnerWithDockerCli",
         "isGatewayReadinessAddon",
       ].sort(),
     );
@@ -968,7 +969,11 @@ describe("package boundaries", () => {
 
     expect(sortedExportKeys(core)).toEqual([
       "AdapterExecutionError",
+      "CLI_AGENT_BACKENDS",
       "DEFAULT_SELF_IMPROVE_LOG_LIMIT",
+      "NODE_EXECUTION_BACKEND",
+      "NODE_EXECUTION_BACKENDS",
+      "NODE_EXECUTION_BACKEND_LIST_TEXT",
       "NODE_TEMPLATE_FIELD_SPECS",
       "NodeValidationResult",
       "SUPERVISION_STALL_ERROR_PREFIX",
@@ -1006,6 +1011,7 @@ describe("package boundaries", () => {
       "getWorkflowSelfImproveReport",
       "hasInvalidNodeValidationResult",
       "hashManagerAuthToken",
+      "isCliAgentBackend",
       "isSuperviserControlAddonName",
       "isSupervisionStallLastError",
       "listEventReplyDispatchesFromRuntimeDb",
@@ -1023,6 +1029,8 @@ describe("package boundaries", () => {
       "loadWorkflowFromDisk",
       "mergeLoadOptionsForSessionMutableBundle",
       "noopWorkflowRunEventSink",
+      "normalizeCliAgentBackend",
+      "normalizeNodeExecutionBackend",
       "normalizeOutputContractEnvelope",
       "normalizeSessionState",
       "normalizeTextBusinessPayload",

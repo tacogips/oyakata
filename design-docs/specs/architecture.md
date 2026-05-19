@@ -221,23 +221,27 @@ Important boundary rules:
   workflow session state and public GraphQL/control-plane DTOs rather than
   relying on structural casts.
 
-Two active tasks intentionally remain blocked until their public-surface
-questions are resolved. `REF-003` must not export a Docker-compatible runner
-predicate from `packages/divedra-addons/src/index.ts` without accepting that
-package API surface. `REF-015` must not centralize backend constants until
-validation, adapter dispatch, runtime-readiness, and workflow-model owners agree
-on the public normalization contract and null-versus-undefined semantics. These
-confirmation items are tracked in
+The delegated completion run for `REF-003` and `REF-015` includes explicit
+owner decisions that resolve the prior public-surface blockers. `REF-003` may
+add or expose the narrowest package-owned Docker-compatible runner predicate
+surface needed by root runtime readiness, including a top-level
+`packages/divedra-addons/src/index.ts` export when that follows the package's
+existing convention. The shared predicate covers `podman`, `docker`, and
+`nerdctl`, while readiness reporting and native executor policy errors remain
+caller-owned. `REF-015` may establish core-owned node execution backend
+constants and normalization in `packages/divedra-core/src/workflow-model.ts`.
+Root validation, adapter dispatch, runtime-readiness, node-patch, and payload
+validation modules must use wrappers or compatibility helpers where needed so
+existing null-versus-undefined caller semantics and public validation issue
+shapes remain stable. The resolved owner decisions are recorded in
 `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`.
 
-For delegated completion reruns of the active plan, the blocker state takes
-precedence over any stale plan-level completion marker. Later workflow steps
-should either receive the owner decisions that unblock `REF-003` and `REF-015`
-and then implement them with the focused verification commands in the plan, or
-preserve them as explicitly accepted residual risks and update the plan progress
-log to reconcile the task-level blocker state with the plan-level status. The
-completion path must not infer approval for new public exports or core-owned
-backend normalization from the existence of the completion request alone.
+For delegated completion reruns of the active plan, the explicit owner
+decisions in workflow input now supersede the previous blocked state for
+`REF-003` and `REF-015`. Later workflow steps should implement both tasks in
+dependency order with the focused verification commands in the plan. If a new
+constraint is discovered, it must be recorded as a new blocker or residual risk
+rather than reviving the superseded public-surface questions.
 
 No Codex-reference implementation behavior is required for this active plan.
 The default local reference root `../../codex-agent` was checked for this

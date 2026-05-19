@@ -1,3 +1,4 @@
+import { isContainerRunnerWithDockerCli } from "divedra-addons";
 import { resolveConfiguredEnvValue } from "./adapters/shared";
 import { resolveNodeExecutionBackend } from "./adapters/dispatch";
 import { effectiveCrossWorkflowDispatches } from "./cross-workflow-from-steps";
@@ -225,7 +226,7 @@ async function probeContainerRunner(
 ): Promise<WorkflowRuntimeRequirement> {
   if (
     candidate.dockerCliRequired === true &&
-    !isDockerCliContainerRunner(candidate.runnerKind)
+    !isContainerRunnerWithDockerCli(candidate.runnerKind)
   ) {
     return {
       id: buildContainerRunnerRequirementId(candidate),
@@ -264,16 +265,6 @@ function probeCodeManagerRuntime(
       `steps=${buildSourceStepList(candidate.sourceStepIds)}`,
     sourceStepIds: candidate.sourceStepIds,
   };
-}
-
-function isDockerCliContainerRunner(
-  runnerKind: ContainerRunnerKind,
-): runnerKind is "podman" | "docker" | "nerdctl" {
-  return (
-    runnerKind === "podman" ||
-    runnerKind === "docker" ||
-    runnerKind === "nerdctl"
-  );
 }
 
 function buildContainerRunnerRequirementId(

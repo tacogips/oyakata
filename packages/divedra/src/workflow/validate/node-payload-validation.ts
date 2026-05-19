@@ -1,4 +1,5 @@
 import {
+  NODE_EXECUTION_BACKEND_LIST_TEXT,
   normalizeCliAgentBackend,
   normalizeNodeExecutionBackend,
 } from "../backend";
@@ -232,7 +233,7 @@ export function normalizeNodePayload(input: {
         makeIssue(
           "error",
           `${path}.executionBackend`,
-          "must be codex-agent, claude-code-agent, cursor-cli-agent, official/openai-sdk, or official/anthropic-sdk",
+          `must be ${NODE_EXECUTION_BACKEND_LIST_TEXT}`,
         ),
       );
     }

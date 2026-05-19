@@ -15,7 +15,6 @@ import type {
   ContainerRuntimeDefaults,
   JsonObject,
   NodeDurability,
-  NodeExecutionBackend,
   NodeInputContract,
   NodeKind,
   NodeOutputContract,
@@ -45,6 +44,8 @@ import {
   DEFAULT_MAX_LOOP_ITERATIONS,
   DEFAULT_NODE_TIMEOUT_MS,
   NODE_ID_PATTERN,
+  NODE_EXECUTION_BACKEND_LIST_TEXT,
+  normalizeNodeExecutionBackend,
 } from "./workflow-model";
 
 export interface RawWorkflowBundle {
@@ -722,18 +723,6 @@ function normalizeAddonRef(
     ...(env === undefined ? {} : { env }),
     ...(isRecord(raw["inputs"]) ? { inputs: raw["inputs"] } : {}),
   };
-}
-
-function normalizeNodeExecutionBackend(
-  raw: unknown,
-): NodeExecutionBackend | undefined {
-  return raw === "codex-agent" ||
-    raw === "claude-code-agent" ||
-    raw === "cursor-cli-agent" ||
-    raw === "official/openai-sdk" ||
-    raw === "official/anthropic-sdk"
-    ? raw
-    : undefined;
 }
 
 function normalizeNodeKind(
@@ -1952,7 +1941,7 @@ function normalizeNodePayload(input: {
       makeIssue(
         "error",
         `${input.path}.executionBackend`,
-        "must be codex-agent, claude-code-agent, cursor-cli-agent, official/openai-sdk, or official/anthropic-sdk",
+        `must be ${NODE_EXECUTION_BACKEND_LIST_TEXT}`,
       ),
     );
   }
