@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { hashJsonSha256, safeArtifactPathSegment } from "../shared/artifacts";
 import { atomicWriteJsonFile } from "../shared/fs";
 import { resolveRootDataDir } from "../workflow/paths";
 import type {
@@ -24,14 +25,6 @@ export interface HookEventRecorderOptions extends LoadOptions {
   readonly eventStore?: HookEventStore;
 }
 
-function safeSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 96) || "hook";
-}
-
-function hashPayload(payload: unknown): string {
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
-}
-
 function buildHookEventId(now: string, idFactory: () => string): string {
   const compactTime = now.replace(/[^0-9]/g, "").slice(0, 14);
   return `hook-${compactTime}-${idFactory().slice(0, 12)}`;
@@ -49,10 +42,10 @@ function buildArtifactRelativePath(input: {
 }): string {
   return path.posix.join(
     "hooks",
-    safeSegment(input.workflowExecutionId),
-    safeSegment(input.nodeExecId),
-    safeSegment(input.agentSessionId),
-    safeSegment(input.hookEventId),
+    safeArtifactPathSegment(input.workflowExecutionId, "hook"),
+    safeArtifactPathSegment(input.nodeExecId, "hook"),
+    safeArtifactPathSegment(input.agentSessionId, "hook"),
+    safeArtifactPathSegment(input.hookEventId, "hook"),
     "payload.json",
   );
 }
@@ -153,7 +146,7 @@ export async function recordHookEvent(
   const now = options.now?.() ?? new Date().toISOString();
   const hookEventId = buildHookEventId(now, options.idFactory ?? randomUUID);
   const captureMode = options.captureMode ?? "redacted";
-  const payloadHash = hashPayload(input.ctx.payload);
+  const payloadHash = hashJsonSha256(input.ctx.payload);
   const payloadRefJson = await writePayloadArtifact({
     ctx: input.ctx,
     hookEventId,

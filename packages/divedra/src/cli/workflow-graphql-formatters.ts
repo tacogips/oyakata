@@ -1,5 +1,5 @@
 import type { WorkflowExecutionCompactSummary } from "../shared/ui-contract";
-import { createLifecycleSupervisionPolicyInput } from "../workflow/auto-improve-policy";
+import { buildLocalWorkflowRunOptionProjection } from "../lib-workflow-run-options";
 import type { CallStepInput } from "../workflow/call-step";
 import {
   listWorkflowCatalogSources,
@@ -20,7 +20,6 @@ import type {
   WorkflowUsageCatalog,
   WorkflowUsageSummary,
 } from "../workflow/usage";
-import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import type {
   CliIo,
   CliStorageOptions,
@@ -50,37 +49,10 @@ export function buildLocalWorkflowRunOverrides(
   | "maxSteps"
   | "workflowWorkingDirectory"
 > {
-  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    parsedOptions.workingDirectory,
+  return buildLocalWorkflowRunOptionProjection(
+    parsedOptions,
+    defaultAutoImprove,
   );
-  const autoImprove =
-    parsedOptions.autoImprove ??
-    (!defaultAutoImprove
-      ? undefined
-      : parsedOptions.disableAutoImprove
-        ? createLifecycleSupervisionPolicyInput()
-        : { enabled: true });
-  return {
-    ...(workflowWorkingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory }),
-    ...(parsedOptions.maxSteps === undefined
-      ? {}
-      : { maxSteps: parsedOptions.maxSteps }),
-    ...(parsedOptions.maxConcurrency === undefined
-      ? {}
-      : { maxConcurrency: parsedOptions.maxConcurrency }),
-    ...(parsedOptions.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: parsedOptions.maxLoopIterations }),
-    ...(parsedOptions.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
-    ...(parsedOptions.debug ? { debug: true } : {}),
-    ...(parsedOptions.dryRun ? { dryRun: true } : {}),
-    ...(autoImprove === undefined ? {} : { autoImprove }),
-    ...(parsedOptions.nestedSuperviser ? { nestedSuperviserDriver: true } : {}),
-  };
 }
 export function buildLocalCallStepOverrides(parsedOptions: ParsedOptions): {
   readonly defaultTimeoutMs?: number;
@@ -88,9 +60,8 @@ export function buildLocalCallStepOverrides(parsedOptions: ParsedOptions): {
   readonly workflowWorkingDirectory?: string;
   readonly overrides?: NonNullable<CallStepInput["overrides"]>;
 } {
-  const workflowWorkingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    parsedOptions.workingDirectory,
-  );
+  const { workflowWorkingDirectory } =
+    buildLocalWorkflowRunOptionProjection(parsedOptions);
   const overrides =
     parsedOptions.timeoutMs === undefined &&
     parsedOptions.promptVariant === undefined &&

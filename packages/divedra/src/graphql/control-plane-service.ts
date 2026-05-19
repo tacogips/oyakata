@@ -11,6 +11,10 @@ import type {
   WorkflowControlPlaneStepRunsResult,
 } from "divedra-graphql";
 import {
+  projectControlPlaneSessionToWorkflowSessionState,
+  projectWorkflowSessionStateToControlPlaneSession,
+} from "divedra-graphql";
+import {
   continueWorkflowFromHistory,
   type ContinueWorkflowFromHistoryInput,
 } from "../lib-continuation";
@@ -34,13 +38,15 @@ import type { GraphqlRequestContext } from "./types";
 function toControlPlaneSession(
   session: WorkflowSessionState,
 ): WorkflowControlPlaneSession {
-  return session as unknown as WorkflowControlPlaneSession;
+  return projectWorkflowSessionStateToControlPlaneSession(session);
 }
 
 function toWorkflowSessionState(
   session: WorkflowControlPlaneSession,
 ): WorkflowSessionState {
-  return session as unknown as WorkflowSessionState;
+  return projectControlPlaneSessionToWorkflowSessionState<WorkflowSessionState>(
+    session,
+  );
 }
 
 export function createWorkflowControlPlaneService(): WorkflowControlPlaneService<GraphqlRequestContext> {

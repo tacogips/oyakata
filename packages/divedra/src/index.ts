@@ -1,6 +1,7 @@
 import { runWorkflow } from "divedra-core";
 import {
   executeGraphqlRequest,
+  readGraphqlDataObject,
   type GraphqlClientRequest,
   type GraphqlClientResponse,
   type GraphqlResponseError,
@@ -43,8 +44,11 @@ import { loadSession, type SessionStoreOptions } from "divedra-core";
 import type { WorkflowSessionState } from "divedra-core";
 import type { MockNodeScenario } from "./workflow/scenario-adapter";
 import type { ChatReplyDispatcher, LoadOptions } from "divedra-core";
-import { normalizeWorkflowWorkingDirectoryOverride } from "divedra-core";
-import { buildLibraryWorkflowRunOptions } from "./lib-workflow-run-options";
+import {
+  buildLibraryWorkflowRunOptions,
+  buildLocalWorkflowExecutionRequestProjection,
+  buildRemoteWorkflowExecutionRequestProjection,
+} from "./lib-workflow-run-options";
 
 export type DivedraOptions = LoadOptions & SessionStoreOptions;
 
@@ -232,8 +236,8 @@ async function executeWorkflowThroughGraphqlClient(
   }
   const runtimeVariables = resolveRuntimeVariables(request);
   const nodePatch = request?.nodePatch ?? options.nodePatch;
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    request?.workingDirectory,
+  const executionOverrides = buildRemoteWorkflowExecutionRequestProjection(
+    request ?? {},
   );
   const response = await executeGraphqlRequest({
     endpoint: options.endpoint,
@@ -253,21 +257,11 @@ async function executeWorkflowThroughGraphqlClient(
         workflowName: options.workflowName,
         ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
         ...(nodePatch === undefined ? {} : { nodePatch }),
-        ...(workingDirectory === undefined ? {} : { workingDirectory }),
+        ...executionOverrides,
         ...(request?.mockScenario === undefined
           ? {}
           : { mockScenario: request.mockScenario }),
         ...(request?.async === undefined ? {} : { async: request.async }),
-        ...(request?.dryRun === undefined ? {} : { dryRun: request.dryRun }),
-        ...(request?.maxSteps === undefined
-          ? {}
-          : { maxSteps: request.maxSteps }),
-        ...(request?.maxLoopIterations === undefined
-          ? {}
-          : { maxLoopIterations: request.maxLoopIterations }),
-        ...(request?.defaultTimeoutMs === undefined
-          ? {}
-          : { defaultTimeoutMs: request.defaultTimeoutMs }),
       },
     },
     ...(options.authToken === undefined
@@ -280,11 +274,7 @@ async function executeWorkflowThroughGraphqlClient(
       ? {}
       : { fetchImpl: options.fetchImpl }),
   });
-  if (response.errors !== undefined && response.errors.length > 0) {
-    throw new Error(response.errors.map((entry) => entry.message).join("; "));
-  }
-
-  const data = requireObjectField(response.data, "GraphQL response.data");
+  const data = readGraphqlDataObject(response);
   const payload = requireObjectField(
     data["executeWorkflow"],
     "executeWorkflow",
@@ -319,8 +309,10 @@ async function executeWorkflowThroughLibraryClient(
 ): Promise<WorkflowExecutionClientResult> {
   const runtimeVariables = resolveRuntimeVariables(request);
   const nodePatch = request?.nodePatch ?? options.nodePatch;
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    request?.workingDirectory,
+  const remoteExecutionOverrides =
+    buildRemoteWorkflowExecutionRequestProjection(request ?? {});
+  const localExecutionOverrides = buildLocalWorkflowExecutionRequestProjection(
+    request ?? {},
   );
   if (request?.async === true) {
     const schema = createGraphqlSchema();
@@ -333,21 +325,11 @@ async function executeWorkflowThroughLibraryClient(
         workflowName: options.workflowName,
         ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
         ...(nodePatch === undefined ? {} : { nodePatch }),
-        ...(workingDirectory === undefined ? {} : { workingDirectory }),
+        ...remoteExecutionOverrides,
         ...(request.mockScenario === undefined
           ? {}
           : { mockScenario: request.mockScenario }),
         async: true,
-        ...(request.dryRun === undefined ? {} : { dryRun: request.dryRun }),
-        ...(request.maxSteps === undefined
-          ? {}
-          : { maxSteps: request.maxSteps }),
-        ...(request.maxLoopIterations === undefined
-          ? {}
-          : { maxLoopIterations: request.maxLoopIterations }),
-        ...(request.defaultTimeoutMs === undefined
-          ? {}
-          : { defaultTimeoutMs: request.defaultTimeoutMs }),
       },
       executionOptions,
     );
@@ -364,22 +346,12 @@ async function executeWorkflowThroughLibraryClient(
   const result = await executeWorkflow({
     ...options,
     workflowName: options.workflowName,
-    ...(workingDirectory === undefined
-      ? {}
-      : { workflowWorkingDirectory: workingDirectory }),
+    ...localExecutionOverrides,
     ...(runtimeVariables === undefined ? {} : { runtimeVariables }),
     ...(nodePatch === undefined ? {} : { nodePatch }),
     ...(request?.mockScenario === undefined
       ? {}
       : { mockScenario: request.mockScenario }),
-    ...(request?.dryRun === undefined ? {} : { dryRun: request.dryRun }),
-    ...(request?.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
-    ...(request?.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: request.maxLoopIterations }),
-    ...(request?.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: request.defaultTimeoutMs }),
   });
   return {
     workflowName: options.workflowName,
@@ -606,10 +578,7 @@ export async function executeWorkflowSelfImprove(
       ...(managerSessionId === undefined ? {} : { managerSessionId }),
       ...(fetchImpl === undefined ? {} : { fetchImpl }),
     });
-    if (response.errors !== undefined && response.errors.length > 0) {
-      throw new Error(response.errors.map((entry) => entry.message).join("; "));
-    }
-    const data = requireObjectField(response.data, "GraphQL response.data");
+    const data = readGraphqlDataObject(response);
     return requireObjectField(
       data["executeWorkflowSelfImprove"],
       "executeWorkflowSelfImprove",
@@ -683,10 +652,7 @@ export async function getWorkflowSelfImproveReport(
       ...(managerSessionId === undefined ? {} : { managerSessionId }),
       ...(fetchImpl === undefined ? {} : { fetchImpl }),
     });
-    if (response.errors !== undefined && response.errors.length > 0) {
-      throw new Error(response.errors.map((entry) => entry.message).join("; "));
-    }
-    const data = requireObjectField(response.data, "GraphQL response.data");
+    const data = readGraphqlDataObject(response);
     const report = data["workflowSelfImproveReport"];
     if (report === null || report === undefined) {
       throw new Error(
@@ -730,10 +696,7 @@ export async function listWorkflowSelfImproveReports(
       ...(managerSessionId === undefined ? {} : { managerSessionId }),
       ...(fetchImpl === undefined ? {} : { fetchImpl }),
     });
-    if (response.errors !== undefined && response.errors.length > 0) {
-      throw new Error(response.errors.map((entry) => entry.message).join("; "));
-    }
-    const data = requireObjectField(response.data, "GraphQL response.data");
+    const data = readGraphqlDataObject(response);
     const connection = requireObjectField(
       data["workflowSelfImproveReports"],
       "workflowSelfImproveReports",

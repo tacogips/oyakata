@@ -1,19 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
-  AdapterExecutionError,
-  normalizeOutputContractEnvelope,
-  normalizeTextBusinessPayload,
-  parseJsonObjectCandidate,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
   type NodeAdapter,
 } from "divedra-core";
 import {
-  executeWithRetry,
-  normalizeAdapterFailure,
-  resolveConfiguredEnvValue,
-  resolveRetryPolicy,
+  executeOfficialSdkRequest,
 } from "./shared";
 
 const DEFAULT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY";
@@ -50,13 +43,6 @@ export interface AnthropicSdkAdapterConfig {
     readonly apiKey: string;
     readonly baseURL?: string;
   }) => AnthropicClientLike;
-}
-
-function resolveApiKey(config: AnthropicSdkAdapterConfig): string | undefined {
-  return resolveConfiguredEnvValue(
-    config.apiKeyEnv,
-    DEFAULT_ANTHROPIC_API_KEY_ENV,
-  );
 }
 
 function extractAnthropicText(response: unknown): string {
@@ -109,33 +95,24 @@ export class AnthropicSdkAdapter implements NodeAdapter {
     input: AdapterExecutionInput,
     context: AdapterExecutionContext,
   ): Promise<AdapterExecutionOutput> {
-    const apiKey = resolveApiKey(this.#config);
-    if (apiKey === undefined) {
-      throw new AdapterExecutionError(
-        "policy_blocked",
-        "missing Anthropic API key",
-      );
-    }
-
-    const clientFactory = this.#config.clientFactory ?? defaultClientFactory;
-    const client = clientFactory({
-      apiKey,
-      ...(this.#config.baseUrl === undefined
-        ? {}
-        : { baseURL: this.#config.baseUrl }),
-    });
-    const { maxAttempts, retryDelayMs } = resolveRetryPolicy(this.#config);
     const maxTokens = Math.max(
       1,
       this.#config.maxTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS,
     );
 
-    return executeWithRetry({
-      maxAttempts,
-      retryDelayMs,
-      signal: context.signal,
-      run: async () => {
-        const response = await client.messages.create(
+    return executeOfficialSdkRequest({
+      adapterInput: input,
+      context,
+      config: this.#config,
+      defaultApiKeyEnv: DEFAULT_ANTHROPIC_API_KEY_ENV,
+      missingApiKeyMessage: "missing Anthropic API key",
+      clientFactory: defaultClientFactory,
+      provider: "official-anthropic-sdk",
+      responseLabel: "official Anthropic SDK response",
+      abortedMessage: "official Anthropic SDK request aborted",
+      fallbackFailureMessage: "unknown Anthropic SDK failure",
+      createRequest: (client) =>
+        client.messages.create(
           {
             model: input.node.model,
             max_tokens: maxTokens,
@@ -147,47 +124,8 @@ export class AnthropicSdkAdapter implements NodeAdapter {
           {
             signal: context.signal,
           },
-        );
-
-        const text = extractAnthropicText(response);
-        const normalizedPayload =
-          input.output === undefined
-            ? {
-                completionPassed: true,
-                when: { always: true },
-                payload: normalizeTextBusinessPayload(text),
-              }
-            : normalizeOutputContractEnvelope(
-                parseJsonObjectCandidate(
-                  text,
-                  "official Anthropic SDK response",
-                ),
-                "official Anthropic SDK response",
-              );
-        return {
-          provider: "official-anthropic-sdk",
-          model: input.node.model,
-          promptText: input.promptText,
-          completionPassed: normalizedPayload.completionPassed,
-          when: normalizedPayload.when,
-          payload: normalizedPayload.payload,
-        };
-      },
-      normalizeError: (error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return new AdapterExecutionError(
-            "timeout",
-            "official Anthropic SDK request aborted",
-          );
-        }
-        if (context.signal.aborted) {
-          return new AdapterExecutionError(
-            "timeout",
-            "official Anthropic SDK request aborted",
-          );
-        }
-        return normalizeAdapterFailure(error, "unknown Anthropic SDK failure");
-      },
+        ),
+      extractText: extractAnthropicText,
     });
   }
 }

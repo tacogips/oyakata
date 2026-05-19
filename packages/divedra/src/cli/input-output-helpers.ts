@@ -3,12 +3,10 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   executeGraphqlRequest,
+  readGraphqlDataObject,
   type GraphqlClientResponse,
 } from "../graphql/client";
-import {
-  createLifecycleSupervisionPolicyInput,
-  type AutoImprovePolicyInput,
-} from "../workflow/auto-improve-policy";
+import { buildRemoteWorkflowExecutionInputProjection } from "../lib-workflow-run-options";
 import { createCommunicationService } from "../workflow/communication-service";
 import type { WorkflowRunOptions } from "../workflow/engine";
 import {
@@ -31,7 +29,6 @@ import {
   createSupervisorProgressEventSink,
   createSupervisorProgressRenderer,
 } from "../workflow/supervisor-progress-renderer";
-import { normalizeWorkflowWorkingDirectoryOverride } from "../workflow/working-directory";
 import type {
   CliDependencies,
   CliIo,
@@ -669,13 +666,10 @@ export function resolveGraphqlCliTransport(
 export function readGraphqlExecutionPayload(
   response: GraphqlClientResponse,
 ): Readonly<Record<string, unknown>> {
-  if (response.errors !== undefined && response.errors.length > 0) {
-    throw new Error(response.errors.map((entry) => entry.message).join("; "));
-  }
-  if (!isJsonObjectRecord(response.data)) {
-    throw new Error("GraphQL response data must be a JSON object");
-  }
-  return response.data;
+  return readGraphqlDataObject(
+    response,
+    "GraphQL response data must be a JSON object",
+  );
 }
 export async function executeCliGraphqlOperation(args: {
   readonly transport: GraphqlCliTransportOptions;
@@ -701,32 +695,7 @@ export async function executeCliGraphqlOperation(args: {
 export function buildRemoteExecutionInput(
   parsedOptions: ParsedOptions,
 ): Readonly<Record<string, unknown>> {
-  const workingDirectory = normalizeWorkflowWorkingDirectoryOverride(
-    parsedOptions.workingDirectory,
-  );
-  const autoImprove: AutoImprovePolicyInput =
-    parsedOptions.autoImprove ??
-    (parsedOptions.disableAutoImprove
-      ? createLifecycleSupervisionPolicyInput()
-      : { enabled: true });
-  return {
-    autoImprove,
-    ...(parsedOptions.nestedSuperviser ? { nestedSuperviser: true } : {}),
-    ...(workingDirectory === undefined ? {} : { workingDirectory }),
-    ...(parsedOptions.dryRun ? { dryRun: true } : {}),
-    ...(parsedOptions.maxSteps === undefined
-      ? {}
-      : { maxSteps: parsedOptions.maxSteps }),
-    ...(parsedOptions.maxConcurrency === undefined
-      ? {}
-      : { maxConcurrency: parsedOptions.maxConcurrency }),
-    ...(parsedOptions.maxLoopIterations === undefined
-      ? {}
-      : { maxLoopIterations: parsedOptions.maxLoopIterations }),
-    ...(parsedOptions.defaultTimeoutMs === undefined
-      ? {}
-      : { defaultTimeoutMs: parsedOptions.defaultTimeoutMs }),
-  };
+  return buildRemoteWorkflowExecutionInputProjection(parsedOptions);
 }
 export async function fetchRemoteWorkflowRunSummary(
   transport: GraphqlCliTransportOptions,

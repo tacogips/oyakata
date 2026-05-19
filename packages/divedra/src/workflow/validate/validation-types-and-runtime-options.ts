@@ -1,4 +1,15 @@
 import {
+  isRecord,
+  makeIssue,
+  normalizePositiveInteger as normalizePositiveIntegerValue,
+  normalizePositiveNumber as normalizePositiveNumberField,
+  normalizeStringArray as normalizeStringArrayField,
+  normalizeStringMap as normalizeStringMapField,
+  readNumberField,
+  readStringField,
+  type UnknownRecord,
+} from "divedra-core/workflow-validation";
+import {
   DEFAULT_MONITOR_INTERVAL_MS,
   DEFAULT_STALL_TIMEOUT_MS,
 } from "../auto-improve-policy";
@@ -57,7 +68,6 @@ export function isStrictWorkflowAuthorshipValidation(
 ): boolean {
   return true;
 }
-export type UnknownRecord = Record<string, unknown>;
 export type ValidationResult = Result<
   NormalizedWorkflowBundle,
   readonly ValidationIssue[]
@@ -67,9 +77,17 @@ export interface ValidationSuccessDetails {
   readonly issues: readonly ValidationIssue[];
   readonly nodeValidationResults: readonly NodeValidationResult[];
 }
-export function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+export {
+  isRecord,
+  makeIssue,
+  normalizePositiveIntegerValue,
+  normalizePositiveNumberField,
+  normalizeStringArrayField,
+  normalizeStringMapField,
+  readNumberField,
+  readStringField,
+  type UnknownRecord,
+};
 export function requiresSeparatedModel(
   executionBackend: NodeExecutionBackend | undefined,
 ): executionBackend is NodeExecutionBackend {
@@ -104,13 +122,6 @@ export function isContainerRunnerKind(
     value === "apple-container"
   );
 }
-export function makeIssue(
-  severity: "error" | "warning",
-  path: string,
-  message: string,
-): ValidationIssue {
-  return { severity, path, message };
-}
 export function normalizeWorkingDirectoryField(
   value: unknown,
   path: string,
@@ -144,36 +155,6 @@ export function normalizeNodeRole(value: unknown): NodeRole | undefined {
   }
   return undefined;
 }
-export function readStringField(
-  record: UnknownRecord,
-  key: string,
-  path: string,
-  issues: ValidationIssue[],
-): string | null {
-  const value = record[key];
-  if (typeof value !== "string" || value.length === 0) {
-    issues.push(
-      makeIssue("error", `${path}.${key}`, "must be a non-empty string"),
-    );
-    return null;
-  }
-  return value;
-}
-export function readNumberField(
-  record: UnknownRecord,
-  key: string,
-  path: string,
-  issues: ValidationIssue[],
-): number | null {
-  const value = record[key];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    issues.push(
-      makeIssue("error", `${path}.${key}`, "must be a finite number"),
-    );
-    return null;
-  }
-  return value;
-}
 export function readPositiveIntegerField(
   record: UnknownRecord,
   key: string,
@@ -188,34 +169,6 @@ export function readPositiveIntegerField(
     return null;
   }
   return value;
-}
-export function normalizePositiveNumberField(
-  value: unknown,
-  path: string,
-  issues: ValidationIssue[],
-): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return value;
-  }
-  issues.push(makeIssue("error", path, "must be > 0 when provided"));
-  return undefined;
-}
-export function normalizePositiveIntegerValue(
-  value: unknown,
-  path: string,
-  issues: ValidationIssue[],
-): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
-    return value;
-  }
-  issues.push(makeIssue("error", path, "must be a positive integer"));
-  return undefined;
 }
 export function normalizeNonNegativeIntegerValue(
   value: unknown,
@@ -233,54 +186,6 @@ export function normalizeNonNegativeIntegerValue(
 }
 export function isAbsoluteContainerPath(value: string): boolean {
   return value.startsWith("/");
-}
-export function normalizeStringArrayField(
-  value: unknown,
-  path: string,
-  issues: ValidationIssue[],
-): readonly string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value)) {
-    issues.push(makeIssue("error", path, "must be an array when provided"));
-    return undefined;
-  }
-  const entries: string[] = [];
-  value.forEach((entry, index) => {
-    if (typeof entry !== "string" || entry.length === 0) {
-      issues.push(
-        makeIssue("error", `${path}[${index}]`, "must be a non-empty string"),
-      );
-      return;
-    }
-    entries.push(entry);
-  });
-  return entries;
-}
-export function normalizeStringMapField(
-  value: unknown,
-  path: string,
-  issues: ValidationIssue[],
-): Readonly<Record<string, string>> | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!isRecord(value)) {
-    issues.push(makeIssue("error", path, "must be an object when provided"));
-    return undefined;
-  }
-  const entries: Record<string, string> = {};
-  for (const [key, entryValue] of Object.entries(value)) {
-    if (typeof entryValue !== "string") {
-      issues.push(
-        makeIssue("error", `${path}.${key}`, "must be a string when provided"),
-      );
-      continue;
-    }
-    entries[key] = entryValue;
-  }
-  return entries;
 }
 export function normalizeContainerBuild(
   value: unknown,

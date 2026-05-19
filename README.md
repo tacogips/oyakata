@@ -752,6 +752,12 @@ structured-output attempts, `output-attempts/attempt-*/request.json`,
 `executionBackend` and `model`, while `mailbox/inbox/input.json` preserves full
 `latestOutputs` for downstream review steps even when prompt summaries are
 truncated.
+Workflow communication deliveries are also persisted under the workflow
+artifact root in `communications/<communication-id>/` with `message.json`,
+`meta.json`, `outbox/`, `inbox/`, and `attempts/<attempt-id>/` records. Replay,
+retry, manager-message, and mailbox delivery paths use this same artifact shape,
+so operators can inspect one communication id consistently across normal
+delivery and manual rerun flows.
 
 Relocate storage with:
 
@@ -815,6 +821,17 @@ primitive, add-on, or narrow abstraction. Slice reviews stay read-only, and
 plan merge should create consolidation tasks only when owned paths, counterpart
 paths, behavioral differences, conflict notes, risks, and verification commands
 are explicit.
+
+The current product-code duplicate-scavenge pass completed the unblocked
+consolidation tasks in
+`impl-plans/active/refactoring-duplicate-scavenge-product-code.md`, including
+shared artifact hashing/sanitization, workflow scope and validation helpers,
+communication artifact persistence, node output publication, official SDK and
+local-agent adapter helpers, workflow run option projection, GraphQL response
+handling, and GraphQL DTO projection. `REF-003` and `REF-015` remain documented
+blocked residual risks pending the public add-ons runner predicate and backend
+constant ownership decisions in
+`design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`.
 
 Run the local refactoring workflow with project workflow definitions:
 

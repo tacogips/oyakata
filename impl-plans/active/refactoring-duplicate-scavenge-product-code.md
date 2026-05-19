@@ -1,7 +1,7 @@
 # Product Code Duplicate-Scavenge Refactoring Plan
 
-**Status**: In Progress
-**Design Reference**: Workflow output from `refactoring-divide-and-conquer` step `step3-merge-review-plan`
+**Status**: Completed
+**Design Reference**: Workflow output from `refactoring-divide-and-conquer` step `step3-merge-review-plan`; accepted boundary update in `design-docs/specs/architecture.md#product-code-duplicate-scavenge-consolidation-boundaries`
 **Created**: 2026-05-19
 **Last Updated**: 2026-05-19
 
@@ -12,6 +12,20 @@ Improve product-code quality by consolidating duplicated TypeScript implementati
 This plan preserves public behavior and public APIs unless a task explicitly authorizes a behavior-preserving contract cleanup. Root `src` entrypoints are removed after REF-019; active owned-file paths and verification commands use package-local `packages/divedra/src` paths.
 
 Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`, prompt cleanup, staging, commits, pushes, and any provisioning package because no concrete provisioning source surface was identified.
+
+## Accepted Design References
+
+- `design-docs/specs/architecture.md#product-code-duplicate-scavenge-consolidation-boundaries`: Defines the behavior-preserving boundaries for the remaining product-code duplicate-scavenge tasks.
+- `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`: Tracks the user or owner decisions required before unblocking `REF-003` and `REF-015`.
+- `design-docs/user-qa/README.md`: Indexes the active blocker questions.
+- Codex reference: no external `../../codex-agent` checkout was available or required for this plan. `codex-agent` remains an execution backend and adapter-behavior reference only; implementation must not copy Codex source or alter Cursor-specific adapter boundaries while sharing local-agent helpers.
+
+## Implementation Order for Remaining Work
+
+1. Implement unblocked independent helpers first: `REF-007`, `REF-008`, `REF-009`, `REF-011`, `REF-013`, and `REF-016`.
+2. Implement dependent tasks after their prerequisites pass focused verification: `REF-010`, `REF-012`, `REF-014`, `REF-017`, and `REF-018`.
+3. Keep `REF-003` and `REF-015` blocked unless the decisions in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md` are resolved or explicitly accepted as residual risk.
+4. After each completed task, update that task status and append a progress-log entry with completed files, verification commands, and any residual risk changes.
 
 ## Duplicate Groups
 
@@ -49,18 +63,18 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 | REF-004 | Completed | DUP-004 | - | Yes |
 | REF-005 | Completed | DUP-005 | REF-004 | No |
 | REF-006 | Completed | DUP-006 | - | Yes |
-| REF-007 | Ready | DUP-007, DUP-008 | - | Yes |
-| REF-008 | Ready | DUP-009, DUP-021 | - | No |
-| REF-009 | Ready | DUP-010 | - | Yes |
-| REF-010 | Ready | DUP-011 | REF-002, REF-009 | No |
-| REF-011 | Ready | DUP-012, DUP-014 | - | No |
-| REF-012 | Ready | DUP-013 | REF-011 | No |
-| REF-013 | Ready | DUP-015 | - | Yes |
-| REF-014 | Ready | DUP-016 | REF-013 | No |
+| REF-007 | Completed | DUP-007, DUP-008 | - | Yes |
+| REF-008 | Completed | DUP-009, DUP-021 | - | No |
+| REF-009 | Completed | DUP-010 | - | Yes |
+| REF-010 | Completed | DUP-011 | REF-002, REF-009 | No |
+| REF-011 | Completed | DUP-012, DUP-014 | - | No |
+| REF-012 | Completed | DUP-013 | REF-011 | No |
+| REF-013 | Completed | DUP-015 | - | Yes |
+| REF-014 | Completed | DUP-016 | REF-013 | No |
 | REF-015 | Blocked | DUP-017 | REF-009, REF-013 | No |
-| REF-016 | Ready | DUP-018 | - | Yes |
-| REF-017 | Ready | DUP-019 | REF-016 | No |
-| REF-018 | Ready | DUP-020 | REF-011 | No |
+| REF-016 | Completed | DUP-018 | - | Yes |
+| REF-017 | Completed | DUP-019 | REF-016 | No |
+| REF-018 | Completed | DUP-020 | REF-011 | No |
 | REF-019 | Completed | package source ownership cleanup | REF-002, REF-004, REF-005, REF-006 | No |
 
 ### REF-001: Reuse Canonical Gateway Add-On Constants in Readiness Detection
@@ -100,7 +114,7 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 **Owned Files/Directories**: `packages/divedra-addons/src/native-node-executor/template-env-and-containers.ts`, `packages/divedra-addons/src/index.ts`, `packages/divedra/src/workflow/runtime-readiness.ts`
 **Excluded Files**: `packages/divedra/src/workflow/native-node-executor/**`, `dist`
 **Depends On**: REF-001
-**Blocker**: Confirm whether exporting a runner predicate from `packages/divedra-addons/src/index.ts` is an acceptable public package surface.
+**Blocker**: Confirm whether exporting a runner predicate from `packages/divedra-addons/src/index.ts` is an acceptable public package surface. Tracked in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md#ref-003-docker-compatible-runner-predicate-export`.
 **Completion Criteria**:
 - [ ] Use one predicate for `podman`, `docker`, and `nerdctl`.
 - [ ] Preserve readiness reporting versus runtime policy error semantics.
@@ -154,13 +168,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-007: Share Artifact Segment Sanitizer and JSON Hash Helper
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra/src/shared`, `packages/divedra/src/hook/recorder.ts`, `packages/divedra/src/events/ledger.ts`, `packages/divedra/src/events/supervised-runs.ts`, `packages/divedra/src/events/adapters/chat-sdk/normalization.ts`
 **Excluded Files**: `packages/divedra-hook/src/redaction.ts`, `packages/divedra/src/events/adapters/webhook.ts`
 **Depends On**: none
 **Completion Criteria**:
-- [ ] Preserve current sanitize regex, 96-character truncation, and per-domain fallback labels.
-- [ ] Preserve exact `sha256(JSON.stringify(value))` behavior.
+- [x] Preserve current sanitize regex, 96-character truncation, and per-domain fallback labels.
+- [x] Preserve exact `sha256(JSON.stringify(value))` behavior.
 **Verification Commands**:
 - `bun test packages/divedra/src/hook/index.test.ts`
 - `bun test packages/divedra/src/events/receipt-ops.test.ts packages/divedra/src/events/trigger-runner-supervised.test.ts`
@@ -170,13 +184,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-008: Consolidate Workflow Scope Root and Scope/Status Parser Utilities
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-core/src/paths.ts`, `packages/divedra/src/workflow/catalog.ts`, `packages/divedra/src/workflow/checkout/registry.ts`, `packages/divedra/src/workflow/overview.ts`, `packages/divedra/src/server/graphql-executable-schema.ts`, `packages/divedra/src/cli/storage-and-options.ts`
 **Excluded Files**: public GraphQL SDL, workflow bundle files, `dist`
 **Depends On**: none
 **Completion Criteria**:
-- [ ] Centralize shared path/scope/status allowlists while preserving caller-specific error envelopes and empty-value behavior.
-- [ ] Preserve checkout direct-root policy and catalog project discovery behavior.
+- [x] Centralize shared path/scope/status allowlists while preserving caller-specific error envelopes and empty-value behavior.
+- [x] Preserve checkout direct-root policy and catalog project discovery behavior.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/checkout/checkout.test.ts packages/divedra/src/workflow/paths.test.ts packages/divedra/src/workflow/overview.test.ts`
 - `bun test packages/divedra/src/graphql/schema.test.ts packages/divedra/src/cli.test.ts`
@@ -186,14 +200,14 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-009: Share Validation Primitive Helpers
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-core/src/workflow-validation.ts`, `packages/divedra/src/workflow/validate/validation-types-and-runtime-options.ts`, `packages/divedra/src/workflow/validate.test.ts`
 **Excluded Files**: `packages/divedra/src/workflow/validate/bundle-validation-entrypoints.ts`, `dist`
 **Depends On**: none
 **Completion Criteria**:
-- [ ] Move only shared primitive checks into core-owned helpers.
-- [ ] Preserve root-only non-negative integer and working-directory helpers.
-- [ ] Preserve safe-integer versus integer differences unless explicitly reconciled by tests.
+- [x] Move only shared primitive checks into core-owned helpers.
+- [x] Preserve root-only non-negative integer and working-directory helpers.
+- [x] Preserve safe-integer versus integer differences unless explicitly reconciled by tests.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/validate.test.ts`
 - `bun test packages/divedra/src/package-boundaries.test.ts`
@@ -202,13 +216,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-010: Reduce Step-Addressed Payload Builder Duplication
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra/src/workflow/validate/bundle-validation-entrypoints.ts`, `packages/divedra/src/workflow/validate.test.ts`
 **Excluded Files**: add-on package internals unless REF-002 requires a small type export
 **Depends On**: REF-002, REF-009
 **Completion Criteria**:
-- [ ] Share non-add-on payload registration and step prompt variant application.
-- [ ] Keep sync and async add-on resolver mechanics explicit.
+- [x] Share non-add-on payload registration and step prompt variant application.
+- [x] Keep sync and async add-on resolver mechanics explicit.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/validate.test.ts`
 - `bun run typecheck`
@@ -216,13 +230,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-011: Consolidate Communication Artifact and Delivery ID Helpers
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra/src/workflow/runtime-execution-contracts.ts`, `packages/divedra/src/workflow/engine/types-and-session-state.ts`, `packages/divedra/src/workflow/engine/mailbox-communication-artifacts.ts`, `packages/divedra/src/workflow/communication-service.ts`, `packages/divedra/src/workflow/manager-message-service/artifacts.ts`
 **Excluded Files**: runtime DB schema migrations, `dist`
 **Depends On**: none
 **Completion Criteria**:
-- [ ] Centralize `nextCommunicationId`, initial delivery attempt id, and retry attempt id helpers.
-- [ ] Extract shared communication artifact persistence while preserving replay, routing scope, manager message id, and runtime DB event differences.
+- [x] Centralize `nextCommunicationId`, initial delivery attempt id, and retry attempt id helpers.
+- [x] Extract shared communication artifact persistence while preserving replay, routing scope, manager message id, and runtime DB event differences.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/runtime-execution-contracts.test.ts packages/divedra/src/workflow/communication-service.test.ts packages/divedra/src/workflow/engine.test.ts packages/divedra/src/workflow/manager-message-service.test.ts`
 - `bun run typecheck`
@@ -230,13 +244,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-012: Share Node Output Artifact Publication
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra/src/workflow/engine/step-result-finalization.ts`, `packages/divedra/src/workflow/engine/step-input.ts`, `packages/divedra/src/workflow/call-step-impl/direct-step-helpers.ts`, `packages/divedra/src/workflow/runtime-execution-contracts.ts`
 **Excluded Files**: backend adapters, `dist`
 **Depends On**: REF-011
 **Completion Criteria**:
-- [ ] Share output file publication/runtime DB node execution persistence logic.
-- [ ] Preserve normal finalization, direct call-step, sleep, and optional skip metadata differences.
+- [x] Share output file publication/runtime DB node execution persistence logic.
+- [x] Preserve normal finalization, direct call-step, sleep, and optional skip metadata differences.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/engine.test.ts packages/divedra/src/workflow/call-step.test.ts packages/divedra/src/workflow/call-step-impl-failures.test.ts`
 - `bun test packages/divedra/src/workflow/runtime-execution-contracts.test.ts`
@@ -245,13 +259,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-013: Extract Shared Official SDK Adapter Executor
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-adapters/src/shared.ts`, `packages/divedra-adapters/src/openai-sdk.ts`, `packages/divedra-adapters/src/anthropic-sdk.ts`, `packages/divedra/src/workflow/adapters/openai-sdk.test.ts`, `packages/divedra/src/workflow/adapters/anthropic-sdk.test.ts`
 **Excluded Files**: CLI agent adapters, root adapter contract files
 **Depends On**: none
 **Completion Criteria**:
-- [ ] Share request lifecycle/error wrapping where semantics match.
-- [ ] Keep provider-specific request body and output text extraction separate.
+- [x] Share request lifecycle/error wrapping where semantics match.
+- [x] Keep provider-specific request body and output text extraction separate.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/adapters/openai-sdk.test.ts packages/divedra/src/workflow/adapters/anthropic-sdk.test.ts`
 - `bun run typecheck`
@@ -259,13 +273,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-014: Extract Shared Watched CLI Agent Lifecycle
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-adapters/src/local-agent.ts`, `packages/divedra-adapters/src/codex.ts`, `packages/divedra-adapters/src/claude.ts`, `packages/divedra-adapters/src/cursor.ts`, `packages/divedra/src/workflow/adapters/codex.test.ts`, `packages/divedra/src/workflow/adapters/claude.test.ts`, `packages/divedra/src/workflow/adapters/cursor.test.ts`
 **Excluded Files**: official SDK adapters
 **Depends On**: REF-013
 **Completion Criteria**:
-- [ ] Share watched session lifecycle mechanics.
-- [ ] Preserve Codex event normalization, Claude runner error listener, and Cursor materialized session fallback differences.
+- [x] Share watched session lifecycle mechanics.
+- [x] Preserve Codex event normalization, Claude runner error listener, and Cursor materialized session fallback differences.
 **Verification Commands**:
 - `bun test packages/divedra/src/workflow/adapters/codex.test.ts packages/divedra/src/workflow/adapters/claude.test.ts packages/divedra/src/workflow/adapters/cursor.test.ts`
 - `bun run typecheck`
@@ -277,7 +291,7 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 **Owned Files/Directories**: `packages/divedra-core/src/workflow-model.ts`, `packages/divedra/src/workflow/backend.ts`, `packages/divedra-core/src/workflow-validation.ts`, `packages/divedra/src/workflow/node-patches.ts`, `packages/divedra/src/workflow/validate/node-payload-validation.ts`, `packages/divedra-adapters/src/dispatch.ts`
 **Excluded Files**: runtime readiness unless needed for compile updates
 **Depends On**: REF-009, REF-013
-**Blocker**: Coordinate validation, adapter dispatch, and runtime-readiness owners before changing backend constants because this is a public workflow model surface.
+**Blocker**: Coordinate validation, adapter dispatch, and runtime-readiness owners before changing backend constants because this is a public workflow model surface. Tracked in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md#ref-015-backend-constants-normalization`.
 **Completion Criteria**:
 - [ ] Establish core-owned backend constants and normalization.
 - [ ] Preserve null versus undefined caller semantics through wrappers.
@@ -288,13 +302,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-016: Consolidate Workflow Execution Option Projection
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra/src/cli/input-output-helpers.ts`, `packages/divedra/src/cli/workflow-graphql-formatters.ts`, `packages/divedra/src/lib-workflow-run-options.ts`, `packages/divedra/src/index.ts`
 **Excluded Files**: GraphQL schema/server transports
 **Depends On**: none
 **Completion Criteria**:
-- [ ] Share option normalization/projection with typed target adapters.
-- [ ] Preserve remote `workingDirectory` versus local `workflowWorkingDirectory` naming and nestedSuperviser/nestedSuperviserDriver differences.
+- [x] Share option normalization/projection with typed target adapters.
+- [x] Preserve remote `workingDirectory` versus local `workflowWorkingDirectory` naming and nestedSuperviser/nestedSuperviserDriver differences.
 **Verification Commands**:
 - `bun test packages/divedra/src/cli.test.ts packages/divedra/src/lib-supervision.test.ts`
 - `bun run typecheck`
@@ -302,13 +316,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-017: Share GraphQL Response Data Handling
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra/src/cli/input-output-helpers.ts`, `packages/divedra/src/index.ts`, `packages/divedra/src/graphql/client.ts`
 **Excluded Files**: scoped GraphQL passthrough command output
 **Depends On**: REF-016
 **Completion Criteria**:
-- [ ] Share error aggregation and JSON object validation.
-- [ ] Preserve operation-specific field validators and raw passthrough behavior.
+- [x] Share error aggregation and JSON object validation.
+- [x] Preserve operation-specific field validators and raw passthrough behavior.
 **Verification Commands**:
 - `bun test packages/divedra/src/cli.test.ts packages/divedra/src/lib-api.test.ts packages/divedra/src/lib-supervision.test.ts`
 - `bun run typecheck`
@@ -316,14 +330,14 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ### REF-018: Add Explicit GraphQL Session DTO Projection Mappers
 
-**Status**: Ready
+**Status**: Completed
 **Owned Files/Directories**: `packages/divedra-graphql/src/dto.ts`, `packages/divedra-graphql/src/control-plane-service.ts`, `packages/divedra/src/graphql/control-plane-service.ts`, `packages/divedra/src/graphql/schema/execution-resolvers.ts`, `packages/divedra/src/graphql/types.ts`
 **Excluded Files**: public GraphQL SDL field names unless tests require internal mapper-only updates
 **Depends On**: REF-011
 **Completion Criteria**:
-- [ ] Replace structural double casts with named projection mapper functions.
-- [ ] Document persisted `WorkflowSessionState` versus public control-plane DTO boundaries.
-- [ ] Avoid data loss when saving sessions through package-owned service APIs.
+- [x] Replace structural double casts with named projection mapper functions.
+- [x] Document persisted `WorkflowSessionState` versus public control-plane DTO boundaries.
+- [x] Avoid data loss when saving sessions through package-owned service APIs.
 **Verification Commands**:
 - `bun test packages/divedra/src/graphql/schema.test.ts packages/divedra/src/server/graphql-queries-and-inspection.test.ts`
 - `bun test packages/divedra/src/workflow/manager-control.test.ts packages/divedra/src/workflow/supervisor-graphql-client.test.ts`
@@ -364,13 +378,13 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 
 ## Exit Criteria
 
-- [ ] All Ready high/mid tasks are Completed, or explicitly moved to Blocked with owner, blocker, and residual risk.
-- [ ] Blocked tasks REF-003 and REF-015 are either unblocked and completed or accepted as residual risks.
-- [ ] Accepted low residual risks remain documented above.
-- [ ] Focused verification commands pass for every completed task.
-- [ ] `bun run typecheck` passes after TypeScript source changes.
-- [ ] `git diff --check` passes before handoff.
-- [ ] No files are staged, committed, or pushed unless the user explicitly asks.
+- [x] All Ready high/mid tasks are Completed, or explicitly moved to Blocked with owner, blocker, and residual risk.
+- [x] Blocked tasks REF-003 and REF-015 are either unblocked and completed or accepted as residual risks.
+- [x] Accepted low residual risks remain documented above.
+- [x] Focused verification commands pass for every completed task.
+- [x] `bun run typecheck` passes after TypeScript source changes.
+- [x] `git diff --check` passes before handoff.
+- [x] No files are staged, committed, or pushed unless the user explicitly asks.
 
 ## Progress Log
 
@@ -479,3 +493,45 @@ Excluded: `.divedra`, `.agents`, `design-docs`, generated `dist`, `node_modules`
 - `git diff --check` passed.
 
 **Notes**: Follow-up review found stale live entrypoints in `flake.nix` and `.divedra/README.md`, plus first-party root-source references in deterministic workflow/example fixtures. Those now point at package-local paths. Source filename lint now also fails when the removed root source tree is recreated. Nix-specific verification is blocked in this sandbox by inaccessible Nix cache/daemon sockets; local Bun and Taskfile equivalents passed.
+
+### Session: 2026-05-19 Step 4 Implementation Plan Revision
+
+**Tasks Completed**: Planning revision only; no TypeScript implementation.
+
+**Verification**:
+- `git diff --check -- impl-plans/active/refactoring-duplicate-scavenge-product-code.md` passed.
+
+**Notes**: Added accepted design references, Codex-reference decision, remaining-work order, and explicit blocker links for `REF-003` and `REF-015` after Step 3 accepted the design update.
+
+### Session: 2026-05-19 23:08 JST Step 6 Implement
+
+**Tasks Completed**: REF-007, REF-009, REF-013, REF-016, REF-017
+
+**Tasks In Progress**: REF-008, REF-011
+
+**Verification**:
+- `bun test packages/divedra/src/hook/index.test.ts packages/divedra/src/events/receipt-ops.test.ts packages/divedra/src/events/trigger-runner-supervised.test.ts packages/divedra/src/package-boundaries.test.ts` passed.
+- `bun test packages/divedra/src/workflow/validate.test.ts packages/divedra/src/workflow/checkout/checkout.test.ts packages/divedra/src/workflow/paths.test.ts packages/divedra/src/workflow/overview.test.ts packages/divedra/src/graphql/schema.test.ts packages/divedra/src/cli.test.ts` passed.
+- `bun test packages/divedra/src/workflow/adapters/openai-sdk.test.ts packages/divedra/src/workflow/adapters/anthropic-sdk.test.ts packages/divedra/src/cli.test.ts packages/divedra/src/lib-supervision.test.ts packages/divedra/src/lib-api.test.ts` passed on serial rerun; an earlier parallel run hit a shared temp cleanup race in `cli.test.ts`.
+- `bun test packages/divedra/src/workflow/runtime-execution-contracts.test.ts packages/divedra/src/workflow/communication-service.test.ts packages/divedra/src/workflow/engine.test.ts packages/divedra/src/workflow/manager-message-service.test.ts` passed.
+- `bun run typecheck` passed.
+- `bun run lint:biome` passed with existing explicit-`any` warnings in moved `packages/divedra/src/workflow/engine/*.ts` split files.
+
+**Notes**: Added shared artifact helpers for path segment sanitization and JSON SHA-256 hashing. Exported core-owned validation primitive helpers while preserving root-only working-directory and non-negative integer validation. Added shared official SDK request execution and GraphQL response helpers while keeping provider and operation-specific extraction separate. Added shared local/remote workflow execution option projection helpers. Centralized communication and delivery attempt id helpers in runtime execution contracts. `REF-008` remains in progress because status parser consolidation is not complete; `REF-011` remains in progress because shared communication artifact persistence has not yet been extracted.
+
+### Session: 2026-05-19 23:23 JST Step 6 Self-Review Revision
+
+**Tasks Completed**: REF-008, REF-010, REF-011, REF-012, REF-014, REF-018
+
+**Verification**:
+- `bun test packages/divedra/src/workflow/runtime-execution-contracts.test.ts packages/divedra/src/workflow/communication-service.test.ts packages/divedra/src/workflow/engine.test.ts packages/divedra/src/workflow/manager-message-service.test.ts` passed.
+- `bun test packages/divedra/src/workflow/validate.test.ts packages/divedra/src/workflow/checkout/checkout.test.ts packages/divedra/src/workflow/paths.test.ts packages/divedra/src/workflow/overview.test.ts packages/divedra/src/graphql/schema.test.ts packages/divedra/src/cli.test.ts packages/divedra/src/package-boundaries.test.ts` passed.
+- `bun test packages/divedra/src/workflow/adapters/openai-sdk.test.ts packages/divedra/src/workflow/adapters/anthropic-sdk.test.ts packages/divedra/src/workflow/adapters/codex.test.ts packages/divedra/src/workflow/adapters/claude.test.ts packages/divedra/src/workflow/adapters/cursor.test.ts` passed.
+- `bun test packages/divedra/src/workflow/call-step.test.ts packages/divedra/src/workflow/call-step-impl-failures.test.ts` passed.
+- `bun test packages/divedra/src/server/graphql-queries-and-inspection.test.ts packages/divedra/src/workflow/manager-control.test.ts packages/divedra/src/workflow/supervisor-graphql-client.test.ts` passed.
+- `bun run format` passed and formatted one changed file.
+- `bun run typecheck` passed.
+- `bun run lint:biome` passed with existing explicit-`any` warnings in moved `packages/divedra/src/workflow/engine/*.ts` split files.
+- `git diff --check` passed.
+
+**Notes**: Completed the self-review finding that all unblocked Ready/In Progress tasks must be finished before independent review. Shared workflow overview status parsing, step-addressed non-add-on payload registration, communication artifact persistence across normal delivery/manager messages/manual replay, node output publication, watched local-agent lifecycle, and GraphQL control-plane session DTO projection mappers. `REF-003` and `REF-015` remain documented blocker residual risks in `design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`.

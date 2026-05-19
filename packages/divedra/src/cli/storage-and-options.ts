@@ -18,7 +18,10 @@ import {
   type buildInspectionSummary,
 } from "../workflow/inspect";
 import { loadWorkflowFromCatalog } from "../workflow/load";
-import { computeProjectScopedRootDataDirForScopeRoot } from "../workflow/paths";
+import {
+  computeProjectScopedRootDataDirForScopeRoot,
+  parseWorkflowScopeSelector as parseSharedWorkflowScopeSelector,
+} from "../workflow/paths";
 import type {
   listRuntimeHookEvents,
   listRuntimeNodeExecutions,
@@ -498,9 +501,7 @@ export function parseEnvBooleanFlag(value: string | undefined): boolean {
 export function parseWorkflowScopeOption(
   value: string | undefined,
 ): WorkflowScopeSelector | undefined {
-  return value === "auto" || value === "project" || value === "user"
-    ? value
-    : undefined;
+  return parseSharedWorkflowScopeSelector(value);
 }
 export function parseWorkflowDefinitionDirectoryOption(
   flagName: string,

@@ -15,6 +15,7 @@ import { normalizeExternalMailboxBusinessPayload } from "../json-boundary";
 import type { PromptCompositionLatestOutput } from "../node-execution-mailbox";
 import { err, ok, type Result } from "../result";
 import { saveCommunicationEventToRuntimeDb } from "../runtime-db";
+import { persistDeliveredCommunicationArtifacts } from "../communication-artifact-persistence";
 import {
   buildOutputRefForExecution,
   type CommunicationRecord,
@@ -39,7 +40,6 @@ import {
   WORKFLOW_EXTERNAL_INPUT_NODE_ID,
   WORKFLOW_EXTERNAL_OUTPUT_NODE_ID,
   initialDeliveryAttemptId,
-  nextCommunicationId,
   outputArtifactJsonText,
   readOutputPayloadArtifact,
 } from "./types-and-session-state";
@@ -272,99 +272,26 @@ export interface CreateCommunicationInput {
 export async function persistCommunicationArtifact(
   input: CreateCommunicationInput,
 ): Promise<CommunicationRecord> {
-  const communicationId = nextCommunicationId(input.communicationCounter + 1);
-  const deliveryAttemptId = initialDeliveryAttemptId();
-  const communicationDir = path.join(
-    input.artifactWorkflowRoot,
-    "executions",
-    input.workflowExecutionId,
-    "communications",
-    communicationId,
-  );
-  const envelope = {
+  const persisted = await persistDeliveredCommunicationArtifacts({
+    artifactWorkflowRoot: input.artifactWorkflowRoot,
     workflowId: input.workflowId,
     workflowExecutionId: input.workflowExecutionId,
-    communicationId,
+    communicationCounter: input.communicationCounter,
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
     routingScope: input.routingScope,
     sourceNodeExecId: input.sourceNodeExecId,
     deliveryKind: input.deliveryKind,
-    payloadRef: {
-      ...input.payloadRef,
-      outputFile: "output.json",
-    },
-    createdAt: input.createdAt,
-  };
-  const meta = {
-    status: "delivered",
-    workflowId: input.workflowId,
-    workflowExecutionId: input.workflowExecutionId,
-    communicationId,
-    fromNodeId: input.fromNodeId,
-    toNodeId: input.toNodeId,
-    sourceNodeExecId: input.sourceNodeExecId,
-    routingScope: input.routingScope,
-    deliveryKind: input.deliveryKind,
-    activeDeliveryAttemptId: deliveryAttemptId,
-    deliveryAttemptIds: [deliveryAttemptId],
-    createdAt: input.createdAt,
-    deliveredAt: input.createdAt,
-  };
-  const attempt = {
-    workflowId: input.workflowId,
-    workflowExecutionId: input.workflowExecutionId,
-    communicationId,
-    deliveryAttemptId,
-    toNodeId: input.toNodeId,
-    status: "succeeded",
-    startedAt: input.createdAt,
-    endedAt: input.createdAt,
-  };
-  const receipt = {
-    communicationId,
-    deliveryAttemptId,
+    payloadRef: input.payloadRef,
+    outputRaw: input.outputRaw,
     deliveredByNodeId: input.deliveredByNodeId,
-    deliveredAt: input.createdAt,
-  };
-
-  await mkdir(path.join(communicationDir, "outbox", input.fromNodeId), {
-    recursive: true,
+    createdAt: input.createdAt,
   });
-  await mkdir(path.join(communicationDir, "inbox", input.toNodeId), {
-    recursive: true,
-  });
-  await mkdir(path.join(communicationDir, "attempts", deliveryAttemptId), {
-    recursive: true,
-  });
-
-  await writeJsonFile(path.join(communicationDir, "message.json"), envelope);
-  await writeJsonFile(
-    path.join(communicationDir, "outbox", input.fromNodeId, "message.json"),
-    envelope,
-  );
-  await writeRawTextFile(
-    path.join(communicationDir, "outbox", input.fromNodeId, "output.json"),
-    input.outputRaw,
-  );
-  await writeJsonFile(
-    path.join(communicationDir, "inbox", input.toNodeId, "message.json"),
-    envelope,
-  );
-  await writeJsonFile(
-    path.join(communicationDir, "attempts", deliveryAttemptId, "attempt.json"),
-    attempt,
-  );
-  await writeJsonFile(
-    path.join(communicationDir, "attempts", deliveryAttemptId, "receipt.json"),
-    receipt,
-  );
-  await writeJsonFile(path.join(communicationDir, "meta.json"), meta);
 
   const communication: CommunicationRecord = {
     workflowId: input.workflowId,
     workflowExecutionId: input.workflowExecutionId,
-    communicationId,
+    communicationId: persisted.communicationId,
     fromNodeId: input.fromNodeId,
     toNodeId: input.toNodeId,
     routingScope: input.routingScope,
@@ -373,11 +300,11 @@ export async function persistCommunicationArtifact(
     deliveryKind: input.deliveryKind,
     transitionWhen: input.transitionWhen,
     status: "delivered",
-    activeDeliveryAttemptId: deliveryAttemptId,
-    deliveryAttemptIds: [deliveryAttemptId],
+    activeDeliveryAttemptId: persisted.deliveryAttemptId,
+    deliveryAttemptIds: [persisted.deliveryAttemptId],
     createdAt: input.createdAt,
     deliveredAt: input.createdAt,
-    artifactDir: communicationDir,
+    artifactDir: persisted.artifactDir,
   };
 
   if (input.runtimeLogOptions !== undefined) {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { Database } from "bun:sqlite";
+import { safeArtifactPathSegment } from "../shared/artifacts";
 import { atomicWriteJsonFile } from "../shared/fs";
 import { resolveRootDataDir } from "../workflow/paths";
 import type { LoadOptions } from "../workflow/types";
@@ -25,10 +26,6 @@ import type {
   EventSupervisedRunStatus,
   EventSupervisorCommand,
 } from "./types";
-
-function safeSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 96) || "run";
-}
 
 function rowToRecord(
   row: RuntimeEventSupervisedRunSaveInput,
@@ -380,7 +377,7 @@ export function resolveSupervisedRunArtifactDir(
     root,
     "events",
     "supervised-runs",
-    safeSegment(record.supervisedRunId),
+    safeArtifactPathSegment(record.supervisedRunId, "run"),
   );
 }
 

@@ -8,9 +8,10 @@ import {
   ROOT_DATA_WORKFLOW_SUBDIR,
   type EffectiveRoots,
   type LoadOptions,
+  type WorkflowScopeSelector,
 } from "./workflow-model";
 
-function resolveRootPath(root: string, cwd: string): string {
+export function resolveRootPath(root: string, cwd: string): string {
   return path.isAbsolute(root) ? root : path.resolve(cwd, root);
 }
 
@@ -32,14 +33,34 @@ export interface ProjectScopeRootRuntimeDataDirInput {
   readonly cwd?: string;
 }
 
-function expandLeadingHome(root: string): string {
+function resolveHomeDir(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const fromEnv = env["HOME"] ?? env["USERPROFILE"];
+  return fromEnv === undefined || fromEnv.length === 0 ? os.homedir() : fromEnv;
+}
+
+export function expandLeadingHome(
+  root: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
   if (root === "~") {
-    return os.homedir();
+    return resolveHomeDir(env);
   }
   if (root.startsWith("~/") || root.startsWith("~\\")) {
-    return path.join(os.homedir(), root.slice(2));
+    return path.join(resolveHomeDir(env), root.slice(2));
   }
   return root;
+}
+
+export function resolveConfiguredRootPath(
+  root: string,
+  options: Pick<LoadOptions, "cwd" | "env"> = {},
+): string {
+  return resolveRootPath(
+    expandLeadingHome(root, options.env ?? process.env),
+    options.cwd ?? process.cwd(),
+  );
 }
 
 function resolveNearestWorkflowProjectRoot(cwd: string): string {
@@ -248,6 +269,14 @@ export function isSafeWorkflowId(workflowId: string): boolean {
 
 export function isSafeWorkflowName(workflowName: string): boolean {
   return isSafeWorkflowId(workflowName);
+}
+
+export function parseWorkflowScopeSelector(
+  value: string | undefined,
+): WorkflowScopeSelector | undefined {
+  return value === "auto" || value === "project" || value === "user"
+    ? value
+    : undefined;
 }
 
 /** Supervision run ids are minted as `sup-` + hex (see engine). */

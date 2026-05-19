@@ -457,16 +457,24 @@ export async function buildWorkflowStatusOverview(
 const WORKFLOW_OVERVIEW_STATUS_FILTER_ALLOWED: readonly WorkflowOverviewStatus[] =
   ["running", "paused", "completed", "failed", "cancelled", "never-run"];
 
+export function parseWorkflowOverviewStatus(
+  raw: string | undefined,
+): WorkflowOverviewStatus | undefined {
+  return raw !== undefined &&
+    (WORKFLOW_OVERVIEW_STATUS_FILTER_ALLOWED as readonly string[]).includes(raw)
+    ? (raw as WorkflowOverviewStatus)
+    : undefined;
+}
+
 export function parseWorkflowOverviewAggregateStatusFilter(
   raw: string | undefined,
 ): Result<WorkflowOverviewStatus | undefined, string> {
   if (raw === undefined || raw.length === 0) {
     return ok(undefined);
   }
-  if (
-    (WORKFLOW_OVERVIEW_STATUS_FILTER_ALLOWED as readonly string[]).includes(raw)
-  ) {
-    return ok(raw as WorkflowOverviewStatus);
+  const parsed = parseWorkflowOverviewStatus(raw);
+  if (parsed !== undefined) {
+    return ok(parsed);
   }
   return err(
     `invalid --status value '${raw}'; expected one of: ${WORKFLOW_OVERVIEW_STATUS_FILTER_ALLOWED.join(", ")}`,

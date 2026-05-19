@@ -9,7 +9,6 @@ import {
   type NodeAdapter,
 } from "divedra-core";
 import {
-  createWatchedLlmSession,
   type LlmSessionStallWatchConfig,
 } from "./llm-session-stall-watch";
 import {
@@ -17,6 +16,7 @@ import {
   buildAmbientProcessEnv,
   buildCombinedPromptText,
   buildLocalAdapterOutput,
+  createWatchedLocalAgentSession,
   throwIfAborted,
   withProcessEnvOverride,
 } from "./local-agent";
@@ -250,7 +250,7 @@ async function executeLocalCursorAgent(
     await session.cancel();
   });
 
-  const watchedSession = createWatchedLlmSession<
+  const watchedSession = createWatchedLocalAgentSession<
     CursorRunningAgentLike,
     CursorAgentRunResult
   >({
@@ -259,11 +259,11 @@ async function executeLocalCursorAgent(
     signal: context.signal,
     stallWatch: config,
     resumeSession: async (targetSessionId, prompt) =>
-      runner.resume({
+      await Promise.resolve(runner.resume({
         ...baseResumeRequest,
         sessionId: targetSessionId,
         prompt,
-      }),
+      })),
     isResultSuccess: (result) =>
       result.exitCode === 0 && result.signal === null,
     describeResult: (result) =>

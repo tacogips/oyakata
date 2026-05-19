@@ -1,19 +1,12 @@
 import OpenAI from "openai";
 import {
-  AdapterExecutionError,
-  normalizeOutputContractEnvelope,
-  normalizeTextBusinessPayload,
-  parseJsonObjectCandidate,
   type AdapterExecutionContext,
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
   type NodeAdapter,
 } from "divedra-core";
 import {
-  executeWithRetry,
-  normalizeAdapterFailure,
-  resolveConfiguredEnvValue,
-  resolveRetryPolicy,
+  executeOfficialSdkRequest,
 } from "./shared";
 
 const DEFAULT_OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
@@ -44,13 +37,6 @@ export interface OpenAiSdkAdapterConfig {
     readonly apiKey: string;
     readonly baseURL?: string;
   }) => OpenAiClientLike;
-}
-
-function resolveApiKey(config: OpenAiSdkAdapterConfig): string | undefined {
-  return resolveConfiguredEnvValue(
-    config.apiKeyEnv,
-    DEFAULT_OPENAI_API_KEY_ENV,
-  );
 }
 
 function extractOpenAiText(response: unknown): string {
@@ -119,29 +105,19 @@ export class OpenAiSdkAdapter implements NodeAdapter {
     input: AdapterExecutionInput,
     context: AdapterExecutionContext,
   ): Promise<AdapterExecutionOutput> {
-    const apiKey = resolveApiKey(this.#config);
-    if (apiKey === undefined) {
-      throw new AdapterExecutionError(
-        "policy_blocked",
-        "missing OpenAI API key",
-      );
-    }
-
-    const clientFactory = this.#config.clientFactory ?? defaultClientFactory;
-    const client = clientFactory({
-      apiKey,
-      ...(this.#config.baseUrl === undefined
-        ? {}
-        : { baseURL: this.#config.baseUrl }),
-    });
-    const { maxAttempts, retryDelayMs } = resolveRetryPolicy(this.#config);
-
-    return executeWithRetry({
-      maxAttempts,
-      retryDelayMs,
-      signal: context.signal,
-      run: async () => {
-        const response = await client.responses.create(
+    return executeOfficialSdkRequest({
+      adapterInput: input,
+      context,
+      config: this.#config,
+      defaultApiKeyEnv: DEFAULT_OPENAI_API_KEY_ENV,
+      missingApiKeyMessage: "missing OpenAI API key",
+      clientFactory: defaultClientFactory,
+      provider: "official-openai-sdk",
+      responseLabel: "official OpenAI SDK response",
+      abortedMessage: "official OpenAI SDK request aborted",
+      fallbackFailureMessage: "unknown OpenAI SDK failure",
+      createRequest: (client) =>
+        client.responses.create(
           {
             model: input.node.model,
             input: input.promptText,
@@ -152,44 +128,8 @@ export class OpenAiSdkAdapter implements NodeAdapter {
           {
             signal: context.signal,
           },
-        );
-
-        const text = extractOpenAiText(response);
-        const normalizedPayload =
-          input.output === undefined
-            ? {
-                completionPassed: true,
-                when: { always: true },
-                payload: normalizeTextBusinessPayload(text),
-              }
-            : normalizeOutputContractEnvelope(
-                parseJsonObjectCandidate(text, "official OpenAI SDK response"),
-                "official OpenAI SDK response",
-              );
-        return {
-          provider: "official-openai-sdk",
-          model: input.node.model,
-          promptText: input.promptText,
-          completionPassed: normalizedPayload.completionPassed,
-          when: normalizedPayload.when,
-          payload: normalizedPayload.payload,
-        };
-      },
-      normalizeError: (error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") {
-          return new AdapterExecutionError(
-            "timeout",
-            "official OpenAI SDK request aborted",
-          );
-        }
-        if (context.signal.aborted) {
-          return new AdapterExecutionError(
-            "timeout",
-            "official OpenAI SDK request aborted",
-          );
-        }
-        return normalizeAdapterFailure(error, "unknown OpenAI SDK failure");
-      },
+        ),
+      extractText: extractOpenAiText,
     });
   }
 }

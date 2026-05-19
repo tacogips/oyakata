@@ -180,6 +180,64 @@ refactoring, and the default local reference root `../../codex-agent` was not
 available during intake. The design therefore introduces no Cursor-specific
 mapping and no intentional divergence from Codex behavior.
 
+### Product-Code Duplicate-Scavenge Consolidation Boundaries
+
+The active product-code duplicate-scavenge plan at
+`impl-plans/active/refactoring-duplicate-scavenge-product-code.md` is the
+source of truth for implementation order, task ownership, and verification. It
+continues the workflow-mode design above after the root source tree was removed:
+live runtime, event, hook, GraphQL, server, shared, workflow, and test sources
+are package-local under `packages/divedra/src`, with reusable package surfaces
+under `packages/divedra-core`, `packages/divedra-addons`,
+`packages/divedra-adapters`, `packages/divedra-events`,
+`packages/divedra-graphql`, `packages/divedra-server`, and
+`packages/divedra-hook`.
+
+Consolidation should prefer narrow helpers that preserve existing observable
+behavior. Shared logic may move only when the active plan identifies a repeated
+concept, an owning package or module, counterpart paths, behavior to preserve,
+and focused verification commands. Refactors must not broaden public APIs or
+change command, GraphQL, event-source, workflow-runtime, or adapter behavior
+unless the plan explicitly authorizes a behavior-preserving contract cleanup.
+
+Important boundary rules:
+
+- `REF-007` may introduce package-local shared helpers for artifact-safe path
+  segment sanitizing and JSON SHA-256 hashing, but it must preserve the current
+  sanitize regex, truncation policy, fallback-label ownership, and exact
+  `sha256(JSON.stringify(value))` semantics.
+- `REF-008`, `REF-016`, and `REF-017` may share parsers, option projectors, and
+  GraphQL response helpers only behind caller-owned envelopes, so CLI wording,
+  GraphQL transport trust boundaries, and library option names remain stable.
+- `REF-011` and `REF-012` may share communication/output artifact persistence
+  helpers only if replay, routing scope, manager-message provenance, direct
+  call-step metadata, sleep metadata, optional-step metadata, and runtime DB
+  records remain distinguishable.
+- `REF-013` and `REF-014` may share adapter lifecycle scaffolding, but provider
+  request bodies, SDK output extraction, Codex event normalization, Claude
+  runner error-listener behavior, and Cursor materialized-session fallback stay
+  adapter-owned.
+- `REF-018` should add explicit DTO projection mappers between persisted
+  workflow session state and public GraphQL/control-plane DTOs rather than
+  relying on structural casts.
+
+Two active tasks intentionally remain blocked until their public-surface
+questions are resolved. `REF-003` must not export a Docker-compatible runner
+predicate from `packages/divedra-addons/src/index.ts` without accepting that
+package API surface. `REF-015` must not centralize backend constants until
+validation, adapter dispatch, runtime-readiness, and workflow-model owners agree
+on the public normalization contract and null-versus-undefined semantics. These
+confirmation items are tracked in
+`design-docs/user-qa/qa-product-code-duplicate-scavenge-blockers.md`.
+
+No Codex-reference implementation behavior is required for this active plan.
+The default local reference root `../../codex-agent` was checked for this
+design pass and was unavailable. `codex-agent` remains an execution backend and
+adapter-behavior reference only. Cursor CLI behavior remains isolated behind
+`packages/divedra-adapters/src/cursor.ts` and related runtime-readiness or
+adapter-validation modules; shared local-agent helpers must not alter Codex
+adapter semantics.
+
 ### Workflow Node Runtime Patches
 
 Workflow node runtime patches are invocation-scoped overlays applied after a

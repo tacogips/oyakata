@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { hashJsonSha256 } from "../../../shared/artifacts";
 import { isJsonObject, type JsonObject } from "../../../shared/json";
 import type { RawExternalEvent } from "../../source-adapter";
 import type {
@@ -9,10 +9,6 @@ import type {
   ExternalEventEnvelope,
 } from "../../types";
 import { isChatSdkProvider, type ChatSdkMessageInput } from "./types";
-
-function hashJson(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -96,7 +92,7 @@ function fallbackEventId(input: {
   readonly receivedAt: string;
   readonly body: JsonObject;
 }): string {
-  return hashJson({
+  return hashJsonSha256({
     sourceId: input.sourceId,
     provider: input.provider,
     receivedAt: input.receivedAt,

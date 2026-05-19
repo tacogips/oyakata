@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { safeArtifactPathSegment } from "../shared/artifacts";
 import { atomicWriteJsonFile } from "../shared/fs";
 import { resolveRootDataDir } from "../workflow/paths";
 import {
@@ -21,10 +22,6 @@ export interface EventReceiptBeginResult {
   readonly duplicateOf?: string;
 }
 
-function safeSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 96) || "event";
-}
-
 function dateSegment(isoTimestamp: string): string {
   return isoTimestamp.slice(0, 10);
 }
@@ -35,9 +32,9 @@ function artifactRelativePath(
 ): string {
   return path.posix.join(
     "events",
-    safeSegment(record.sourceId),
+    safeArtifactPathSegment(record.sourceId, "event"),
     dateSegment(record.receivedAt),
-    safeSegment(record.receiptId),
+    safeArtifactPathSegment(record.receiptId, "event"),
     fileName,
   );
 }

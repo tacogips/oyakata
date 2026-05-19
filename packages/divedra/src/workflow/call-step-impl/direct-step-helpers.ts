@@ -1,8 +1,3 @@
-import path from "node:path";
-import {
-  atomicWriteJsonFile as writeJsonFile,
-  atomicWriteTextFile as writeRawTextFile,
-} from "../../shared/fs";
 import {
   normalizeOutputContractEnvelope,
   type AdapterExecutionOutput,
@@ -16,6 +11,7 @@ import { err, ok, type Result } from "../result";
 import {
   resolveCandidatePayload,
   resolveRuntimeTimeoutMs,
+  publishNodeOutputArtifacts,
   sha256Hex,
   stableJson,
 } from "../runtime-execution-contracts";
@@ -476,19 +472,17 @@ export class MailboxPublisher {
         : { backendSessionMode: input.requestedBackendSessionMode }),
     };
 
-    await writeRawTextFile(
-      path.join(input.artifactDir, "output.json"),
+    await publishNodeOutputArtifacts({
+      artifactDir: input.artifactDir,
       outputRaw,
-    );
-    await writeJsonFile(path.join(input.artifactDir, "meta.json"), metaPayload);
-    await writeJsonFile(
-      path.join(input.artifactDir, "handoff.json"),
+      metaPayload,
       handoffPayload,
-    );
-    await writeRawTextFile(
-      path.join(input.artifactDir, "commit-message.txt"),
-      `${buildCommitMessageTemplate(inputHash, outputHash, outputRef)}\n`,
-    );
+      commitMessageTemplate: buildCommitMessageTemplate(
+        inputHash,
+        outputHash,
+        outputRef,
+      ),
+    });
 
     try {
       await saveNodeExecutionToRuntimeDb(

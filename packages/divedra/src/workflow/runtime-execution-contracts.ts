@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { atomicWriteJsonFile, atomicWriteTextFile } from "../shared/fs";
 import type { AdapterExecutionOutput } from "./adapter";
 import type { JsonSchemaValidationError } from "./json-schema";
 import { err, ok, type Result } from "./result";
@@ -25,6 +26,45 @@ export function nextManagerSessionId(nodeExecId: string): string {
 
 export function nextOutputAttemptId(counter: number): string {
   return `attempt-${String(counter).padStart(6, "0")}`;
+}
+
+export function nextCommunicationId(counter: number): string {
+  return `comm-${String(counter).padStart(6, "0")}`;
+}
+
+export function initialDeliveryAttemptId(): string {
+  return "attempt-000001";
+}
+
+export function nextDeliveryAttemptId(
+  deliveryAttemptIds: readonly string[],
+): string {
+  return `attempt-${String(deliveryAttemptIds.length + 1).padStart(6, "0")}`;
+}
+
+export async function publishNodeOutputArtifacts(input: {
+  readonly artifactDir: string;
+  readonly outputRaw: string;
+  readonly metaPayload: unknown;
+  readonly handoffPayload: unknown;
+  readonly commitMessageTemplate: string;
+}): Promise<void> {
+  await atomicWriteTextFile(
+    path.join(input.artifactDir, "output.json"),
+    input.outputRaw,
+  );
+  await atomicWriteJsonFile(
+    path.join(input.artifactDir, "meta.json"),
+    input.metaPayload,
+  );
+  await atomicWriteJsonFile(
+    path.join(input.artifactDir, "handoff.json"),
+    input.handoffPayload,
+  );
+  await atomicWriteTextFile(
+    path.join(input.artifactDir, "commit-message.txt"),
+    `${input.commitMessageTemplate}\n`,
+  );
 }
 
 export interface RuntimeTimeoutCandidate<Source extends string> {

@@ -19,6 +19,38 @@ export interface GraphqlClientResponse {
   readonly errors?: readonly GraphqlResponseError[];
 }
 
+export function graphqlResponseErrorMessage(
+  response: GraphqlClientResponse,
+): string | undefined {
+  return response.errors === undefined || response.errors.length === 0
+    ? undefined
+    : response.errors.map((entry) => entry.message).join("; ");
+}
+
+export function assertGraphqlResponseSucceeded(
+  response: GraphqlClientResponse,
+): void {
+  const message = graphqlResponseErrorMessage(response);
+  if (message !== undefined) {
+    throw new Error(message);
+  }
+}
+
+export function readGraphqlDataObject(
+  response: GraphqlClientResponse,
+  message = "GraphQL response.data must be an object",
+): Readonly<Record<string, unknown>> {
+  assertGraphqlResponseSucceeded(response);
+  if (
+    typeof response.data !== "object" ||
+    response.data === null ||
+    Array.isArray(response.data)
+  ) {
+    throw new Error(message);
+  }
+  return response.data as Readonly<Record<string, unknown>>;
+}
+
 export async function executeGraphqlRequest(
   request: GraphqlClientRequest,
 ): Promise<GraphqlClientResponse> {

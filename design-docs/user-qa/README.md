@@ -29,6 +29,9 @@ Store questions, pending decisions, and items awaiting user approval.
 - `qa-scheduled-workflow-execution.md`: timezone defaults, missed-run policy,
   schedule CRUD scope, result delivery destination, and startup rehydration
   scope for chat-created workflow schedules.
+- `qa-product-code-duplicate-scavenge-blockers.md`: public export and backend
+  normalization decisions blocking `REF-003` and `REF-015` in the product-code
+  duplicate-scavenge implementation plan.
 
 ## Adding New Items
 

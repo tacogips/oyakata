@@ -19,6 +19,9 @@ export {
   cleanupReservedCandidateSubmissionPath,
   formatOutputValidationErrors,
   nextManagerSessionId,
+  nextCommunicationId,
+  initialDeliveryAttemptId,
+  nextDeliveryAttemptId,
   nextNodeExecId,
   nextOutputAttemptId,
   readCandidatePayloadFromFile,
@@ -267,12 +270,6 @@ export interface UpstreamInput extends UpstreamOutputRef {
 export interface OutputArtifact {
   readonly payload: Readonly<Record<string, unknown>>;
   readonly raw: string;
-}
-export function nextCommunicationId(counter: number): string {
-  return `comm-${String(counter).padStart(6, "0")}`;
-}
-export function initialDeliveryAttemptId(): string {
-  return "attempt-000001";
 }
 export function resolveTimeoutMs(input: {
   readonly node: NodePayload;

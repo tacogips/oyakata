@@ -1,6 +1,7 @@
 import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { atomicWriteJsonFile, atomicWriteTextFile } from "../shared/fs";
+import { atomicWriteJsonFile } from "../shared/fs";
+import { persistDeliveredCommunicationArtifacts } from "./communication-artifact-persistence";
 import type { IdempotencyStore } from "./manager-message-service/idempotency";
 import { runIdempotentMutation } from "./manager-message-service/idempotency";
 import {
@@ -13,6 +14,10 @@ import type {
   NodeExecutionRecord,
   WorkflowSessionState,
 } from "./session";
+import {
+  initialDeliveryAttemptId,
+  nextDeliveryAttemptId,
+} from "./runtime-execution-contracts";
 
 export interface CommunicationLookupInput {
   readonly workflowId: string;
@@ -88,14 +93,6 @@ export interface CommunicationService {
     input: RetryCommunicationDeliveryInput,
     options?: CommunicationServiceOptions,
   ): Promise<RetryCommunicationDeliveryResult>;
-}
-
-function nextCommunicationId(counter: number): string {
-  return `comm-${String(counter).padStart(6, "0")}`;
-}
-
-function nextDeliveryAttemptId(deliveryAttemptIds: readonly string[]): string {
-  return `attempt-${String(deliveryAttemptIds.length + 1).padStart(6, "0")}`;
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {
@@ -228,7 +225,7 @@ async function loadDeliveredByNodeId(
   const activeDeliveryAttemptId =
     communication.activeDeliveryAttemptId ??
     communication.deliveryAttemptIds.at(-1) ??
-    "attempt-000001";
+    initialDeliveryAttemptId();
   const receiptRaw = await readOptionalText(
     path.join(
       communication.artifactDir,
@@ -245,6 +242,10 @@ async function loadDeliveredByNodeId(
   return typeof deliveredByNodeId === "string" && deliveredByNodeId.length > 0
     ? deliveredByNodeId
     : communication.toNodeId;
+}
+
+function resolveArtifactWorkflowRoot(artifactDir: string): string {
+  return path.dirname(path.dirname(path.dirname(path.dirname(artifactDir))));
 }
 
 async function persistUpdatedSession(
@@ -312,134 +313,42 @@ export function createCommunicationService(
           const outputRaw = await loadSourceOutputRaw(sourceCommunication);
           const deliveredByNodeId =
             await loadDeliveredByNodeId(sourceCommunication);
-          const replayedCommunicationId = nextCommunicationId(
-            loaded.value.communicationCounter + 1,
-          );
-          const deliveryAttemptId = "attempt-000001";
-          const artifactDir = path.join(
-            path.dirname(sourceCommunication.artifactDir),
-            replayedCommunicationId,
-          );
-          await mkdir(
-            path.join(artifactDir, "outbox", sourceCommunication.fromNodeId),
-            { recursive: true },
-          );
-          await mkdir(
-            path.join(artifactDir, "inbox", sourceCommunication.toNodeId),
-            { recursive: true },
-          );
-          await mkdir(path.join(artifactDir, "attempts", deliveryAttemptId), {
-            recursive: true,
-          });
-
-          const envelope = {
-            workflowId: sourceCommunication.workflowId,
-            workflowExecutionId: sourceCommunication.workflowExecutionId,
-            communicationId: replayedCommunicationId,
-            fromNodeId: sourceCommunication.fromNodeId,
-            toNodeId: sourceCommunication.toNodeId,
-            routingScope: sourceCommunication.routingScope,
-            sourceNodeExecId: sourceCommunication.sourceNodeExecId,
-            deliveryKind: "manual-rerun",
-            payloadRef: {
-              ...sourceCommunication.payloadRef,
-              outputFile: "output.json",
-            },
-            createdAt: now,
-            replayedFromCommunicationId: sourceCommunication.communicationId,
-          };
-          const meta = {
-            status: "delivered",
-            workflowId: sourceCommunication.workflowId,
-            workflowExecutionId: sourceCommunication.workflowExecutionId,
-            communicationId: replayedCommunicationId,
-            fromNodeId: sourceCommunication.fromNodeId,
-            toNodeId: sourceCommunication.toNodeId,
-            sourceNodeExecId: sourceCommunication.sourceNodeExecId,
-            routingScope: sourceCommunication.routingScope,
-            deliveryKind: "manual-rerun",
-            activeDeliveryAttemptId: deliveryAttemptId,
-            deliveryAttemptIds: [deliveryAttemptId],
-            createdAt: now,
-            deliveredAt: now,
-            replayedFromCommunicationId: sourceCommunication.communicationId,
-            ...(input.reason === undefined
-              ? {}
-              : { replayReason: input.reason }),
-          };
-          const attempt = {
-            workflowId: sourceCommunication.workflowId,
-            workflowExecutionId: sourceCommunication.workflowExecutionId,
-            communicationId: replayedCommunicationId,
-            deliveryAttemptId,
-            toNodeId: sourceCommunication.toNodeId,
-            status: "succeeded",
-            startedAt: now,
-            endedAt: now,
-            ...(input.reason === undefined ? {} : { reason: input.reason }),
-          };
-          const receipt = {
-            communicationId: replayedCommunicationId,
-            deliveryAttemptId,
-            deliveredByNodeId,
-            deliveredAt: now,
-          };
-
-          await atomicWriteJsonFile(
-            path.join(artifactDir, "message.json"),
-            envelope,
-          );
-          await atomicWriteJsonFile(path.join(artifactDir, "meta.json"), meta);
-          await atomicWriteJsonFile(
-            path.join(
-              artifactDir,
-              "outbox",
-              sourceCommunication.fromNodeId,
-              "message.json",
-            ),
-            envelope,
-          );
-          await atomicWriteTextFile(
-            path.join(
-              artifactDir,
-              "outbox",
-              sourceCommunication.fromNodeId,
-              "output.json",
-            ),
-            outputRaw,
-          );
-          await atomicWriteJsonFile(
-            path.join(
-              artifactDir,
-              "inbox",
-              sourceCommunication.toNodeId,
-              "message.json",
-            ),
-            envelope,
-          );
-          await atomicWriteJsonFile(
-            path.join(
-              artifactDir,
-              "attempts",
-              deliveryAttemptId,
-              "attempt.json",
-            ),
-            attempt,
-          );
-          await atomicWriteJsonFile(
-            path.join(
-              artifactDir,
-              "attempts",
-              deliveryAttemptId,
-              "receipt.json",
-            ),
-            receipt,
-          );
+          const persistedArtifacts =
+            await persistDeliveredCommunicationArtifacts({
+              artifactWorkflowRoot: resolveArtifactWorkflowRoot(
+                sourceCommunication.artifactDir,
+              ),
+              workflowId: sourceCommunication.workflowId,
+              workflowExecutionId: sourceCommunication.workflowExecutionId,
+              communicationCounter: loaded.value.communicationCounter,
+              fromNodeId: sourceCommunication.fromNodeId,
+              toNodeId: sourceCommunication.toNodeId,
+              routingScope: sourceCommunication.routingScope,
+              sourceNodeExecId: sourceCommunication.sourceNodeExecId,
+              deliveryKind: "manual-rerun",
+              payloadRef: sourceCommunication.payloadRef,
+              outputRaw,
+              deliveredByNodeId,
+              createdAt: now,
+              extraEnvelopeFields: {
+                replayedFromCommunicationId:
+                  sourceCommunication.communicationId,
+              },
+              extraMetaFields: {
+                replayedFromCommunicationId:
+                  sourceCommunication.communicationId,
+                ...(input.reason === undefined
+                  ? {}
+                  : { replayReason: input.reason }),
+              },
+              extraAttemptFields:
+                input.reason === undefined ? {} : { reason: input.reason },
+            });
 
           const replayedRecord: CommunicationRecord = {
             workflowId: sourceCommunication.workflowId,
             workflowExecutionId: sourceCommunication.workflowExecutionId,
-            communicationId: replayedCommunicationId,
+            communicationId: persistedArtifacts.communicationId,
             fromNodeId: sourceCommunication.fromNodeId,
             toNodeId: sourceCommunication.toNodeId,
             routingScope: sourceCommunication.routingScope,
@@ -448,12 +357,12 @@ export function createCommunicationService(
             deliveryKind: "manual-rerun",
             transitionWhen: `manual-rerun:${sourceCommunication.communicationId}`,
             status: "delivered",
-            deliveryAttemptIds: [deliveryAttemptId],
-            activeDeliveryAttemptId: deliveryAttemptId,
+            deliveryAttemptIds: [persistedArtifacts.deliveryAttemptId],
+            activeDeliveryAttemptId: persistedArtifacts.deliveryAttemptId,
             createdAt: now,
             deliveredAt: now,
             replayedFromCommunicationId: sourceCommunication.communicationId,
-            artifactDir,
+            artifactDir: persistedArtifacts.artifactDir,
           };
           const updatedCommunications = loaded.value.communications.map(
             (communication) =>
@@ -462,7 +371,8 @@ export function createCommunicationService(
                 ? {
                     ...communication,
                     status: "superseded" as const,
-                    supersededByCommunicationId: replayedCommunicationId,
+                    supersededByCommunicationId:
+                      persistedArtifacts.communicationId,
                     supersededAt: now,
                   }
                 : communication,
@@ -476,7 +386,7 @@ export function createCommunicationService(
           return {
             sourceCommunicationId: sourceCommunication.communicationId,
             workflowExecutionId: input.workflowExecutionId,
-            replayedCommunicationId,
+            replayedCommunicationId: persistedArtifacts.communicationId,
             status: replayedRecord.status,
           } satisfies ReplayCommunicationResult;
         },

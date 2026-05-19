@@ -32,7 +32,11 @@ import type {
   WorkflowSelfImproveReportGraphqlInput,
   WorkflowSelfImproveReportsGraphqlInput,
 } from "../graphql/types";
-import type { WorkflowOverviewStatus } from "../workflow/overview";
+import {
+  parseWorkflowOverviewStatus,
+  type WorkflowOverviewStatus,
+} from "../workflow/overview";
+import { parseWorkflowScopeSelector } from "../workflow/paths";
 import type { WorkflowScopeSelector } from "../workflow/types";
 import { createJsonScalar, GRAPHQL_SCHEMA_TEXT } from "./graphql-schema-text";
 const FULL_LLM_SESSION_MESSAGES_SELECTION: LlmSessionMessagesSelectionInput = {
@@ -51,8 +55,9 @@ function parseOverviewWorkflowScopeArg(
   if (value === undefined || value === null || value === "") {
     return undefined;
   }
-  if (value === "auto" || value === "project" || value === "user") {
-    return value;
+  const parsed = parseWorkflowScopeSelector(value);
+  if (parsed !== undefined) {
+    return parsed;
   }
   throw new Error(`invalid workflowScope '${value}'`);
 }
@@ -62,16 +67,9 @@ function parseOverviewAggregateStatusArg(
   if (value === undefined || value === null || value === "") {
     return undefined;
   }
-  const allowed: readonly WorkflowOverviewStatus[] = [
-    "running",
-    "paused",
-    "completed",
-    "failed",
-    "cancelled",
-    "never-run",
-  ];
-  if ((allowed as readonly string[]).includes(value)) {
-    return value as WorkflowOverviewStatus;
+  const parsed = parseWorkflowOverviewStatus(value);
+  if (parsed !== undefined) {
+    return parsed;
   }
   throw new Error(`invalid workflow overview status '${value}'`);
 }

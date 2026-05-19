@@ -1,12 +1,13 @@
 import { readdir, stat } from "node:fs/promises";
 import { statSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { err, ok, type Result } from "./result";
 import {
   computeProjectScopedRootDataDirForScopeRoot,
   inferRootDataDirFromExplicitStorageRoots,
   isSafeWorkflowName,
+  parseWorkflowScopeSelector,
+  resolveConfiguredRootPath,
 } from "./paths";
 import type {
   AddonSourceScope,
@@ -46,49 +47,6 @@ interface AddonRootCandidate {
 
 function resolveCwd(options: LoadOptions): string {
   return options.cwd ?? process.cwd();
-}
-
-function resolveRootPath(root: string, cwd: string): string {
-  return path.isAbsolute(root) ? root : path.resolve(cwd, root);
-}
-
-function resolveHomeDir(
-  env: Readonly<Record<string, string | undefined>>,
-): string {
-  const fromEnv = env["HOME"] ?? env["USERPROFILE"];
-  if (fromEnv !== undefined && fromEnv.length > 0) {
-    return fromEnv;
-  }
-  return os.homedir();
-}
-
-function expandLeadingHome(
-  rawPath: string,
-  env: Readonly<Record<string, string | undefined>>,
-): string {
-  if (rawPath === "~") {
-    return resolveHomeDir(env);
-  }
-  if (rawPath.startsWith("~/") || rawPath.startsWith("~\\")) {
-    return path.join(resolveHomeDir(env), rawPath.slice(2));
-  }
-  return rawPath;
-}
-
-function resolveConfiguredRootPath(
-  rawPath: string,
-  options: LoadOptions,
-): string {
-  const env = options.env ?? process.env;
-  return resolveRootPath(expandLeadingHome(rawPath, env), resolveCwd(options));
-}
-
-function parseWorkflowScopeSelector(
-  value: string | undefined,
-): WorkflowScopeSelector | undefined {
-  return value === "auto" || value === "project" || value === "user"
-    ? value
-    : undefined;
 }
 
 function invalidWorkflowScopeSelector(value: string): WorkflowCatalogFailure {

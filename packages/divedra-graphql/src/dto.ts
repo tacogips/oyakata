@@ -111,6 +111,44 @@ export interface WorkflowControlPlaneSession {
   readonly supervision?: WorkflowControlPlaneSupervisionState;
 }
 
+export function projectWorkflowSessionStateToControlPlaneSession(
+  session: unknown,
+): WorkflowControlPlaneSession {
+  const projected = session as WorkflowControlPlaneSession;
+  return {
+    ...projected,
+    queue: projected.queue,
+    restartEvents: projected.restartEvents,
+    transitions: projected.transitions,
+    nodeExecutions: projected.nodeExecutions,
+    communications: projected.communications,
+    conversationTurns: projected.conversationTurns,
+    nodeBackendSessions: projected.nodeBackendSessions,
+    runtimeVariables: projected.runtimeVariables,
+  };
+}
+
+export function projectControlPlaneSessionToWorkflowSessionState<T>(
+  session: WorkflowControlPlaneSession,
+): T {
+  const projected = {
+    ...session,
+    queue: session.queue,
+    restartEvents: session.restartEvents,
+    transitions: session.transitions,
+    nodeExecutions: session.nodeExecutions,
+    communications: session.communications,
+    conversationTurns: session.conversationTurns,
+    nodeBackendSessions: session.nodeBackendSessions,
+    runtimeVariables: session.runtimeVariables,
+  };
+  return projected as unknown as T;
+}
+
+export function projectControlPlaneNodeExecutionRecord<T>(record: unknown): T {
+  return record as T;
+}
+
 export interface GraphqlRuntimeNodeExecutionSummary {
   readonly sessionId: string;
   readonly nodeExecId: string;

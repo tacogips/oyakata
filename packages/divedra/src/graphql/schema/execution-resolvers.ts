@@ -1,6 +1,10 @@
 import { EVENT_SUPERVISOR_ACTION_SET } from "../../events/supervisor-command-contract";
 import type { EventBinding } from "../../events/types";
-import type { WorkflowControlPlaneSession } from "divedra-graphql";
+import {
+  projectControlPlaneNodeExecutionRecord,
+  projectControlPlaneSessionToWorkflowSessionState,
+  type WorkflowControlPlaneSession,
+} from "divedra-graphql";
 import type { WorkflowExecutionSummary } from "../../shared/ui-contract";
 import { buildFanoutGroupSummaries } from "../../workflow/inspect";
 import { loadWorkflowFromCatalog } from "../../workflow/load";
@@ -115,13 +119,15 @@ export async function buildNodeExecutionView(
 function toWorkflowSessionState(
   session: WorkflowControlPlaneSession,
 ): WorkflowSessionState {
-  return session as unknown as WorkflowSessionState;
+  return projectControlPlaneSessionToWorkflowSessionState<WorkflowSessionState>(
+    session,
+  );
 }
 
 function toNodeExecutionRecord(
   record: WorkflowControlPlaneSession["nodeExecutions"][number],
 ): NodeExecutionRecord {
-  return record as unknown as NodeExecutionRecord;
+  return projectControlPlaneNodeExecutionRecord<NodeExecutionRecord>(record);
 }
 
 export function toWorkflowExecutionSummary(

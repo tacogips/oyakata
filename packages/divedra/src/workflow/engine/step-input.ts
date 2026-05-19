@@ -1,4 +1,5 @@
 import { createScheduledEventManager } from "../../events/scheduled-event-manager";
+import { publishNodeOutputArtifacts } from "../runtime-execution-contracts";
 import { markWorkflowSleepScheduledEventRef } from "../session";
 import { workflowStepInputPort } from "./workflow-runner-deps";
 
@@ -246,8 +247,7 @@ export async function handlePreparedStepInput(input: any) {
     const inputHash = sha256Hex(inputJson);
     const outputHash = sha256Hex(outputJson);
     const nextNodes = selected.map((edge: any) => edge.to);
-    await writeRawTextFile(path.join(artifactDir, "output.json"), outputRaw);
-    await writeJsonFile(path.join(artifactDir, "meta.json"), {
+    const metaPayload = {
       nodeId,
       ...stepIdentityFields,
       nodeExecId,
@@ -260,8 +260,8 @@ export async function handlePreparedStepInput(input: any) {
       ...(stepExecutionAddress.promptVariant === undefined
         ? {}
         : { promptVariant: stepExecutionAddress.promptVariant }),
-    });
-    await writeJsonFile(path.join(artifactDir, "handoff.json"), {
+    };
+    const handoffPayload = {
       schemaVersion: 1,
       generatedAt: endedAt,
       nodeId,
@@ -271,11 +271,19 @@ export async function handlePreparedStepInput(input: any) {
       inputHash: `sha256:${inputHash}`,
       outputHash: `sha256:${outputHash}`,
       nextNodes,
+    };
+    await publishNodeOutputArtifacts({
+      artifactDir,
+      outputRaw,
+      metaPayload,
+      handoffPayload,
+      commitMessageTemplate: buildCommitMessageTemplate(
+        inputHash,
+        outputHash,
+        outputRef,
+        nextNodes,
+      ),
     });
-    await writeRawTextFile(
-      path.join(artifactDir, "commit-message.txt"),
-      `${buildCommitMessageTemplate(inputHash, outputHash, outputRef, nextNodes)}\n`,
-    );
     try {
       await saveNodeExecutionToRuntimeDb(
         {
@@ -541,8 +549,7 @@ export async function handlePreparedStepInput(input: any) {
     const inputHash = sha256Hex(inputJson);
     const outputHash = sha256Hex(outputJson);
     const nextNodes = selected.map((edge: any) => edge.to);
-    await writeRawTextFile(path.join(artifactDir, "output.json"), outputRaw);
-    await writeJsonFile(path.join(artifactDir, "meta.json"), {
+    const metaPayload = {
       nodeId,
       ...stepIdentityFields,
       nodeExecId,
@@ -554,8 +561,8 @@ export async function handlePreparedStepInput(input: any) {
         ? {}
         : { promptVariant: stepExecutionAddress.promptVariant }),
       optionalDecision: "skip",
-    });
-    await writeJsonFile(path.join(artifactDir, "handoff.json"), {
+    };
+    const handoffPayload = {
       schemaVersion: 1,
       generatedAt: endedAt,
       nodeId,
@@ -565,11 +572,19 @@ export async function handlePreparedStepInput(input: any) {
       inputHash: `sha256:${inputHash}`,
       outputHash: `sha256:${outputHash}`,
       nextNodes,
+    };
+    await publishNodeOutputArtifacts({
+      artifactDir,
+      outputRaw,
+      metaPayload,
+      handoffPayload,
+      commitMessageTemplate: buildCommitMessageTemplate(
+        inputHash,
+        outputHash,
+        outputRef,
+        nextNodes,
+      ),
     });
-    await writeRawTextFile(
-      path.join(artifactDir, "commit-message.txt"),
-      `${buildCommitMessageTemplate(inputHash, outputHash, outputRef, nextNodes)}\n`,
-    );
     try {
       await saveNodeExecutionToRuntimeDb(
         {

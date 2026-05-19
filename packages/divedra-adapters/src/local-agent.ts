@@ -6,6 +6,11 @@ import {
   type AdapterExecutionInput,
   type AdapterExecutionOutput,
 } from "divedra-core";
+import {
+  createWatchedLlmSession,
+  type LlmSessionStallWatchConfig,
+  type WatchedLlmSession,
+} from "./llm-session-stall-watch";
 
 const ALWAYS_TRUE_WHEN: Readonly<Record<string, boolean>> = Object.freeze({
   always: true,
@@ -96,6 +101,33 @@ export function bindAbortSignal(
   return () => {
     signal.removeEventListener("abort", onAbort);
   };
+}
+
+interface WatchedLocalSessionLike<TResult> {
+  readonly sessionId: string;
+  messages(): AsyncIterable<unknown>;
+  waitForCompletion(): Promise<TResult>;
+  cancel(): Promise<void>;
+  getState?(): unknown;
+}
+
+export function createWatchedLocalAgentSession<
+  TSession extends WatchedLocalSessionLike<TResult>,
+  TResult,
+>(input: {
+  readonly provider: string;
+  readonly primarySession: TSession;
+  readonly signal: AbortSignal;
+  readonly stallWatch: LlmSessionStallWatchConfig;
+  readonly resumeSession: (
+    sessionId: string,
+    prompt: string,
+  ) => Promise<TSession>;
+  readonly isResultSuccess: (result: TResult) => boolean;
+  readonly describeResult: (result: TResult) => string;
+  readonly onProcessLog: (log: import("divedra-core").AdapterProcessLog) => void;
+}): WatchedLlmSession<TResult> {
+  return createWatchedLlmSession<TSession, TResult>(input);
 }
 
 export function throwIfAborted(signal: AbortSignal, message: string): void {

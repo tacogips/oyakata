@@ -70,15 +70,15 @@ export type PureWorkflowValidationResult = Result<
   readonly ValidationIssue[]
 >;
 
-type UnknownRecord = Record<string, unknown>;
+export type UnknownRecord = Record<string, unknown>;
 const DEFAULT_MONITOR_INTERVAL_MS = 5_000;
 const DEFAULT_STALL_TIMEOUT_MS = 60 * 60 * 1000;
 
-function isRecord(value: unknown): value is UnknownRecord {
+export function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function makeIssue(
+export function makeIssue(
   severity: "error" | "warning",
   path: string,
   message: string,
@@ -86,7 +86,7 @@ function makeIssue(
   return { severity, path, message };
 }
 
-function readStringField(
+export function readStringField(
   record: UnknownRecord,
   key: string,
   path: string,
@@ -102,7 +102,7 @@ function readStringField(
   return value;
 }
 
-function readNumberField(
+export function readNumberField(
   record: UnknownRecord,
   key: string,
   path: string,
@@ -118,7 +118,7 @@ function readNumberField(
   return value;
 }
 
-function readPositiveIntegerField(
+export function readPositiveIntegerField(
   record: UnknownRecord,
   key: string,
   path: string,
@@ -134,7 +134,7 @@ function readPositiveIntegerField(
   return value;
 }
 
-function normalizePositiveNumber(
+export function normalizePositiveNumber(
   value: unknown,
   path: string,
   issues: ValidationIssue[],
@@ -149,7 +149,7 @@ function normalizePositiveNumber(
   return undefined;
 }
 
-function normalizePositiveInteger(
+export function normalizePositiveInteger(
   value: unknown,
   path: string,
   issues: ValidationIssue[],
@@ -164,7 +164,7 @@ function normalizePositiveInteger(
   return undefined;
 }
 
-function normalizeStringArray(
+export function normalizeStringArray(
   value: unknown,
   path: string,
   issues: ValidationIssue[],
@@ -189,7 +189,7 @@ function normalizeStringArray(
   return entries;
 }
 
-function normalizeStringMap(
+export function normalizeStringMap(
   value: unknown,
   path: string,
   issues: ValidationIssue[],
@@ -214,7 +214,7 @@ function normalizeStringMap(
   return entries;
 }
 
-function normalizeObjectField(
+export function normalizeObjectField(
   value: unknown,
   path: string,
   issues: ValidationIssue[],

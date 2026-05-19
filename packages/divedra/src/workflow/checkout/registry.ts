@@ -1,8 +1,11 @@
 import { statSync } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { atomicWriteJsonFile } from "../../shared/fs";
-import { isSafeWorkflowName, resolveSafeScopedPath } from "../paths";
+import {
+  isSafeWorkflowName,
+  resolveConfiguredRootPath,
+  resolveSafeScopedPath,
+} from "../paths";
 import type { LoadOptions } from "../types";
 import { err, ok, type Result } from "../result";
 import type { WorkflowCheckoutFailure, WorkflowCheckoutScope } from "./types";
@@ -32,38 +35,6 @@ function checkoutFailure(
 
 function resolveCwd(options: LoadOptions): string {
   return options.cwd ?? process.cwd();
-}
-
-function resolveRootPath(root: string, cwd: string): string {
-  return path.isAbsolute(root) ? root : path.resolve(cwd, root);
-}
-
-function resolveHomeDir(
-  env: Readonly<Record<string, string | undefined>>,
-): string {
-  const fromEnv = env["HOME"] ?? env["USERPROFILE"];
-  return fromEnv === undefined || fromEnv.length === 0 ? os.homedir() : fromEnv;
-}
-
-function expandLeadingHome(
-  rawPath: string,
-  env: Readonly<Record<string, string | undefined>>,
-): string {
-  if (rawPath === "~") {
-    return resolveHomeDir(env);
-  }
-  if (rawPath.startsWith("~/") || rawPath.startsWith("~\\")) {
-    return path.join(resolveHomeDir(env), rawPath.slice(2));
-  }
-  return rawPath;
-}
-
-function resolveConfiguredRootPath(
-  rawPath: string,
-  options: LoadOptions,
-): string {
-  const env = options.env ?? process.env;
-  return resolveRootPath(expandLeadingHome(rawPath, env), resolveCwd(options));
 }
 
 function discoverProjectScopeRoot(options: LoadOptions): string | undefined {

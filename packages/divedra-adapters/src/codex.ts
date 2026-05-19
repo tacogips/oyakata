@@ -8,7 +8,6 @@ import {
   type NodeAdapter,
 } from "divedra-core";
 import {
-  createWatchedLlmSession,
   type LlmSessionStallWatchConfig,
 } from "./llm-session-stall-watch";
 import {
@@ -16,6 +15,7 @@ import {
   buildAmbientProcessEnv,
   buildCombinedPromptText,
   buildLocalAdapterOutput,
+  createWatchedLocalAgentSession,
   throwIfAborted,
   withProcessEnvOverride,
 } from "./local-agent";
@@ -259,7 +259,7 @@ async function executeLocalCodexAgent(
   const disposeAbort = bindAbortSignal(context.signal, async () => {
     await session.cancel();
   });
-  const watchedSession = createWatchedLlmSession<
+  const watchedSession = createWatchedLocalAgentSession<
     CodexRunningSessionLike,
     CodexSessionResult
   >({

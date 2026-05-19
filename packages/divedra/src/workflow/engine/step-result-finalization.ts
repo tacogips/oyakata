@@ -1,6 +1,7 @@
 import { workflowStepResultFinalizationPort } from "./workflow-runner-deps";
 
 import { finalizeStepTransitions } from "./step-transition-finalization";
+import { publishNodeOutputArtifacts } from "../runtime-execution-contracts";
 
 type CommunicationRecord = any;
 type LoopRule = any;
@@ -8,9 +9,6 @@ type NodeExecutionRecord = any;
 type WorkflowSessionState = any;
 
 const {
-  path,
-  writeJsonFile,
-  writeRawTextFile,
   parseManagerControlPayload,
   hashManagerAuthToken,
   isManagerNodeRef,
@@ -604,13 +602,13 @@ export async function finalizeExecutedNode(input: any) {
     outputRef,
     nextNodes,
   );
-  await writeRawTextFile(path.join(artifactDir, "output.json"), outputRaw);
-  await writeJsonFile(path.join(artifactDir, "meta.json"), metaPayload);
-  await writeJsonFile(path.join(artifactDir, "handoff.json"), handoffPayload);
-  await writeRawTextFile(
-    path.join(artifactDir, "commit-message.txt"),
-    `${commitMessageTemplate}\n`,
-  );
+  await publishNodeOutputArtifacts({
+    artifactDir,
+    outputRaw,
+    metaPayload,
+    handoffPayload,
+    commitMessageTemplate,
+  });
   try {
     await saveNodeExecutionToRuntimeDb(
       {

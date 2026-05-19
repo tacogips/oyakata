@@ -15,8 +15,11 @@ import type {
   NormalizedWorkflowBundle,
   ValidationIssue,
   WorkflowJson,
+  WorkflowNodeRegistryRef,
+  WorkflowStepRef,
 } from "../types";
 import type {
+  NodeStepRoleUsage,
   RawBundle,
   ValidationResult,
   ValidationSuccessDetails,
@@ -43,6 +46,65 @@ import {
   validateCrossWorkflowCalleeEntryAlignmentSync,
   validateResolvedAddonPayload,
 } from "./semantic-validation-and-addons";
+
+function registerStepAddressedNodePayload(input: {
+  readonly node: WorkflowNodeRegistryRef;
+  readonly nodePayloadsRaw: Readonly<Record<string, unknown>>;
+  readonly issues: ValidationIssue[];
+  readonly usage: NodeStepRoleUsage | undefined;
+  readonly nodePayloads: Record<string, NodePayload>;
+  readonly basePayloadsByRegistryId: Map<string, NodePayload>;
+}): void {
+  if (input.node.nodeFile === undefined) {
+    return;
+  }
+  const payloadRaw = input.nodePayloadsRaw[input.node.nodeFile];
+  if (payloadRaw === undefined) {
+    input.issues.push(
+      makeIssue(
+        "error",
+        `nodePayloads.${input.node.nodeFile}`,
+        "node payload file is missing",
+      ),
+    );
+    return;
+  }
+  const payload = normalizeNodePayload({
+    nodeId: input.node.id,
+    nodeFile: input.node.nodeFile,
+    payload: payloadRaw,
+    issues: input.issues,
+    allowManagerCodePathDefaults:
+      input.usage?.manager === true && input.usage.worker !== true,
+  });
+  if (payload !== null) {
+    input.basePayloadsByRegistryId.set(input.node.id, payload);
+    input.nodePayloads[input.node.id] = payload;
+    input.nodePayloads[input.node.nodeFile] = payload;
+  }
+}
+
+function applyStepAddressedPromptVariants(input: {
+  readonly workflow: WorkflowJson;
+  readonly steps: readonly WorkflowStepRef[];
+  readonly issues: ValidationIssue[];
+  readonly nodePayloads: Record<string, NodePayload>;
+  readonly basePayloadsByRegistryId: ReadonlyMap<string, NodePayload>;
+}): void {
+  input.steps.forEach((step, index) => {
+    const basePayload = input.basePayloadsByRegistryId.get(step.nodeId);
+    if (basePayload === undefined) {
+      return;
+    }
+    input.nodePayloads[step.id] = applyStepPromptVariant({
+      basePayload,
+      workflow: input.workflow,
+      step,
+      issues: input.issues,
+      stepPath: `workflow.steps[${index}]`,
+    });
+  });
+}
 
 export function buildStepAddressedNodePayloadsSync(input: {
   readonly workflow: WorkflowJson;
@@ -107,47 +169,22 @@ export function buildStepAddressedNodePayloadsSync(input: {
       return;
     }
 
-    if (node.nodeFile === undefined) {
-      return;
-    }
-    const payloadRaw = input.nodePayloadsRaw[node.nodeFile];
-    if (payloadRaw === undefined) {
-      input.issues.push(
-        makeIssue(
-          "error",
-          `nodePayloads.${node.nodeFile}`,
-          "node payload file is missing",
-        ),
-      );
-      return;
-    }
-    const payload = normalizeNodePayload({
-      nodeId: node.id,
-      nodeFile: node.nodeFile,
-      payload: payloadRaw,
+    registerStepAddressedNodePayload({
+      node,
+      nodePayloadsRaw: input.nodePayloadsRaw,
       issues: input.issues,
-      allowManagerCodePathDefaults:
-        usage?.manager === true && usage.worker !== true,
+      usage,
+      nodePayloads,
+      basePayloadsByRegistryId,
     });
-    if (payload !== null) {
-      basePayloadsByRegistryId.set(node.id, payload);
-      nodePayloads[node.id] = payload;
-      nodePayloads[node.nodeFile] = payload;
-    }
   });
 
-  steps.forEach((step, index) => {
-    const basePayload = basePayloadsByRegistryId.get(step.nodeId);
-    if (basePayload === undefined) {
-      return;
-    }
-    nodePayloads[step.id] = applyStepPromptVariant({
-      basePayload,
-      workflow: input.workflow,
-      step,
-      issues: input.issues,
-      stepPath: `workflow.steps[${index}]`,
-    });
+  applyStepAddressedPromptVariants({
+    workflow: input.workflow,
+    steps,
+    issues: input.issues,
+    nodePayloads,
+    basePayloadsByRegistryId,
   });
 
   return nodePayloads;
@@ -217,47 +254,22 @@ export async function buildStepAddressedNodePayloadsAsync(input: {
       continue;
     }
 
-    if (node.nodeFile === undefined) {
-      continue;
-    }
-    const payloadRaw = input.nodePayloadsRaw[node.nodeFile];
-    if (payloadRaw === undefined) {
-      input.issues.push(
-        makeIssue(
-          "error",
-          `nodePayloads.${node.nodeFile}`,
-          "node payload file is missing",
-        ),
-      );
-      continue;
-    }
-    const payload = normalizeNodePayload({
-      nodeId: node.id,
-      nodeFile: node.nodeFile,
-      payload: payloadRaw,
+    registerStepAddressedNodePayload({
+      node,
+      nodePayloadsRaw: input.nodePayloadsRaw,
       issues: input.issues,
-      allowManagerCodePathDefaults:
-        usage?.manager === true && usage.worker !== true,
+      usage,
+      nodePayloads,
+      basePayloadsByRegistryId,
     });
-    if (payload !== null) {
-      basePayloadsByRegistryId.set(node.id, payload);
-      nodePayloads[node.id] = payload;
-      nodePayloads[node.nodeFile] = payload;
-    }
   }
 
-  steps.forEach((step, index) => {
-    const basePayload = basePayloadsByRegistryId.get(step.nodeId);
-    if (basePayload === undefined) {
-      return;
-    }
-    nodePayloads[step.id] = applyStepPromptVariant({
-      basePayload,
-      workflow: input.workflow,
-      step,
-      issues: input.issues,
-      stepPath: `workflow.steps[${index}]`,
-    });
+  applyStepAddressedPromptVariants({
+    workflow: input.workflow,
+    steps,
+    issues: input.issues,
+    nodePayloads,
+    basePayloadsByRegistryId,
   });
 
   return nodePayloads;
