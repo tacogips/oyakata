@@ -30,50 +30,15 @@ Duplicate-scavenge review:
 - Recommend no abstraction when apparent duplicates intentionally differ by
   domain, lifecycle, error semantics, performance needs, or security boundary.
 
-Return adapter JSON:
+Return adapter JSON with this child output contract:
 
-```json
-{
-  "when": {
-    "has_findings": true
-  },
-  "payload": {
-    "sliceId": "workflow-runtime",
-    "title": "Workflow runtime",
-    "ownedPaths": ["src/workflow"],
-    "reviewedPaths": ["src/workflow/engine.ts"],
-    "findings": [
-      {
-        "severity": "mid",
-        "file": "src/workflow/example.ts",
-        "line": 1,
-        "problem": "Implementation and validation ownership are mixed.",
-        "recommendedRefactor": "Extract validation-only helpers behind a narrow interface.",
-        "risk": "Behavior drift if runtime callers depend on implicit mutation.",
-        "confidence": "medium",
-        "duplicateScavenge": {
-          "repeatedConcept": "workflow input validation",
-          "counterpartPaths": ["src/cli/example.ts", "src/graphql/example.ts"],
-          "behavioralDifferences": ["CLI reports usage errors; GraphQL returns typed errors."],
-          "consolidationTarget": "Existing validation helper or a new narrow helper owned by src/workflow.",
-          "verificationSuggestions": ["bun test src/workflow/example.test.ts"]
-        }
-      }
-    ],
-    "proposedTasks": [
-      {
-        "taskId": "REF-001",
-        "title": "Extract validation helpers",
-        "ownedPaths": ["src/workflow/example.ts"],
-        "blockedBy": [],
-        "verificationCommands": ["bun test src/workflow/example.test.ts"]
-      }
-    ],
-    "conflictNotes": [],
-    "verificationSuggestions": [],
-    "residualRisks": []
-  }
-}
-```
+- `when.has_findings`: true only when the slice has actionable high or mid maintainability findings.
+- `payload.sliceId`, `payload.title`, `payload.ownedPaths`, and `payload.reviewedPaths`: identify the reviewed slice and concrete paths inspected.
+- `payload.findings[]`: each finding must include `severity`, `file`, `line`, `problem`, `recommendedRefactor`, `risk`, and `confidence`.
+- `payload.findings[].duplicateScavenge`: required for duplicate-scavenge findings and must include `repeatedConcept`, `counterpartPaths`, `behavioralDifferences`, `consolidationTarget`, and `verificationSuggestions`.
+- `payload.proposedTasks[]`: optional implementation-plan inputs with `taskId`, `title`, `ownedPaths`, `blockedBy`, and `verificationCommands`.
+- `payload.conflictNotes[]`: cross-slice ownership, ordering, or safety constraints that Step 3 must preserve.
+- `payload.verificationSuggestions[]`: commands or checks relevant to the slice-level recommendation.
+- `payload.residualRisks[]`: accepted risks or reasons not to consolidate apparent duplicates.
 
-Use `when.has_findings: false` and empty `findings` / `proposedTasks` when no actionable high or mid maintainability work exists for the slice.
+Use `when.has_findings: false` and empty `findings` / `proposedTasks` when no actionable high or mid maintainability work exists for the slice. Keep fixture-level examples and stable assertions in `.divedra/workflows/refactoring-slice-review/mock-scenario.json` and `.divedra/workflows/refactoring-slice-review/EXPECTED_RESULTS.md`.

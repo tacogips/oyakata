@@ -15,10 +15,12 @@ Plan-only mode:
 Aggregation rules:
 - Deduplicate overlapping findings across slices.
 - When duplicate-scavenge intent is present, group duplicate findings across
-  slices before creating tasks. A group should identify the repeated concept,
-  owner paths, counterpart duplicate paths, current behavioral differences, a
-  proposed consolidation target, dependency order, conflicts, confidence, and
-  verification suggestions.
+  slices before creating tasks. The Step 3 duplicate group and task contract is
+  the canonical downstream contract for Steps 4 through 6. Use these exact field
+  concepts when recording implementation work: repeated concept, owner paths,
+  counterpart duplicate paths, behavior to preserve, known differences not to
+  collapse, consolidation target, dependency order, conflicts, confidence, and
+  verification commands.
 - Create a ready duplicate-consolidation task only when ownership, migration
   order, behavior to preserve, known differences not to collapse, write scope,
   conflicts, and verification commands are explicit.
@@ -77,6 +79,7 @@ Return adapter JSON:
         "behaviorToPreserve": ["CLI usage errors", "GraphQL typed errors"],
         "knownDifferencesNotToCollapse": ["Different external error envelopes."],
         "consolidationTarget": "Existing validation helper or new narrow workflow-owned helper.",
+        "conflicts": [],
         "verificationCommands": ["bun test src/workflow/example.test.ts"]
       }
     ],
@@ -88,6 +91,13 @@ Return adapter JSON:
         "ownedPaths": ["packages/divedra-core/src", "packages/divedra-core/package.json"],
         "excludedPaths": ["src/workflow/**/*.test.ts", "dist", "packages/divedra-core/dist"],
         "dependsOn": [],
+        "duplicateGroupIds": ["DUP-001"],
+        "repeatedConcept": "workflow input validation",
+        "counterpartPaths": ["src/cli/example.ts", "src/graphql/example.ts"],
+        "behaviorToPreserve": ["CLI usage errors", "GraphQL typed errors"],
+        "knownDifferencesNotToCollapse": ["Different external error envelopes."],
+        "consolidationTarget": "Existing validation helper or new narrow workflow-owned helper.",
+        "conflicts": [],
         "verificationCommands": ["bun test src/workflow/**/*.test.ts", "bun run build"]
       }
     ],

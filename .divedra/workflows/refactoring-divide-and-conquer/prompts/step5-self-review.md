@@ -14,6 +14,9 @@ Prioritize:
 - duplicate-scavenge consolidations that collapse intentional behavioral
   differences, introduce an over-broad abstraction, ignore counterpart paths, or
   exceed the selected plan task
+- duplicate-scavenge review coverage for the Step 3 contract fields: counterpart
+  paths, behavior to preserve, known differences not to collapse, consolidation
+  target, conflicts, and verification commands
 - incomplete plan progress updates
 - missing or false verification evidence
 - unsafe edits to unrelated dirty worktree files

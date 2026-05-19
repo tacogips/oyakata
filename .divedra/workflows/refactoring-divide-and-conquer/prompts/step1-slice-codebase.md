@@ -13,15 +13,20 @@ Inputs:
 - `runtimeVariables.workflowInput.constraints`: optional operator constraints.
 
 Recommended slicing:
-- Treat package roots as the primary ownership roots: `packages/*`, package
-  manifests, workspace build/declaration tooling, and package-local tests.
-- Treat root `src` as a temporary compatibility and dependency surface unless a
-  requested outcome explicitly says otherwise. Slice `src` by the package-owned
-  surface it should feed, such as CLI/public facade, workflow model, workflow
-  runtime, add-ons, adapters, server/graphql, events/hooks, TUI, or shared
-  utilities.
-- Include workflow bundles, scripts, and build files when they encode future
-  package-ownership behavior.
+- Treat explicit `targetPaths` and the `requestedOutcome` as the first slicing
+  authority. When they name a focused workflow bundle, skill, package, or
+  processing group, form slices inside that requested scope before applying
+  broader repository ownership heuristics.
+- For broad refactors without focused targets, treat package roots as the
+  primary ownership roots: `packages/*`, package manifests, workspace
+  build/declaration tooling, and package-local tests.
+- Treat root `src` as a temporary compatibility and dependency surface unless
+  the requested outcome explicitly says otherwise. Slice `src` by the
+  package-owned surface it should feed, such as CLI/public facade, workflow
+  model, workflow runtime, add-ons, adapters, server/graphql, events/hooks, TUI,
+  or shared utilities.
+- Include workflow bundles, scripts, and build files when they are named by the
+  target scope or when they encode future package-ownership behavior.
 - Split very large areas into cohesive subgroups only when ownership is clear.
 - Include dependency notes when a slice depends on another slice or when a root
   `src` compatibility shim depends on package-owned source moving first.
@@ -32,9 +37,10 @@ Duplicate-scavenge mode:
   `"duplicate-scavenge"` or when `requestedOutcome`, constraints, or equivalent
   operator text asks to scavenge duplicates, deduplicate custom implementations,
   or consolidate repeated concepts.
-- Preserve normal package or processing-group slicing first. Then add
-  duplicate-oriented `reviewQuestions`, likely counterpart paths, and search
-  hints to each slice where useful.
+- Preserve the target-path/requested-outcome slicing authority first, falling
+  back to normal package or processing-group slicing when the request is broad.
+  Then add duplicate-oriented `reviewQuestions`, likely counterpart paths, and
+  search hints to each slice where useful.
 - Search targets include repeated validation, parsing, normalization,
   serialization, path resolution, retry/idempotency, control-flow,
   mailbox/output handling, workflow validation/routing, adapter glue, and

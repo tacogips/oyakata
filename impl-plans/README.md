@@ -41,6 +41,7 @@ impl-plans/
 
 | Plan                                               | Completed  | Design Reference                                                                                                                                                                            |
 | -------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refactoring-workflow-duplicate-guidance-consolidation` | 2026-05-19 | `refactoring-divide-and-conquer duplicate-scavenge slice reviews` |
 | `workflow-node-runtime-patches` | 2026-05-17 | `architecture#workflow-node-runtime-patches`, `command`, `design-workflow-node-executability-validation` |
 | `package-boundary-architecture` | 2026-05-17 | `architecture` |
 | `workflow-checkout-github-directory` | 2026-05-17 | `command`, `architecture`, `design-user-scope-workflows` |

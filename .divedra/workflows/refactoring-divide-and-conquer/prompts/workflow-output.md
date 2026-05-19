@@ -9,9 +9,11 @@ Read the latest inbox and runtime variables. Return JSON with:
 - `remainingTasks`
 - `blockedTasks`
 - `changedFiles`
-- `duplicateScavengeSummary`: include grouped duplicates, completed
-  consolidations, deferred investigations, and known differences preserved when
-  duplicate-scavenge mode was active
+- `duplicateScavengeSummary`: summarize Step 3 duplicate groups and task
+  outcomes when duplicate-scavenge mode was active, including completed
+  consolidations, blocked or deferred investigations, known differences
+  preserved, verification evidence, and residual risks. Do not redefine the
+  child slice-review evidence schema here.
 - `verificationEvidence`
 - `reviewSummary`
 - `residualRisks`

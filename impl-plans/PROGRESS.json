@@ -1,5 +1,5 @@
 {
-  "lastUpdated": "2026-05-19T11:06:45+09:00",
+  "lastUpdated": "2026-05-19T12:44:00+09:00",
   "phases": {
     "1": {
       "status": "COMPLETED"
@@ -528,6 +528,9 @@
     },
     "176": {
       "status": "COMPLETED"
+    },
+    "180": {
+      "status": "IN_PROGRESS"
     }
   },
   "plans": {
@@ -6413,6 +6416,53 @@
             "TASK-003",
             "TASK-004",
             "TASK-005"
+          ]
+        }
+      }
+    },
+    "active/refactoring-workflow-duplicate-guidance-consolidation": {
+      "phase": 180,
+      "status": "Completed",
+      "path": "impl-plans/completed/refactoring-workflow-duplicate-guidance-consolidation.md",
+      "designReference": "refactoring-divide-and-conquer duplicate-scavenge slice reviews",
+      "tasks": {
+        "REF-001": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "REF-002": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "REF-003": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "REF-002"
+          ]
+        },
+        "REF-004": {
+          "status": "Completed",
+          "parallelizable": true,
+          "deps": []
+        },
+        "REF-005": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "REF-004"
+          ]
+        },
+        "REF-006": {
+          "status": "Completed",
+          "parallelizable": false,
+          "deps": [
+            "REF-002",
+            "REF-003",
+            "REF-004",
+            "REF-005"
           ]
         }
       }

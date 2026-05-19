@@ -29,23 +29,27 @@ Adjust `requestedOutcome`, `targetPaths`, `excludePaths`, and `constraints` to t
 
 ## Duplicate-Scavenge Mode
 
-Use duplicate-scavenge mode when the user asks to find duplicated implementations,
-parallel custom implementations of the same concept, or code that should be
-unified behind one helper, API, or abstraction.
+Use duplicate-scavenge mode when the user asks to find duplicated
+implementations, parallel custom implementations of the same concept, or code
+that should be unified behind one helper, API, or abstraction.
 
 Keep this as a mode of `refactoring-divide-and-conquer`; do not create or run a
-separate duplicate-only workflow. Set the requested outcome and constraints so
-Step 1 forms slices that can compare counterpart paths, the slice-review child
-records duplicate candidates and behavioral differences, and Step 3 groups those
-findings into bounded consolidation tasks only when ownership and verification
-are clear.
+separate duplicate-only workflow. The workflow prompts own the detailed runtime
+contracts:
+
+- Step 1 slices explicit `targetPaths` first, then broad package/processing
+  groups when the request is not targeted.
+- `refactoring-slice-review` owns per-slice duplicate evidence.
+- Step 3 owns merged `duplicateGroups` and implementation task contracts.
+- Steps 4 through 6 implement and review only the Step 3-authorized task
+  fields.
 
 Example input:
 
 ```json
 {
   "workflowInput": {
-    "requestedOutcome": "Run duplicate-scavenge refactoring: find duplicate implementations and consolidate safe candidates behind shared helpers or APIs.",
+    "requestedOutcome": "Run duplicate-scavenge refactoring on the selected paths and consolidate safe duplicate candidates.",
     "refactoringMode": "duplicate-scavenge",
     "targetPaths": ["src", "packages", ".divedra/workflows"],
     "excludePaths": ["dist", "node_modules", "impl-plans/completed"],
@@ -54,8 +58,7 @@ Example input:
       "Do not stage, commit, or push unless the user explicitly asks.",
       "Do not revert unrelated dirty worktree changes.",
       "Preserve public behavior and public APIs unless the plan explicitly authorizes a change.",
-      "Prefer consolidation only when counterpart implementations have matching semantics or documented differences.",
-      "Record duplicate evidence, chosen consolidation target, behavioral differences, risks, and verification commands."
+      "Prefer consolidation only when counterpart implementations have matching semantics or documented differences."
     ],
     "verificationPreferences": [
       "Run focused tests for each consolidated behavior.",
@@ -67,8 +70,9 @@ Example input:
 ```
 
 When reviewing results, reject broad abstractions that only remove superficial
-similarity. Accepted duplicate-scavenge tasks should name owned paths,
-counterpart paths, the consolidation target, compatibility risks, and narrow
+similarity. Accepted duplicate-scavenge tasks should preserve the Step 3
+contract fields: owned paths, counterpart paths, behavior to preserve, known
+differences not to collapse, consolidation target, conflicts, and narrow
 verification commands.
 
 ## Monitoring

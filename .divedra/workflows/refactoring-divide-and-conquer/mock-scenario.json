@@ -133,29 +133,11 @@
       },
       "payload": {
         "sliceId": "package-contracts-build-tooling",
-        "title": "Package contracts, workspace build, and tooling",
-        "ownedPaths": [
-          "package.json",
-          "Taskfile.yml",
-          "scripts",
-          "packages/divedra/src",
-          "packages/divedra-core/src",
-          "packages/divedra-addons/src"
-        ],
-        "reviewedPaths": [
-          "package.json",
-          "scripts/sync-package-declarations.ts",
-          "packages/divedra/src/index.ts"
-        ],
         "findings": [
           {
             "severity": "mid",
             "file": "packages/divedra/src/index.ts",
-            "line": 1,
             "problem": "Package entrypoints still depend on root src as the implementation owner.",
-            "recommendedRefactor": "Move source ownership behind package-local entrypoints while keeping root src as compatibility shims.",
-            "risk": "Package contracts can drift from the implementation they are intended to own.",
-            "confidence": "high",
             "duplicateScavenge": {
               "repeatedConcept": "package/root export normalization",
               "counterpartPaths": [
@@ -168,7 +150,6 @@
               ],
               "consolidationTarget": "Package-owned entrypoint contract with root src compatibility shims.",
               "verificationSuggestions": [
-                "bun test src/package-boundaries.test.ts",
                 "bun run build"
               ]
             }
@@ -186,7 +167,6 @@
             ],
             "blockedBy": [],
             "verificationCommands": [
-              "bun test src/package-boundaries.test.ts",
               "bun run build"
             ]
           }
@@ -195,8 +175,7 @@
           "Root src compatibility shims must remain until package-owned entrypoints pass build and API checks."
         ],
         "verificationSuggestions": [
-          "bun run build",
-          "bun test src/package-boundaries.test.ts"
+          "bun run build"
         ],
         "residualRisks": [
           "No concrete provisioning source surface was identified."
@@ -211,32 +190,11 @@
       },
       "payload": {
         "sliceId": "src-compatibility-surfaces",
-        "title": "Root src compatibility surfaces",
-        "ownedPaths": [
-          "src/cli",
-          "src/main.ts",
-          "src/lib.ts",
-          "src/workflow",
-          "src/graphql",
-          "src/server",
-          "src/events",
-          "src/hook",
-          "src/shared"
-        ],
-        "reviewedPaths": [
-          "src/lib.ts",
-          "src/cli.ts",
-          "src/workflow"
-        ],
         "findings": [
           {
             "severity": "mid",
             "file": "src/lib.ts",
-            "line": 1,
             "problem": "Root public API still acts as the implementation center for package consumers.",
-            "recommendedRefactor": "Split CLI, workflow runtime, add-ons, server/graphql, events/hooks, and shared contracts into package-owned surfaces before narrowing root src.",
-            "risk": "Later package movement may unintentionally change public API behavior.",
-            "confidence": "medium",
             "duplicateScavenge": {
               "repeatedConcept": "root src compatibility and package facade exports",
               "counterpartPaths": [
@@ -249,7 +207,6 @@
               ],
               "consolidationTarget": "Package-owned contracts with root facade compatibility.",
               "verificationSuggestions": [
-                "bun run typecheck",
                 "bun run test"
               ]
             }
@@ -273,7 +230,6 @@
               "REF-001"
             ],
             "verificationCommands": [
-              "bun run typecheck",
               "bun run test"
             ]
           }
@@ -282,7 +238,6 @@
           "No provisioning package should be added because the reviewed src tree has no provisioning module."
         ],
         "verificationSuggestions": [
-          "bun run typecheck",
           "bun run test"
         ],
         "residualRisks": [

@@ -9,9 +9,11 @@ Rules:
 - Implement one task only.
 - Keep behavior and public APIs stable unless the plan explicitly authorizes a behavior change.
 - For duplicate-scavenge consolidation tasks, consolidate only the repeated concept
-  named by the selected ready task. Preserve every listed behavioral difference
-  and do not widen the abstraction beyond the plan-authorized owner paths,
-  counterpart paths, and consolidation target.
+  named by the selected ready task. Treat the Step 3 duplicate group/task
+  contract as authoritative: repeated concept, owner paths, counterpart paths,
+  behavior to preserve, known differences not to collapse, consolidation target,
+  conflicts, and verification commands. Preserve those fields exactly and do not
+  widen the abstraction beyond the plan-authorized write scope.
 - Prefer adapting callers to an existing helper, API, workflow primitive, add-on,
   or narrow owned abstraction when the plan identifies one. Do not create a new
   shared abstraction solely because two code blocks look similar.
